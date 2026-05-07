@@ -459,8 +459,9 @@ pub fn generic_path_with_pretty_initialized(
     // are field-identical mirrors of `fs.zig:Path` that haven't been unified
     // yet (TYPE_ONLY split). Convert by field — every field is `Copy`
     // (`&'static [u8]` / `bool`), so this is a plain move, no `unsafe`.
-    // A `transmute` here would be UB: neither struct is `#[repr(C)]`, so
-    // default-repr layout is unspecified across distinct nominal types.
+    // (Both mirrors now carry `#[repr(C)]` for the bit-cast sites in
+    // `bundle_v2.rs`, but the safe field-copy is preferred where lifetimes
+    // already line up.)
     #[inline]
     fn to_resolver(p: bun_logger::fs::Path) -> bun_fs::Path<'static> {
         bun_fs::Path {

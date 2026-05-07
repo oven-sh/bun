@@ -741,6 +741,17 @@ impl Index {
     pub fn get(self) -> u32 {
         self.value
     }
+
+    /// Zig const-decl `pub const invalid = Index{ .value = … }`.
+    #[inline]
+    pub const fn invalid() -> Index {
+        Self::INVALID
+    }
+
+    #[inline]
+    pub const fn runtime() -> Index {
+        Self::RUNTIME
+    }
 }
 
 impl Default for Index {

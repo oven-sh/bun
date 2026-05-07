@@ -147,9 +147,11 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
-#[path = "bunfig.rs"]
-pub mod bunfig;
-pub use bunfig::Bunfig;
+// MOVE_DOWN(b0): bunfig parser moved to `bun_bunfig` so `bun_install` can load
+// bunfig.toml without a tier-6 dependency. Re-export under the original path so
+// existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
+pub use bun_bunfig::bunfig;
+pub use bun_bunfig::Bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 

@@ -1625,13 +1625,14 @@ impl Package<u64> {
         // are disjoint fields and `parse` does not re-enter through `manager`.
         let m = unsafe { &mut *manager };
         let log: &mut logger::Log = unsafe { &mut *m.log };
-        let pm = crate::PackageManager::get();
-        // reconciler-6: forward to `parse` once
-        // `package_manager_real::PackageManager.lockfile` is
-        // `Box<lockfile_real::Lockfile>`. Until then route through the stub
-        // PM's lockfile so the call type-checks; both lockfiles share the same
-        // `string_bytes` / `dependencies` buffer shapes.
-        self.parse(&mut pm.lockfile, pm, log, source, resolver, features)
+        let lockfile: *mut crate::lockfile::Lockfile = &mut *m.lockfile;
+        // reconciler-6: forward to `self.parse(&mut *lockfile, …)` once
+        // `package_manager_real::PackageManager.lockfile` becomes
+        // `Box<lockfile_real::Lockfile>`. The two structs expose identical
+        // `buffers` / `string_pool` / `packages` field surfaces; only the
+        // `packages` column container type differs.
+        let _ = (lockfile, log, source, resolver, features);
+        Err(bun_core::err!(LockfileTypePendingReconciler6))
     }
 
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
@@ -1703,7 +1704,9 @@ impl Package<u64> {
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
             dependency::version::Tag::Npm => {
-                semver::string::Builder::string_hash(dependency_version.value.npm.name.slice(buf))
+                // SAFETY: tag == Npm selects the `npm` union member.
+                let npm_name = unsafe { dependency_version.value.npm.name };
+                semver::string::Builder::string_hash(npm_name.slice(buf))
             }
             dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
@@ -1759,7 +1762,8 @@ impl Package<u64> {
                         FileSystem::instance().top_level_dir(),
                         &[
                             source.path.name.dir,
-                            dependency_version.value.folder.slice(buf),
+                            // SAFETY: tag == Folder selects the `folder` union member.
+                            unsafe { dependency_version.value.folder }.slice(buf),
                         ],
                     ),
                 );
@@ -1768,11 +1772,16 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                let npm = dependency_version.value.npm;
                 if workspace_version.is_some() {
-                    if pm.options.link_workspace_packages
-                        && npm.version.satisfies(workspace_version.unwrap(), buf, buf)
-                    {
+                    // SAFETY: tag == Npm selects the `npm` union member.
+                    let satisfies = unsafe {
+                        dependency_version
+                            .value
+                            .npm
+                            .version
+                            .satisfies(workspace_version.unwrap(), buf, buf)
+                    };
+                    if pm.options.link_workspace_packages && satisfies {
                         let path = workspace_path.unwrap().sliced(buf);
                         if let Some(dep) = dependency::parse_with_tag(
                             external_alias.value,
@@ -1841,7 +1850,8 @@ impl Package<u64> {
 
                     dependency_version.value.workspace = path;
                 } else {
-                    let workspace = dependency_version.value.workspace.slice(buf);
+                    // SAFETY: tag == Workspace selects the `workspace` union member.
+                    let workspace = unsafe { dependency_version.value.workspace }.slice(buf);
                     let path = string_builder.append::<String>(if workspace == b"*" {
                         b"*"
                     } else {
@@ -1884,12 +1894,15 @@ impl Package<u64> {
                                     semver::string::Builder::string_hash(
                                         package_dep.realname().slice(buf),
                                     ) == name_hash
-                                        && package_dep
-                                            .version
-                                            .value
-                                            .npm
-                                            .version
-                                            .satisfies(ver, buf, buf)
+                                        // SAFETY: tag == Npm selects the `npm` union member.
+                                        && unsafe {
+                                            package_dep
+                                                .version
+                                                .value
+                                                .npm
+                                                .version
+                                                .satisfies(ver, buf, buf)
+                                        }
                                 }
                                 // `workspace:*`
                                 dependency::version::Tag::Workspace => {
@@ -2760,9 +2773,11 @@ impl Package<u64> {
                         package_dependencies[total_dependencies_count as usize] = dep;
                         total_dependencies_count += 1;
 
-                        lockfile
-                            .workspace_paths
-                            .put(external_name.hash, dep.version.value.workspace)?;
+                        // SAFETY: `parse_dependency` was called with
+                        // `Tag::Workspace`, so `dep.version.value.workspace`
+                        // is the active union member.
+                        let ws_path = unsafe { dep.version.value.workspace };
+                        lockfile.workspace_paths.put(external_name.hash, ws_path)?;
                         if let Some(version) = workspace_version {
                             lockfile
                                 .workspace_versions

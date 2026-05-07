@@ -5851,7 +5851,7 @@ impl<'a> BundleV2<'a> {
                             .enqueue_parse_task2(&mut server_source, source_loader, Target::Browser)
                             .expect("oom");
 
-                        (server_index, Index::invalid().get())
+                        (server_index, Index::INVALID.get())
                     };
 
                     this.graph

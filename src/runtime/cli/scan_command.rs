@@ -1,44 +1,45 @@
 use crate::Command;
-use bun_core::{Global, Output};
-use bun_install::package_manager::security_scanner;
-use bun_install::PackageManager;
+use bun_core::{err, Global, Output};
+use bun_install::lockfile::LoadResult;
+use bun_install::package_manager::{self, security_scanner};
+use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
 
 pub struct ScanCommand;
 
 impl ScanCommand {
-    // TODO(port): narrow error set
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // Zig:
-        //   const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .scan);
-        //   const manager, const cwd = PackageManager.init(ctx, cli, .scan) catch |err| { ... };
-        //   try execWithManager(ctx, manager, cwd);
-        //
-        // `CommandLineArguments::parse`, `PackageManager::init`, and `Subcommand::Scan` all live
-        // in the gated `package_manager_real` module (src/install/lib.rs reconciler-6). The
-        // exported stub `Subcommand` enum has no `Scan` variant and the stub `PackageManager`
-        // struct has no `init` associated fn, so this body cannot type-check until that crate
-        // un-gates. Keep the error-handling shape commented for reference.
-        let _ = ctx;
-        // if err == error.MissingPackageJSON:
-        //     Output::err_generic(
-        //         "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
-        //         format_args!(""),
-        //     );
-        //     Output::note("Run \"bun install\" first to generate a lockfile", format_args!(""));
-        //     Global::exit(1);
-        todo!("blocked_on: bun_install::Subcommand::Scan / bun_install::PackageManager::init / bun_install::package_manager::command_line_arguments::parse (package_manager_real un-gate, reconciler-6)")
+        let cli = CommandLineArguments::parse(Subcommand::Scan)?;
+
+        let (pm_ptr, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan) {
+            Ok(v) => v,
+            Err(e) => {
+                if e == err!("MissingPackageJSON") {
+                    Output::err_generic(
+                        "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
+                        (),
+                    );
+                    Output::note("Run \"bun install\" first to generate a lockfile");
+                    Global::exit(1);
+                }
+                return Err(e);
+            }
+        };
+        // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
+
+        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
+        // non-null and exclusively owned by this thread for the command's
+        // duration (mirrors Zig's `*PackageManager`).
+        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
+
+        Self::exec_with_manager(ctx, manager, &original_cwd)
     }
 
-    // TODO(port): narrow error set
     pub fn exec_with_manager(
-        ctx: &Command::Context,
+        ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Zig: `if (manager.options.security_scanner == null) { ... }`
-        // The stub `PackageManagerOptionsStub` (src/install/lib.rs) has no `security_scanner`
-        // field; gated behind `package_manager_real`.
-        if security_scanner_configured(manager).is_none() {
+        if manager.options.security_scanner.is_none() {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: no security scanner configured"
             ));
@@ -53,39 +54,60 @@ impl ScanCommand {
             Global::exit(1);
         }
 
-        // TODO(port): `Output.prettyFmt(str, true)` is a comptime ANSI-color expander; needs a Rust
-        // const equivalent (or call the runtime `pretty_fmt` and pass `true`).
+        // Zig: `Output.prettyError(comptime Output.prettyFmt(..., true), .{})` — the
+        // comptime ANSI expansion is folded into `pretty_error`'s runtime tag rewrite.
         Output::pretty_error(format_args!(
-            "{}",
-            const_format::concatcp!(
-                "<r><b>bun pm scan <r><d>v",
-                Global::package_json_version_with_sha,
-                "<r>\n"
-            )
+            "<r><b>bun pm scan <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
         ));
         Output::flush();
 
-        // Zig:
-        //   const load_lockfile = manager.lockfile.loadFromCwd(manager, ctx.allocator, ctx.log, true);
-        //   if (load_lockfile == .not_found) { ... } / if (load_lockfile == .err) { ... }
-        // The stub `PackageManager` has no `lockfile` field and stub `LoadResult` is a unit struct
-        // (no `NotFound`/`Err` variants); both gated behind `package_manager_real`.
-        load_lockfile_or_exit(manager, ctx);
+        // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
+        // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
+        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
+        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
+        {
+            let pm_ptr: *mut PackageManager = manager;
+            // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
+            let log: &mut bun_logger::Log = unsafe { &mut *(*pm_ptr).log };
+            // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
+            // no other live `&mut Lockfile` exists at this point.
+            let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
+            match lockfile.load_from_cwd::<true>(
+                // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
+                // fields disjoint from `lockfile` (Zig invariant).
+                Some(unsafe { &mut *pm_ptr }),
+                log,
+            ) {
+                LoadResult::NotFound => {
+                    Output::err_generic(
+                        "Lockfile not found. Run 'bun install' first to generate a lockfile.",
+                        (),
+                    );
+                    Global::exit(1);
+                }
+                LoadResult::Err(e) => {
+                    Output::err_generic("Error loading lockfile: {s}", (e.value.name(),));
+                    Global::exit(1);
+                }
+                LoadResult::Ok(_) => {}
+            }
+        }
 
         let security_scan_results =
-            match security_scanner::perform_security_scan_for_all(manager, ctx, original_cwd) {
+            match security_scanner::perform_security_scan_for_all(manager, &mut *ctx, original_cwd) {
                 Ok(v) => v,
-                Err(err) => {
+                Err(e) => {
                     Output::err_generic(
                         "Could not perform security scan (<d>{s}<r>)",
-                        format_args!("{}", err.name()),
+                        (e.name(),),
                     );
                     Global::exit(1);
                 }
             };
 
         if let Some(results) = security_scan_results {
-            // `defer { var results_mut = results; results_mut.deinit(); }` — deleted; Drop handles it.
+            // `defer { var results_mut = results; results_mut.deinit(); }` — Drop handles it.
 
             security_scanner::print_security_advisories(manager, &results);
 
@@ -100,41 +122,13 @@ impl ScanCommand {
     }
 }
 
-/// Local shim for `manager.options.security_scanner` — field absent on the upstream
-/// `PackageManagerOptionsStub`. Returns the configured scanner package name when the
-/// real `PackageManagerOptions` is un-gated.
-#[inline]
-fn security_scanner_configured(_manager: &PackageManager) -> Option<&[u8]> {
-    todo!("blocked_on: bun_install::PackageManagerOptionsStub::security_scanner (package_manager_real un-gate, reconciler-6)")
-}
-
-/// Local shim for `manager.lockfile.load_from_cwd(...)` + `LoadResult::{NotFound,Err}` matching.
-/// The upstream stub `PackageManager` has no `lockfile` field and `LoadResult` is a unit struct.
-#[inline]
-fn load_lockfile_or_exit(_manager: &mut PackageManager, _ctx: &Command::Context) {
-    // Real body once un-gated:
-    //   let load_lockfile = manager.lockfile.load_from_cwd(manager, ctx.log, true);
-    //   if matches!(load_lockfile, LoadResult::NotFound) {
-    //       Output::err_generic(
-    //           "Lockfile not found. Run 'bun install' first to generate a lockfile.",
-    //           format_args!(""),
-    //       );
-    //       Global::exit(1);
-    //   }
-    //   if let LoadResult::Err(err) = &load_lockfile {
-    //       Output::err_generic("Error loading lockfile: {s}", format_args!("{}", err.value.name()));
-    //       Global::exit(1);
-    //   }
-    todo!("blocked_on: bun_install::PackageManager::lockfile / bun_install::lockfile::LoadResult variants (package_manager_real un-gate, reconciler-6)")
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/scan_command.zig (76 lines)
-//   confidence: low
-//   todos:      3
-//   notes:      Output::* fns modeled as taking fmt::Arguments; exec/exec_with_manager bodies
-//               blocked on gated bun_install::package_manager_real stubs (Subcommand::Scan,
-//               PackageManager::init/lockfile, PackageManagerOptions::security_scanner,
-//               LoadResult variants).
+//   confidence: high
+//   todos:      0
+//   notes:      `load_from_cwd` borrow split via raw-ptr projections from the
+//               PackageManager singleton (Zig holds `lockfile: *Lockfile`, so
+//               the aliasing is a Rust-shape artifact; `load_from_cwd` never
+//               touches `manager.lockfile` through the `manager` arg).
 // ──────────────────────────────────────────────────────────────────────────

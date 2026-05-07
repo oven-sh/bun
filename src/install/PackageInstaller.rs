@@ -716,11 +716,16 @@ impl<'a> PackageInstaller<'a> {
                 // O(pending_installs) extra `.clone()` allocations and to leave
                 // `pending_installs` empty as the spec's defer does.
                 for context in core::mem::take(&mut self.trees[i].pending_installs) {
-                    let package_id = resolutions[context.dependency_id as usize];
+                    let package_id =
+                        self.lockfile.buffers.resolutions.as_slice()[context.dependency_id as usize];
                     let name = self.names[package_id as usize];
                     let resolution = &self.resolutions[package_id as usize] as *const Resolution;
                     self.node_modules.tree_id = context.tree_id;
-                    self.node_modules.path = context.path;
+                    // PORT NOTE: `context.path` is a `*const [u8]` borrowed from this
+                    // installer's path buffer; copy bytes into the owned Vec.
+                    self.node_modules.path.clear();
+                    // SAFETY: BACKREF — set from `self.node_modules.path` earlier this pass.
+                    self.node_modules.path.extend_from_slice(unsafe { &*context.path });
                     self.current_tree_id = context.tree_id;
 
                     const NEEDS_VERIFY: bool = false;
@@ -868,7 +873,7 @@ impl<'a> PackageInstaller<'a> {
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         if self.successfully_installed.bit_length() < self.lockfile.packages.len() {
-            let new = Bitset::init_empty(self.lockfile.packages.len());
+            let new = Bitset::init_empty(self.lockfile.packages.len()).unwrap_or_oom();
             let old = core::mem::replace(&mut self.successfully_installed, new);
             old.copy_into(&mut self.successfully_installed);
             // PORT NOTE: `defer old.deinit(bun.default_allocator)` — Bitset impls Drop.
@@ -903,7 +908,7 @@ impl<'a> PackageInstaller<'a> {
             let pkg_metas = self.lockfile.packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
                 pkg_metas[package_id as usize].integrity = data.integrity;
-                self.manager.options.enable.force_save_lockfile = true;
+                self.manager.options.enable.set(Options::Enable::FORCE_SAVE_LOCKFILE, true);
             }
         }
 
@@ -927,15 +932,22 @@ impl<'a> PackageInstaller<'a> {
             }
 
             for cb in callbacks.iter() {
-                let context = &cb.dependency_install_context;
+                let TaskCallbackContext::DependencyInstallContext(context) = cb else {
+                    debug_assert!(false, "expected DependencyInstallContext");
+                    continue;
+                };
                 let callback_package_id =
                     self.lockfile.buffers.resolutions.as_slice()[context.dependency_id as usize];
                 let callback_resolution =
                     &self.resolutions[callback_package_id as usize] as *const Resolution;
                 self.node_modules.tree_id = context.tree_id;
-                // TODO(port): zig assigns `context.path` (ArrayList struct copy). In Rust this
-                // moves the Vec out of `context`; iterate by value (`into_iter()`) in Phase B.
-                self.node_modules.path = context.path.clone();
+                // PORT NOTE: zig assigns `context.path` (ArrayList struct copy). The
+                // Rust `DependencyInstallContext.path` is a borrowed `*const [u8]` into
+                // the installer's path buffer; copy the bytes into the owned Vec.
+                self.node_modules.path.clear();
+                // SAFETY: BACKREF — `context.path` was set from this installer's
+                // `node_modules.path` buffer earlier in this pass.
+                self.node_modules.path.extend_from_slice(unsafe { &*context.path });
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -958,7 +970,7 @@ impl<'a> PackageInstaller<'a> {
 
         if cfg!(debug_assertions) {
             Output::panic(format_args!(
-                "Ran callback to install enqueued packages, but there was no task associated with it. {:?}:{:?} (dependency_id: {})",
+                "Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {})",
                 bun_core::fmt::quote(name.slice(self.lockfile.buffers.string_bytes.as_slice())),
                 bun_core::fmt::quote(&data.url),
                 dependency_id,
@@ -991,20 +1003,21 @@ impl<'a> PackageInstaller<'a> {
             temp_lockfile.init_empty();
             // PORT NOTE: `defer temp_lockfile.deinit()` — Lockfile impls Drop.
             let mut string_builder = temp_lockfile.string_builder();
+            // SAFETY: `manager.log` is a borrowed `*mut Log` set in `init()`; never null.
+            let log = unsafe { &mut *self.manager.log };
             if let Err(err) = temp.fill_from_package_json(
                 &mut string_builder,
-                &mut self.manager.log,
+                log,
                 folder_path,
             ) {
                 if log_level != Options::LogLevel::Silent {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "failed to fill lifecycle scripts for <b>{}<r>: {}",
-                        bstr::BStr::new(alias),
-                        err.name(),
-                    ));
+                        (bstr::BStr::new(alias), err.name()),
+                    );
                 }
 
-                if self.manager.options.enable.fail_early {
+                if self.manager.options.enable.fail_early() {
                     Global::crash();
                 }
 
@@ -1019,11 +1032,10 @@ impl<'a> PackageInstaller<'a> {
 
         match resolution_tag {
             resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
-                // PORT NOTE: zig `inline for (Lockfile.Scripts.names) |script_name| { @field(...) }`.
-                // TODO(port): @field reflection — Phase B should add a `Scripts::iter_all()` helper
-                // that yields each named script field.
-                for s in scripts.iter_all() {
-                    count += (!s.is_empty()) as usize;
+                // PORT NOTE: zig `inline for (Lockfile.Scripts.names) |hook| { @field(...) }`.
+                // The `FIELD_NAMES` table lists each script field accessor.
+                for &(_, accessor) in PackageScripts::FIELD_NAMES.iter() {
+                    count += (!accessor(&scripts).is_empty()) as usize;
                 }
             }
             _ => {
@@ -1086,7 +1098,7 @@ impl<'a> PackageInstaller<'a> {
         let package_version: &[u8] = if resolution.tag == resolution::Tag::Workspace {
             'brk: {
                 if let Some(workspace_version) =
-                    self.manager.lockfile.workspace_versions.get(pkg_name_hash)
+                    self.manager.lockfile.workspace_versions.get(&pkg_name_hash)
                 {
                     // TODO(port): std.fmt.bufPrint — write into &mut [u8], return written slice
                     break 'brk bun_core::fmt::buf_print(
@@ -1117,8 +1129,8 @@ impl<'a> PackageInstaller<'a> {
         };
 
         let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
-            if self.manager.lockfile.patched_dependencies.entries().len() == 0
-                && self.manager.patched_dependencies_to_remove.entries().len() == 0
+            if self.manager.lockfile.patched_dependencies.count() == 0
+                && self.manager.patched_dependencies_to_remove.count() == 0
             {
                 break 'brk (None, None, None, false);
             }
@@ -1139,12 +1151,12 @@ impl<'a> PackageInstaller<'a> {
             let Some(patchdep) = self
                 .lockfile
                 .patched_dependencies
-                .get(name_and_version_hash)
+                .get(&name_and_version_hash)
             else {
                 let to_remove = self
                     .manager
                     .patched_dependencies_to_remove
-                    .contains(name_and_version_hash);
+                    .contains(&name_and_version_hash);
                 if to_remove {
                     break 'brk (None, None, Some(name_and_version_hash), true);
                 }

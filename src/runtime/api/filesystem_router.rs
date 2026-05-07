@@ -868,17 +868,11 @@ impl MatchedRoute {
     pub fn get_script_src_string(
         origin: &URL,
         // PORT NOTE: Zig used `comptime Writer: type, writer: Writer` over a fixedBufferStream of
-        // path bytes; the accessible `get_public_path_with_asset_prefix` takes `core::fmt::Write`.
+        // path bytes; `bun_object::get_public_path` takes `core::fmt::Write`.
         writer: &mut impl core::fmt::Write,
         file_path: &[u8],
         client_framework_enabled: bool,
     ) {
-        // PORT NOTE: `jsc.API.Bun.getPublicPath` is gated behind a private `_jsc_gated` mod in
-        // BunObject.rs; it is a thin wrapper over `get_public_path_with_asset_prefix` with
-        // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`. Inline that body here.
-        // SAFETY: `VirtualMachine::get()` returns a thread-local singleton pointer; this fn is
-        // only called on the JS thread where the VM is alive.
-        let top_level_dir = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir };
         let mut entry_point_tempbuf = PathBuffer::uninit();
         // We don't store the framework config including the client parts in the server
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
@@ -889,26 +883,16 @@ impl MatchedRoute {
             let path_name = bun_logger::fs::PathName::init(unsafe {
                 core::mem::transmute::<&[u8], &'static [u8]>(file_path)
             });
-            bun_object::get_public_path_with_asset_prefix(
+            bun_object::get_public_path(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
                     &mut entry_point_tempbuf,
                     &path_name,
                 ),
-                top_level_dir,
                 origin,
-                b"",
                 writer,
-                path::Platform::Loose,
             );
         } else {
-            bun_object::get_public_path_with_asset_prefix(
-                file_path,
-                top_level_dir,
-                origin,
-                b"",
-                writer,
-                path::Platform::Loose,
-            );
+            bun_object::get_public_path(file_path, origin, writer);
         }
     }
 

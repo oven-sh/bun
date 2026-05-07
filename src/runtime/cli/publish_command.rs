@@ -6,11 +6,12 @@ use bun_core::fmt as bun_fmt;
 use bun_str::{strings, ZStr};
 use bun_paths::{self as path, PathBuffer};
 use bun_logger as logger;
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, Fd, File, FileKind};
 use bun_http as http;
 use bun_http::HeaderBuilder;
-use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager};
-use bun_libarchive::lib::Archive;
+use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_resolver::fs::FileSystem;
 use bun_dotenv as dotenv;
 use bun_sha_hmac as sha;
@@ -22,43 +23,15 @@ use crate::cli::ci_info as ci;
 use bun_simdutf_sys::simdutf as simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-// `LogLevel`/`AuthType`/`Access` from the stub surface in `bun_install`
-// (see PackageManagerOptions.zig `PublishConfig`).
+// `LogLevel`/`AuthType`/`Access` from `bun_install::PackageManagerOptions`.
 use bun_install::{AuthType, LogLevel};
 pub use bun_install::Access;
 use bun_install::dependency;
 use bun_sys::FdExt as _;
 use bun_js_parser::ast::expr::Data as ExprData;
+use bun_core::OSPathChar;
 
-// ── Upstream-stub shims ────────────────────────────────────────────────────
-// `PublishConfigStub` / `PackageManagerOptionsStub` in `bun_install` are
-// minimal placeholders (real bodies gated behind `package_manager_real`,
-// reconciler-6). Shim the missing field surface as trait getters so call
-// sites compile; bodies `todo!()` until the upstream stubs are widened.
-trait PublishConfigShim {
-    fn tag(&self) -> &[u8];
-    fn access(&self) -> Option<Access>;
-    fn otp(&self) -> &[u8];
-    fn tolerate_republish(&self) -> bool;
-}
-impl PublishConfigShim for install::PublishConfigStub {
-    fn tag(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::tag") }
-    fn access(&self) -> Option<Access> { self.access }
-    fn otp(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::otp") }
-    fn tolerate_republish(&self) -> bool { todo!("blocked_on: bun_install::PublishConfigStub::tolerate_republish") }
-}
-trait PackageManagerOptionsShim {
-    fn dry_run(&self) -> bool;
-}
-impl PackageManagerOptionsShim for install::PackageManagerOptionsStub {
-    fn dry_run(&self) -> bool { self.dry_run }
-}
-trait PackageManagerShim {
-    fn original_package_json_path(&self) -> &[u8];
-}
-impl PackageManagerShim for PackageManager {
-    fn original_package_json_path(&self) -> &[u8] { todo!("blocked_on: bun_install::PackageManager::original_package_json_path") }
-}
+use crate::api::bun_process::sync as spawn_sync;
 
 // Local hex-lower Display shim — `bun_fmt::bytes_to_hex_lower` writes into a
 // caller buf; the Zig spec used it as a formatter (`{x}`).
@@ -176,13 +149,238 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             }
         };
 
-        // TODO(port): Archive::Iterator / EntryKind / read_entry_data are not
-        // exposed by `bun_libarchive::lib` yet — the Zig `Archive.Iterator`
-        // wrapper has no Rust port. The package.json-extraction loop below
-        // (publish_command.zig:fromTarballPath) is gated until that surface
-        // lands.
-        let _ = (&ctx, &tarball_bytes, manager);
-        todo!("blocked_on: bun_libarchive::lib::Archive::Iterator + bun_install::PackageManager::log/publish_config (reconciler-6)")
+        let mut maybe_package_json_contents: Option<Box<[u8]>> = None;
+
+        let mut iter = match ArchiveIterator::init(&tarball_bytes) {
+            ArchiveIterResult::Err { archive, message } => {
+                Output::err_generic("{}: {}", format_args!(
+                    "{}: {}",
+                    bstr::BStr::new(message),
+                    bstr::BStr::new(Archive::error_string(archive)),
+                ));
+                Global::crash();
+            }
+            ArchiveIterResult::Result(res) => res,
+        };
+
+        let mut unpacked_size: usize = 0;
+        let mut total_files: usize = 0;
+
+        Output::print(format_args!("\n"));
+
+        loop {
+            let next = match iter.next() {
+                ArchiveIterResult::Err { archive, message } => {
+                    Output::err_generic("{}: {}", format_args!(
+                        "{}: {}",
+                        bstr::BStr::new(message),
+                        bstr::BStr::new(Archive::error_string(archive)),
+                    ));
+                    Global::crash();
+                }
+                ArchiveIterResult::Result(res) => res,
+            };
+            let Some(next) = next else { break };
+
+            // SAFETY: `next.entry` is valid until the next `iter.next()` call.
+            let entry = unsafe { &*next.entry };
+            #[cfg(windows)]
+            let pathname: &[OSPathChar] = entry.pathname_w().as_slice();
+            #[cfg(not(windows))]
+            let pathname: &[OSPathChar] = entry.pathname().as_bytes();
+
+            let size = entry.size();
+
+            unpacked_size += usize::try_from(size.max(0)).unwrap();
+            total_files += usize::from(next.kind == FileKind::File);
+
+            // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
+            if let Some(slash) = bun_core::index_of_any_t(pathname, sep_chars()) {
+                let stripped = &pathname[slash + 1..];
+                if stripped.is_empty() {
+                    continue;
+                }
+
+                Output::pretty(format_args!(
+                    "<b><cyan>packed<r> {} {}\n",
+                    bun_fmt::size(usize::try_from(size.max(0)).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::fmt_os_path(stripped, Default::default()),
+                ));
+
+                if next.kind != FileKind::File {
+                    continue;
+                }
+
+                if bun_core::index_of_any_t(stripped, sep_chars()).is_none() {
+                    // check for package.json, readme.md, ...
+                    let filename = &pathname[slash + 1..];
+
+                    if maybe_package_json_contents.is_none()
+                        && strings::eql_case_insensitive_t(filename, b"package.json")
+                    {
+                        maybe_package_json_contents = match next.read_entry_data(iter.archive)? {
+                            ArchiveIterResult::Err { archive, message } => {
+                                Output::err_generic("{}: {}", format_args!(
+                                    "{}: {}",
+                                    bstr::BStr::new(message),
+                                    bstr::BStr::new(Archive::error_string(archive)),
+                                ));
+                                Global::crash();
+                            }
+                            ArchiveIterResult::Result(bytes) => Some(bytes),
+                        };
+                    }
+                }
+            } else {
+                Output::pretty(format_args!(
+                    "<b><cyan>packed<r> {} {}\n",
+                    bun_fmt::size(usize::try_from(size.max(0)).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::fmt_os_path(pathname, Default::default()),
+                ));
+            }
+        }
+
+        match iter.close() {
+            ArchiveIterResult::Err { archive, message } => {
+                Output::err_generic("{}: {}", format_args!(
+                    "{}: {}",
+                    bstr::BStr::new(message),
+                    bstr::BStr::new(Archive::error_string(archive)),
+                ));
+                Global::crash();
+            }
+            ArchiveIterResult::Result(()) => {}
+        }
+
+        let package_json_contents =
+            maybe_package_json_contents.ok_or(FromTarballError::MissingPackageJSON)?;
+
+        // PORT NOTE: leak `package_json_contents` so the `Source` borrow stays
+        // alive across `normalized_package` (Zig held an arena slice).
+        let package_json_contents: &'static [u8] =
+            Box::leak(package_json_contents);
+
+        let bump = bun_alloc::Arena::new();
+        let (package_name, package_version, mut json, json_source) = {
+            let source = logger::Source::init_path_string(b"package.json", package_json_contents);
+            // SAFETY: `manager.log` is set once at `PackageManager::init`.
+            let log = unsafe { &mut *manager.log };
+            let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
+                Ok(j) => j,
+                Err(e) => {
+                    if e == err!(OutOfMemory) {
+                        return Err(FromTarballError::OutOfMemory);
+                    }
+                    return Err(FromTarballError::InvalidPackageJSON);
+                }
+            };
+
+            if let Some(private) = json.get(b"private") {
+                if let Some(is_private) = private.as_bool() {
+                    if is_private {
+                        return Err(FromTarballError::PrivatePackage);
+                    }
+                }
+            }
+
+            if let Some(config) = json.get(b"publishConfig") {
+                if manager.options.publish_config.tag.is_empty() {
+                    if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
+                        // PORT NOTE: `PublishConfig.tag` is `&'static [u8]`; leak the
+                        // bump-owned slice (single-shot CLI; freed at process exit).
+                        manager.options.publish_config.tag = Box::leak(Box::<[u8]>::from(tag));
+                    }
+                }
+
+                if manager.options.publish_config.access.is_none() {
+                    if let Some(access) = json_get_string_cloned(&config, &bump, b"access")? {
+                        manager.options.publish_config.access = match Access::from_str(access) {
+                            Some(a) => Some(a),
+                            None => {
+                                Output::err_generic(
+                                    "invalid `access` value: '{}'",
+                                    (bstr::BStr::new(access),),
+                                );
+                                Global::crash();
+                            }
+                        };
+                    }
+                }
+
+                // maybe otp
+            }
+
+            let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
+                .ok_or(FromTarballError::MissingPackageName)?
+                .into();
+            let is_scoped = dependency::is_scoped_package_name(&name)
+                .map_err(|_| FromTarballError::InvalidPackageName)?;
+
+            if let Some(access) = manager.options.publish_config.access {
+                if access == Access::Restricted && !is_scoped {
+                    return Err(FromTarballError::RestrictedUnscopedPackage);
+                }
+            }
+
+            let version: Box<[u8]> = json_get_string_cloned(&json, &bump, b"version")?
+                .ok_or(FromTarballError::MissingPackageVersion)?
+                .into();
+            if version.is_empty() {
+                return Err(FromTarballError::InvalidPackageVersion);
+            }
+
+            (name, version, json, source)
+        };
+
+        let mut shasum: SHA1Digest = [0u8; sha::SHA1::DIGEST];
+        let mut sha1 = sha::SHA1::init();
+        sha1.update(&tarball_bytes);
+        sha1.r#final(&mut shasum);
+        drop(sha1);
+
+        let mut integrity: SHA512Digest = [0u8; sha::SHA512::DIGEST];
+        let mut sha512 = sha::SHA512::init();
+        sha512.update(&tarball_bytes);
+        sha512.r#final(&mut integrity);
+        drop(sha512);
+
+        let normalized_pkg_info = Self::normalized_package(
+            manager,
+            &package_name,
+            &package_version,
+            &mut json,
+            &json_source,
+            shasum,
+            integrity,
+        )?;
+
+        Pack::Context::print_summary(
+            pack::Stats {
+                total_files,
+                unpacked_size,
+                packed_size: tarball_bytes.len(),
+                ..Default::default()
+            },
+            Some(&shasum),
+            Some(&integrity),
+            manager.options.log_level,
+        );
+
+        Ok(Context {
+            manager,
+            command_ctx: ctx,
+            package_name,
+            package_version,
+            abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
+            tarball_bytes: tarball_bytes.into(),
+            shasum,
+            integrity,
+            uses_workspaces: false,
+            normalized_pkg_info,
+            publish_script: None,
+            postpublish_script: None,
+            script_env: None,
+        })
     }
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get

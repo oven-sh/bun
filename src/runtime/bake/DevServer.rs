@@ -53,32 +53,6 @@ use bun_watcher::Watcher;
 
 pub use crate::bake::dev_server::assets::Assets;
 pub use crate::bake::dev_server::DirectoryWatchStore;
-
-/// Shim: `bun_watcher::AnyResolveWatcher` and `bun_resolver::AnyResolveWatcher`
-/// are duplicate forward-decls of the same Zig vtable struct, defined in two
-/// crates to break a dependency cycle. Convert at the seam until the upstream
-/// move-in pass unifies them.
-#[inline]
-fn convert_resolve_watcher(w: bun_watcher::AnyResolveWatcher) -> bun_resolver::AnyResolveWatcher {
-    bun_resolver::AnyResolveWatcher {
-        // SAFETY: `Watcher::get_resolve_watcher` always stores `&mut Watcher` (non-null).
-        context: unsafe { ::core::ptr::NonNull::new_unchecked(w.context) },
-        // SAFETY: `unsafe fn(*mut (), &[u8], Fd)` and `fn(*mut (), &[u8], Fd)` have
-        // identical ABI; the resolver caller upholds the watcher callback's safety
-        // contract (ctx is the original `*mut Watcher`).
-        callback: unsafe {
-            ::core::mem::transmute::<
-                unsafe fn(*mut (), &[u8], bun_sys::Fd),
-                fn(*mut (), &[u8], bun_sys::Fd),
-            >(w.callback)
-        },
-    }
-}
-// PORT NOTE: full `ErrorReportRequest` body lives in
-// `crate::bake::dev_server::error_report_request_body` (mounted from
-// `DevServer/ErrorReportRequest.rs`). Its `run` is typed against the keystone
-// `dev_server::DevServer`; this body file's `set_routes` registers it through a
-// trampoline that recovers the keystone pointer, so no local stub is needed.
 pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 pub use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
@@ -319,7 +293,14 @@ pub enum TestingBatchEvents {
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
 pub struct CurrentBundle {
-    pub bv2: Box<BundleV2<'a>>,
+    /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
+    /// PORT NOTE: `'static` is a stand-in for the DevServer-self lifetime —
+    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
+    /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
+    /// (stable address, never moved post-init). Threading a real `'dev` would
+    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
+    /// already encodes that contract.
+    pub bv2: Box<BundleV2<'static>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -400,12 +381,12 @@ pub struct DevServer {
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
-    pub barrel_files_with_deferrals: ArrayHashMap<Box<[u8]>, ()>,
+    pub barrel_files_with_deferrals: bun_collections::StringArrayHashMap<()>,
     /// Accumulated barrel export requests across all builds. Maps barrel file
     /// path → set of export names that have been requested. This ensures that
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
-    pub barrel_needed_exports: ArrayHashMap<Box<[u8]>, StringHashMap<()>>,
+    pub barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
     /// State populated during bundling and hot updates. Often cleared
     pub incremental_result: IncrementalResult,
     /// Quickly retrieve a framework route's index from its entry point file. These
@@ -424,7 +405,11 @@ pub struct DevServer {
     /// All bundling failures are stored until a file is saved and rebuilt.
     /// They are stored in the wire format the HMR runtime expects so that
     /// serialization only happens once.
-    pub bundling_failures: ArrayHashMap<SerializedFailure, ()>, // TODO(port): custom hash ctx ArrayHashContextViaOwner
+    /// Zig: `AutoArrayHashMapUnmanaged(SerializedFailure, void,
+    /// SerializedFailure.ArrayHashContextViaOwner, false)` — keyed by
+    /// `failure.owner`. Port stores `OwnerPacked → SerializedFailure` so the
+    /// custom context is unnecessary.
+    pub bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
     /// When set, nothing is ever bundled for the server-side,
     /// and DevSever acts purely as a frontend bundler.
     pub frontend_only: bool,
@@ -453,10 +438,18 @@ pub struct DevServer {
 
     pub framework: bake::Framework,
     pub bundler_options: bake::SplitBundlerOptions,
-    // Each logical graph gets its own bundler configuration
-    pub server_transpiler: Transpiler<'a>,
-    pub client_transpiler: Transpiler<'a>,
-    pub ssr_transpiler: Transpiler<'a>,
+    // Each logical graph gets its own bundler configuration.
+    // PORT NOTE: `'static` is the DevServer-self lifetime stand-in (see
+    // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
+    // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
+    // the server.
+    //
+    // `MaybeUninit` until `Framework::init_transpiler` populates them in place
+    // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
+    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
+    pub server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -2662,8 +2655,8 @@ pub mod deferred_request {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     pub const MAX_PREALLOCATED: usize = 16;
 
-    pub type List<'a> = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
-    pub type Node<'a> = bun_collections::pool::Node<DeferredRequest>;
+    pub type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
+    pub type Node = bun_collections::pool::Node<DeferredRequest>;
 
     bun_output::declare_scope!(DlogeferredRequest, hidden);
     macro_rules! debug_log_dr { ($($t:tt)*) => { bun_output::scoped_log!(DlogeferredRequest, $($t)*) }; }
@@ -5850,16 +5843,16 @@ impl EntryPointList {
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 /// Zig stores `*HTMLBundle.HTMLBundleRoute` (BACKREF — DevServer.zig:4364);
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
+#[derive(Default)]
 pub struct HTMLRouter {
     pub map: StringHashMap<*mut HTMLBundleRoute>,
     /// If a catch-all route exists, it is not stored in map, but here.
     pub fallback: Option<*mut HTMLBundleRoute>,
-    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl HTMLRouter {
     pub fn empty() -> HTMLRouter {
-        HTMLRouter { map: StringHashMap::new(), fallback: None, _marker: core::marker::PhantomData }
+        HTMLRouter { map: StringHashMap::new(), fallback: None }
     }
 
     pub fn get(&self, path: &[u8]) -> Option<*mut HTMLBundleRoute> {

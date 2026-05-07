@@ -617,8 +617,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
+                // PORT NOTE: reshaped — `enqueue_parse_npm_package` takes
+                // `StringOrTinyString` by value; reconstruct from the slice we
+                // captured (the original lives in `task.callback`, which the
+                // enqueued resolve Task takes ownership of via `network`).
+                let name_tiny = strings::StringOrTinyString::init_append_if_needed(
+                    name,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable");
                 manager.task_batch.push(ThreadPoolBatch::from(
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name, task_ptr),
+                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr),
                 ));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -1239,8 +1248,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             Task::Tag::GitClone => {
-                let clone = &task.request.git_clone();
-                let repo_fd = task.data.git_clone;
+                // SAFETY: `task.tag == GitClone` — `request.git_clone` /
+                // `data.git_clone` are the active union arms.
+                let clone = unsafe { &*task.request.git_clone };
+                let repo_fd: bun_sys::Fd = unsafe { *task.data.git_clone };
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
@@ -1340,7 +1351,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         unsafe { manager.env.unwrap().as_mut() },
                         // SAFETY: `manager.log` is a non-null backref to the CLI log.
                         unsafe { &mut *manager.log },
-                        task.data.git_clone.std_dir(),
+                        bun_sys::Dir { fd: repo_fd },
                         dep_name,
                         committish,
                         task.id,
@@ -1359,7 +1370,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             repo_fd,
                             dep_id,
                             dep_name,
-                            clone.res.clone(),
+                            clone.res,
                             &resolved,
                             None,
                         ),
@@ -1389,7 +1400,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             Task::Tag::GitCheckout => {
-                let git_checkout = &task.request.git_checkout();
+                // SAFETY: `task.tag == GitCheckout` — active union arm.
+                let git_checkout = unsafe { &*task.request.git_checkout };
                 let alias = &git_checkout.name;
                 let resolution = &git_checkout.resolution;
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
@@ -1477,11 +1489,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             match dep {
                                 bun_install::TaskCallbackContext::Dependency(id)
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    let repo = manager.lockfile.buffers.dependencies
-                                        [id as usize]
-                                        .version
-                                        .value
-                                        .git_mut();
+                                    // SAFETY: this branch is only reached for
+                                    // git dependencies — `version.tag == Git`.
+                                    let repo = unsafe {
+                                        &mut *manager.lockfile.buffers.dependencies
+                                            [id as usize]
+                                            .version
+                                            .value
+                                            .git
+                                    };
                                     // SAFETY: `pkg.resolution.value` is a Zig `extern union`;
                                     // `Tag::Git` was checked when the resolution was set.
                                     repo.resolved = unsafe { pkg.resolution.value.git }.resolved;
@@ -1739,16 +1755,7 @@ pub fn generate_network_task_for_tarball<'a>(
             .unwrap()
             .patchfile_hash()
             .unwrap();
-        // PORT NOTE: `patch_install::PatchTask` is still typed against the
-        // crate-level stub `PackageManager`; until the two structs unify, route
-        // through the stub singleton (`crate::PackageManager::get()`). Both
-        // refer to the same install-phase global state in Zig.
-        let task = PatchTask::new_apply_patch_hash(
-            crate::PackageManager::get(),
-            package.meta.id,
-            patch_hash,
-            h,
-        );
+        let task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
         // SAFETY: `task` is a fresh non-null `Box::into_raw` from
         // `new_apply_patch_hash`; we hold the only reference.
         if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
@@ -1802,7 +1809,7 @@ pub fn generate_network_task_for_tarball<'a>(
     network_task.package_manager = this_backref;
     network_task.apply_patch_task = apply_patch_task;
 
-    network_task.for_tarball(&extract_tarball, scope, authorization)?;
+    network_task.for_tarball(extract_tarball, scope, authorization)?;
 
     if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the

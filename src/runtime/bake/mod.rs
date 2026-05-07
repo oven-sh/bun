@@ -270,12 +270,36 @@ impl Framework {
         out.options.minify_whitespace =
             bundler_options.minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        out.options.framework = None;
+        // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
+        // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
+        // projection (`bake_types::Framework`); construct it here and give it
+        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
+        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
+        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
+        // is reshaped to `&'a [u8]`.
+        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
         }
-        out.options.source_map = bun_bundler::options::SourceMapOption::External;
+        out.options.source_map = match mode {
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
+            Mode::Development => bun_bundler::options::SourceMapOption::External,
+            // TODO: follow user configuration
+            Mode::ProductionDynamic | Mode::ProductionStatic => {
+                bun_bundler::options::SourceMapOption::None
+            }
+        };
+        // PORT NOTE: spec bake.zig:784-787 also applies `bundler_options.env` /
+        // `env_prefix` here; the keystone `BuildConfigSubset` omits those fields
+        // until the schema types are const-constructible (see `_blocked_tail`),
+        // so the `env != ._none` branch is a no-op and elided.
+        // Spec bake.zig:788 `out.resolver.opts = out.options` (struct copy). The
+        // resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
+        // re-project via the dedicated helper rather than `Clone`.
+        out.sync_resolver_opts();
 
         out.configure_linker();
         out.configure_defines()?;
@@ -291,11 +315,15 @@ impl Framework {
         )?;
 
         if mode != Mode::Development {
+            // Hide information about the source repository, at the cost of debugging quality.
             out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
             out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
             out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
         }
 
+        // Spec bake.zig:821 — re-sync after define/naming mutations so the
+        // resolver sees the final option set.
+        out.sync_resolver_opts();
         Ok(())
     }
 

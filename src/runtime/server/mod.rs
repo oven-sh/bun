@@ -2526,20 +2526,3 @@ impl ServerAllConnectionsClosedTask {
         Ok(())
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/server.zig (5193 lines)
-//   confidence: low (cycle-7: init/listen/set_routes un-gated)
-//   notes:      NewServer/AnyServer/AnyRoute structs real; stop/stop_listening/
-//               on_listen bodies real (uws calls only). init() now constructs
-//               the boxed server (per-monomorphization pool statics via
-//               `impl_server_pools!`); listen() creates the uws::App<SSL>,
-//               registers routes, and binds the listen socket; set_routes()
-//               wires user/negative routes + the "/*" fallback through extern
-//               "C" trampolines. Static-route/DevServer/H3-listen paths and
-//               the on_request JS dispatch body remain narrowly gated where
-//               they touch not-yet-real surface — full drafts preserved in
-//               server_body.rs. Blocked on: bun_uws_sys::h3 listen trampoline,
-//               bake::DevServer::init, .classes.ts RouteList codegen extern.
-// ──────────────────────────────────────────────────────────────────────────

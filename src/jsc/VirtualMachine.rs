@@ -2321,27 +2321,26 @@ unsafe extern "C" {
 }
 
 /// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
-/// `SUBPROCESS_IPC_OWNER_VTABLE` in `bun_runtime`; lives here because
-/// `IPCInstance` itself is defined in this crate.
-pub static IPCINSTANCE_OWNER_VTABLE: crate::ipc::SendQueueOwnerVTable =
-    crate::ipc::SendQueueOwnerVTable {
-        global_this: |ptr| {
-            // SAFETY: `ptr` was set from a live `*mut IPCInstance` in
-            // `get_ipc_instance` below; the SendQueue is stored inline in
-            // `IPCInstance.data` and dropped before the IPCInstance is freed.
-            unsafe { (*ptr.cast::<IPCInstance>()).global_this }
-        },
-        handle_ipc_close: |ptr| {
-            // SAFETY: see `global_this`.
-            unsafe { (*ptr.cast::<IPCInstance>()).handle_ipc_close() }
-        },
-        handle_ipc_message: |ptr, msg, handle| {
-            // SAFETY: see `global_this`.
-            unsafe { (*ptr.cast::<IPCInstance>()).handle_ipc_message(msg, handle) }
-        },
-        // VM-side owner has no JS-visible `this` (Zig: `.null` arm).
-        this_jsvalue: |_| JSValue::ZERO,
-    };
+/// the `Subprocess` impl in `bun_runtime`; lives here because `IPCInstance`
+/// itself is defined in this crate.
+impl crate::ipc::SendQueueOwner for IPCInstance {
+    fn global_this(&self) -> *const JSGlobalObject {
+        self.global_this
+    }
+    fn handle_ipc_close(&mut self) {
+        IPCInstance::handle_ipc_close(self)
+    }
+    fn handle_ipc_message(&mut self, msg: crate::ipc::DecodedIPCMessage, handle: JSValue) {
+        IPCInstance::handle_ipc_message(self, msg, handle)
+    }
+    /// VM-side owner has no JS-visible `this` (Zig: `.null` arm).
+    fn this_jsvalue(&self) -> JSValue {
+        JSValue::ZERO
+    }
+    fn kind(&self) -> crate::ipc::SendQueueOwnerKind {
+        crate::ipc::SendQueueOwnerKind::VirtualMachine
+    }
+}
 
 /// Spec VirtualMachine.zig:1708 `ResolveFunctionResult`.
 #[derive(Default)]
@@ -3755,7 +3754,7 @@ impl VirtualMachine {
         if let Some(rare) = self.rare_data.take() {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract — `self` is the live per-thread VM.
-                unsafe { (hooks.cron_clear_all_for_vm)(self as *mut _) };
+                unsafe { (hooks.cron_clear_all_teardown)(self as *mut _) };
             }
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
@@ -5118,24 +5117,21 @@ impl VirtualMachine {
                 (*rare).spawn_ipc_group(&mut *this)
             };
 
-            // Box the instance first so `data.owner.ptr` can name its final
+            // Box the instance first so `data.owner` can name its final
             // address (Zig wrote `.data = undefined` then re-init in place).
             let instance = IPCInstance::new(IPCInstance {
                 global_this: self.global,
                 group,
                 data: crate::ipc::SendQueue::init(
                     mode,
-                    crate::ipc::SendQueueOwner {
-                        ptr: core::ptr::null_mut(),
-                        kind: crate::ipc::SendQueueOwnerKind::VirtualMachine,
-                        vtable: &IPCINSTANCE_OWNER_VTABLE,
-                    },
+                    // Patched below once the box address is fixed.
+                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
                     crate::ipc::SocketUnion::Uninitialized,
                 ),
                 has_disconnect_called: false,
             });
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner.ptr = instance.cast() };
+            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
@@ -5171,17 +5167,14 @@ impl VirtualMachine {
                 group: (),
                 data: crate::ipc::SendQueue::init(
                     mode,
-                    crate::ipc::SendQueueOwner {
-                        ptr: core::ptr::null_mut(),
-                        kind: crate::ipc::SendQueueOwnerKind::VirtualMachine,
-                        vtable: &IPCINSTANCE_OWNER_VTABLE,
-                    },
+                    // Patched below once the box address is fixed.
+                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
                     crate::ipc::SocketUnion::Uninitialized,
                 ),
                 has_disconnect_called: false,
             });
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner.ptr = instance.cast() };
+            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 

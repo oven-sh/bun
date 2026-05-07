@@ -2374,12 +2374,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionBody, e_.body.loc)
             .expect("unreachable");
 
-        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
-        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
-        //   Until reshaped, save/clear/restore so the parent frame's hook context is not
-        //   attributed while visiting this arrow's body. Emission preserved in `_draft::e_arrow`.
+        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
+        // hook_ctx_storage is a raw NonNull so a stack local is fine; we manually restore `prev`
+        // on every exit path below (Zig used `defer`).
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
-        // Zig: const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage =
             Some(core::ptr::NonNull::from(&mut react_hook_data));
@@ -2403,8 +2401,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
-         // blocked_on: P::get_react_refresh_hook_signal_{decl,init},
-        //   handle_react_refresh_post_visit_function_body
+        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore before any further `p.*`
+        // call so the stack-local pointer never escapes this frame.
+        p.react_refresh.hook_ctx_storage = prev_hook_ctx;
+
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
                 let Some(mut stmts) = p.nearest_stmt_list else {
@@ -2420,9 +2420,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev;
-        p.react_refresh.hook_ctx_storage = prev_hook_ctx;
-        let _ = react_hook_data;
         e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
         expr
     }
@@ -2433,15 +2430,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return expr;
         }
 
-        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
-        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
-        //   Hook tracking deferred — save/restore preserved in `_draft::e_function`.
+        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
+        let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
+        p.react_refresh.hook_ctx_storage =
+            Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         // Spec (visitExpr.zig e_function): visitFunc(e_.func, expr.loc) — for function
         // *expressions* the .function_args scope is pushed at the `function` keyword loc
         // (parseFn.zig:364), not at open_parens_loc. (s_function correctly uses open_parens_loc.)
         e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
+
+        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore now so the stack-local
+        // pointer never escapes this frame.
+        p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
         // Remove unused function names when minifying (only when bundling is enabled)
         // unless --keep-names is specified

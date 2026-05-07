@@ -119,42 +119,37 @@ pub struct TerminalCreateResult {
     pub js_value: JSValue,
 }
 
-// ── IPC owner vtable for Subprocess ─────────────────────────────────────────
-// Mirrors `IPCINSTANCE_OWNER_VTABLE` in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5) only
-// sees the erased `*mut c_void` + fn-pointer dispatch.
-static SUBPROCESS_IPC_OWNER_VTABLE: IPC::SendQueueOwnerVTable = IPC::SendQueueOwnerVTable {
-    global_this: |ptr| {
-        // SAFETY: `ptr` was set from a live `*mut Subprocess<'static>` in
-        // `subprocess_ipc_owner` below; the SendQueue is stored inline in
-        // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).global_this() as *const JSGlobalObject }
-    },
-    handle_ipc_close: |ptr| {
-        // SAFETY: see `global_this`.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_close() }
-    },
-    handle_ipc_message: |ptr, msg, handle| {
-        // SAFETY: see `global_this`.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_message(msg, handle) }
-    },
-    this_jsvalue: |ptr| {
-        // SAFETY: see `global_this`.
-        unsafe {
-            (*ptr.cast::<SubprocessT<'static>>())
-                .this_value
-                .try_get()
-                .unwrap_or(JSValue::ZERO)
-        }
-    },
-};
+// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
+// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
+// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
+// sees only the `dyn SendQueueOwner` trait object.
+impl<'a> IPC::SendQueueOwner for SubprocessT<'a> {
+    fn global_this(&self) -> *const JSGlobalObject {
+        self.global_this
+    }
+    fn handle_ipc_close(&mut self) {
+        SubprocessT::handle_ipc_close(self)
+    }
+    fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
+        SubprocessT::handle_ipc_message(self, msg, handle)
+    }
+    fn this_jsvalue(&self) -> JSValue {
+        self.this_value.try_get().unwrap_or(JSValue::ZERO)
+    }
+    fn kind(&self) -> IPC::SendQueueOwnerKind {
+        IPC::SendQueueOwnerKind::Subprocess
+    }
+}
 
 #[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
-    IPC::SendQueueOwner {
-        ptr: ptr.cast(),
-        kind: IPC::SendQueueOwnerKind::Subprocess,
-        vtable: &SUBPROCESS_IPC_OWNER_VTABLE,
+fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
+    // SAFETY: erase the borrowed lifetime — `SendQueue.owner` is a BACKREF
+    // (the SendQueue is stored inline in `Subprocess.ipc_data` and dropped
+    // before the Subprocess is freed).
+    unsafe {
+        core::mem::transmute::<*mut dyn IPC::SendQueueOwner, *mut dyn IPC::SendQueueOwner>(
+            ptr as *mut dyn IPC::SendQueueOwner,
+        )
     }
 }
 
@@ -194,41 +189,6 @@ unsafe fn subprocess_maxbuf_on_overflow(owner: NonNull<()>, this: NonNull<MaxBuf
 static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
     on_overflow: subprocess_maxbuf_on_overflow,
 };
-
-/// `IPC.SendQueue` owner dispatch for the parent-side `Subprocess`. The Zig
-/// code stored `.{ .subprocess = subprocess }` and switched on the union tag;
-/// the Rust port routes through this static vtable so `bun_jsc::ipc` stays
-/// type-erased over `bun_runtime` types.
-static SUBPROCESS_IPC_OWNER_VTABLE: IPC::SendQueueOwnerVTable = IPC::SendQueueOwnerVTable {
-    global_this: |ptr| {
-        // SAFETY: `ptr` was set from a live `*mut Subprocess` in `SendQueue::init`
-        // below; the SendQueue is stored inline in `Subprocess.ipc_data` and
-        // dropped before the Subprocess is freed.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).global_this }
-    },
-    handle_ipc_close: |ptr| {
-        // SAFETY: see `global_this`.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_close() }
-    },
-    handle_ipc_message: |ptr, msg, handle| {
-        // SAFETY: see `global_this`.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_message(msg, handle) }
-    },
-    this_jsvalue: |ptr| {
-        // SAFETY: see `global_this`.
-        unsafe { (*ptr.cast::<SubprocessT<'static>>()).this_value.try_get() }
-            .unwrap_or(JSValue::ZERO)
-    },
-};
-
-#[inline]
-fn subprocess_ipc_owner(subprocess: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
-    IPC::SendQueueOwner {
-        ptr: subprocess.cast(),
-        kind: IPC::SendQueueOwnerKind::Subprocess,
-        vtable: &SUBPROCESS_IPC_OWNER_VTABLE,
-    }
-}
 
 bun_output::declare_scope!(Subprocess, hidden);
 

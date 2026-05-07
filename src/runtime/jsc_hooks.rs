@@ -1302,7 +1302,10 @@ unsafe fn retroactively_report_discovered_tests(
         &mut source_url,
     );
 
-    bun_core::scoped_log!(TestReporterAgent, "retroactively reported {} tests", max_id);
+    // Spec: `debug("retroactively reported {} tests", .{max_id})` — the scoped
+    // logger static lives in `bun_jsc::debugger`; `scoped_log!` only accepts an
+    // ident, so it can't name a foreign-crate static. Debug-only line dropped.
+    let _ = max_id;
 
     /// Spec Debugger.zig:376 `retroactivelyReportScope`.
     fn retroactively_report_scope(

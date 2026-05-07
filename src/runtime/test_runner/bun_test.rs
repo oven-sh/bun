@@ -9,7 +9,7 @@ use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use super::jest::{Jest, TestRunner, FileId, FileListExt as _};
+use super::jest::{Jest, TestRunner, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::{self, CommandLineReporter};
 use super::execution::TimespecExt as _;

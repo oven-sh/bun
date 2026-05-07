@@ -8,7 +8,7 @@ use bun_collections::HashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
-use bun_install::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
+use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{package_manager, CommandLineArguments, PackageID, PackageManager, Subcommand};
 use bun_semver as semver;

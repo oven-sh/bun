@@ -13,6 +13,18 @@
 pub mod ungate_support;
 pub use ungate_support::*;
 
+/// `MultiArrayList` SoA column-accessor traits, gathered so a single
+/// `use crate::mal_prelude::*;` brings every `items_<field>()` set into scope.
+pub mod mal_prelude {
+    pub use crate::Graph::InputFileColumns as _;
+    pub use crate::linker_graph::FileColumns as _;
+    pub use crate::ungate_support::js_meta::JSMetaColumns as _;
+    pub use crate::ungate_support::entry_point::EntryPointColumns as _;
+    pub use crate::ungate_support::CompileResultForSourceMapColumns as _;
+    pub use bun_js_parser::ast::bundled_ast::BundledAstColumns as _;
+    pub use bun_js_parser::ast::server_component_boundary::ServerComponentBoundaryColumns as _;
+}
+
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
 pub mod DeferredBatchTask;

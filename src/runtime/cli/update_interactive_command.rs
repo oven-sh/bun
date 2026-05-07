@@ -13,7 +13,7 @@ use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
+use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, install_with_manager, populate_manifest_cache, LogLevel, ManifestCacheOptions,

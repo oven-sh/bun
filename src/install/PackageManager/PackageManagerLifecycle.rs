@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -24,7 +25,6 @@ use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::lockfile_real::package::PackageListExt as _;
 use crate::package_manager_real::Command;
 use super::directories;
 use super::package_manager_options::Do;

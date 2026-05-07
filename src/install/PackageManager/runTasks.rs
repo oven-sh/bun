@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -26,9 +27,7 @@ use bun_core::fmt::PathSep;
 use crate::dependency::Behavior;
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::isolated_install::installer as store_installer;
-use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
-use crate::lockfile::package::PackageListExt as _;
-
+use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use super::{Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
 use super::{directories, enqueue};
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);

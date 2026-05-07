@@ -21,6 +21,7 @@ pub use store::Store;
 pub use store::entry::Id as EntryId;
 pub use file_copier::FileCopier;
 
+use crate::lockfile::package::PackageColumns as _;
 use std::hash::Hasher as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
@@ -47,14 +48,13 @@ use crate::{
     invalid_dependency_id, invalid_package_id,
 };
 use crate::lockfile::{self, Lockfile};
-use crate::lockfile::package::PackageSliceExt as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
 use store::{
-    Entry as StoreEntry, EntryListExt as _, EntrySliceExt as _, Node as StoreNode,
-    NodeListExt as _, NodeSliceExt as _,
+    Entry as StoreEntry, EntryColumns as _, EntryColumns as _, Node as StoreNode,
+    NodeColumns as _, NodeColumns as _,
 };
 
 bun_output::declare_scope!(IsolatedInstall, visible);
@@ -431,16 +431,16 @@ pub fn install_isolated_packages(
             'check_cycle: {
                 // check for cycles
                 let mut nodes_slice = nodes.slice();
-                let node_pkg_ids = nodes_slice.pkg_id();
-                let node_dep_ids = nodes_slice.dep_id();
-                let node_parent_ids = nodes_slice.parent_id();
+                let node_pkg_ids = nodes_slice.items_pkg_id();
+                let node_dep_ids = nodes_slice.items_dep_id();
+                let node_parent_ids = nodes_slice.items_parent_id();
                 // PORT NOTE: reshaped for borrowck — Zig grabbed multiple
                 // mutable column views from one Slice; in Rust those overlap
                 // on `&mut self`, so go through `items_raw` and rebuild
                 // disjoint `&mut [_]` views.
                 let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
                     core::slice::from_raw_parts_mut(
-                        nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                        nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                         nodes_slice.len(),
                     )
                 };
@@ -511,16 +511,16 @@ pub fn install_isolated_packages(
                     let nodes_len = nodes_slice.len();
                     let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
                         core::slice::from_raw_parts_mut(
-                            nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                            nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                             nodes_len,
                         )
                     };
-                    let node_dep_ids = nodes_slice.dep_id();
-                    let node_parent_ids = nodes_slice.parent_id();
-                    let node_dependencies = nodes_slice.dependencies();
+                    let node_dep_ids = nodes_slice.items_dep_id();
+                    let node_parent_ids = nodes_slice.items_parent_id();
+                    let node_dependencies = nodes_slice.items_dependencies();
                     let node_peers: &mut [store::node::Peers] = unsafe {
                         core::slice::from_raw_parts_mut(
-                            nodes_slice.items_raw::<store::node::Peers>(store::NodeField::peers),
+                            nodes_slice.items_raw::<"peers", store::node::Peers>(),
                             nodes_len,
                         )
                     };
@@ -656,22 +656,22 @@ pub fn install_isolated_packages(
             let nodes_slice = nodes.slice();
             // PORT NOTE: disjoint-column raw views (see above).
             let nodes_len = nodes_slice.len();
-            let node_parent_ids = nodes_slice.parent_id();
+            let node_parent_ids = nodes_slice.items_parent_id();
             let node_dependencies: &mut [Vec<store::node::DependencyIds>] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    nodes_slice.items_raw::<Vec<store::node::DependencyIds>>(store::NodeField::dependencies),
+                    nodes_slice.items_raw::<"dependencies", Vec<store::node::DependencyIds>>(),
                     nodes_len,
                 )
             };
             let node_peers: &mut [store::node::Peers] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    nodes_slice.items_raw::<store::node::Peers>(store::NodeField::peers),
+                    nodes_slice.items_raw::<"peers", store::node::Peers>(),
                     nodes_len,
                 )
             };
             let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    nodes_slice.items_raw::<Vec<store::node::Id>>(store::NodeField::nodes),
+                    nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                     nodes_len,
                 )
             };
@@ -932,10 +932,10 @@ pub fn install_isolated_packages(
         let mut res_fmt_buf: Vec<u8> = Vec::new();
 
         let nodes_slice = nodes.slice();
-        let node_pkg_ids = nodes_slice.pkg_id();
-        let node_dep_ids = nodes_slice.dep_id();
-        let node_peers: &[store::node::Peers] = nodes_slice.peers();
-        let node_nodes = nodes_slice.nodes();
+        let node_pkg_ids = nodes_slice.items_pkg_id();
+        let node_dep_ids = nodes_slice.items_dep_id();
+        let node_peers: &[store::node::Peers] = nodes_slice.items_peers();
+        let node_nodes = nodes_slice.items_nodes();
 
         let mut store_entries: store::entry::List = store::entry::List::default();
 
@@ -994,13 +994,13 @@ pub fn install_isolated_packages(
                         let entries_len = entries.len();
                         let entry_dependencies: &mut [store::entry::Dependencies] = unsafe {
                             core::slice::from_raw_parts_mut(
-                                entries.items_raw::<store::entry::Dependencies>(store::EntryField::dependencies),
+                                entries.items_raw::<"dependencies", store::entry::Dependencies>(),
                                 entries_len,
                             )
                         };
                         let entry_parents: &mut [Vec<store::entry::Id>] = unsafe {
                             core::slice::from_raw_parts_mut(
-                                entries.items_raw::<Vec<store::entry::Id>>(store::EntryField::parents),
+                                entries.items_raw::<"parents", Vec<store::entry::Id>>(),
                                 entries_len,
                             )
                         };
@@ -1110,7 +1110,7 @@ pub fn install_isolated_packages(
                     }
 
                     let mut entries = store_entries.slice();
-                    let entry_dependencies = entries.dependencies_mut();
+                    let entry_dependencies = entries.items_dependencies_mut();
                     let ctx = store::entry::DependenciesOrderedArraySetCtx {
                         string_buf,
                         dependencies,
@@ -1185,12 +1185,12 @@ pub fn install_isolated_packages(
             let entries_len = entries.len();
             let entry_hashes: &mut [u64] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    entries.items_raw::<u64>(store::EntryField::entry_hash),
+                    entries.items_raw::<"entry_hash", u64>(),
                     entries_len,
                 )
             };
-            let entry_node_ids = entries.node_id();
-            let entry_dependencies = entries.dependencies();
+            let entry_node_ids = entries.items_node_id();
+            let entry_dependencies = entries.items_dependencies();
 
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();
@@ -1913,14 +1913,14 @@ pub fn install_isolated_packages(
         }
 
         let nodes_slice = store.nodes.slice();
-        let node_pkg_ids = nodes_slice.pkg_id();
-        let node_dep_ids = nodes_slice.dep_id();
+        let node_pkg_ids = nodes_slice.items_pkg_id();
+        let node_dep_ids = nodes_slice.items_dep_id();
 
         let entries = store.entries.slice();
-        let entry_node_ids = entries.node_id();
-        let entry_steps = entries.step();
-        let entry_dependencies = entries.dependencies();
-        let entry_hoisted = entries.hoisted();
+        let entry_node_ids = entries.items_node_id();
+        let entry_steps = entries.items_step();
+        let entry_dependencies = entries.items_dependencies();
+        let entry_hoisted = entries.items_hoisted();
 
         // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
         // also keeping immutable column slices into it. Reborrow through a raw

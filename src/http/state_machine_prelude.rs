@@ -17,7 +17,7 @@ use bun_core::{self as bun, Environment, FeatureFlags, Global, Output, err};
 use bun_string::{immutable as strings, StringBuilder};
 use bun_uws as uws;
 use bun_wyhash::Wyhash11 as Wyhash;
-use bun_http_types::ETag::{HeaderEntryField, StringPointer};
+use bun_http_types::ETag::{StringPointer};
 
 use crate::headers::api;
 use crate::http_context::HTTPSocket as HttpSocket;
@@ -126,18 +126,18 @@ mod boring_extra {
 // Re-widen the borrow to `'static` so the per-row `header_str()` calls inside
 // `build_request` don't trip borrowck (the underlying buffer is the static
 // `SHARED_REQUEST_HEADERS_BUF` / `self.header_buf` pair).
-trait HeaderEntrySliceExt {
+trait HeaderEntrySliceColumns {
     fn items_name(&self) -> &'static [StringPointer];
     fn items_value(&self) -> &'static [StringPointer];
 }
-impl HeaderEntrySliceExt for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
+impl HeaderEntrySliceColumns for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
     fn items_name(&self) -> &'static [StringPointer] {
         // SAFETY: StringPointer is POD; the MultiArrayList backing storage outlives every
         // caller in this file (header_entries is a field of HTTPClient). Lifetime is
         // erased only to avoid threading `'self` through the Zig-shaped state machine.
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Name),
+                self.items::<"name", StringPointer>(),
             )
         }
     }
@@ -145,20 +145,20 @@ impl HeaderEntrySliceExt for bun_collections::multi_array_list::Slice<bun_http_t
         // SAFETY: see items_name()
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Value),
+                self.items::<"value", StringPointer>(),
             )
         }
     }
 }
-trait HeaderEntryListExt {
+trait HeaderEntryListColumns {
     fn items_name(&self) -> &'static [StringPointer];
 }
-impl HeaderEntryListExt for bun_http_types::ETag::HeaderEntryList {
+impl HeaderEntryListColumns for bun_http_types::ETag::HeaderEntryList {
     fn items_name(&self) -> &'static [StringPointer] {
-        // SAFETY: see HeaderEntrySliceExt::items_name()
+        // SAFETY: see HeaderEntrySliceColumns::items_name()
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Name),
+                self.items::<"name", StringPointer>(),
             )
         }
     }

@@ -9,7 +9,7 @@ use bun_http::headers::api::StringPointer;
 use bun_http::headers::{append_etag, Options as HeadersFromOptions};
 use bun_http::{Headers, HeadersExt, Method};
 use bun_http_types::ETag;
-use bun_http_types::ETag::HeaderEntryField;
+
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::{HTTPHeaderName, JsClass};
 use bun_uws::{AnyRequest, AnyResponse};
@@ -465,9 +465,9 @@ impl StaticRoute {
         // SAFETY: `HeaderEntry` columns are both `StringPointer` (see
         // `bun_http_types::ETag::HeaderEntry` MultiArrayElement impl).
         let names: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Name) };
+            unsafe { entries.items::<"name", StringPointer>() };
         let values: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
+            unsafe { entries.items::<"value", StringPointer>() };
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());

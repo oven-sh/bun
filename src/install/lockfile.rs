@@ -82,9 +82,9 @@ pub use self::tree::Tree;
 pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
 use self::bun_lock as TextLockfile;
-// Bring the derive-generated `items_*` column accessors (`PackageListExt` for
-// `MultiArrayList<Package>`, `PackageSliceExt` for `Slice<Package>`) into scope.
-use self::package::{PackageListExt as _, PackageSliceExt as _};
+// Bring the derive-generated `items_*` column accessors (`PackageColumns` for
+// `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
+use self::package::{PackageColumns as _, PackageColumns as _};
 
 // Zig path-style associated types (`Dependency.Version`, `Resolution.Tag`,
 // `String.Buf`/`String.Builder`) are module-level types in the Rust port.
@@ -1437,7 +1437,7 @@ impl Lockfile {
 
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
-            use tree::BuilderEntryListExt as _;
+            use tree::BuilderEntryColumns as _;
             // PORT NOTE: reshaped for borrowck — Zig indexes builder.list while passing &mut builder.
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
@@ -1496,7 +1496,7 @@ impl Lockfile {
         // initialized; the two columns are non-overlapping allocations.
         let pkg_bins: &mut [crate::bin::Bin] = unsafe {
             core::slice::from_raw_parts_mut(
-                pkgs.items_raw::<crate::bin::Bin>(self::package::PackageField::Bin),
+                pkgs.items_raw::<"bin", crate::bin::Bin>(),
                 len,
             )
         };
@@ -1507,7 +1507,7 @@ impl Lockfile {
             // SAFETY: see above — disjoint column, `len` initialized rows.
             unsafe {
                 core::slice::from_raw_parts_mut(
-                    pkgs.items_raw::<self::package::meta::Meta>(self::package::PackageField::Meta),
+                    pkgs.items_raw::<"meta", self::package::meta::Meta>(),
                     len,
                 )
             }

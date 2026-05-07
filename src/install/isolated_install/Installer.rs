@@ -9,7 +9,6 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{thread_pool, Mutex, ThreadPool, UnboundedQueue};
 
-
 use bun_semver::String as SemverString;
 use bun_sys::{FdExt as _, FdDirExt as _};
 
@@ -28,7 +27,7 @@ use crate::lockfile_real::PackageIDSlice;
 use crate::lockfile::package;
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
-use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
+use crate::lockfile_real::package::{PackageColumns as _, PackageColumns as _};
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
 use crate::bun_fs;
@@ -37,7 +36,7 @@ use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
 use super::symlinker::{self, Symlinker};
 use super::store::{self, Store};
-use super::store::{EntryListExt as _, NodeListExt as _};
+use super::store::{EntryColumns as _, NodeColumns as _};
 
 /// Zig: `Resolution.Tag` — Rust can't nest a type inside a struct, so the
 /// enum lives at module level in `crate::resolution`.

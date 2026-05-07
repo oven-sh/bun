@@ -120,7 +120,6 @@ pub fn validate_path(
     Box::from(out)
 }
 
-
 // TODO(port): both Zig call sites (defines/loaders from transform options) inline
 // the map construction directly; this generic helper is dead until a concrete
 // map trait (`reserve`/`insert`) is available. Gated to avoid a silent no-op
@@ -838,7 +837,6 @@ pub struct LoaderResult<'a> {
     /// needed for them.
     pub package_json: Option<&'a PackageJSON>,
 }
-
 
 // TODO(b2-blocked): bun_paths::path_literal! + Fs::Path::loader + strings::eql_long
 // arity — body touches VmLoaderCtx vtable which is real but the helper APIs are not.
@@ -2583,7 +2581,7 @@ impl TransformResult {
     }
 }
 
-#[derive(Debug, Clone, bun_collections::MultiArrayElement)]
+#[derive(Debug, Clone)]
 pub struct EnvEntry {
     pub key: Box<[u8]>,
     pub value: Box<[u8]>,
@@ -2692,8 +2690,8 @@ impl Env {
             dotenv: self.behavior,
             prefix: self.prefix.clone(),
             defaults: api::StringMap {
-                keys: slice.key().to_vec(),
-                values: slice.value().to_vec(),
+                keys: slice.items::<"key", Box<[u8]>>().to_vec(),
+                values: slice.items::<"value", Box<[u8]>>().to_vec(),
             },
         }
     }
@@ -2701,7 +2699,7 @@ impl Env {
     // For reading from package.json
     pub fn get_or_put_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), bun_alloc::AllocError> {
         let slice = self.defaults.slice();
-        for _key in slice.key().iter() {
+        for _key in slice.items::<"key", Box<[u8]>>().iter() {
             if key == &**_key {
                 return Ok(());
             }
@@ -2816,8 +2814,6 @@ impl EntryPoint {
 // already depends on); re-export here so existing options::RouteConfig paths
 // resolve to the single canonical definition.
 pub use bun_router::RouteConfig;
-
-
 
 #[derive(Debug, Clone, Default)]
 pub struct PathTemplate {

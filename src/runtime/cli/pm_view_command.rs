@@ -338,7 +338,7 @@ pub fn view(
             if let ast::ExprData::EString(e_string) = &value.data {
                 // JSON parse_utf8 always produces UTF-8 strings, so the raw
                 // `data` slice is the literal value.
-                let slice = e_string.data;
+                let slice = e_string.data.slice();
                 if json_output {
                     Output::print(format_args!("{}\n", bun_fmt::format_json_string_utf8(&slice, Default::default())));
                 } else {

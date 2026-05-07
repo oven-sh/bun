@@ -68,7 +68,6 @@ pub mod runtime {
     pub use crate::Runtime::{Features, Imports, Names, ReplaceableExport, ServerComponentsMode};
 }
 
-
 pub use crate::ast::ast_memory_allocator::ASTMemoryAllocator;
 pub use crate::ast::ast::Ast;
 pub use crate::ast::binding::Binding;
@@ -1045,52 +1044,6 @@ pub struct DeclaredSymbol {
     pub is_top_level: bool,
 }
 
-// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
-// does not exist yet (TODO in bun_collections). Two fields, sorted by
-// alignment descending: `ref_` (8-byte, align 8) then `is_top_level` (1-byte).
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum DeclaredSymbolField {
-    Ref = 0,
-    IsTopLevel = 1,
-}
-
-impl bun_collections::multi_array_list::MultiArrayElement for DeclaredSymbol {
-    type Field = DeclaredSymbolField;
-    const FIELD_COUNT: usize = 2;
-    const ALIGN: usize = core::mem::align_of::<Ref>();
-    const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<Ref>(),
-        core::mem::size_of::<bool>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1];
-
-    #[inline]
-    fn field_index(field: Self::Field) -> usize {
-        field as usize
-    }
-
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
-        // SAFETY: caller guarantees `ptrs[0..2]` are valid columns with capacity > `index`.
-        unsafe {
-            ptrs[0].cast::<Ref>().add(index).write(self.ref_);
-            ptrs[1].cast::<bool>().add(index).write(self.is_top_level);
-        }
-    }
-
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
-        // SAFETY: caller guarantees `ptrs[0..2]` are valid columns with `len > index`.
-        unsafe {
-            DeclaredSymbol {
-                ref_: ptrs[0].cast::<Ref>().add(index).read(),
-                is_top_level: ptrs[1].cast::<bool>().add(index).read(),
-            }
-        }
-    }
-}
-
 pub struct DeclaredSymbolList {
     pub entries: MultiArrayList<DeclaredSymbol>,
 }
@@ -1103,9 +1056,7 @@ impl Default for DeclaredSymbolList {
 
 impl DeclaredSymbolList {
     pub fn refs(&self) -> &[Ref] {
-        // Zig `items(.ref)` → MultiArrayList column accessor.
-        // SAFETY: column 0 is `Ref` per the `MultiArrayElement` impl above.
-        unsafe { self.entries.items::<Ref>(DeclaredSymbolField::Ref) }
+        self.entries.items::<"ref_", Ref>()
     }
 
     pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
@@ -1185,8 +1136,8 @@ impl DeclaredSymbol {
     ) {
         let entries = decls.entries.slice();
         // SAFETY: column 1 is `bool`, column 0 is `Ref` per the `MultiArrayElement` impl above.
-        let is_top_level: &[bool] = unsafe { entries.items::<bool>(DeclaredSymbolField::IsTopLevel) };
-        let refs: &[Ref] = unsafe { entries.items::<Ref>(DeclaredSymbolField::Ref) };
+        let is_top_level: &[bool] = unsafe { entries.items::<"is_top_level", bool>() };
+        let refs: &[Ref] = unsafe { entries.items::<"ref_", Ref>() };
 
         // TODO: SIMD
         debug_assert_eq!(is_top_level.len(), refs.len());
@@ -2003,7 +1954,6 @@ pub mod defines {
     }
 }
 pub use defines::{Define, DefineData};
-
 
 pub mod defines_full_draft {
     use bstr::BStr;

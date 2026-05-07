@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
 
@@ -14,8 +15,6 @@ use crate::invalid_package_id;
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
-use crate::lockfile_real::package::PackageSliceExt as _;
-
 use super::PackageManager;
 use super::package_manager_options as Options;
 use super::run_tasks::{self, RunTasksCallbacks};

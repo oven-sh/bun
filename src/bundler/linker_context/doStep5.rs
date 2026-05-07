@@ -6,6 +6,7 @@
 //! reallocate during this step, so we cache raw column pointers and deref at
 //! each use site.
 
+use crate::mal_prelude::*;
 use core::mem::{offset_of, MaybeUninit};
 
 use bun_alloc::Arena as Bump;
@@ -14,7 +15,7 @@ use bun_collections::{ArrayHashMap, VecExt, HashMap};
 use bun_logger::Loc;
 use bun_string::strings;
 
-use bun_js_parser::ast::bundled_ast::{BundledAstListExt as _, Flags as AstFlags};
+use bun_js_parser::ast::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
 use bun_js_parser::ast::symbol::Use as SymbolUse;
 use bun_js_parser::{
     self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, Expr, Part,
@@ -22,7 +23,6 @@ use bun_js_parser::{
 };
 
 use crate::options::Format;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::ungate_support::perf;
 use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports};
 

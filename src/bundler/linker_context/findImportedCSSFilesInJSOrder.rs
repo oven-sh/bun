@@ -1,9 +1,7 @@
+use crate::mal_prelude::*;
 use bun_alloc::Arena;
 use bun_collections::{VecExt, DynamicBitSet};
 use bun_options_types::ImportRecord;
-
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use crate::Graph::InputFileListExt as _;
 
 use crate::options::Loader;
 use crate::part::List as PartList;

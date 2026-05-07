@@ -1,3 +1,4 @@
+use crate::mal_prelude::*;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
@@ -12,7 +13,6 @@ use bun_logger::Loc;
 use bun_options_types::{ImportRecordTag, Loader};
 use bun_options_types::import_record::Flags as ImportRecordFlags;
 
-use crate::Graph::InputFileListExt as _;
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.

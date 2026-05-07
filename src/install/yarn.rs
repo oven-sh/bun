@@ -13,7 +13,7 @@ use bun_install::integrity::Integrity;
 // `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
 // resolve against the ported types.
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
-use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta, PackageListExt as _};
+use crate::lockfile_real::package::{Package as LockfilePackage, Meta as PackageMeta, PackageColumns as _};
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::Origin;
 use bun_install::npm;

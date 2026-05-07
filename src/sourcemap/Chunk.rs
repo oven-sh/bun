@@ -503,7 +503,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         // relying on the cached `line_offset_table_byte_offset_list` (which can't borrow
         // `line_offset_tables` without a struct lifetime param — see field comment).
         let original_line = {
-            use crate::line_offset_table::ListExt as _;
+            use crate::line_offset_table::LineOffsetTableColumns as _;
             LineOffsetTable::find_line(list.items_byte_offset_to_start_of_line(), loc)
         };
         let line = list.get(usize::try_from(original_line.max(0)).expect("int cast"));

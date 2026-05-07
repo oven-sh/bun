@@ -1,10 +1,6 @@
+use crate::mal_prelude::*;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_alloc::ArenaVecExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstField as AstField;
-use crate::ungate_support::js_meta::JSMetaField;
-use crate::Graph::InputFileListExt as _;
-use crate::linker_graph::FileField;
-use crate::ungate_support::EntryPointListExt as _;
 use bun_js_parser as js_ast;
 use bun_js_parser::{Part, Symbol};
 use bun_logger as Logger;
@@ -59,24 +55,24 @@ pub fn compute_cross_chunk_dependencies(
         let (ast_len, meta_len, files_len) = (ast.len(), meta.len(), files.len());
 
         macro_rules! col {
-            ($slice:ident, $len:ident, $fenum:ident :: $field:ident, $ty:ty) => {
+            ($slice:ident, $len:ident, $field:ident, $ty:ty) => {
                 // SAFETY: `$ty` is exactly the column type for `$field` (derive-guaranteed
                 // pairing); SoA columns are disjoint and the backing buffer is never
                 // reallocated during `walk`.
                 unsafe {
                     core::slice::from_raw_parts::<'_, $ty>(
-                        $slice.items_raw::<$ty>($fenum::$field),
+                        $slice.items_raw::<{ ::core::stringify!($field) }, $ty>(),
                         $len,
                     )
                 }
             };
         }
         macro_rules! col_mut {
-            ($slice:ident, $len:ident, $fenum:ident :: $field:ident, $ty:ty) => {
+            ($slice:ident, $len:ident, $field:ident, $ty:ty) => {
                 // SAFETY: see `col!`; exclusive access to this column for the scope.
                 unsafe {
                     core::slice::from_raw_parts_mut::<'_, $ty>(
-                        $slice.items_raw::<$ty>($fenum::$field),
+                        $slice.items_raw::<{ ::core::stringify!($field) }, $ty>(),
                         $len,
                     )
                 }
@@ -86,20 +82,20 @@ pub fn compute_cross_chunk_dependencies(
         let mut cross_chunk_dependencies = CrossChunkDependencies {
             chunks: chunks as *const [Chunk],
             chunk_meta: &mut chunk_metas,
-            parts: col!(ast, ast_len, AstField::parts, Vec<Part>),
-            import_records: col_mut!(ast, ast_len, AstField::import_records, Vec<ImportRecord>),
-            flags: col!(meta, meta_len, JSMetaField::flags, js_meta::Flags),
-            entry_point_chunk_indices: col!(files, files_len, FileField::entry_point_chunk_index, IndexInt),
-            imports_to_bind: col!(meta, meta_len, JSMetaField::imports_to_bind, RefImportData),
-            wrapper_refs: col!(ast, ast_len, AstField::wrapper_ref, Ref),
-            exports_refs: col!(ast, ast_len, AstField::exports_ref, Ref),
+            parts: col!(ast, ast_len, parts, Vec<Part>),
+            import_records: col_mut!(ast, ast_len, import_records, Vec<ImportRecord>),
+            flags: col!(meta, meta_len, flags, js_meta::Flags),
+            entry_point_chunk_indices: col!(files, files_len, entry_point_chunk_index, IndexInt),
+            imports_to_bind: col!(meta, meta_len, imports_to_bind, RefImportData),
+            wrapper_refs: col!(ast, ast_len, wrapper_ref, Ref),
+            exports_refs: col!(ast, ast_len, exports_ref, Ref),
             sorted_and_filtered_export_aliases: col!(
                 meta,
                 meta_len,
-                JSMetaField::sorted_and_filtered_export_aliases,
+                sorted_and_filtered_export_aliases,
                 Box<[Box<[u8]>]>
             ),
-            resolved_exports: col!(meta, meta_len, JSMetaField::resolved_exports, ResolvedExports),
+            resolved_exports: col!(meta, meta_len, resolved_exports, ResolvedExports),
             // SAFETY: lifetime-erase the `*const LinkerContext<'_>` so the
             // struct's `'a` (which now ties only the local SoA-column borrows)
             // is not forced to equal the LinkerContext's invariant `'_`.

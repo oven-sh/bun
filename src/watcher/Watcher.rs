@@ -1043,121 +1043,8 @@ pub enum WatchItemKind {
     Directory,
 }
 
-// ─── MultiArrayElement impl for WatchItem ─────────────────────────────────
-//
-// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
-// does not exist yet (see bun_collections TODO). Field index order matches
-// declaration order; SIZES_BYTES/SIZES_FIELDS are sorted by alignment
-// descending so the single backing allocation packs without padding.
-
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum WatchItemField {
-    FilePath = 0,
-    Hash = 1,
-    Loader = 2,
-    Fd = 3,
-    Count = 4,
-    ParentHash = 5,
-    Kind = 6,
-    PackageJson = 7,
-    #[cfg(target_os = "linux")]
-    EventlistIndex = 8,
-}
-
-#[cfg(target_os = "linux")]
-const WATCH_ITEM_FIELD_COUNT: usize = 9;
-#[cfg(not(target_os = "linux"))]
-const WATCH_ITEM_FIELD_COUNT: usize = 8;
-
-impl bun_collections::MultiArrayElement for WatchItem {
-    type Field = WatchItemField;
-    const FIELD_COUNT: usize = WATCH_ITEM_FIELD_COUNT;
-    const ALIGN: usize = core::mem::align_of::<Cow<'static, [u8]>>();
-
-    // Sorted by alignment descending: pointer-sized (file_path, package_json)
-    // first; then 4-byte (hash, fd, count, parent_hash, eventlist_index);
-    // then 1-byte (loader, kind).
-    #[cfg(target_os = "linux")]
-    const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<Cow<'static, [u8]>>(), // FilePath
-        core::mem::size_of::<Option<&'static PackageJSON>>(), // PackageJson
-        core::mem::size_of::<u32>(),           // Hash
-        core::mem::size_of::<Fd>(),            // Fd
-        core::mem::size_of::<u32>(),           // Count
-        core::mem::size_of::<u32>(),           // ParentHash
-        core::mem::size_of::<platform::EventListIndex>(), // EventlistIndex
-        core::mem::size_of::<Loader>(),        // Loader
-        core::mem::size_of::<WatchItemKind>(), // Kind
-    ];
-    #[cfg(target_os = "linux")]
-    const SIZES_FIELDS: &'static [usize] = &[0, 7, 1, 3, 4, 5, 8, 2, 6];
-
-    #[cfg(not(target_os = "linux"))]
-    const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<Cow<'static, [u8]>>(),
-        core::mem::size_of::<Option<&'static PackageJSON>>(),
-        core::mem::size_of::<u32>(),
-        core::mem::size_of::<Fd>(),
-        core::mem::size_of::<u32>(),
-        core::mem::size_of::<u32>(),
-        core::mem::size_of::<Loader>(),
-        core::mem::size_of::<WatchItemKind>(),
-    ];
-    #[cfg(not(target_os = "linux"))]
-    const SIZES_FIELDS: &'static [usize] = &[0, 7, 1, 3, 4, 5, 2, 6];
-
-    #[inline]
-    fn field_index(field: Self::Field) -> usize {
-        field as usize
-    }
-
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], i: usize) {
-        // SAFETY: caller guarantees `ptrs[0..FIELD_COUNT]` are valid columns
-        // with capacity > `i` for their respective field types.
-        unsafe {
-            ptrs[0].cast::<Cow<'static, [u8]>>().add(i).write(self.file_path);
-            ptrs[1].cast::<u32>().add(i).write(self.hash);
-            ptrs[2].cast::<Loader>().add(i).write(self.loader);
-            ptrs[3].cast::<Fd>().add(i).write(self.fd);
-            ptrs[4].cast::<u32>().add(i).write(self.count);
-            ptrs[5].cast::<u32>().add(i).write(self.parent_hash);
-            ptrs[6].cast::<WatchItemKind>().add(i).write(self.kind);
-            ptrs[7]
-                .cast::<Option<&'static PackageJSON>>()
-                .add(i)
-                .write(self.package_json);
-            #[cfg(target_os = "linux")]
-            ptrs[8]
-                .cast::<platform::EventListIndex>()
-                .add(i)
-                .write(self.eventlist_index);
-        }
-    }
-
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], i: usize) -> Self {
-        // SAFETY: caller guarantees `ptrs[0..FIELD_COUNT]` are valid columns
-        // with len > `i`.
-        unsafe {
-            WatchItem {
-                file_path: ptrs[0].cast::<Cow<'static, [u8]>>().add(i).read(),
-                hash: ptrs[1].cast::<u32>().add(i).read(),
-                loader: ptrs[2].cast::<Loader>().add(i).read(),
-                fd: ptrs[3].cast::<Fd>().add(i).read(),
-                count: ptrs[4].cast::<u32>().add(i).read(),
-                parent_hash: ptrs[5].cast::<u32>().add(i).read(),
-                kind: ptrs[6].cast::<WatchItemKind>().add(i).read(),
-                package_json: ptrs[7].cast::<Option<&'static PackageJSON>>().add(i).read(),
-                #[cfg(target_os = "linux")]
-                eventlist_index: ptrs[8].cast::<platform::EventListIndex>().add(i).read(),
-            }
-        }
-    }
-}
-
-/// Typed SoA column accessors — what `#[derive(MultiArrayElement)]` would emit.
+/// Typed SoA column accessors — thin safe wrappers over the reflection-backed
+/// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
 /// Implemented locally so callers can write `watchlist.items_fd()` instead of
 /// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
@@ -1173,71 +1060,51 @@ pub trait WatchItemColumns {
 
 impl WatchItemColumns for WatchList {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
-        // SAFETY: column 0 is `Cow<'static, [u8]>` per MultiArrayElement impl above.
-        unsafe { &*(self.items::<Cow<'static, [u8]>>(WatchItemField::FilePath) as *const [_]) }
+        self.items::<"file_path", Cow<'static, [u8]>>()
     }
     fn items_hash(&self) -> &[u32] {
-        // SAFETY: column 1 is `u32`.
-        unsafe { &*(self.items::<u32>(WatchItemField::Hash) as *const [_]) }
+        self.items::<"hash", u32>()
     }
     fn items_fd(&self) -> &[Fd] {
-        // SAFETY: column 3 is `Fd`.
-        unsafe { &*(self.items::<Fd>(WatchItemField::Fd) as *const [_]) }
+        self.items::<"fd", Fd>()
     }
     fn items_fd_mut(&mut self) -> &mut [Fd] {
-        // SAFETY: column 3 is `Fd`; &mut self ensures unique access.
-        unsafe { self.items_mut::<Fd>(WatchItemField::Fd) }
+        self.items_mut::<"fd", Fd>()
     }
     fn items_parent_hash(&self) -> &[u32] {
-        // SAFETY: column 5 is `u32`.
-        unsafe { &*(self.items::<u32>(WatchItemField::ParentHash) as *const [_]) }
+        self.items::<"parent_hash", u32>()
     }
     fn items_kind(&self) -> &[WatchItemKind] {
-        // SAFETY: column 6 is `WatchItemKind`.
-        unsafe { &*(self.items::<WatchItemKind>(WatchItemField::Kind) as *const [_]) }
+        self.items::<"kind", WatchItemKind>()
     }
     #[cfg(target_os = "linux")]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
-        // SAFETY: column 8 is `EventListIndex`.
-        unsafe {
-            &*(self.items::<platform::EventListIndex>(WatchItemField::EventlistIndex)
-                as *const [_])
-        }
+        self.items::<"eventlist_index", platform::EventListIndex>()
     }
 }
 
 impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
-        // SAFETY: column 0 is `Cow<'static, [u8]>`.
-        unsafe { &*(self.items::<Cow<'static, [u8]>>(WatchItemField::FilePath) as *const [_]) }
+        self.items::<"file_path", Cow<'static, [u8]>>()
     }
     fn items_hash(&self) -> &[u32] {
-        // SAFETY: column 1 is `u32`.
-        unsafe { &*(self.items::<u32>(WatchItemField::Hash) as *const [_]) }
+        self.items::<"hash", u32>()
     }
     fn items_fd(&self) -> &[Fd] {
-        // SAFETY: column 3 is `Fd`.
-        unsafe { &*(self.items::<Fd>(WatchItemField::Fd) as *const [_]) }
+        self.items::<"fd", Fd>()
     }
     fn items_fd_mut(&mut self) -> &mut [Fd] {
-        // SAFETY: column 3 is `Fd`.
-        unsafe { self.items_mut::<Fd>(WatchItemField::Fd) }
+        self.items_mut::<"fd", Fd>()
     }
     fn items_parent_hash(&self) -> &[u32] {
-        // SAFETY: column 5 is `u32`.
-        unsafe { &*(self.items::<u32>(WatchItemField::ParentHash) as *const [_]) }
+        self.items::<"parent_hash", u32>()
     }
     fn items_kind(&self) -> &[WatchItemKind] {
-        // SAFETY: column 6 is `WatchItemKind`.
-        unsafe { &*(self.items::<WatchItemKind>(WatchItemField::Kind) as *const [_]) }
+        self.items::<"kind", WatchItemKind>()
     }
     #[cfg(target_os = "linux")]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
-        // SAFETY: column 8 is `EventListIndex`.
-        unsafe {
-            &*(self.items::<platform::EventListIndex>(WatchItemField::EventlistIndex)
-                as *const [_])
-        }
+        self.items::<"eventlist_index", platform::EventListIndex>()
     }
 }
 

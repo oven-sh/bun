@@ -31,7 +31,7 @@ use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::Mutex;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-use bun_watcher::{WatchItemColumns, WatchItemField, Watcher};
+use bun_watcher::{WatchItemColumns, Watcher};
 
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
@@ -674,9 +674,7 @@ impl TranspilerJob {
                         };
                         // SAFETY: column `PackageJson` is `Option<&'static PackageJSON>` per WatchItem layout.
                         package_json = unsafe {
-                            watchlist.items::<Option<&'static bun_watcher::PackageJSON>>(
-                                WatchItemField::PackageJson,
-                            )[index as usize]
+                            watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
                         };
                     }
                 }

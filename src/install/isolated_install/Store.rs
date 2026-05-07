@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayElement, MultiArrayList};
+use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
 
 use crate::lockfile::{package, Lockfile};
@@ -112,7 +112,7 @@ impl Store {
         maybe_parent_id: entry::Id,
         parent_dedupe: &mut ArrayHashMap<entry::Id, ()>,
     ) -> bool {
-        use entry::EntryListExt as _;
+        use entry::EntryColumns as _;
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -286,13 +286,13 @@ impl<T: Copy> OrderedArraySet<T> {
 // directory to the workspace.
 pub mod entry {
     use super::*;
-    use crate::lockfile::package::PackageSliceExt as _;
+    use crate::lockfile::package::PackageColumns as _;
 
     pub type Id = NewId<Entry>;
     pub type List = MultiArrayList<Entry>;
     pub type Dependencies = OrderedArraySet<DependenciesItem>;
 
-    #[derive(MultiArrayElement)]
+    
     pub struct Entry {
         // Used to get dependency name for destination path and peers
         // for store path
@@ -330,6 +330,19 @@ pub mod entry {
         // per-entry write would mutate through shared-reference provenance.
         // Raw `*mut` instead of `Box` so reads don't move out of the cell.
         pub scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
+    }
+
+    bun_collections::multi_array_columns! {
+        pub trait EntryColumns for Entry {
+            node_id: super::node::Id,
+            dependencies: Dependencies,
+            parents: Vec<Id>,
+            step: core::sync::atomic::AtomicU32,
+            hoisted: bool,
+            peer_hash: PeerHash,
+            entry_hash: u64,
+            scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
+        }
     }
 
     impl Default for Entry {
@@ -375,12 +388,12 @@ pub mod entry {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            use super::node::NodeListExt as _;
+            use super::node::NodeColumns as _;
             let store = self.store;
             let entries = store.entries.slice();
-            // derive(MultiArrayElement)-generated SliceExt accessors: `.peer_hash()`, `.node_id()`.
-            let entry_peer_hashes = entries.peer_hash();
-            let entry_node_ids = entries.node_id();
+            // derive(MultiArrayElement)-generated SliceExt accessors: `.items_peer_hash()`, `.items_node_id()`.
+            let entry_peer_hashes = entries.items_peer_hash();
+            let entry_node_ids = entries.items_node_id();
 
             let peer_hash = entry_peer_hashes[self.entry_id.get() as usize];
             let node_id = entry_node_ids[self.entry_id.get() as usize];
@@ -576,7 +589,7 @@ pub mod entry {
     // typechecks dead code, so this is rewritten against the real shape:
     // resolve `pkg_id` via `nodes[entry.node_id].pkg_id`.
     pub fn debug_print_list(list: &List, nodes: &super::node::List, lockfile: &mut Lockfile) {
-        use super::node::NodeListExt as _;
+        use super::node::NodeColumns as _;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         let pkgs = lockfile.packages.slice();
@@ -584,8 +597,8 @@ pub mod entry {
         let pkg_resolutions = pkgs.items_resolution();
 
         let entries = list.slice();
-        let entry_node_ids = entries.node_id();
-        let entry_dependencies = entries.dependencies();
+        let entry_node_ids = entries.items_node_id();
+        let entry_dependencies = entries.items_dependencies();
         let node_pkg_ids = nodes.items_pkg_id();
 
         for entry_id in 0..list.len() {
@@ -620,7 +633,7 @@ pub mod entry {
 }
 
 pub use entry::Entry;
-pub use entry::{EntryField, EntryListExt, EntrySliceExt};
+pub use entry::{EntryColumns};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -629,8 +642,8 @@ pub use entry::{EntryField, EntryListExt, EntrySliceExt};
 // A node used to represent the full dependency tree. Uniqueness is determined
 // from `pkg_id` and `peers`
 pub mod node {
+    use crate::lockfile::package::PackageColumns as _;
     use super::*;
-    use crate::lockfile::package::PackageSliceExt as _;
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
@@ -639,7 +652,7 @@ pub mod node {
     /// disambiguating name for callers building the dependency vec.
     pub use super::Ids as DependencyIds;
 
-    #[derive(MultiArrayElement)]
+    
     pub struct Node {
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
@@ -653,6 +666,17 @@ pub mod node {
         // each node in this list becomes a symlink in the package's node_modules
         // Zig default: `.empty`
         pub nodes: Vec<Id>,
+    }
+
+    bun_collections::multi_array_columns! {
+        pub trait NodeColumns for Node {
+            dep_id: DependencyID,
+            pkg_id: PackageID,
+            parent_id: Id,
+            dependencies: Vec<Ids>,
+            peers: Peers,
+            nodes: Vec<Id>,
+        }
     }
 
     impl Default for Node {
@@ -808,7 +832,7 @@ pub mod node {
 }
 
 pub use node::Node;
-pub use node::{NodeField, NodeListExt, NodeSliceExt};
+pub use node::{NodeColumns};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -563,7 +563,6 @@ pub fn http_thread_mut() -> &'static mut HTTPThread { http_thread() }
 pub static mut SOCKET_ASYNC_HTTP_ABORT_TRACKER:
     Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>> = None;
 
-
 // ═══════════════════════════════════════════════════════════════════════
 // Prelude: imports, constants, helper fns, and bridge impls the
 // `impl HTTPClient` state machine needs. Kept separate from the head/tail
@@ -586,7 +585,7 @@ use bun_uws as uws;
 // once `bun_wyhash::Wyhash` (std algorithm) lands so proxy_auth_hash() and
 // header-name hashing match any component still computing the Zig hash.
 use bun_wyhash::Wyhash11 as Wyhash;
-use bun_http_types::ETag::{HeaderEntryField, StringPointer};
+use bun_http_types::ETag::StringPointer;
 
 use crate::headers::api;
 use crate::http_context::HTTPSocket as HttpSocket;
@@ -785,18 +784,18 @@ pub fn configure_http_client_with_alpn(
 // Re-widen the borrow to `'static` so the per-row `header_str()` calls inside
 // `build_request` don't trip borrowck (the underlying buffer is the static
 // `SHARED_REQUEST_HEADERS_BUF` / `self.header_buf` pair).
-trait HeaderEntrySliceExt {
+trait HeaderEntrySliceColumns {
     fn items_name(&self) -> &'static [StringPointer];
     fn items_value(&self) -> &'static [StringPointer];
 }
-impl HeaderEntrySliceExt for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
+impl HeaderEntrySliceColumns for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
     fn items_name(&self) -> &'static [StringPointer] {
         // SAFETY: StringPointer is POD; the MultiArrayList backing storage outlives every
         // caller in this file (header_entries is a field of HTTPClient). Lifetime is
         // erased only to avoid threading `'self` through the Zig-shaped state machine.
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Name),
+                self.items::<"name", StringPointer>(),
             )
         }
     }
@@ -804,20 +803,20 @@ impl HeaderEntrySliceExt for bun_collections::multi_array_list::Slice<bun_http_t
         // SAFETY: see items_name()
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Value),
+                self.items::<"value", StringPointer>(),
             )
         }
     }
 }
-trait HeaderEntryListExt {
+trait HeaderEntryListColumns {
     fn items_name(&self) -> &'static [StringPointer];
 }
-impl HeaderEntryListExt for bun_http_types::ETag::HeaderEntryList {
+impl HeaderEntryListColumns for bun_http_types::ETag::HeaderEntryList {
     fn items_name(&self) -> &'static [StringPointer] {
-        // SAFETY: see HeaderEntrySliceExt::items_name()
+        // SAFETY: see HeaderEntrySliceColumns::items_name()
         unsafe {
             core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<StringPointer>(HeaderEntryField::Name),
+                self.items::<"name", StringPointer>(),
             )
         }
     }
@@ -1230,7 +1229,6 @@ impl HTTPClient {
         self.progress_node.map(|p| unsafe { &mut *p.as_ptr() })
     }
 }
-
 
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
@@ -4387,5 +4385,4 @@ impl HTTPClient {
         }
     }
 } // impl HTTPClient
-
 

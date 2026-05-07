@@ -3094,5 +3094,3 @@ pub fn get_use_system_ca(
 //   notes:      Root re-export hub; heavy comptime reflection (span/sliceTo/serializable/ThreadlocalBuffers/MakePath) stubbed with TODO(port); allocator params erased per guide; argv stored as Vec<Box<ZStr>>; timespec::MockMode nesting reshaped (runtime param + PERF(port) markers).
 // ──────────────────────────────────────────────────────────────────────────
 
-
-

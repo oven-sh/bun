@@ -1,10 +1,6 @@
+use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use core::mem::offset_of;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use crate::Graph::InputFileListExt as _;
-use crate::linker_graph::FileListExt as _;
-use crate::ungate_support::EntryPointListExt as _;
 use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;

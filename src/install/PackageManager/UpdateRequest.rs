@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
@@ -13,8 +14,6 @@ use bun_install::{
 use bun_install::dependency::{self, DependencyExt as _};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
-use crate::lockfile::package::PackageListExt as _;
-
 pub struct UpdateRequest {
     // TODO(port): lifetime — Zig leaks these (no deinit); using &'static for now
     pub name: &'static [u8],

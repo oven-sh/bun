@@ -1,6 +1,7 @@
 //! Binary lockfile (bun.lockb) serializer/deserializer.
 //! Port of `src/install/lockfile/bun.lockb.zig` (`const Serializer = @This();`).
 
+use crate::lockfile::package::PackageColumns as _;
 use core::mem::{align_of, size_of};
 
 use bun_core::Error;
@@ -11,7 +12,6 @@ use super::{
     buffers, package, package_index as PackageIndex, FormatVersion, Lockfile, Scratch, Stream,
     StringPool,
 };
-use super::package::PackageListExt as _;
 use crate::config_version::ConfigVersion;
 use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;

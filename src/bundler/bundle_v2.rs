@@ -6,6 +6,7 @@
 // `ParseTask`, `ThreadPool`, and the JSBundler/api TYPE_ONLY split land.
 // ══════════════════════════════════════════════════════════════════════════
 
+use crate::mal_prelude::*;
 use core::ptr::NonNull;
 
 use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
@@ -37,9 +38,9 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
 use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::{EventLoop, InputFileListExtMut, UseDirective};
+use crate::ungate_support::{EventLoop, UseDirective};
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-use crate::Graph::{Graph, InputFileListExt, SideEffects};
+use crate::Graph::{Graph, InputFileColumns, SideEffects};
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::{Index, IndexInt, LinkerContext};
 
@@ -240,6 +241,7 @@ impl<'a> BundleV2<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 
 pub mod bv2_impl {
+use crate::mal_prelude::*;
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -306,11 +308,7 @@ use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::{self as _resolver, Resolver, is_package_path};
 use bun_threading::ThreadPool as ThreadPoolLib;
 use crate::options_impl::{TargetExt, LoaderExt};
-use crate::Graph::{InputFileListExt, InputFileSliceExt as _};
-use bun_js_parser::ast::bundled_ast::{BundledAstListExt as _, BundledAstSliceExt as _};
-use bun_js_parser::ast::server_component_boundary::{
-    ServerComponentBoundaryListExt as _, ServerComponentBoundarySliceExt as _,
-};
+use crate::Graph::InputFileColumns;
 // TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
 use self::bake_types as bake;
 
@@ -1894,8 +1892,8 @@ impl<'a> ReachableFileVisitor<'a> {
         if let Some(scb_bitset) = &self.scb_bitset {
             if scb_bitset.is_set(source_index.get() as usize) {
                 let scb_index = self.scb_list.get_index(source_index.get()).expect("unreachable");
-                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.reference_source_index()[scb_index]), false);
-                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.ssr_source_index()[scb_index]), false);
+                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.items_reference_source_index()[scb_index]), false);
+                self.visit::<CHECK_DYNAMIC_IMPORTS>(Index::init(self.scb_list.list.items_ssr_source_index()[scb_index]), false);
             }
         }
 
@@ -2032,9 +2030,7 @@ impl<'a> BundleV2<'a> {
         // `&mut` to this column exists.
         let all_import_records: &mut [import_record::List] = unsafe {
             core::slice::from_raw_parts_mut(
-                ast_slice.items_raw::<import_record::List>(
-                    js_ast::ast::bundled_ast::BundledAstField::import_records,
-                ),
+                ast_slice.items_raw::<"import_records", import_record::List>(),
                 ast_len,
             )
         };
@@ -2100,20 +2096,20 @@ impl<'a> BundleV2<'a> {
         let additional_files: &mut [Vec<crate::AdditionalFile>] = unsafe {
             core::slice::from_raw_parts_mut(
                 input_files_slice
-                    .items_raw::<Vec<crate::AdditionalFile>>(crate::Graph::InputFileField::additional_files),
+                    .items_raw::<"additional_files", Vec<crate::AdditionalFile>>(),
                 input_files_len,
             )
         };
         let unique_keys: &mut [Box<[u8]>] = unsafe {
             core::slice::from_raw_parts_mut(
                 input_files_slice
-                    .items_raw::<Box<[u8]>>(crate::Graph::InputFileField::unique_key_for_additional_file),
+                    .items_raw::<"unique_key_for_additional_file", Box<[u8]>>(),
                 input_files_len,
             )
         };
         let content_hashes: &mut [u64] = unsafe {
             core::slice::from_raw_parts_mut(
-                input_files_slice.items_raw::<u64>(crate::Graph::InputFileField::content_hash_for_additional_file),
+                input_files_slice.items_raw::<"content_hash_for_additional_file", u64>(),
                 input_files_len,
             )
         };
@@ -2212,9 +2208,7 @@ impl<'a> BundleV2<'a> {
         // to this column exists.
         let ast_import_records: &mut [import_record::List] = unsafe {
             core::slice::from_raw_parts_mut(
-                ast_slice.items_raw::<import_record::List>(
-                    js_ast::ast::bundled_ast::BundledAstField::import_records,
-                ),
+                ast_slice.items_raw::<"import_records", import_record::List>(),
                 ast_len,
             )
         };
@@ -3086,9 +3080,9 @@ impl<'a> BundleV2<'a> {
         let specifier_string = server.new_expr(E::EString { data: b"specifier".into(), ..Default::default() });
         let empty_array = server.new_expr(E::Array::default());
 
-        for ((r#use, source_id), ssr_index) in scbs.use_directive().iter()
-            .zip(scbs.source_index().iter())
-            .zip(scbs.ssr_source_index().iter())
+        for ((r#use, source_id), ssr_index) in scbs.items_use_directive().iter()
+            .zip(scbs.items_source_index().iter())
+            .zip(scbs.items_ssr_source_index().iter())
         {
             if *r#use == js_ast::UseDirective::Client {
                 // TODO(@paperclover/bake): this file is being generated far too
@@ -3676,8 +3670,8 @@ impl<'a> BundleV2<'a> {
         {
             let scbs = self.graph.server_component_boundaries.slice();
             self.graph.entry_points.reserve(scbs.list.len() * 2);
-            debug_assert_eq!(scbs.list.source_index().len(), scbs.list.ssr_source_index().len());
-            for (original_index, ssr_index) in scbs.list.source_index().iter().zip(scbs.list.ssr_source_index().iter()) {
+            debug_assert_eq!(scbs.list.items_source_index().len(), scbs.list.items_ssr_source_index().len());
+            for (original_index, ssr_index) in scbs.list.items_source_index().iter().zip(scbs.list.items_ssr_source_index().iter()) {
                 for idx in [*original_index, *ssr_index] {
                     self.graph.entry_points.push(bun_js_parser::Index::init(idx)); // PERF(port): was assume_capacity
                 }
@@ -4467,7 +4461,7 @@ impl<'a> BundleV2<'a> {
             let mut js_files: Vec<Index> = Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
 
             let asts = self.graph.ast.slice();
-            let css_asts = asts.css();
+            let css_asts = asts.items_css();
             // PORT NOTE: SoA columns are physically disjoint slabs but rustc cannot
             // see that through `&Slice`. Route the two columns we mutate (`parts`,
             // `import_records`) through raw `items_raw` so the per-index `&mut`
@@ -4477,26 +4471,22 @@ impl<'a> BundleV2<'a> {
             // slab does not resize for the duration of this loop and no other
             // `&mut` to these columns exists.
             let parts_col: *mut js_ast::PartList = unsafe {
-                asts.items_raw::<js_ast::PartList>(
-                    js_ast::ast::bundled_ast::BundledAstField::parts,
-                )
+                asts.items_raw::<"parts", js_ast::PartList>()
             };
             let import_records_col: *mut import_record::List = unsafe {
-                asts.items_raw::<import_record::List>(
-                    js_ast::ast::bundled_ast::BundledAstField::import_records,
-                )
+                asts.items_raw::<"import_records", import_record::List>()
             };
 
             let input_files = self.graph.input_files.slice();
-            let loaders = input_files.loader();
-            let sources = input_files.source();
+            let loaders = input_files.items_loader();
+            let sources = input_files.items_source();
             // TODO(port): multi-zip iteration over MultiArrayList slices [1..]
             for index in 1..self.graph.ast.len() {
                 // SAFETY: `index < ast.len()`; see PORT NOTE above for column aliasing.
                 let part_list = unsafe { &mut *parts_col.add(index) };
                 let import_records = unsafe { &mut *import_records_col.add(index) };
                 let maybe_css = &css_asts[index];
-                let target = asts.target()[index];
+                let target = asts.items_target()[index];
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -4577,7 +4567,7 @@ impl<'a> BundleV2<'a> {
             // Find CSS entry points. Originally, this was computed up front, but
             // failed files do not remember their loader, and plugins can
             // asynchronously decide a file is CSS.
-            let css = asts.css();
+            let css = asts.items_css();
             for entry_point in &self.graph.entry_points {
                 if css[entry_point.get() as usize].is_some() {
                     start.css_entry_points.put(
@@ -6908,6 +6898,5 @@ pub use Logger::Loc;
 //   todos:      30
 //   notes:      Heavy borrowck reshaping needed (overlapping &mut self.graph/transpiler); enqueueEntryPoints split into 3 fns (see PORT NOTE); ParseTask/Resolve/Load/ThreadPool/chunks now arena-allocated via `arena_create`/`alloc_slice_fill_iter` (no more global-heap leaks); ssr_transpiler aliases transpiler in init (illegal in Rust); init() should arena-allocate self
 // ──────────────────────────────────────────────────────────────────────────
-
 
 }

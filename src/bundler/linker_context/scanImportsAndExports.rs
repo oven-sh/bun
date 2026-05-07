@@ -1,9 +1,4 @@
 //! Port of `src/bundler/linker_context/scanImportsAndExports.zig`.
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use crate::Graph::InputFileListExt as _;
-use crate::linker_graph::FileListExt as _;
-use crate::ungate_support::EntryPointListExt as _;
 //
 // PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
 // (`this.graph.ast.items(.field)`) and freely interleaves them with
@@ -16,6 +11,7 @@ use crate::ungate_support::EntryPointListExt as _;
 // use site through `*mut [T]`. This is the documented escape hatch in
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
+use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_collections::{VecExt, HashMap, MultiArrayList};
 use bun_core::FeatureFlags;
@@ -35,10 +31,6 @@ use bun_js_parser::ast::symbol::{self, Kind as SymbolKind};
 use bun_js_parser::{Dependency, ExportsKind, PartList, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
-use crate::linker_graph::FileField;
-use crate::ungate_support::js_meta::JSMetaField;
-use crate::Graph::InputFileField;
-use bun_js_parser::ast::bundled_ast::BundledAstField as AstField;
 
 type AstFlags = bundled_ast::Flags;
 type ImportRecordList = import_record::List;
@@ -75,11 +67,11 @@ impl From<ScanImportsAndExportsError> for bun_core::Error {
 /// reallocated for the lifetime of the slice (no `append`/`resize` here),
 /// so dereferencing distinct columns simultaneously is sound.
 macro_rules! col_ptr {
-    ($slice:ident, $field_enum:ident :: $field:ident, $ty:ty) => {{
+    ($slice:ident, $field:ident, $ty:ty) => {{
         let len = $slice.len();
         // SAFETY: `$ty` is exactly the column type for `$field`; the derive
         // guarantees the field-enum ↔ type pairing.
-        let p: *mut $ty = unsafe { $slice.items_raw::<$ty>($field_enum::$field) };
+        let p: *mut $ty = unsafe { $slice.items_raw::<{ ::core::stringify!($field) }, $ty>() };
         core::ptr::slice_from_raw_parts_mut(p, len)
     }};
 }
@@ -125,46 +117,46 @@ pub fn scan_imports_and_exports(
     let input = parse_graph.input_files.slice();
 
     let import_records_list: *mut [ImportRecordList] =
-        col_ptr!(ast, AstField::import_records, ImportRecordList);
-    let exports_kind: *mut [ExportsKind] = col_ptr!(ast, AstField::exports_kind, ExportsKind);
+        col_ptr!(ast, import_records, ImportRecordList);
+    let exports_kind: *mut [ExportsKind] = col_ptr!(ast, exports_kind, ExportsKind);
     let entry_point_kinds: *mut [EntryPoint::Kind] =
-        col_ptr!(files, FileField::entry_point_kind, EntryPoint::Kind);
-    let named_imports: *mut [NamedImports] = col_ptr!(ast, AstField::named_imports, NamedImports);
-    let named_exports: *mut [NamedExports] = col_ptr!(ast, AstField::named_exports, NamedExports);
-    let flags: *mut [js_meta::Flags] = col_ptr!(meta, JSMetaField::flags, js_meta::Flags);
-    let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, AstField::flags, AstFlags);
+        col_ptr!(files, entry_point_kind, EntryPoint::Kind);
+    let named_imports: *mut [NamedImports] = col_ptr!(ast, named_imports, NamedImports);
+    let named_exports: *mut [NamedExports] = col_ptr!(ast, named_exports, NamedExports);
+    let flags: *mut [js_meta::Flags] = col_ptr!(meta, flags, js_meta::Flags);
+    let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, flags, AstFlags);
     let export_star_import_records: *mut [&'static [u32]] =
-        col_ptr!(ast, AstField::export_star_import_records, &'static [u32]);
-    let exports_refs: *mut [Ref] = col_ptr!(ast, AstField::exports_ref, Ref);
-    let module_refs: *mut [Ref] = col_ptr!(ast, AstField::module_ref, Ref);
-    let wrapper_refs: *mut [Ref] = col_ptr!(ast, AstField::wrapper_ref, Ref);
-    let parts_list: *mut [PartList] = col_ptr!(ast, AstField::parts, PartList);
+        col_ptr!(ast, export_star_import_records, &'static [u32]);
+    let exports_refs: *mut [Ref] = col_ptr!(ast, exports_ref, Ref);
+    let module_refs: *mut [Ref] = col_ptr!(ast, module_ref, Ref);
+    let wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
+    let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
     // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
     // pointer. Mirror the actual storage type (`BundledAst.css: Option<*mut c_void>`)
     // so downstream casts to `*mut BundlerStyleSheet` don't go through `&T`.
     type CssCol = Option<*mut core::ffi::c_void>;
-    let css_asts: *mut [CssCol] = col_ptr!(ast, AstField::css, CssCol);
+    let css_asts: *mut [CssCol] = col_ptr!(ast, css, CssCol);
 
-    let input_files: *mut [Source] = col_ptr!(input, InputFileField::source, Source);
-    let loaders: *mut [Loader] = col_ptr!(input, InputFileField::loader, Loader);
+    let input_files: *mut [Source] = col_ptr!(input, source, Source);
+    let loaders: *mut [Loader] = col_ptr!(input, loader, Loader);
 
     let resolved_exports: *mut [ResolvedExports] =
-        col_ptr!(meta, JSMetaField::resolved_exports, ResolvedExports);
+        col_ptr!(meta, resolved_exports, ResolvedExports);
     let resolved_export_stars: *mut [ExportData] =
-        col_ptr!(meta, JSMetaField::resolved_export_star, ExportData);
+        col_ptr!(meta, resolved_export_star, ExportData);
     let imports_to_bind_list: *mut [RefImportData] =
-        col_ptr!(meta, JSMetaField::imports_to_bind, RefImportData);
+        col_ptr!(meta, imports_to_bind, RefImportData);
     let wrapper_part_indices: *mut [Index] =
-        col_ptr!(meta, JSMetaField::wrapper_part_index, Index);
+        col_ptr!(meta, wrapper_part_index, Index);
     let sorted_aliases: *mut [Box<[Box<[u8]>]>] = col_ptr!(
         meta,
-        JSMetaField::sorted_and_filtered_export_aliases,
+        sorted_and_filtered_export_aliases,
         Box<[Box<[u8]>]>
     );
     let cjs_export_copies: *mut [Box<[Ref]>] =
-        col_ptr!(meta, JSMetaField::cjs_export_copies, Box<[Ref]>);
+        col_ptr!(meta, cjs_export_copies, Box<[Ref]>);
     let entry_point_part_indices: *mut [Index] =
-        col_ptr!(meta, JSMetaField::entry_point_part_index, Index);
+        col_ptr!(meta, entry_point_part_index, Index);
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
     // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
@@ -1718,7 +1710,7 @@ mod __css_validation {
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,
-            all_sources: col_ptr!(input, InputFileField::source, Source),
+            all_sources: col_ptr!(input, source, Source),
             log: this.log,
         };
         for local in root_css_ast.local_scope.values() {

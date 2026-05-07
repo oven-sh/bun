@@ -1,10 +1,9 @@
 //! Port of src/cli/create/SourceFileProjectGenerator.zig
 
+use bun_bundler::mal_prelude::*;
 use bun_collections::{VecExt, ByteVecExt};
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
-use bun_bundler::Graph::InputFileListExt as _;
-use bun_bundler::JSMetaListExt as _;
 use bun_bundler::ResolvedExports;
 use crate::cli::create_command::ExampleTag;
 use crate::cli::Command;
@@ -13,7 +12,6 @@ use crate::api::bun::process::sync as spawn_sync;
 use crate::api::bun::process::SignalCodeExt as _;
 use bun_collections::StringSet;
 use bun_core::{Global, Output};
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::js_lexer;
 use bun_logger::Source as LoggerSource;
 use bun_paths as path;

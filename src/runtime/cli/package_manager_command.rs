@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{env_var, fmt as bun_fmt, Global, Output};
 use bun_install::dependency::Dependency;
 use bun_install::lockfile::{
-    package::{PackageListExt as _, PackageSliceExt as _},
+    package::{PackageColumns as _, PackageColumns as _},
     tree, LoadResult, Lockfile,
 };
 use bun_install::npm as Npm;

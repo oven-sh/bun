@@ -9,7 +9,7 @@ use bun_sys as sys;
 
 use crate::bun_json as json;
 use crate::bun_json::Expr;
-use crate::lockfile_real::package::{Package, PackageListExt, ResolverContext, Scripts};
+use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
 use crate::lockfile_real::StringBuilder;
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{

@@ -12,7 +12,7 @@ use bun_str::ZStr;
 use crate::lockfile::{
     DependencyIDList, DependencyIDSlice, DepSorter, Lockfile,
 };
-use crate::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
+use crate::lockfile::package::{PackageColumns as _};
 use crate::external_slice::ExternalSlice;
 use crate::{
     invalid_dependency_id, invalid_package_id, Dependency, DependencyID, PackageID,
@@ -411,10 +411,16 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub packages_to_install: Option<&'a [PackageID]>,
 }
 
-#[derive(bun_collections::MultiArrayElement)]
 pub struct BuilderEntry {
     pub tree: Tree,
     pub dependencies: DependencyIDList,
+}
+
+bun_collections::multi_array_columns! {
+    pub trait BuilderEntryColumns for BuilderEntry {
+        tree: Tree,
+        dependencies: DependencyIDList,
+    }
 }
 
 pub struct CleanResult {
@@ -471,8 +477,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         // internal layout. Porting the straightforward path (fresh Vec<Tree>) instead.
         // PERF(port): was MultiArrayList buffer reuse — profile in Phase B.
         let mut slice = self.list.to_owned_slice();
-        let mut trees: Vec<Tree> = slice.tree().to_vec();
-        let dependencies: &mut [DependencyIDList] = slice.dependencies_mut();
+        let mut trees: Vec<Tree> = slice.items_tree().to_vec();
+        let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
 
         for tree in &trees {
             total += tree.dependencies.len;
@@ -851,7 +857,7 @@ impl Tree {
                     }
                     {
                         let mut list_slice = builder.list.slice();
-                        let dependency_lists = list_slice.dependencies_mut();
+                        let dependency_lists = list_slice.items_dependencies_mut();
                         for placed_dep_id in dependency_lists[replace.id as usize].iter_mut() {
                             if *placed_dep_id == replace.dep_id {
                                 *placed_dep_id = dep_id;

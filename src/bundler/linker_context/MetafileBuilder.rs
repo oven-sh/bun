@@ -29,6 +29,7 @@
 //! }
 //! ```
 
+use crate::mal_prelude::*;
 use std::io::Write;
 
 use bstr::BStr;
@@ -44,10 +45,6 @@ use bun_options_types::ImportKind;
 
 use crate::chunk::Content as ChunkContent;
 use crate::options::Loader;
-use crate::Graph::InputFileListExt as _;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-
 use crate::{Chunk, Index, LinkerContext};
 
 #[inline]

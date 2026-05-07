@@ -8,7 +8,7 @@ use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
 use bun_logger::Loc;
 use bun_sourcemap::{
     self as sourcemap, internal_source_map, line_offset_table, LineOffsetTable,
-    LineOffsetTableListExt as _, Ordinal, ParsedSourceMap,
+    LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
 };
 use bun_str::{self, strings, ZigStringSlice};
 

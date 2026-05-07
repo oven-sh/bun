@@ -484,7 +484,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_collections_macros",
  "bun_core",
  "bun_ptr",
  "bun_simdutf_sys",
@@ -494,19 +493,11 @@ dependencies = [
  "enumset",
  "libc",
  "parking_lot",
+ "paste",
  "phf",
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_collections_macros"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -2899,6 +2890,12 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "phf"

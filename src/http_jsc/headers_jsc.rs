@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
-use bun_http_types::ETag::{HeaderEntryField, StringPointer as HeaderStringPointer};
+use bun_http_types::ETag::{StringPointer as HeaderStringPointer};
 use bun_jsc::{CallFrame, FetchHeaders, JSGlobalObject, JSValue, JsResult};
 use bun_string::{StringPointer, ZigString};
 
@@ -32,9 +32,9 @@ pub fn to_fetch_headers(
     // SAFETY: column type for both fields is `HeaderStringPointer` (see
     // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
     let names: &[HeaderStringPointer] =
-        unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Name) };
+        unsafe { this.entries.items::<"name", HeaderStringPointer>() };
     let values: &[HeaderStringPointer] =
-        unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Value) };
+        unsafe { this.entries.items::<"value", HeaderStringPointer>() };
     FetchHeaders::create(
         global,
         // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).

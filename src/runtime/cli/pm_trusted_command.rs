@@ -6,7 +6,7 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
-    package::{PackageListExt as _, PackageSliceExt as _},
+    package::{PackageColumns as _, PackageColumns as _},
     tree, LoadResult, Lockfile,
 };
 use bun_install::package_manager_real::{

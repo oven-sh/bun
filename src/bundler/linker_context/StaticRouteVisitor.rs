@@ -3,12 +3,10 @@
 //!
 //! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
 
+use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
-
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use bun_js_parser::ast::server_component_boundary::ServerComponentBoundaryListExt as _;
 
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};

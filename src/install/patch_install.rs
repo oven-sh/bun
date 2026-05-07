@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::mem::offset_of;
 use core::ptr;
 
@@ -17,7 +18,6 @@ use crate::{
     bun_hash_tag, lockfile::Lockfile, lockfile::Package, resolution::Resolution, DependencyID,
     PackageID, PackageManager,
 };
-use crate::lockfile::package::PackageListExt as _;
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 

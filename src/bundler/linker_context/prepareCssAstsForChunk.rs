@@ -1,3 +1,4 @@
+use crate::mal_prelude::*;
 use core::mem::offset_of;
 
 use bun_alloc::Arena as Bump;
@@ -32,10 +33,7 @@ use bun_resolver::DataURL;
 use crate::bun_str::strings;
 
 #[cfg(feature = "css")]
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 #[cfg(feature = "css")]
-use crate::Graph::InputFileListExt as _;
-
 #[cfg(feature = "css")]
 use crate::chunk::{Content, CssImportOrderKind};
 

@@ -100,7 +100,7 @@ phase("Isolate");
 const iso = await agent(
   `Set up isolated shard ${SHARD}.
 
-1. **Worktree:** \`test -d ${WT} || git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} claude/phase-a-port\`. **Own build/ + target/** (NO symlinks — full isolation): \`mkdir -p ${WT}/build/debug ${WT}/target\`. Seed shared C++ obj + codegen (read-only copies, ~1GB): \`rsync -a --exclude='bun-debug*' --exclude='*.tmp*' /root/bun-5/build/debug/ ${WT}/build/debug/\`.
+1. **Worktree:** \`test -d ${WT} || git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} claude/phase-a-port\`. **Full isolation** — own \`build/\` and \`rust-target/\` (cmake+ninja create them). NO symlinks, NO rsync.
 2. **Build once:** \`cd ${WT} && ${RUN_IN_CG} bun bd --version 2>&1 | tail -3\` → must show version.
 3. **cgroup test:** \`${RUN_IN_CG} true && echo cgroup_ok\`
 

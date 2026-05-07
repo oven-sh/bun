@@ -737,7 +737,6 @@ pub fn readableStream(
 const Credentials = @import("../../../s3_signing/credentials.zig");
 const S3ListObjects = @import("./list_objects.zig");
 const S3SimpleRequest = @import("./simple_request.zig");
-const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -15,18 +15,18 @@ Conventions:
 
 **Always use `bun.*` APIs instead of `std.*`.** The `bun` namespace (`@import("bun")`) provides cross-platform wrappers that preserve OS error info and never use `unreachable`. Using `std.fs`, `std.posix`, or `std.os` directly is wrong in this codebase.
 
-| Instead of                                                   | Use                                  |
-| ------------------------------------------------------------ | ------------------------------------ |
-| `std.base64`                                                 | `bun.base64`                         |
-| `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`              |
+| Instead of                                                   | Use                                                 |
+| ------------------------------------------------------------ | --------------------------------------------------- |
+| `std.base64`                                                 | `bun.base64`                                        |
+| `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`                             |
 | `std.fmt.allocPrint` / `std.fmt.allocPrintSentinel`          | `bun.fmt.allocPrint` / `bun.fmt.allocPrintSentinel` |
-| `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
-| `std.fs.File`                                                | `bun.sys.File`                       |
-| `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |
-| `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith` |
-| `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`      |
-| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
-| `std.process.Child`                                          | `bun.spawnSync`                      |
+| `std.fs.cwd()`                                               | `bun.FD.cwd()`                                      |
+| `std.fs.File`                                                | `bun.sys.File`                                      |
+| `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`                    |
+| `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith`                |
+| `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`                     |
+| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents                             |
+| `std.process.Child`                                          | `bun.spawnSync`                                     |
 
 ## `bun.sys` — System Calls (`src/sys/sys.zig`)
 

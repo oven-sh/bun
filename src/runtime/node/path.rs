@@ -3053,8 +3053,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
     let is_sep_t = is_sep_windows_t::<T>;
-    // TODO(port): const-generic array size depends on T; using u8 size as upper bound.
-    let mut tmp_buf = [T::default(); max_path_size::<u8>() + 1];
+    // Zig: `[MAX_PATH_SIZE(T):0]T` — sized to the larger of the two T variants.
+    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
 
     // Backed by tmpBuf.
     // PORT NOTE: reshaped for borrowck — track resolved_device length into tmp_buf.

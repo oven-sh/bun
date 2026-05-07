@@ -1036,20 +1036,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive borrow's
-                                    // address; `by_name_hash_allow_expired` only reads
-                                    // `pm` fields disjoint from `pm.manifests`.
+                                    // address; `by_name_hash_allow_expired` takes `pm`
+                                    // raw and only projects fields disjoint from
+                                    // `pm.manifests` (see its safety doc).
                                     let scope: *const crate::npm::registry::Scope =
-                                        unsafe { &*this_ptr }.scope_for_package_name(name_str);
-                                    if let Some(manifest) = unsafe { &mut (*this_ptr).manifests }
-                                        .by_name_hash_allow_expired(
-                                            unsafe { &mut *this_ptr },
-                                            unsafe { &*scope },
+                                        unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
+                                    if let Some(manifest) = unsafe {
+                                        (*this_ptr).manifests.by_name_hash_allow_expired(
+                                            this_ptr,
+                                            &*scope,
                                             name_hash,
                                             Some(&mut expired),
                                             ManifestLoad::LoadFromMemoryFallbackToDisk,
                                             needs_extended_manifest,
                                         )
-                                    {
+                                    } {
                                         loaded_manifest = Some(manifest.clone());
 
                                         // If it's an exact package version already living in the cache
@@ -2371,15 +2372,19 @@ fn get_or_put_resolved_package(
             let name_str = unsafe { &*this_ptr }.lockfile.str(&name);
 
             let scope: *const crate::npm::registry::Scope =
-                unsafe { &*this_ptr }.scope_for_package_name(name_str);
+                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
             let needs_ext = this.options.minimum_release_age_ms.is_some();
-            let Some(manifest) = unsafe { &mut (*this_ptr).manifests }.by_name_hash(
-                unsafe { &mut *this_ptr },
-                unsafe { &*scope },
-                name_hash,
-                ManifestLoad::LoadFromMemoryFallbackToDisk,
-                needs_ext,
-            ) else {
+            // SAFETY: `manifests` projected from `this_ptr`; `pm` routed raw
+            // and only dereferenced for disjoint fields (see fn safety doc).
+            let Some(manifest) = (unsafe {
+                (*this_ptr).manifests.by_name_hash(
+                    this_ptr,
+                    &*scope,
+                    name_hash,
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_ext,
+                )
+            }) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
             let manifest: &Npm::PackageManifest = manifest;

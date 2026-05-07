@@ -304,6 +304,18 @@ impl JSValue {
     #[inline] pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
+    /// `JSValue.isJSXElement(globalObject)` (JSValue.zig:56). Checks via the
+    /// global's `Symbol.for("react.element")` / `Symbol.for("react.transitional.element")`
+    /// for `$$typeof`; may invoke a user getter and throw.
+    pub fn is_jsx_element(self, global: &JSGlobalObject) -> JsResult<bool> {
+        unsafe extern "C" {
+            fn JSC__JSValue__isJSXElement(this: JSValue, global: *const JSGlobalObject) -> bool;
+        }
+        // SAFETY: `global` is live; FFI may invoke user `$$typeof` getter and throw.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__isJSXElement(self, global)
+        })
+    }
     /// `JSValue.isAggregateError(globalObject)` (JSValue.zig:2194).
     #[inline] pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {

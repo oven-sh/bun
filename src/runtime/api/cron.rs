@@ -105,31 +105,40 @@ trait CronJobBase: Sized {
         unsafe { vm_mut() }.event_loop()
     }
 
-    fn on_reader_done(&mut self) {
-        debug_assert!(*self.remaining_fds_mut() > 0);
-        *self.remaining_fds_mut() -= 1;
-        self.maybe_finished();
+    /// May free `this` via `maybe_finished`.
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
+        let s = unsafe { &mut *this };
+        debug_assert!(*s.remaining_fds_mut() > 0);
+        *s.remaining_fds_mut() -= 1;
+        unsafe { Self::maybe_finished(this) };
     }
 
-    fn on_reader_error(&mut self, err: sys::Error) {
-        debug_assert!(*self.remaining_fds_mut() > 0);
-        *self.remaining_fds_mut() -= 1;
-        if self.err_msg_mut().is_none() {
+    /// May free `this` via `maybe_finished`.
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
+        let s = unsafe { &mut *this };
+        debug_assert!(*s.remaining_fds_mut() > 0);
+        *s.remaining_fds_mut() -= 1;
+        if s.err_msg_mut().is_none() {
             let mut msg = Vec::new();
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
                 <&'static str>::from(err.get_errno())
             );
-            *self.err_msg_mut() = Some(msg);
+            *s.err_msg_mut() = Some(msg);
         }
-        self.maybe_finished();
+        unsafe { Self::maybe_finished(this) };
     }
 
-    fn on_process_exit(&mut self, _proc: &Process, status: Status, _rusage: &Rusage) {
-        *self.has_called_process_exit_mut() = true;
-        *self.exit_status_mut() = Some(status);
-        self.maybe_finished();
+    /// May free `this` via `maybe_finished`.
+    unsafe fn on_process_exit(this: *mut Self, _proc: &Process, status: Status, _rusage: &Rusage) {
+        // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
+        let s = unsafe { &mut *this };
+        *s.has_called_process_exit_mut() = true;
+        *s.exit_status_mut() = Some(status);
+        unsafe { Self::maybe_finished(this) };
     }
 }
 

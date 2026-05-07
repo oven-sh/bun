@@ -1404,6 +1404,7 @@ impl RunCommand {
                 bstr::BStr::new(paths::basename(path)),
                 bstr::BStr::new(err.name()),
             );
+            bun_core::handle_error_return_trace(&err);
             Global::exit(1);
         }
         true

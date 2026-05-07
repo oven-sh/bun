@@ -110,10 +110,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-// TODO(port): #[bun_jsc::host_fn] must emit the extern shim under the C name
-// "Bun__createObjectURL" (Zig: `@export(&jsc.toJSHostFn(..), .{.name = ...})`).
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__createObjectURL")]
+#[bun_jsc::host_fn(export = "Bun__createObjectURL")]
 pub fn bun_create_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
@@ -134,9 +131,7 @@ pub fn bun_create_object_url(
     str.transfer_to_js(global_object)
 }
 
-// TODO(port): export shim under C name "Bun__revokeObjectURL".
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__revokeObjectURL")]
+#[bun_jsc::host_fn(export = "Bun__revokeObjectURL")]
 pub fn bun_revoke_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,

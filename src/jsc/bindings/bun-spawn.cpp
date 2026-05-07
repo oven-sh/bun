@@ -110,10 +110,11 @@ typedef struct bun_spawn_request_t {
 static inline void rawExit(int status)
 {
 #if defined(__NR_exit_group)
-    syscall(__NR_exit_group, status);
-#else
-    _exit(status);
+    // Best-effort: try exit_group first (faster for multi-threaded processes).
+    // If the syscall fails (e.g. blocked by seccomp), fall through to _exit().
+    (void)syscall(__NR_exit_group, status);
 #endif
+    _exit(status);
 }
 
 extern "C" ssize_t posix_spawn_bun(
@@ -155,14 +156,28 @@ extern "C" ssize_t posix_spawn_bun(
     // If vfork() fails (e.g. blocked by seccomp on some platforms), fall back
     // to fork().
     volatile int child_errno = 0;
-    pid_t child = vfork();
+
+    // On Linux, prefer vfork() for performance. vfork suspends the parent
+    // until exec/_exit, so exec failures can be communicated via shared
+    // memory (child_errno). If vfork fails (e.g. blocked by seccomp on
+    // some platforms), fall back to fork() with a pipe for error signaling.
+    bool use_fork_fallback = false;
+    int fork_errpipe[2] = { -1, -1 };
+
+    pid_t child;
+#if OS(LINUX)
+    child = vfork();
     if (child == -1) {
+        // vfork unavailable — use fork with error pipe
+        use_fork_fallback = true;
+        if (pipe(fork_errpipe) == -1) {
+            return errno;
+        }
+        fcntl(fork_errpipe[1], F_SETFD, FD_CLOEXEC);
         child = fork();
     }
 #else
-    // On macOS, we must use fork() because vfork() is more strictly enforced.
-    // This code path should only be used for PTY spawns on macOS.
-    pid_t child = fork();
+    child = fork();
 #endif
 
 #if OS(DARWIN) || OS(FREEBSD)
@@ -182,7 +197,12 @@ extern "C" ssize_t posix_spawn_bun(
         // With vfork(), we share memory with the parent, so we can communicate
         // the error directly via a volatile variable. The parent will see this
         // value after we call _exit().
+        // With fork() fallback, the error is communicated via fork_errpipe instead.
         child_errno = errno;
+        if (use_fork_fallback && fork_errpipe[1] >= 0) {
+            (void)write(fork_errpipe[1], &child_errno, sizeof(child_errno));
+            close(fork_errpipe[1]);
+        }
         rawExit(127);
 
         // should never be reached
@@ -366,9 +386,23 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     // Linux vfork() path: parent resumes after child calls exec or _exit
-    // We can detect exec failure via the volatile child_errno variable
+    // We can detect exec failure via the volatile child_errno variable.
+    // When vfork() was not available and fork() was used instead, the
+    // error comes through fork_errpipe.
     if (child != -1) {
-        if (child_errno != 0) {
+        if (use_fork_fallback && fork_errpipe[0] >= 0) {
+            // Fork fallback: read errno from pipe
+            int child_err = 0;
+            ssize_t n = read(fork_errpipe[0], &child_err, sizeof(child_err));
+            close(fork_errpipe[0]);
+            if (n == sizeof(child_err) && child_err != 0) {
+                wait4(child, NULL, 0, NULL);
+                res = child_err;
+            } else {
+                res = 0;
+                if (pid) *pid = child;
+            }
+        } else if (child_errno != 0) {
             // Child failed to exec - it set child_errno and called _exit()
             // Reap the zombie child process
             wait4(child, NULL, 0, NULL);
@@ -381,7 +415,7 @@ extern "C" ssize_t posix_spawn_bun(
             }
         }
     } else {
-        // vfork() failed
+        // fork/vfork() failed
         res = errno;
     }
 #endif

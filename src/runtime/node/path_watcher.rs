@@ -1028,7 +1028,7 @@ impl Darwin {
     fn add_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
         // PORT NOTE: reshaped for borrowck — capture the raw ctx pointer before the
         // shared borrow of `watcher.path` so the two don't overlap at the call site.
-        let ctx = watcher as *mut PathWatcher as *mut c_void;
+        let ctx = core::ptr::from_mut::<PathWatcher>(watcher).cast::<c_void>();
         match fsevents::watch(
             // `FSEventsWatcher` borrows this slice for its whole lifetime; the
             // backing `ZBox` is NUL-terminated for CF's C-string consumer.
@@ -1092,7 +1092,7 @@ impl Darwin {
         // `remove_watch()` (blocked on the FSEvents loop mutex we hold), with the
         // watcher already unlinked. Forming `&mut *ctx` here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
-        let watcher_ptr = ctx as *mut PathWatcher;
+        let watcher_ptr = ctx.cast::<PathWatcher>();
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();
@@ -1113,7 +1113,7 @@ impl Darwin {
 
     fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
-        let watcher_ptr = ctx as *mut PathWatcher;
+        let watcher_ptr = ctx.cast::<PathWatcher>();
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();
@@ -1299,7 +1299,7 @@ impl Kqueue {
             handle_oom((*plat).entries.put(
                 fd.native() as i32,
                 KqEntry {
-                    watcher: watcher as *mut PathWatcher,
+                    watcher: core::ptr::from_mut(watcher),
                     fd,
                     subpath: ZBox::from_bytes(subpath),
                     generation,

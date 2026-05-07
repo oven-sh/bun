@@ -2124,13 +2124,13 @@ mod tests {
             // produced by `dir_info_ref` below; the resolver guarantees it
             // outlives the router walk.
             let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
-            di.get_entries_const().map(|e| e as *const Fs::DirEntry)
+            di.get_entries_const().map(core::ptr::from_ref)
         },
     };
 
     #[inline]
     fn dir_info_ref(di: *const bun_resolver::DirInfo) -> DirInfoRef {
-        DirInfoRef { owner: di as *const (), vtable: &RESOLVER_DIR_INFO_VTABLE }
+        DirInfoRef { owner: di.cast::<()>(), vtable: &RESOLVER_DIR_INFO_VTABLE }
     }
 
     /// Newtype so the orphan rule lets us `impl ResolverLike` for a
@@ -2144,7 +2144,7 @@ mod tests {
         }
         fn fs_impl(&self) -> *mut Fs::Implementation {
             // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation }
+            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
         }
         fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
@@ -2192,10 +2192,10 @@ mod tests {
             // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
             // no errdefer; the test harness panics on error anyway, but the guard
             // still flushes diagnostics on early-return for parity.
-            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
+                    .print(bun_core::output::error_writer());
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2223,7 +2223,7 @@ mod tests {
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             let routes = RouteLoader::load_all(
                 router.config.clone(),
-                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
+                unsafe { &mut *core::ptr::from_mut(&mut log) },
                 &mut resolver,
                 dir_info_ref(root_dir),
                 top_level_dir,
@@ -2264,10 +2264,10 @@ mod tests {
             )?;
 
             let mut log = bun_logger::Log::init();
-            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
+                    .print(bun_core::output::error_writer());
             });
 
             let opts = bun_resolver::options::BundleOptions {
@@ -2288,7 +2288,7 @@ mod tests {
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
-                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
+                unsafe { &mut *core::ptr::from_mut(&mut log) },
                 dir_info_ref(root_dir),
                 &mut resolver,
                 top_level_dir,

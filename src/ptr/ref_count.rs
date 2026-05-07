@@ -290,7 +290,7 @@ impl<T: RefCounted> RefCount<T> {
             {
                 // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(self_ as *const u8, size_of::<T>())
+                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
                 };
                 // SAFETY: count is &*get_ref_count(self_); we need &mut for deinit
                 unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
@@ -472,7 +472,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             {
                 // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(self_ as *const u8, size_of::<T>())
+                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
                 };
                 // SAFETY: we hold the last ref; exclusive access
                 unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
@@ -805,7 +805,7 @@ macro_rules! impl_thread_safe_any_ref_counted {
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .has_one_ref()
                 }
             }
@@ -813,7 +813,7 @@ macro_rules! impl_thread_safe_any_ref_counted {
             unsafe fn rc_assert_no_refs(this: *const Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .assert_no_refs()
                 }
             }
@@ -1320,7 +1320,7 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
         let vtable = self.get_scope_extra_vtable();
         let _guard = self.lock.lock();
         // SAFETY: data_ptr/data_size describe a live T allocation
-        let bytes = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_size) };
+        let bytes = unsafe { core::slice::from_raw_parts(data_ptr.cast::<u8>(), data_size) };
         scope.track_external_allocation(
             bytes,
             ret_addr,

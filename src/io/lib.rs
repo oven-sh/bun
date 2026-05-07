@@ -243,7 +243,7 @@ impl Loop {
             let rc = unsafe {
                 libc::kevent(
                     loop_.kqueue_fd.native(),
-                    &change as *const KEvent,
+                    core::ptr::from_ref::<KEvent>(&change),
                     1,
                     core::ptr::null_mut(),
                     0,

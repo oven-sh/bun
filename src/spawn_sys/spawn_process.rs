@@ -693,14 +693,14 @@ pub fn spawn_process_posix(
                                 fds[1].cast(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
                                 fds[0].cast(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                         } else {
@@ -708,14 +708,14 @@ pub fn spawn_process_posix(
                                 fds[0].cast(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
                                 fds[1].cast(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                         }

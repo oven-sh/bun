@@ -276,7 +276,7 @@ fn generate_compile_result_for_css_chunk_impl(
                     // SAFETY: multiple threads update this counter; treat *usize as AtomicUsize
                     // (Zig: @atomicRmw(usize, bytes_ptr, .Add, output.len, .monotonic))
                     let atomic: &AtomicUsize =
-                        unsafe { &*(std::ptr::from_mut::<usize>(bytes_ptr) as *const AtomicUsize) };
+                        unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
                     let _ = atomic.fetch_add(output.len(), Ordering::Relaxed);
                 }
             }

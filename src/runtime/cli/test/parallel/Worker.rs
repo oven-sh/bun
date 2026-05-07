@@ -241,7 +241,7 @@ impl Worker {
         }
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
-        unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers += 1 };
+        unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         process.set_exit_handler(
             (&raw mut **this).cast::<()>(),
             &WORKER_EXIT_VTABLE,
@@ -256,7 +256,7 @@ impl Worker {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
                 // SAFETY: see above.
-                unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers -= 1 };
+                unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
                 return Err(bun_core::err!("ProcessWatchFailed"));
             }
@@ -270,7 +270,7 @@ impl Worker {
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_worker_exit(self, status) };
+        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
@@ -284,7 +284,7 @@ impl Worker {
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
+        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
         f.u32_(file_idx);
         f.str(file);
@@ -296,7 +296,7 @@ impl Worker {
 
     pub fn shutdown(&mut self) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
+        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
@@ -307,7 +307,7 @@ impl Worker {
     /// `Channel` owner callback: a decoded frame arrived.
     pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
+        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
@@ -323,7 +323,7 @@ impl Worker {
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
+        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -351,7 +351,7 @@ impl ChannelOwner for Worker {
 
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
+        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     fn on_channel_done(&mut self) {
@@ -364,7 +364,7 @@ impl ChannelOwner for Worker {
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
+        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 

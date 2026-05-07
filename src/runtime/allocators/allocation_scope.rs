@@ -418,7 +418,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
         #[cfg(feature = "alloc_scopes")]
         {
             // TODO(port): see LockedState::assert_owned note re: anytype slice handling.
-            self.state.lock().assert_owned(ptr as *const u8);
+            self.state.lock().assert_owned(ptr.cast::<u8>());
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;
@@ -427,7 +427,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     pub fn assert_unowned<T: ?Sized>(&self, ptr: *const T) {
         #[cfg(feature = "alloc_scopes")]
         {
-            self.state.lock().assert_unowned(ptr as *const u8);
+            self.state.lock().assert_unowned(ptr.cast::<u8>());
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;

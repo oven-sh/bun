@@ -678,7 +678,7 @@ impl FileSink {
         // (`*const bun_jsc::EventLoopHandle`) to recover the loop pointer and
         // never write through it. The `as *mut` is an erasure cast, not a
         // mutability claim — the field itself is never mutated via this path.
-        bun_io::EventLoopHandle(&raw const self.event_loop_handle as *mut c_void)
+        bun_io::EventLoopHandle((&raw const self.event_loop_handle).cast_mut().cast::<c_void>())
     }
 
     /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover

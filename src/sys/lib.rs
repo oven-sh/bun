@@ -1997,9 +1997,9 @@ mod posix_impl {
                     // SAFETY: setsockopt on freshly-created socketpair fds.
                     unsafe {
                         libc::setsockopt(fds[1], libc::SOL_SOCKET, libc::SO_RCVBUF,
-                            (&so_recvbuf as *const i32).cast(), core::mem::size_of::<i32>() as u32);
+                            core::ptr::from_ref::<i32>(&so_recvbuf).cast(), core::mem::size_of::<i32>() as u32);
                         libc::setsockopt(fds[0], libc::SOL_SOCKET, libc::SO_SNDBUF,
-                            (&so_sendbuf as *const i32).cast(), core::mem::size_of::<i32>() as u32);
+                            core::ptr::from_ref::<i32>(&so_sendbuf).cast(), core::mem::size_of::<i32>() as u32);
                     }
                 } else {
                     let on: libc::c_int = 1;
@@ -2007,7 +2007,7 @@ mod posix_impl {
                         // SAFETY: setsockopt on freshly-created socketpair fds.
                         if unsafe {
                             libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
-                                (&on as *const i32).cast(), core::mem::size_of::<i32>() as u32)
+                                core::ptr::from_ref::<i32>(&on).cast(), core::mem::size_of::<i32>() as u32)
                         } < 0 {
                             return close_both(Error::from_code_int(last_errno(), Tag::setsockopt));
                         }
@@ -3672,7 +3672,7 @@ pub mod darwin {
             let p = unsafe { os_log_create(c"com.bun.bun".as_ptr(), c"PointsOfInterest".as_ptr()) };
             core::ptr::NonNull::new(p)
         }
-        #[inline] pub fn as_ptr(&self) -> *const OSLog { self as *const _ }
+        #[inline] pub fn as_ptr(&self) -> *const OSLog { core::ptr::from_ref(self) }
         /// Full signpost API lives in `bun_platform::darwin`; this stub lets
         /// `bun_perf` compile its Darwin arm without pulling that crate up-tier.
         pub fn signpost(&self, name: i32) -> os_log::Signpost<'_> {

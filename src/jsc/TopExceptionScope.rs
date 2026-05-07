@@ -127,7 +127,7 @@ impl TopExceptionScope {
 
         #[cfg(feature = "ci_assert")]
         {
-            self.location = &self.bytes[0] as *const u8;
+            self.location = core::ptr::from_ref::<u8>(&self.bytes[0]);
         }
     }
 

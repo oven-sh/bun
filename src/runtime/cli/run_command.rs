@@ -717,7 +717,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
         // (breaks the bun_install dep cycle) — erase the type.
         b.resolver.opts.install =
-            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr() as *const ());
+            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr().cast::<()>());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online);
         b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
@@ -2169,8 +2169,8 @@ impl RunCommand {
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase
                             // borrowed lifetime for the singleton handoff.
-                            &mut *(env as *mut DotEnv::Loader<'_>
-                                as *mut DotEnv::Loader<'static>)
+                            &mut *core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
+                                .cast::<DotEnv::Loader<'static>>()
                         }),
                         None,
                     ),
@@ -4053,7 +4053,7 @@ impl BunXFastPath {
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer() as *mut bun_core::io::Writer);
+            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

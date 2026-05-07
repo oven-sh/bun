@@ -146,7 +146,7 @@ impl<'a> Writable<'a> {
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop) as *mut (),
+            std::ptr::from_ref::<EventLoop>(event_loop).cast_mut().cast::<()>(),
         );
 
         #[cfg(windows)]
@@ -404,7 +404,7 @@ impl<'a> Writable<'a> {
                     pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
-                            std::ptr::from_mut::<Subprocess>(subprocess) as *const c_void,
+                            std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>(),
                         )),
                     )
                 }

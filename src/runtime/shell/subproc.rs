@@ -2233,7 +2233,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
         // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void`; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it.
-        bun_io::EventLoopHandle(unsafe { &raw const (*this).event_loop } as *mut c_void)
+        bun_io::EventLoopHandle(unsafe { &raw const (*this).event_loop }.cast_mut().cast::<c_void>())
     }
 }
 

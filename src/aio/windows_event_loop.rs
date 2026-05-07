@@ -508,7 +508,7 @@ impl Closer {
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         // SAFETY: closer is a freshly-boxed valid pointer.
         unsafe {
-            (*closer).io_request.data = closer as *mut c_void;
+            (*closer).io_request.data = closer.cast::<c_void>();
             if let Some(err) =
                 uv::uv_fs_close(loop_, &mut (*closer).io_request, fd.uv(), Some(Self::on_close))
                     .err_enum()

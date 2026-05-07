@@ -443,7 +443,7 @@ pub fn getcwd_z(buf: &mut PathBuffer) -> Result<&ZStr> {
             // SAFETY: getcwd NUL-terminates on success.
             let len = unsafe { libc::strlen(rc) };
             // SAFETY: buffer is NUL-terminated at the given length (written above).
-            Result::Ok(unsafe { ZStr::from_raw(rc as *const u8, len) })
+            Result::Ok(unsafe { ZStr::from_raw(rc.cast::<u8>().cast_const(), len) })
         } else {
             Result::<&ZStr>::errno_sys_p(0 as c_int, Tag::getcwd, buf).unwrap()
         }
@@ -803,7 +803,7 @@ fn makedev(major: u32, minor: u32) -> u64 {
 fn statx_fallback(fd: Fd, path: Option<*const c_char>, flags: u32) -> Result<PosixStat> {
     if let Some(p) = path {
         // SAFETY: caller passed a valid NUL-terminated pointer.
-        let path_span = unsafe { ZStr::from_ptr(p as *const u8) };
+        let path_span = unsafe { ZStr::from_ptr(p.cast::<u8>()) };
         let fallback = if flags & syscall::AT_SYMLINK_NOFOLLOW != 0 {
             lstat(path_span)
         } else {
@@ -2285,13 +2285,13 @@ pub fn ppoll(fds: &mut [posix::pollfd], timeout: Option<&mut posix::timespec>, s
         let rc = {
             #[cfg(target_os = "macos")]
             // SAFETY: FFI call; arguments are valid for the duration of the call.
-            { unsafe { darwin_nocancel::ppoll_nocancel(fds.as_mut_ptr(), fds.len(), timeout.as_deref_mut().map_or(core::ptr::null_mut(), |t| t as *mut _), sigmask.map_or(core::ptr::null(), |s| s as *const _)) } }
+            { unsafe { darwin_nocancel::ppoll_nocancel(fds.as_mut_ptr(), fds.len(), timeout.as_deref_mut().map_or(core::ptr::null_mut(), core::ptr::from_mut), sigmask.map_or(core::ptr::null(), core::ptr::from_ref)) } }
             #[cfg(target_os = "linux")]
             // SAFETY: FFI call; arguments are valid for the duration of the call.
-            { unsafe { syscall::ppoll(fds.as_mut_ptr(), fds.len(), timeout.as_deref_mut().map_or(core::ptr::null_mut(), |t| t as *mut _), sigmask.map_or(core::ptr::null(), |s| s as *const _)) } }
+            { unsafe { syscall::ppoll(fds.as_mut_ptr(), fds.len(), timeout.as_deref_mut().map_or(core::ptr::null_mut(), core::ptr::from_mut), sigmask.map_or(core::ptr::null(), core::ptr::from_ref)) } }
             #[cfg(target_os = "freebsd")]
             // SAFETY: FFI call; arguments are valid for the duration of the call.
-            { unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout.as_deref_mut().map_or(core::ptr::null_mut(), |t| t as *mut _), sigmask.map_or(core::ptr::null(), |s| s as *const _)) } }
+            { unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout.as_deref_mut().map_or(core::ptr::null_mut(), core::ptr::from_mut), sigmask.map_or(core::ptr::null(), core::ptr::from_ref)) } }
         };
         if let Some(err) = Result::<usize>::errno_sys(rc, Tag::ppoll) {
             if err.get_errno() == E::INTR { continue; }
@@ -2344,7 +2344,7 @@ pub fn kevent(fd: Fd, changelist: &[libc::kevent], eventlist: &mut [libc::kevent
                 changelist.len() as _,
                 eventlist.as_mut_ptr(),
                 eventlist.len() as _,
-                timeout.as_deref().map_or(core::ptr::null(), |t| t as *const _),
+                timeout.as_deref().map_or(core::ptr::null(), core::ptr::from_ref),
             )
         };
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::kevent, fd) {
@@ -3130,7 +3130,7 @@ pub fn get_fd_path<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -> Result<&'a mut
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
         let mut info: c::struct_kinfo_file = unsafe { mem::zeroed() };
         info.kf_structsize = mem::size_of::<c::struct_kinfo_file>() as _;
-        if let Result::Err(err) = fcntl(fd, c::F_KINFO, (&mut info) as *mut _ as usize) {
+        if let Result::Err(err) = fcntl(fd, c::F_KINFO, core::ptr::from_mut(&mut info) as usize) {
             return Result::Err(err);
         }
         let path = bun_str::slice_to_nul(&info.kf_path);
@@ -3153,7 +3153,7 @@ pub fn mmap(
 ) -> Result<&'static mut [u8]> {
     let ioffset = offset as i64; // the OS treats this as unsigned
     // SAFETY: FFI call; ptr is either null or a hint address, fd is a valid live fd.
-    let rc = unsafe { libc::mmap(ptr.unwrap_or(core::ptr::null_mut()) as *mut c_void, length, prot as _, flags, fd.cast(), ioffset) };
+    let rc = unsafe { libc::mmap(ptr.unwrap_or(core::ptr::null_mut()).cast::<c_void>(), length, prot as _, flags, fd.cast(), ioffset) };
     let fail = libc::MAP_FAILED;
     if rc == fail {
         return Result::Err(Error {
@@ -3163,7 +3163,7 @@ pub fn mmap(
         });
     }
     // SAFETY: mmap returned a valid mapping of `length` bytes.
-    Result::Ok(unsafe { core::slice::from_raw_parts_mut(rc as *mut u8, length) })
+    Result::Ok(unsafe { core::slice::from_raw_parts_mut(rc.cast::<u8>(), length) })
 }
 
 #[cfg(unix)]
@@ -4596,7 +4596,7 @@ pub fn get_self_exe_shared_lib_paths() -> core::result::Result<Vec<Box<ZStr>>, b
         // SAFETY: callback is only invoked from dl_iterate_phdr below with `data` pointing
         // at our local `paths` Vec; `info` is a valid dl_phdr_info for the duration of the call.
         unsafe extern "C" fn callback(info: *mut posix::dl_phdr_info, _size: usize, data: *mut c_void) -> c_int {
-            let list = &mut *(data as *mut Vec<Box<ZStr>>);
+            let list = &mut *data.cast::<Vec<Box<ZStr>>>();
             let name = (*info).dlpi_name;
             if name.is_null() { return 0; }
             if *name == b'/' as c_char {
@@ -5121,7 +5121,7 @@ pub mod os {
             let rc = unsafe {
                 libc::sysctlbyname(
                     c"hw.physmem".as_ptr(),
-                    (&mut physmem as *mut u64).cast(),
+                    core::ptr::from_mut::<u64>(&mut physmem).cast(),
                     &mut size,
                     core::ptr::null_mut(),
                     0,

@@ -1159,7 +1159,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
     // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::read to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-    let rwl = &mut this.read_write_loop as *mut ReadWriteLoop;
+    let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut this.read_write_loop);
     // SAFETY: rwl points to this.read_write_loop; read() only touches this.io_request/this.event_loop, so no overlapping &mut alias is live across the call.
     match unsafe { (*rwl).read(this) } {
         bun_sys::Result::Err(err) => {
@@ -1296,7 +1296,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::start to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-        let rwl = &mut self.read_write_loop as *mut ReadWriteLoop;
+        let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut self.read_write_loop);
         // SAFETY: rwl points to self.read_write_loop; start() only touches self.io_request/self.event_loop, so no overlapping &mut alias is live across the call.
         match unsafe { (*rwl).start(self) } {
             bun_sys::Result::Err(err) => {

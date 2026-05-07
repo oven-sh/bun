@@ -576,8 +576,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let mut stdout_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
             // SAFETY: as above.
             let mut stderr_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            let stdout_ptr = stdout_pipe.as_mut() as *mut uv::Pipe;
-            let stderr_ptr = stderr_pipe.as_mut() as *mut uv::Pipe;
+            let stdout_ptr: *mut uv::Pipe = core::ptr::from_mut(stdout_pipe.as_mut());
+            let stderr_ptr: *mut uv::Pipe = core::ptr::from_mut(stderr_pipe.as_mut());
             (*this).stdout.source = Some(bun_io::Source::Pipe(stdout_pipe));
             (*this).stderr.source = Some(bun_io::Source::Pipe(stderr_pipe));
             (stdout_ptr, stderr_ptr)
@@ -687,12 +687,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         #[cfg(windows)]
         {
             if matches!(spawned.stdout, bun_spawn::SpawnedStdio::Buffer(_)) {
-                (*this).stdout.set_parent(this as *mut c_void);
+                (*this).stdout.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
             if matches!(spawned.stderr, bun_spawn::SpawnedStdio::Buffer(_)) {
-                (*this).stderr.set_parent(this as *mut c_void);
+                (*this).stderr.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;
             }
@@ -1196,7 +1196,7 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         // CYCLEBREAK note on `bun_io::EventLoopHandle`).
         unsafe {
             EventLoopHandle(
-                std::ptr::from_ref::<AnyEventLoop<'static>>((*this).event_loop()) as *mut c_void,
+                std::ptr::from_ref::<AnyEventLoop<'static>>((*this).event_loop()).cast_mut().cast::<c_void>(),
             )
         }
     }

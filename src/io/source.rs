@@ -120,7 +120,7 @@ impl File {
         }
 
         // SAFETY: &mut self.fs is a valid uv_fs_t request; uv_req_t is its base.
-        let cancel_result = unsafe { uv::uv_cancel((&mut self.fs as *mut uv::fs_t).cast()) };
+        let cancel_result = unsafe { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
         if cancel_result == 0 {
             self.state = FileState::Canceling;
         }
@@ -216,7 +216,7 @@ impl Source {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance (Zig: `getHandle` returns `*uv.Handle`).
-            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
+            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }
@@ -226,7 +226,7 @@ impl Source {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance (Zig: `toStream` returns `*uv.uv_stream_t`).
-            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
+            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }

@@ -35,7 +35,7 @@ pub trait GlobalObjectRef {
 impl GlobalObjectRef for crate::JSGlobalObject {
     #[inline]
     fn as_global_ptr(&self) -> *mut c_void {
-        std::ptr::from_ref::<Self>(self) as *mut c_void
+        std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>()
     }
     #[inline]
     fn throw_js_value(&self, value: JSValue) -> JsError {

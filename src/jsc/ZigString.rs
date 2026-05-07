@@ -112,7 +112,7 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
         // SAFETY: caller contract — `ptr` came from the global mimalloc
         // allocator. `mi_free` accepts the raw block pointer regardless of
         // element size.
-        unsafe { bun_alloc::mimalloc::mi_free(ptr as *mut core::ffi::c_void) };
+        unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
         // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
         // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
         // yet, so throw a plain RangeError with the same message. Propagation
@@ -1110,7 +1110,7 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     let _ = len;
     // SAFETY: ptr was allocated by mimalloc; mi_free is size-agnostic.
-    unsafe { bun_alloc::mimalloc::mi_free(ptr as *mut c_void) };
+    unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<c_void>()) };
 }
 
 #[unsafe(no_mangle)]

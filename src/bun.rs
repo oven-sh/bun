@@ -402,7 +402,7 @@ pub fn free_all_threadlocal_buffers() {
 
 #[inline]
 pub unsafe fn cast<To>(value: *const c_void) -> *mut To {
-    value as *mut To
+    value.cast_mut().cast::<To>()
 }
 
 /// Find the length of a NUL-terminated C string.
@@ -676,7 +676,7 @@ pub fn unreachable_panic(args: core::fmt::Arguments<'_>) -> ! {
 pub fn is_heap_memory<T>(mem: *const T) -> bool {
     if use_mimalloc {
         // SAFETY: mi_is_in_heap_region only reads the pointer value
-        return unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(mem as *const c_void) };
+        return unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(mem.cast::<c_void>()) };
     }
     false
 }
@@ -2878,7 +2878,7 @@ pub fn split_at_mut<T>(slice: &mut [T], mid: usize) -> (&mut [T], &mut [T]) {
 /// Reverse of the slice index operator.
 pub fn index_of_pointer_in_slice<T>(slice: &[T], item: &T) -> usize {
     debug_assert!(isSliceInBufferT(core::slice::from_ref(item), slice));
-    let offset = (item as *const T as usize) - (slice.as_ptr() as usize);
+    let offset = (core::ptr::from_ref::<T>(item) as usize) - (slice.as_ptr() as usize);
     offset / core::mem::size_of::<T>()
 }
 
@@ -3036,7 +3036,7 @@ impl StackCheck {
         // TODO(port): @frameAddress() — use an approximate stack pointer
         let stack_ptr: usize = {
             let local = 0u8;
-            &local as *const u8 as usize
+            core::ptr::from_ref::<u8>(&local) as usize
         };
         let remaining_stack = stack_ptr.saturating_sub(self.cached_stack_end);
         let limit = if cfg!(windows) { 256 } else { 128 };

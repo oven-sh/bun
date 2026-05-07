@@ -325,7 +325,7 @@ impl<'a> AsyncHTTP<'a> {
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
-        std::ptr::from_ref::<Self>(self) as *mut AsyncHTTP<'static>
+        std::ptr::from_ref::<Self>(self).cast_mut().cast::<AsyncHTTP<'static>>()
     }
 
     /// Accessor for the global concurrent-request cap (Zig:

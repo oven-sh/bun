@@ -541,7 +541,7 @@ impl<'a> HTTPClient<'a> {
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
         // SAFETY: `self` is a valid reference (non-null, aligned).
-        unsafe { NonNull::new_unchecked(std::ptr::from_ref::<Self>(self) as *mut HTTPClient<'static>) }
+        unsafe { NonNull::new_unchecked(std::ptr::from_ref::<Self>(self).cast_mut().cast::<HTTPClient<'static>>()) }
     }
 }
 

@@ -324,7 +324,7 @@ impl PackedNextPtr {
         // auto_delete is immutable after construction, so we can safely read it
         // with a relaxed load and preserve it in the new value.
         // SAFETY: PackedNextPtr is #[repr(transparent)] over usize; cast is layout-valid.
-        let self_ptr = unsafe { &*(std::ptr::from_mut::<Self>(self) as *const AtomicUsize) };
+        let self_ptr = unsafe { &*std::ptr::from_mut::<Self>(self).cast_const().cast::<AtomicUsize>() };
         let auto_del_bit = self_ptr.load(Ordering::Relaxed) & 1;
         self_ptr.store(ptr_bits | auto_del_bit, ordering);
     }

@@ -172,7 +172,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
         // (`*const bun_jsc::EventLoopHandle`) and never write through it.
-        bun_io::EventLoopHandle(&raw const self.event_loop as *mut c_void)
+        bun_io::EventLoopHandle((&raw const self.event_loop).cast_mut().cast::<c_void>())
     }
 
     pub fn update_ref(&mut self, add: bool) {

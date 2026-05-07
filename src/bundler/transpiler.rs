@@ -1073,7 +1073,7 @@ pub(crate) fn resolver_bundle_options_subset(
         // call sites), so this is a plain pointer-to-pointer cast.
         install: src
             .install
-            .map(|p| p.as_ptr() as *const ())
+            .map(|p| p.as_ptr().cast::<()>().cast_const())
             .unwrap_or(core::ptr::null()),
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,

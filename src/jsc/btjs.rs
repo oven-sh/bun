@@ -111,7 +111,7 @@ mod zig_std_debug {
             // arches without an asm! mapping yet. fp-walk will fail its alignment
             // sanity check and terminate cleanly.
             let probe = 0u8;
-            &probe as *const u8 as usize
+            core::ptr::from_ref::<u8>(&probe) as usize
         }
     }
 

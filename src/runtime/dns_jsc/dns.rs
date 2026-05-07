@@ -420,7 +420,7 @@ pub mod lib_uv_backend {
 
         // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
         let promise = unsafe {
-            (*request).backend.as_libc_uv_mut().data = request as *mut c_void;
+            (*request).backend.as_libc_uv_mut().data = request.cast::<c_void>();
             let promise = (*request).head.promise.value();
             let rc = libuv::uv_getaddrinfo(
                 this.vm().uv_loop(),
@@ -428,7 +428,7 @@ pub mod lib_uv_backend {
                 Some(on_raw_libuv_complete),
                 host.as_ptr().cast::<c_char>(),
                 port_z.as_ptr().cast::<c_char>(),
-                hints.as_ref().map(|h| h as *const _).unwrap_or(ptr::null()),
+                hints.as_ref().map_or(ptr::null(), core::ptr::from_ref),
             );
             if rc.int() < 0 {
                 // uv_getaddrinfo can fail synchronously before it queues any work
@@ -1086,7 +1086,7 @@ pub mod get_addr_info_request {
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
                 ) {
                     bun_output::scoped_log!(GetAddrInfoRequest, "onMachportChange: getaddrinfo_send_reply failed");
-                    GetAddrInfoRequest::get_addr_info_async_callback(-1, ptr::null_mut(), this as *mut c_void);
+                    GetAddrInfoRequest::get_addr_info_async_callback(-1, ptr::null_mut(), this.cast::<c_void>());
                 }
             }
         }
@@ -1399,7 +1399,7 @@ impl GetAddrInfoRequest {
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
             let this: *mut Self = (*uv_info).data.cast();
             #[cfg(windows)]
-            debug_assert!(uv_info == (*this).backend.as_libc_uv_mut() as *mut _);
+            debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
             if let get_addr_info_request::Backend::Libinfo(li) = &mut (*this).backend {
                 if let Some(poll) = li.file_poll.take() {
                     // SAFETY: `poll` is the hive slot returned by `FilePoll::init`;
@@ -1936,7 +1936,7 @@ pub mod internal {
                     (*this).libinfo.machport,
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
                 ) {
-                    libinfo_callback(sys::E::ENOSYS as i32, ptr::null_mut(), this as *mut c_void);
+                    libinfo_callback(sys::E::ENOSYS as i32, ptr::null_mut(), this.cast::<c_void>());
                 }
             }
         }
@@ -2273,10 +2273,10 @@ pub mod internal {
                 if !(*info_).ai_addr.is_null() {
                     if (*info_).ai_family == libc::AF_INET {
                         let addr_in = (&raw mut (*entry).addr).cast::<libc::sockaddr_in>();
-                        *addr_in = *((*info_).ai_addr as *const libc::sockaddr_in);
+                        *addr_in = *(*info_).ai_addr.cast::<libc::sockaddr_in>();
                     } else if (*info_).ai_family == libc::AF_INET6 {
                         let addr_in = (&raw mut (*entry).addr).cast::<libc::sockaddr_in6>();
-                        *addr_in = *((*info_).ai_addr as *const libc::sockaddr_in6);
+                        *addr_in = *(*info_).ai_addr.cast::<libc::sockaddr_in6>();
                     }
                 } else {
                     // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
@@ -4074,7 +4074,7 @@ impl Resolver {
             if !readable && !writable {
                 // cleanup
                 if let Some(entry) = self.polls.fetch_ordered_remove(&fd) {
-                    unsafe { uv::uv_close((&mut (*entry.value).poll) as *mut _ as *mut _, Some(Self::on_close_uv)) };
+                    unsafe { uv::uv_close(core::ptr::from_mut(&mut (*entry.value).poll).cast(), Some(Self::on_close_uv)) };
                 }
                 return;
             }
@@ -4095,7 +4095,7 @@ impl Resolver {
             let uv_events = (if readable { uv::UV_READABLE } else { 0 }) | (if writable { uv::UV_WRITABLE } else { 0 });
             if unsafe { uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv)) } < 0 {
                 let _ = self.polls.swap_remove(&fd);
-                unsafe { uv::uv_close((&mut (*poll).poll) as *mut _ as *mut _, Some(Self::on_close_uv)) };
+                unsafe { uv::uv_close(core::ptr::from_mut(&mut (*poll).poll).cast(), Some(Self::on_close_uv)) };
             }
         }
         #[cfg(not(windows))]

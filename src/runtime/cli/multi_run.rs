@@ -1187,7 +1187,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             state.abort();
         }
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
+        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
     }
 
     let status = state.finalize();

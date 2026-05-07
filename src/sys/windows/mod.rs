@@ -3233,7 +3233,7 @@ pub fn CreateHardLinkW(
         CreateHardLinkW_raw(
             new_file_name,
             existing_file_name,
-            security_attributes.map_or(ptr::null_mut(), |p| p as *mut _),
+            security_attributes.map_or(ptr::null_mut(), core::ptr::from_mut),
         )
     };
     #[cfg(debug_assertions)]
@@ -4272,7 +4272,7 @@ pub fn spawn_watcher_child(
         lpAttributeList: p.as_mut_ptr(),
     };
     // SAFETY: procinfo is POD
-    unsafe { ptr::write_bytes(procinfo as *mut _ as *mut u8, 0, size_of::<win32::PROCESS_INFORMATION>()); }
+    unsafe { ptr::write_bytes(core::ptr::from_mut(procinfo).cast::<u8>(), 0, size_of::<win32::PROCESS_INFORMATION>()); }
     // SAFETY: all pointers valid; envbuf double-NUL terminated
     let rc = unsafe {
         kernel32::CreateProcessW(
@@ -4284,7 +4284,7 @@ pub fn spawn_watcher_child(
             flags,
             envbuf.as_mut_ptr().cast::<c_void>(),
             ptr::null(),
-            (&mut startupinfo) as *mut _ as *mut win32::STARTUPINFOW,
+            core::ptr::from_mut(&mut startupinfo).cast::<win32::STARTUPINFOW>(),
             procinfo,
         )
     };

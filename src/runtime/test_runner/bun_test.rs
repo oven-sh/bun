@@ -717,7 +717,7 @@ impl BunTest {
                     group_index: self.execution.group_index,
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
-                        entry: active_entry.as_ptr() as *const (),
+                        entry: active_entry.as_ptr().cast::<()>(),
                         remaining_repeat_count: sequence.remaining_repeat_count as i64,
                     }),
                 }

@@ -1553,7 +1553,7 @@ impl Terminal {
         // address of the stored bun_jsc::EventLoopHandle.
         self.writer.update_ref(
             bun_io::EventLoopHandle(
-                &raw const self.event_loop_handle as *mut c_void,
+                (&raw const self.event_loop_handle).cast_mut().cast::<c_void>(),
             ),
             add,
         );
@@ -1892,7 +1892,7 @@ impl BufferedReaderParent for Terminal {
         // (registered by bun_runtime::init) can recover it.
         // SAFETY: see on_read_chunk; shared-only read.
         bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
         )
     }
 }
@@ -1928,7 +1928,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it.
         bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
         )
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {

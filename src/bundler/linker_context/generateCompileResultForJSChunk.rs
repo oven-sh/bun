@@ -178,7 +178,7 @@ fn generate_compile_result_for_js_chunk_impl(
             // SAFETY: multiple threads update this counter; treat &mut usize as &AtomicUsize
             // (same layout, monotonic add only).
             let atomic: &AtomicUsize =
-                unsafe { &*(std::ptr::from_mut::<usize>(bytes_ptr) as *const AtomicUsize) };
+                unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
             let _ = atomic.fetch_add(code_len, Ordering::Relaxed);
         }
     }

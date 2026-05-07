@@ -568,7 +568,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
                 pid,
                 bun_sys::c::PROC_PIDTBSDINFO,
                 0,
-                (&mut info as *mut bun_sys::c::struct_proc_bsdinfo).cast(),
+                core::ptr::from_mut::<bun_sys::c::struct_proc_bsdinfo>(&mut info).cast(),
                 size,
             );
             if rc != size {

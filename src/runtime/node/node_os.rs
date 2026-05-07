@@ -1016,7 +1016,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
 
                     // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
-                    break 'search Some(ll_iface.ifa_addr as *const c_void);
+                    break 'search Some(ll_iface.ifa_addr.cast::<c_void>().cast_const());
                 }
                 None
             };
@@ -1139,7 +1139,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             let addr_str = bun_fmt::format_ip(
                 // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                 // SAFETY: address4 is a valid sockaddr
-                &unsafe { bun_sys::net::Address::init_posix(&iface.address.address4 as *const _ as *const bun_sys::posix::sockaddr) },
+                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.address.address4).cast::<bun_sys::posix::sockaddr>()) },
                 &mut ip_buf,
             )
             .expect("unreachable");
@@ -1167,7 +1167,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             let str = bun_fmt::format_ip(
                 // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                 // SAFETY: netmask4 is a valid sockaddr
-                &unsafe { bun_sys::net::Address::init_posix(&iface.netmask.netmask4 as *const _ as *const bun_sys::posix::sockaddr) },
+                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.netmask.netmask4).cast::<bun_sys::posix::sockaddr>()) },
                 &mut ip_buf,
             )
             .expect("unreachable");

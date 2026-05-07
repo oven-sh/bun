@@ -249,7 +249,7 @@ impl Process {
         // the raw `*mut uv_process_t` and forward.
         if let Poller::Uv(uv_proc) = &mut self.poller {
             if !uv_proc.is_active() && matches!(self.status, Status::Running) {
-                let handle: *mut uv::uv_process_t = uv_proc as *mut uv::uv_process_t;
+                let handle: *mut uv::uv_process_t = core::ptr::from_mut(uv_proc);
                 Self::on_exit_uv(handle, 0, 0);
             }
         }
@@ -1643,8 +1643,8 @@ pub fn spawn_process_windows(
     // SAFETY: all-zero is a valid uv_process_options_t
     let mut uv_process_options: uv::uv_process_options_t = unsafe { core::mem::zeroed() };
 
-    uv_process_options.args = argv as *mut *mut c_char;
-    uv_process_options.env = envp as *mut *mut c_char;
+    uv_process_options.args = argv.cast_mut().cast::<*mut c_char>();
+    uv_process_options.env = envp.cast_mut().cast::<*mut c_char>();
     // SAFETY: argv is null-terminated, argv[0] is non-null
     uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
@@ -1759,7 +1759,7 @@ pub fn spawn_process_windows(
                     // create_zeroed_pipe (Box::into_raw).
                     unsafe { (&mut **my_pipe).init(loop_, false) }.unwrap()?;
                     stdio.flags = pipe_flags;
-                    stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
+                    stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
                 }
                 WindowsStdio::Pipe(fd) => {
                     stdio.flags = uv::UV_INHERIT_FD;
@@ -1822,7 +1822,7 @@ pub fn spawn_process_windows(
                     | uv::UV_WRITABLE_PIPE
                     | uv::UV_READABLE_PIPE
                     | uv::UV_OVERLAPPED_PIPE;
-                stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
+                stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
             }
             WindowsStdio::Buffer(my_pipe) => {
                 // SAFETY: non-null heap allocation from create_zeroed_pipe.
@@ -1831,7 +1831,7 @@ pub fn spawn_process_windows(
                     | uv::UV_WRITABLE_PIPE
                     | uv::UV_READABLE_PIPE
                     | uv::UV_OVERLAPPED_PIPE;
-                stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
+                stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
             }
             WindowsStdio::Pipe(fd) => {
                 stdio.flags = uv::StdioFlags::INHERIT_FD;
@@ -1938,7 +1938,7 @@ pub fn spawn_process_windows(
                     // transfer — the borrowed `options` dropping later is a
                     // no-op on the raw pointer.
                     *result_stdio = WindowsStdioResult::Buffer(unsafe {
-                        Box::from_raw(stdio.data.stream as *mut uv::Pipe)
+                        Box::from_raw(stdio.data.stream.cast::<uv::Pipe>())
                     });
                 }
                 _ => {
@@ -1955,7 +1955,7 @@ pub fn spawn_process_windows(
                 // SAFETY: sole ownership transfer of the Box::into_raw'd
                 // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
                 result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
-                    Box::from_raw(stdio_containers[3 + i].data.stream as *mut uv::Pipe)
+                    Box::from_raw(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
                 }));
             }
             _ => {

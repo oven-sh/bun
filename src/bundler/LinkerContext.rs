@@ -104,9 +104,9 @@ pub fn bundle_generate_chunk_action(
     part_range: &PartRange,
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        context: ctx as *const LinkerContext as *const (),
-        chunk: chunk as *const Chunk as *const (),
-        part_range: part_range as *const PartRange as *const (),
+        context: core::ptr::from_ref::<LinkerContext>(ctx).cast::<()>(),
+        chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
+        part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
         vtable: &BUNDLE_GENERATE_CHUNK_VTABLE,
     })
 }

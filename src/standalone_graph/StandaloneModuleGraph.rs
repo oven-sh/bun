@@ -357,7 +357,7 @@ mod elf {
         let target = vaddr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
-            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }

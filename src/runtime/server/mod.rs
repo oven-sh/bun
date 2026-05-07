@@ -832,7 +832,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // is the heap `Request` kept alive by `ctx.request_weakref`.
                 unsafe {
                     (*ctx).to_async(
-                        std::ptr::from_ref::<uws::Request>(r) as *mut c_void,
+                        std::ptr::from_ref::<uws::Request>(r).cast_mut().cast::<c_void>(),
                         &mut *request_object,
                     )
                 };
@@ -2814,7 +2814,7 @@ impl AnyServer {
             (false, true) => AnyServerTag::DebugHTTPServer,
             (true, true) => AnyServerTag::DebugHTTPSServer,
         };
-        AnyServer { tag, ptr: server as *mut () }
+        AnyServer { tag, ptr: server.cast::<()>().cast_mut() }
     }
 
     /// Re-pack into the Zig `bun.ptr.TaggedPointerUnion` wire format

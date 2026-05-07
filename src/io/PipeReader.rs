@@ -1112,19 +1112,19 @@ impl WindowsBufferedReader {
             has_more: ReadState,
         ) -> bool {
             // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_read_chunk(this as *mut T, chunk, has_more) }
+            unsafe { T::on_read_chunk(this.cast::<T>(), chunk, has_more) }
         }
         fn on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
             // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_reader_done(this as *mut T) }
+            unsafe { T::on_reader_done(this.cast::<T>()) }
         }
         fn on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
             // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_reader_error(this as *mut T, err) }
+            unsafe { T::on_reader_error(this.cast::<T>(), err) }
         }
         fn loop_<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
             // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::loop_(this as *mut T) }
+            unsafe { T::loop_(this.cast::<T>()) }
         }
 
         WindowsBufferedReader {
@@ -1365,12 +1365,12 @@ impl WindowsBufferedReader {
         // SAFETY: libuv read_cb — `handle` is a `uv_stream_t*` whose `.data`
         // was set to `*mut Self` in `set_data`. Invoked from the event loop
         // with no other Rust borrow of the reader live (single-owner).
-        let stream = handle as *mut uv::uv_stream_t;
+        let stream = handle.cast::<uv::uv_stream_t>();
         let this = unsafe { &mut *(*stream).data.cast::<WindowsBufferedReader>() };
 
         let nread_int = nread.int();
 
-        bun_sys::syslog!("onStreamRead(0x{}) = {}", this as *mut _ as usize, nread_int);
+        bun_sys::syslog!("onStreamRead(0x{}) = {}", core::ptr::from_mut(this) as usize, nread_int);
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         match nread_int {
@@ -1529,7 +1529,7 @@ impl WindowsBufferedReader {
                                     (this.vtable.loop_)(this.parent),
                                     &mut file_ptr.fs,
                                     file_ptr.file,
-                                    &mut file_ptr.iov as *mut _ as *mut _,
+                                    core::ptr::from_mut(&mut file_ptr.iov).cast(),
                                     1,
                                     offset,
                                     Self::on_file_read,
@@ -1591,7 +1591,7 @@ impl WindowsBufferedReader {
                     (self.vtable.loop_)(self.parent),
                     &mut file.fs,
                     file.file,
-                    &mut file.iov as *mut _ as *mut _,
+                    core::ptr::from_mut(&mut file.iov).cast(),
                     1,
                     offset,
                     Self::on_file_read,
@@ -1658,7 +1658,7 @@ impl WindowsBufferedReader {
                 Source::Pipe(pipe) => {
                     // SAFETY: pipe is a live uv::Pipe*.
                     unsafe {
-                        (*pipe).data = pipe as *mut c_void;
+                        (*pipe).data = pipe.cast::<c_void>();
                     }
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                     // SAFETY: pipe is valid; on_pipe_close frees it.
@@ -1672,7 +1672,7 @@ impl WindowsBufferedReader {
                     } else {
                         // SAFETY: tty is a live heap-allocated uv_tty_t*.
                         unsafe {
-                            (*p).data = p as *mut c_void;
+                            (*p).data = p.cast::<c_void>();
                             (*p).close(Self::on_tty_close);
                         }
                     }
@@ -1737,7 +1737,7 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
         // SAFETY: handle.data was set to the pipe itself before close.
-        let this = unsafe { (*handle).data as *mut uv::Pipe };
+        let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
         // SAFETY: pipe was Box-allocated; reclaim and drop.
         drop(unsafe { Box::from_raw(this) });
     }
@@ -1745,7 +1745,7 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // SAFETY: handle.data was set to the tty itself before close.
-        let this = unsafe { (*handle).data as *mut uv::uv_tty_t };
+        let this = unsafe { (*handle).data.cast::<uv::uv_tty_t>() };
         // Caller already gates on `!is_stdin_tty` before scheduling close, so
         // `this` is heap-allocated (open_tty Box::into_raw). Reclaim and drop.
         debug_assert!(!crate::source::stdin_tty::is_stdin_tty(this));

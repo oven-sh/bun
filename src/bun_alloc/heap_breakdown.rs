@@ -89,7 +89,7 @@ macro_rules! get_zone {
             // only `namedAllocator` prepends the prefix.
             unsafe {
                 $crate::heap_breakdown::Zone::init(
-                    concat!($name, "\0").as_ptr() as *const ::core::ffi::c_char,
+                    concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
                 )
             }
         })

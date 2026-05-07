@@ -1039,7 +1039,7 @@ impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
         // FilePoll vtable downcast it (see `bun_io::EventLoopHandle` note).
         unsafe {
             bun_io::EventLoopHandle(
-                &raw const (*this).manager.event_loop as *mut core::ffi::c_void,
+                (&raw const (*this).manager.event_loop).cast_mut().cast::<core::ffi::c_void>(),
             )
         }
     }

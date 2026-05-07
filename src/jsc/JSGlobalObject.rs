@@ -1168,8 +1168,11 @@ impl JSGlobalObject {
         // TODO(port): comptime field_name.len == 0 → @compileError.
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
         let always_allow_zero = range.always_allow_zero;
-        let min = range.min;
-        let max = range.max;
+        // Zig passes the *unclamped* `range.min`/`range.max` to `throwRangeError`
+        // (not `min_t`/`max_t`). i128→i64 narrowing is safe here: callers always
+        // supply bounds within i64 (the formatter's range type).
+        let min = range.min as i64;
+        let max = range.max as i64;
 
         if value.is_int32() {
             let int = value.to_int32();
@@ -1181,8 +1184,8 @@ impl JSGlobalObject {
                     int,
                     bun_fmt::OutOfRangeOptions {
                         field_name,
-                        min: Some(min),
-                        max: Some(max),
+                        min,
+                        max,
                         ..Default::default()
                     },
                 ));

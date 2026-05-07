@@ -339,6 +339,7 @@ pub mod multipart_options_impl;
 #[doc(hidden)] #[path = "webcore/s3/list_objects.rs"] pub mod __s3_list_objects;
 #[doc(hidden)] #[path = "webcore/s3/multipart.rs"] pub mod __s3_multipart;
 #[doc(hidden)] #[path = "webcore/s3/client.rs"] pub mod __s3_client;
+#[doc(hidden)] #[path = "webcore/s3/credentials_jsc.rs"] pub mod __s3_credentials_jsc;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;

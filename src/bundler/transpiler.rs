@@ -418,10 +418,13 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     pub fn dump_environment_variables(&self) {
-        // PORT NOTE: spec uses `std.json.Stringify` to dump `env.map.*`. The
-        // Rust `bun_dotenv::Map` doesn't impl `serde::Serialize`, so iterate
-        // and write a JSON object by hand. Output formatting matches the
-        // `.indent_2` whitespace option.
+        use bun_js_printer::{write_json_string, Encoding};
+        // PORT NOTE: spec uses `std.json.Stringify` (`.whitespace = .indent_2`)
+        // to dump `env.map.*`. The Rust `bun_dotenv::Map` doesn't impl
+        // `serde::Serialize`, so iterate and emit the object by hand. Keys and
+        // values go through `write_json_string` (the same escaper the printer
+        // uses for metafile/HTML-manifest JSON) so `"` / `\` / control bytes
+        // are escaped exactly as `std.json.Stringify` does.
         bun_core::Output::flush();
         // SAFETY: `self.env` is non-null after `init`.
         let env = unsafe { &mut *self.env };
@@ -434,12 +437,10 @@ impl<'a> Transpiler<'a> {
                 let _ = w.write_all(b",\n");
             }
             first = false;
-            let _ = write!(
-                w,
-                "  \"{}\": \"{}\"",
-                bstr::BStr::new(&**pair.key_ptr),
-                bstr::BStr::new(&*pair.value_ptr.value)
-            );
+            let _ = w.write_all(b"  ");
+            let _ = write_json_string::<_, { Encoding::Utf8 }>(&**pair.key_ptr, w);
+            let _ = w.write_all(b": ");
+            let _ = write_json_string::<_, { Encoding::Utf8 }>(&*pair.value_ptr.value, w);
         }
         let _ = w.write_all(b"\n}\n");
         bun_core::Output::flush();

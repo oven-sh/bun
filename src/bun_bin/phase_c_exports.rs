@@ -306,22 +306,6 @@ pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> J
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
 
-// LAYERING: this body lives in `bun_runtime::webcore` (it touches Response/
-// Body/ReadableStream/Blob — types unavailable to `bun_jsc`). It was removed
-// from `bun_jsc::JSGlobalObject` to break a dep cycle. Port the real body in
-// `bun_runtime::webcore::wasm_streaming` once `Response::get_body_used` /
-// `Body::Value::use_as_any_blob` land, then drop this link stub.
-#[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
-    _global: *mut JSGlobalObject,
-    _response: JSValue,
-    _streaming_compiler: *mut c_void,
-) -> JSValue {
-    unreachable!(
-        "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming: gated on JSGlobalObject.rs un-gate"
-    )
-}
-
 // `bundler_jsc::analyze_jsc` defines these but the crate is not in `bun_bin`'s
 // dep graph yet (it pulls `bun_bundler` test-only surface). Park the link names
 // here; the real bodies move once `bun_bundler_jsc` is linked.

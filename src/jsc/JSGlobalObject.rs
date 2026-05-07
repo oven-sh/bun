@@ -1439,10 +1439,11 @@ pub extern "C" fn Zig__GlobalObject__resolve(
     query: *mut BunString,
 ) {
     crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    let (res, global, specifier, source, query) = unsafe {
-        (&mut *res, &*global, (*specifier).clone(), (*source).clone(), &mut *query)
-    };
+    // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
+    // `*specifier` / `*source` is the bitwise load Zig spells as `specifier.*`
+    // — no refcount bump (the caller still owns the ref).
+    let (res, global, specifier, source, query) =
+        unsafe { (&mut *res, &*global, *specifier, *source, &mut *query) };
     if VirtualMachine::resolve(res, global, specifier, source, Some(query), true).is_err() {
         debug_assert!(!res.success);
     }

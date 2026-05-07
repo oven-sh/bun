@@ -1263,16 +1263,9 @@ impl ZigString {
         self.len
     }
 
-    /// `ZigString.encodeWithAllocator` — encode `self` into a freshly
-    /// allocated buffer using a Node.js Buffer encoding. Dispatches to
-    /// `jsc.WebCore.encoding.constructFrom{U8,U16}` via [`webcore_encoding`].
-    pub fn encode_with_allocator(self, enc: encoding::Encoding) -> Vec<u8> {
-        if self.is_16bit() {
-            webcore_encoding::construct_from_u16(self.utf16_slice(), enc)
-        } else {
-            webcore_encoding::construct_from_u8(self.slice(), enc)
-        }
-    }
+    // `ZigString.encodeWithAllocator` — moved UP to
+    // `bun_runtime::webcore::encoding::ZigStringEncode` (extension trait); the
+    // encoder bodies live in `bun_runtime`.
 
     /// Port of `ZigString.githubAction` (ZigString.zig). Returns a `Display`
     /// formatter that escapes the string for GitHub Actions annotation output

@@ -1122,18 +1122,24 @@ fn get_ast(
                 bun_css::SrcIndex::source(source.index.0),
             ) {
                 Ok(v) => v,
-                Err(_e) => {
-                    // TODO(port): `e.add_to_logger` once `bun_css` error type carries it.
+                Err(e) => {
+                    // .zig:587 — surface the actual CSS parse diagnostic.
+                    #[cfg(feature = "css")]
+                    let _ = e.add_to_logger(&mut temp_log, source);
+                    #[cfg(not(feature = "css"))]
+                    let _ = e;
                     let _ = temp_log.append_to_maybe_recycled(log, source);
                     return Err(err!("SyntaxError"));
                 }
             };
             // Make sure the css modules local refs have a valid tag
-            // TODO(port): re-enable once `bun_css::LocalScope` value type
-            // exposes `.ref_` (current no-css stub stores `()`).
-            // (debug-only assertion in Zig — omitted here, not gated.)
-            let _ = &extra;
-            if let Err(_e) = css_ast.minify(
+            #[cfg(all(debug_assertions, feature = "css"))]
+            if css_ast.local_scope.count() > 0 {
+                for entry in css_ast.local_scope.values() {
+                    debug_assert!((entry.r#ref.inner_index() as u32) < extra.symbols.len);
+                }
+            }
+            if let Err(e) = css_ast.minify(
                 bump,
                 &bun_css::MinifyOptions {
                     targets: bun_css::Targets::for_bundler_target(topts.target),
@@ -1141,7 +1147,11 @@ fn get_ast(
                 },
                 &extra,
             ) {
-                // TODO(port): `e.add_to_logger` once `bun_css` error type carries it.
+                // .zig:604 — surface the actual minify diagnostic.
+                #[cfg(feature = "css")]
+                let _ = e.add_to_logger(&mut temp_log, source);
+                #[cfg(not(feature = "css"))]
+                let _ = e;
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Err(err!("MinifyError"));
             }
@@ -1151,6 +1161,12 @@ fn get_ast(
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
             let css_ast_heap = bump.alloc(css_ast) as *mut _ as *mut c_void;
+            // PORT NOTE: under `feature = "css"` `StylesheetExtra.symbols` is
+            // `BabyList<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
+            // `BabyList<bun_js_parser::Symbol>`. Both port the same Zig
+            // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
+            // index a populated symbol table (.zig:613).
+            let symbols = css_symbols_to_parser_symbols(extra.symbols);
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast_impl(
                     bump,
@@ -1160,14 +1176,7 @@ fn get_ast(
                     root,
                     source,
                     b"",
-                    // PORT NOTE (blocked_on: `bun_logger::Symbol` / `bun_js_parser::Symbol`
-                    // unification): under `feature = "css"` `StylesheetExtra.symbols` is
-                    // `BabyList<bun_logger::Symbol>`, but `new_lazy_export_ast_impl` takes
-                    // `BabyList<bun_js_parser::Symbol>`. Both are independent ports of the
-                    // same Zig `js_ast.Symbol` and cannot interconvert without touching
-                    // either crate. Drop the CSS-module local symbols for now; the
-                    // resulting AST still carries `css_ast.local_scope` for the linker.
-                    { let _ = extra; bun_js_parser::ast::symbol::List::default() },
+                    symbols,
                 )?
                 .unwrap(),
             );

@@ -309,7 +309,13 @@ pub struct LexerType<
     const GUESS_INDENTATION: bool,
 > {
     // err: ?LexerType.Error,
-    pub log: &'a mut Log,
+    /// Raw pointer to the caller-owned `Log`. Zig held a `*Log` here while the
+    /// parser held a second aliasing `*Log`; Rust cannot store two `&'a mut Log`
+    /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
+    /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
+    /// pointee must outlive `'a` (enforced by all `init*` constructors taking
+    /// `&'a mut Log`).
+    pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
     pub current: usize,
     pub start: usize,

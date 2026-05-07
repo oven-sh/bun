@@ -1136,6 +1136,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     init_request_body_value,
     has_blob_url,
     vm_loader_vtable: &VM_LOADER_VTABLE,
+    process_exit,
     handle_ipc_internal_child,
     ipc_child_singleton_deinit,
     console_on_before_print,

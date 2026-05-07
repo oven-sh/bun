@@ -473,7 +473,7 @@ impl ExitHandler {
         let exit_code = unsafe { (*vm).exit_handler.exit_code };
         // SAFETY: per fn contract; vm.global valid for VM lifetime.
         let global = unsafe { &*(*vm).global };
-        let _ = jsc::from_js_host_call_generic(global, || unsafe {
+        let _ = jsc::from_js_host_call_generic(global, core::panic::Location::caller(), || unsafe {
             Process__dispatchOnBeforeExit((*vm).global, exit_code)
         });
     }
@@ -1319,30 +1319,51 @@ pub struct RuntimeHooks {
         name_buf: &'a mut [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
-    /// `bun.cli.Command.Tag.RunCommand.params()` parse of a worker's
-    /// `execArgv` — spec web_worker.zig:445. The CLI param table lives in
-    /// `bun_cli` (forward dep). Reads `--no-addons` etc. and patches
-    /// `transform_options` in place; parse errors are silently ignored
-    /// (matches the Zig `catch break :parse_new_args`).
+    /// `jsc.VirtualMachine.initWorker(worker, opts)` — build a fresh
+    /// per-thread VM for a Web/Node Worker (spec VirtualMachine.zig:1390).
+    /// `worker` is a `*const jsc::WebWorker` (erased so the hook table stays
+    /// declarable before `web_worker.rs`); the high tier casts it back to
+    /// read `mini`/`execution_context_id`/`cpp_worker`. Returns the freshly-
+    /// boxed VM with `vm.worker` already set, or an error.
+    pub init_worker_vm: unsafe fn(
+        worker: *const c_void,
+        opts: WorkerInitOptions,
+    ) -> Result<*mut VirtualMachine, bun_core::Error>,
+    /// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec
+    /// web_worker.zig:552. `graph` is the erased `*StandaloneModuleGraph`
+    /// (high-tier owned); applies `--compile`-baked runtime flags to the
+    /// worker's transpiler.
+    pub apply_standalone_runtime_flags:
+        unsafe fn(transpiler: *mut Transpiler<'static>, graph: NonNull<c_void>),
+    /// Spec web_worker.zig:445-476 — parse `execArgv` with the `RunCommand`
+    /// param table and apply recognised flags to `transform_options`. The
+    /// param table lives in `bun_runtime::cli` (forward-dep). Currently only
+    /// honours `--no-addons`.
     pub parse_worker_exec_argv: unsafe fn(
         exec_argv: &[bun_string::WTFStringImpl],
-        transform_options: &mut bun_options_types::schema::api::TransformOptions,
+        transform_options: &mut bun_api::TransformOptions,
     ),
-    /// `bun.bun_js.applyStandaloneRuntimeFlags(transpiler, graph)` — spec
-    /// web_worker.zig:551. `bun_runtime` owns the flag set and the
-    /// `StandaloneModuleGraph` type.
-    pub apply_standalone_runtime_flags:
-        unsafe fn(transpiler: &mut Transpiler<'static>, graph: NonNull<c_void>),
-    /// `StandaloneModuleGraph.find(name)` — spec web_worker.zig:865. Returns
-    /// the matched file's `name` slice (borrowed from the graph) if found.
-    pub standalone_graph_find:
-        unsafe fn(graph: NonNull<c_void>, name: &[u8]) -> Option<&'static [u8]>,
+    /// `StandaloneModuleGraph.find(path)` — spec web_worker.zig:865. Returns
+    /// the graph-owned module name (BORROWED, `'static` for the process) if
+    /// `path` is a baked module, else `None`. `graph` is the erased
+    /// `*StandaloneModuleGraph` from `vm.standalone_module_graph`.
+    pub find_standalone_module:
+        unsafe fn(graph: NonNull<c_void>, path: &[u8]) -> Option<&'static [u8]>,
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — spec
-    /// web_worker.zig:886. Static string owned by `bun_standalone`.
-    pub standalone_graph_base_path: &'static [u8],
+    /// web_worker.zig:886. `&'static` because it's a baked-in constant.
+    pub standalone_base_public_path: &'static [u8],
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
-    /// web_worker.zig:727. Cron lives in `bun_runtime::api`.
+    /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
+}
+
+/// Subset of [`InitOptions`] passed to [`RuntimeHooks::init_worker_vm`].
+/// Mirrors VirtualMachine.zig `Options` for the `initWorker` path.
+pub struct WorkerInitOptions {
+    pub args: bun_api::TransformOptions,
+    pub env_loader: NonNull<bun_dotenv::Loader<'static>>,
+    pub store_fd: bool,
+    pub graph: Option<NonNull<c_void>>,
 }
 
 impl VirtualMachine {
@@ -1717,9 +1738,11 @@ impl VirtualMachine {
                 let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                     .map_err(|_| bun_core::err!("JSError"))?;
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let ret = jsc::from_js_host_call_generic(global_ref, || unsafe {
-                    NodeModuleModule__callOverriddenRunMain(global, argv1)
-                })
+                let ret = jsc::from_js_host_call_generic(
+                    global_ref,
+                    core::panic::Location::caller(),
+                    || unsafe { NodeModuleModule__callOverriddenRunMain(global, argv1) },
+                )
                 .map_err(|_| bun_core::err!("JSError"))?;
                 // If the override stored a promise itself, use that; otherwise
                 // wrap its return value.
@@ -1745,9 +1768,11 @@ impl VirtualMachine {
                     .ok_or_else(|| bun_core::err!("JSError"))?
             } else {
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || unsafe {
-                    Bun__loadHTMLEntryPoint(global)
-                })
+                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(
+                    global_ref,
+                    core::panic::Location::caller(),
+                    || unsafe { Bun__loadHTMLEntryPoint(global) },
+                )
                 .map_err(|_| bun_core::err!("JSError"))?;
                 if p.is_null() {
                     return Err(bun_core::err!("JSError"));
@@ -2347,7 +2372,7 @@ impl VirtualMachine {
         let global = self.global;
         // SAFETY: `global` is valid for VM lifetime.
         let global_ref = unsafe { &*global };
-        let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
+        let jsvalue = jsc::from_js_host_call(global_ref, core::panic::Location::caller(), || unsafe {
             Bake__getAsyncLocalStorage(global)
         })?;
         if jsvalue.is_empty_or_undefined_or_null() {
@@ -2578,9 +2603,11 @@ impl VirtualMachine {
             let _ = unsafe { (*this.event_loop()).drain_microtasks() };
         };
         let emit_warning = |this: &mut Self| {
-            let r = jsc::from_js_host_call_generic(global_object, || unsafe {
-                Bun__promises__emitUnhandledRejectionWarning(global, reason, promise)
-            });
+            let r = jsc::from_js_host_call_generic(
+                global_object,
+                core::panic::Location::caller(),
+                || unsafe { Bun__promises__emitUnhandledRejectionWarning(global, reason, promise) },
+            );
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
                 // PORT NOTE: Zig went `exc.asException(vm)` → `reportUncaughtException`,
@@ -2904,7 +2931,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1394 `initWorker`.
     pub fn init_worker(
-        worker: &crate::web_worker::WebWorker,
+        worker: &mut crate::web_worker::WebWorker,
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
@@ -5047,7 +5074,7 @@ impl VirtualMachine {
 use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
-    jsc::from_js_host_call_generic(global_object, || unsafe {
+    jsc::from_js_host_call_generic(global_object, core::panic::Location::caller(), || unsafe {
         Bun__promises__isErrorLike(global_object.as_ptr(), reason)
     })
 }

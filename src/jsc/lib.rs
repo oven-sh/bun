@@ -2065,6 +2065,11 @@ pub mod math {
 #[path = "generated.rs"]
 pub mod generated;
 
+/// `bun.gen` — bindgen dispatch shims (`src/jsc/bindings/GeneratedBindings.zig`).
+/// Hand-ported per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
+#[path = "bindings/GeneratedBindings.rs"]
+pub mod gen;
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/jsc.zig (283 lines)

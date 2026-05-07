@@ -562,6 +562,15 @@ impl String {
     }
     pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool { self.eql_utf8(lit.as_ref()) }
 
+    /// Port of `bun.String.githubAction` (string.zig). Returns a `Display`
+    /// formatter that escapes the string for GitHub Actions annotation output
+    /// (`%0A` for newlines, ANSI stripped). Encoding-aware: materialises a
+    /// UTF-8 view inside `fmt` so 16-bit / WTF-backed strings are handled.
+    #[inline]
+    pub fn github_action(&self) -> StringGithubActionFormatter<'_> {
+        StringGithubActionFormatter { text: self }
+    }
+
     /// Port of `bun.String.hasPrefixComptime` (string.zig). ASCII-only prefix
     /// check that avoids materialising the whole UTF-8 view when the
     /// underlying encoding is 8-bit; falls back to `to_utf8_without_ref` for
@@ -607,6 +616,13 @@ impl String {
             return new;
         }
         Self::clone_utf8(self.byte_slice())
+    }
+
+    /// `bun.String.githubAction` (string.zig:606) — render `self` with the
+    /// GitHub Actions `::error`-annotation escaping (`\n` → `%0A`, ANSI
+    /// stripped). Delegates to [`ZigString::github_action`].
+    pub fn github_action(&self) -> GithubActionFormatter {
+        self.to_zig_string().github_action()
     }
 
     /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
@@ -836,6 +852,19 @@ impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = self.to_utf8_without_ref();
         f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
+    }
+}
+
+/// `Display` adapter for [`String::github_action`]. Converts to UTF-8 on the
+/// fly (handles 16-bit / WTF-backed strings) and delegates to
+/// `bun_core::fmt::github_action_writer`.
+pub struct StringGithubActionFormatter<'a> {
+    text: &'a String,
+}
+impl core::fmt::Display for StringGithubActionFormatter<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let utf8 = self.text.to_utf8_without_ref();
+        bun_core::fmt::github_action_writer(f, utf8.slice())
     }
 }
 
@@ -1107,6 +1136,11 @@ impl ZigString {
         if self.is_utf8() { out.mark_utf8(); }
         if self.is_globally_allocated() { out.mark_global(); }
         out
+    }
+    /// `ZigString.githubAction` (ZigString.zig:518).
+    #[inline]
+    pub fn github_action(self) -> GithubActionFormatter {
+        GithubActionFormatter { text: self }
     }
     /// `ZigString.substring` (ZigString.zig:183).
     #[inline]
@@ -1391,8 +1425,8 @@ impl SliceWithUnderlyingString {
     }
 }
 
-impl fmt::Display for SliceWithUnderlyingString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl core::fmt::Display for SliceWithUnderlyingString {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.utf8.length() == 0 {
             return self.underlying.fmt(f);
         }

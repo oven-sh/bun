@@ -1319,6 +1319,30 @@ pub struct RuntimeHooks {
         name_buf: &'a mut [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
+    /// `bun.cli.Command.Tag.RunCommand.params()` parse of a worker's
+    /// `execArgv` — spec web_worker.zig:445. The CLI param table lives in
+    /// `bun_cli` (forward dep). Reads `--no-addons` etc. and patches
+    /// `transform_options` in place; parse errors are silently ignored
+    /// (matches the Zig `catch break :parse_new_args`).
+    pub parse_worker_exec_argv: unsafe fn(
+        exec_argv: &[bun_string::WTFStringImpl],
+        transform_options: &mut bun_options_types::schema::api::TransformOptions,
+    ),
+    /// `bun.bun_js.applyStandaloneRuntimeFlags(transpiler, graph)` — spec
+    /// web_worker.zig:551. `bun_runtime` owns the flag set and the
+    /// `StandaloneModuleGraph` type.
+    pub apply_standalone_runtime_flags:
+        unsafe fn(transpiler: &mut Transpiler<'static>, graph: NonNull<c_void>),
+    /// `StandaloneModuleGraph.find(name)` — spec web_worker.zig:865. Returns
+    /// the matched file's `name` slice (borrowed from the graph) if found.
+    pub standalone_graph_find:
+        unsafe fn(graph: NonNull<c_void>, name: &[u8]) -> Option<&'static [u8]>,
+    /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — spec
+    /// web_worker.zig:886. Static string owned by `bun_standalone`.
+    pub standalone_graph_base_path: &'static [u8],
+    /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
+    /// web_worker.zig:727. Cron lives in `bun_runtime::api`.
+    pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
 }
 
 impl VirtualMachine {
@@ -2886,7 +2910,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1394 `initWorker`.
     pub fn init_worker(
-        worker: &mut crate::web_worker::WebWorker,
+        worker: &crate::web_worker::WebWorker,
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {

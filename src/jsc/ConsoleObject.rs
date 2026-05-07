@@ -679,11 +679,12 @@ impl<'a> TablePrinter<'a> {
                     }
                 }
             } else {
-                let mut cols_iter = jsc::JSPropertyIterator::init(
-                    self.global_object,
-                    obj,
-                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
-                )?;
+                // SAFETY: `obj` is a live JSC heap cell returned by
+                // `get_object()`; the borrow is bounded by this stack frame.
+                let obj_ref = unsafe { &*obj };
+                let mut cols_iter = jsc::JSPropertyIterator::<
+                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
+                >::init(self.global_object, obj_ref)?;
 
                 while let Some(col_key) = cols_iter.next()? {
                     let value = cols_iter.value;
@@ -842,7 +843,7 @@ impl<'a> TablePrinter<'a> {
         let mut columns: Vec<Column> = Vec::with_capacity(16);
         let _deref_names = scopeguard::guard(&mut columns, |cols| {
             for col in cols.iter_mut() {
-                col.name.deref_();
+                col.name.deref();
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through the guard.
@@ -899,11 +900,12 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                let mut rows_iter = jsc::JSPropertyIterator::init(
-                    global_object,
-                    tabular_obj,
-                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
-                )?;
+                // SAFETY: `to_object()` returned a live heap cell; borrow
+                // bounded by this stack frame.
+                let tabular_obj = unsafe { &*tabular_obj };
+                let mut rows_iter = jsc::JSPropertyIterator::<
+                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
+                >::init(global_object, tabular_obj)?;
 
                 while let Some(row_key) = rows_iter.next()? {
                     self.update_columns_for_row(
@@ -1005,15 +1007,16 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let Some(cell) = self.tabular_data.to_cell() else {
-                    return Err(global_object
-                        .throw_type_error("tabular_data must be an object or array"));
+                    return Err(global_object.throw_type_error(
+                        "tabular_data must be an object or array",
+                        format_args!(""),
+                    ));
                 };
-                let mut rows_iter = jsc::JSPropertyIterator::init(
-                    global_object,
-                    // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
-                    unsafe { &*cell }.to_object(global_object),
-                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
-                )?;
+                // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
+                let row_obj = unsafe { &*cell }.to_object(global_object);
+                let mut rows_iter = jsc::JSPropertyIterator::<
+                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
+                >::init(global_object, row_obj)?;
 
                 while let Some(row_key) = rows_iter.next()? {
                     self.print_row::<ENABLE_ANSI_COLORS>(
@@ -1104,7 +1107,7 @@ impl<'a> DynWriteAdapter<'a> {
     }
 }
 
-pub fn write_trace(writer: &mut (impl bun_io::Write + ?Sized), global: &JSGlobalObject) {
+pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = unsafe { &mut *VirtualMachine::get() };
@@ -3032,7 +3035,7 @@ pub mod formatter {
                 writer.print(format_args!(
                     "{}{}{}{}",
                     pfmt!("<r><magenta>", C),
-                    if key.len > 0 && key.char_at(0) == b'#' { "" } else { "$" },
+                    if key.len > 0 && key.char_at(0) == u16::from(b'#') { "" } else { "$" },
                     key,
                     pfmt!("<r><d>:<r> ", C),
                 ));
@@ -3458,7 +3461,7 @@ pub mod formatter {
                     // the call's duration. `JSGlobalObject` is an opaque handle with
                     // `UnsafeCell` interior, so `.as_ptr()` yields a `*mut` with write
                     // provenance — the C++ callee may mutate VM state through it.
-                    let result = crate::from_js_host_call(self.global_this, || unsafe {
+                    let result = crate::from_js_host_call(self.global_this, core::panic::Location::caller(), || unsafe {
                         JSC__JSValue__callCustomInspectFunction(
                             self.global_this.as_ptr(),
                             self.custom_formatted_object.function,
@@ -4711,12 +4714,12 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
-                // SAFETY: JSX props are always objects
-                let props_obj = props.get_object().unwrap();
-                let mut props_iter = jsc::JSPropertyIterator::init(
-                    self.global_this, props_obj,
-                    jsc::PropertyIteratorOptions { skip_empty_name: true, include_value: true },
-                )?;
+                // SAFETY: JSX props are always objects; `get_object()` returned a
+                // live JSC heap cell, borrow bounded by this stack frame.
+                let props_obj = unsafe { &*props.get_object().unwrap() };
+                let mut props_iter = jsc::JSPropertyIterator::<
+                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(true, true) },
+                >::init(self.global_this, props_obj)?;
 
                 let children_prop = props.get(self.global_this, "children")?;
                 if props_iter.len > 0 {

@@ -836,7 +836,12 @@ impl TranspilerJob {
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
-        if let Some(entry) = cache.entry.as_mut() {
+        if let Some(entry_ptr) = cache.entry.take() {
+            // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
+            // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
+            let mut entry: Box<CacheEntry> =
+                unsafe { Box::from_raw(entry_ptr.cast::<CacheEntry>()) };
+
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
             let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
@@ -849,7 +854,7 @@ impl TranspilerJob {
             }
 
             let module_info: *mut c_void = if use_isolation_source_provider_cache
-                && entry.metadata.module_type != ModuleType::Cjs
+                && entry.metadata.module_type != CacheModuleType::Cjs
                 && !entry.esm_record.is_empty()
             {
                 analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
@@ -864,14 +869,14 @@ impl TranspilerJob {
             self.resolved_source = ResolvedSource {
                 allocator: ptr::null_mut(),
                 source_code: match &mut entry.output_code {
-                    crate::runtime_transpiler_cache::OutputCode::String(s) => *s,
-                    crate::runtime_transpiler_cache::OutputCode::Utf8(utf8) => {
+                    OutputCode::String(s) => *s,
+                    OutputCode::Utf8(utf8) => {
                         let result = String::clone_utf8(utf8);
                         *utf8 = Box::default();
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == ModuleType::Cjs,
+                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
                 tag: this_tag,
                 ..Default::default()
@@ -919,7 +924,8 @@ impl TranspilerJob {
             }
 
             if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                import_record.path = Fs::Path::init(&import_record.path.text[b"bun:".len()..]);
+                import_record.path =
+                    bun_paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
                 import_record.path.namespace = b"bun";
                 import_record
                     .flags
@@ -1020,9 +1026,13 @@ impl TranspilerJob {
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
+            // PORT NOTE: lower-tier `cache.output_code` is `Option<Box<[u8]>>`
+            // (Zig `?bun.String`). `RuntimeTranspilerCacheExt::put()` stores
+            // the printer bytes there; convert to a WTF `bun.String` for JSC.
             let result = cache
                 .output_code
                 .take()
+                .map(|b| String::clone_latin1(&b))
                 .unwrap_or_else(|| String::clone_latin1(written));
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.

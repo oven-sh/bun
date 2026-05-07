@@ -230,6 +230,23 @@ impl JSValue {
         // immediates (JSValue.zig:1076 — no `isCell()` guard).
         unsafe { JSC__JSValue__isBigInt(self) }
     }
+    /// `JSValue.isBigIntInInt64Range` (JSValue.zig:40) — `self` must already be
+    /// known to be a BigInt; checks `min <= self <= max` without truncation.
+    #[inline] pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
+        unsafe extern "C" {
+            fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
+        }
+        // SAFETY: pure FFI predicate; caller guarantees `self.is_big_int()`.
+        unsafe { JSC__isBigIntInInt64Range(self, min, max) }
+    }
+    /// `JSValue.isBigIntInUInt64Range` (JSValue.zig:36).
+    #[inline] pub fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
+        unsafe extern "C" {
+            fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
+        }
+        // SAFETY: pure FFI predicate; caller guarantees `self.is_big_int()`.
+        unsafe { JSC__isBigIntInUInt64Range(self, min, max) }
+    }
     /// `JSValue.isCallable()` (JSValue.zig:1159).
     #[inline] pub fn is_callable(self) -> bool {
         // SAFETY: pure FFI predicate; C++ handles non-cells.
@@ -1165,6 +1182,77 @@ impl From<u64> for JSValue {
 }
 impl From<usize> for JSValue {
     #[inline] fn from(i: usize) -> Self { Self::js_number_from_uint64(i as u64) }
+}
+
+impl JSValue {
+    /// `JSValue.asEncoded` (JSValue.zig:967) — view the encoded word as the
+    /// `EncodedJSValue` C union (used by the FFI fast-paths in `bun:ffi`).
+    #[inline]
+    pub fn as_encoded(self) -> ffi::EncodedJSValue {
+        ffi::EncodedJSValue { as_js_value: self }
+    }
+
+    /// `JSValue.fromAny(global, T, value)` (JSValue.zig:2351) — generic
+    /// value→JSValue conversion. Zig reflected over `@TypeOf(value)`; in Rust
+    /// the dispatch is via [`FromAny`], implemented for each supported leaf
+    /// type. Slice / struct reflection is handled by per-element impls instead
+    /// of comptime recursion.
+    #[inline]
+    pub fn from_any<T: FromAny>(global: &JSGlobalObject, value: T) -> JsResult<JSValue> {
+        value.into_js_value(global)
+    }
+}
+
+/// Dispatch trait for [`JSValue::from_any`]. Zig used a comptime
+/// `@TypeOf`/`@typeInfo` switch (JSValue.zig:2351); in Rust each supported
+/// leaf type implements this trait directly.
+pub trait FromAny {
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+}
+
+/// Primitive numeric / boolean / `JSValue` arms of the Zig `fromAny` switch
+/// all reduce to the existing `From<T> for JSValue` impls — `global` is unused
+/// for these leaves (Zig: `jsNumberWithType`, `jsBoolean`, identity).
+macro_rules! from_any_via_from {
+    ($($t:ty),* $(,)?) => {$(
+        impl FromAny for $t {
+            #[inline]
+            fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+                Ok(JSValue::from(self))
+            }
+        }
+    )*};
+}
+from_any_via_from!(bool, i32, u32, f64, u64, usize, JSValue);
+
+impl FromAny for () {
+    #[inline]
+    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+}
+impl FromAny for &[u8] {
+    /// Zig: `bun.String.createUTF8ForJS(globalObject, value)`.
+    #[inline]
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::create_utf8_for_js(global, self)
+    }
+}
+impl FromAny for &str {
+    #[inline]
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::create_utf8_for_js(global, self.as_bytes())
+    }
+}
+impl<T: FromAny> FromAny for Option<T> {
+    /// Zig: `if (@typeInfo(T) == .optional) ...` — `null` → `undefined`.
+    #[inline]
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            Some(v) => v.into_js_value(global),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
 }
 
 /// Dispatch trait for `JSValue::coerce::<T>()`. Zig used a comptime type switch.

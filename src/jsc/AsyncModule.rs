@@ -757,19 +757,15 @@ impl AsyncModule {
 
         let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
         let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        let _ = jsc::from_js_host_call_generic(
-            global_this,
-            core::panic::Location::caller(),
-            || unsafe {
-                Bun__onFulfillAsyncModule(
-                    global_this,
-                    this.promise.get().unwrap(),
-                    &mut errorable,
-                    &mut spec,
-                    &mut ref_,
-                )
-            },
-        );
+        let _ = jsc::from_js_host_call_generic(global_this, || unsafe {
+            Bun__onFulfillAsyncModule(
+                global_this,
+                this.promise.get().unwrap(),
+                &mut errorable,
+                &mut spec,
+                &mut ref_,
+            )
+        });
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
         drop(unsafe { Box::from_raw(this) });
     }
@@ -1282,16 +1278,21 @@ impl AsyncModule {
         let parse_result = core::mem::take(&mut self.parse_result);
 
         // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
-        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced
-        // to copy by value, reset, and wrote back in a `defer`. We mirror
-        // with `clone()`/scopeguard write-back to preserve the same
-        // buffer-reuse dance (matches RuntimeTranspilerStore.rs:802).
+        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to
+        // copy by value (`var printer = source_code_printer.?.*`), reset, and
+        // wrote back in a `defer`. `BufferPrinter` is `!Clone` in Rust, so
+        // swap the buffer out instead and write it back via the `_writeback`
+        // guard — same observable effect (the thread-local's buffer is
+        // reused). Matches RuntimeTranspilerStore.rs.
         let printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
             .get()
             .expect("source_code_printer not initialized");
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let source_code_printer = unsafe { printer_ptr.as_mut() };
-        let mut printer = source_code_printer.clone();
+        let source_code_printer = unsafe { &mut *printer_ptr.as_ptr() };
+        let mut printer = core::mem::replace(
+            source_code_printer,
+            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+        );
         printer.ctx.reset();
 
         {
@@ -1302,11 +1303,18 @@ impl AsyncModule {
             let _writeback = scopeguard::guard(
                 (
                     source_code_printer as *mut bun_js_printer::BufferPrinter,
-                    &mut printer as *mut _,
+                    &mut printer as *mut bun_js_printer::BufferPrinter,
                 ),
                 |(dst, src)| {
-                    // SAFETY: both pointees outlive this scope; no aliases at drop.
-                    unsafe { *dst = (*src).clone() };
+                    // SAFETY: both pointees outlive this scope; no aliases at
+                    // drop. Move the buffer back into the thread-local slot
+                    // (Zig: `defer source_code_printer.?.* = printer`).
+                    unsafe {
+                        *dst = core::mem::replace(
+                            &mut *src,
+                            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+                        )
+                    };
                 },
             );
             // SAFETY: per-thread VM.
@@ -1336,7 +1344,7 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source::<false>(
-                    printer.ctx.written(),
+                    printer.ctx.get_written(),
                     BunString::init(specifier),
                     path.text,
                     None,

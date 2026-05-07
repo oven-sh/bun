@@ -687,17 +687,13 @@ impl JSGlobalObject {
         err.put(
             self,
             ZigString::static_str("code"),
-            ZigString::init(<&'static str>::from(opts.code).as_bytes()).to_js(self),
+            ZigString::init(opts.code.as_bytes()).to_js(self),
         );
         if let Some(name) = opts.name {
             err.put(self, ZigString::static_str("name"), ZigString::init(name).to_js(self));
         }
         if let Some(errno) = opts.errno {
-            let v = match JSValue::from_any(self, errno) {
-                Ok(v) => v,
-                Err(e) => return e,
-            };
-            err.put(self, ZigString::static_str("errno"), v);
+            err.put(self, ZigString::static_str("errno"), JSValue::js_number_from_int32(errno));
         }
         self.throw_value(err)
     }
@@ -716,10 +712,15 @@ impl JSGlobalObject {
     }
 
     pub fn throw_pretty(&self, fmt: &'static str, args: Arguments<'_>) -> JsError {
-        // TODO(port): Zig used `switch (Output.enable_ansi_colors_stderr) { inline else => |enabled| ... }`
-        // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting.
-        // This needs a macro in Rust; for Phase A we forward as-is.
-        let instance = if Output::enable_ansi_colors_stderr() {
+        // PORT NOTE: Zig used `switch (Output.enable_ansi_colors_stderr) { inline else => |enabled| ... }`
+        // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting (strip
+        // `<r>`/`<red>` markers when colors disabled). The `pretty_fmt!` macro provides the
+        // equivalent rewrite at the call site, so callers should pass an already-processed `fmt`;
+        // this body just creates the instance once. The branch is kept for parity with Zig but
+        // both arms are identical until callers adopt `pretty_fmt!` themselves.
+        let instance = if bun_core::output::ENABLE_ANSI_COLORS_STDERR
+            .load(core::sync::atomic::Ordering::Relaxed)
+        {
             self.create_error_instance(fmt, args)
         } else {
             self.create_error_instance(fmt, args)
@@ -731,22 +732,22 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn queue_microtask_callback<C>(&self, ctx_val: *mut C, function: fn(*mut C)) {
-        // TODO(port): Zig version takes `comptime Function: fn(ctx)` and generates a
-        // `callconv(.c)` wrapper struct at comptime. In Rust we cannot monomorphize an
-        // `extern "C"` trampoline over a runtime fn pointer. Phase B should make this
-        // a const-generic `<const F: fn(*mut C)>` or accept an `extern "C" fn(*mut c_void)`.
-        crate::mark_binding(core::panic::Location::caller());
-        unsafe extern "C" fn call<C>(_p: *mut c_void) {
-            // TODO(port): cannot capture `function` here; needs const-generic fn ptr.
-            unreachable!("queue_microtask_callback trampoline not yet ported");
-        }
-        let _ = function;
+    /// Queue a native callback as a microtask.
+    ///
+    /// PORT NOTE: Zig version takes `comptime Function: fn(ctx)` and generates a
+    /// `callconv(.c)` wrapper struct at comptime. Rust can't monomorphize an
+    /// `extern "C"` trampoline over a *runtime* fn pointer, so callers supply the
+    /// `extern "C" fn(*mut c_void)` directly (see [`crate::opaque_wrap`] for a
+    /// typed wrapper helper). This matches the underlying FFI exactly.
+    pub fn queue_microtask_callback(
+        &self,
+        ctx_val: *mut c_void,
+        function: unsafe extern "C" fn(*mut c_void),
+    ) {
+        crate::mark_binding();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ctx_val` is caller-supplied
-        // opaque context; `call::<C>` is a valid `extern "C"` fn pointer.
-        unsafe {
-            JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val as *mut c_void, call::<C>);
-        }
+        // opaque context; `function` is a valid `extern "C"` fn pointer.
+        unsafe { JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val, function) }
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -766,7 +767,7 @@ impl JSGlobalObject {
     ) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args are passed by value
         // and rooted on the caller's stack for the duration of the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             Bun__Process__emitWarning(self, warning, type_, code, ctor)
         })
     }
@@ -836,7 +837,7 @@ impl JSGlobalObject {
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), message)
         })
     }
@@ -851,7 +852,7 @@ impl JSGlobalObject {
         }
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `error_array`/`message` are
         // by-value; C++ consumes `message` (BunString) by value.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__createAggregateErrorWithArray(self, error_array, message, JSValue::UNDEFINED)
         })
     }
@@ -953,7 +954,7 @@ impl JSGlobalObject {
 
     pub fn delete_module_registry_entry(&self, name_: &ZigString) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `name_` borrow outlives the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__deleteModuleRegistryEntry(self, name_)
         })
     }
@@ -1024,7 +1025,7 @@ impl JSGlobalObject {
         // (worker terminate() or process.exit()), and the request flag may
         // already be cleared by the time we observe it. Nothing actionable here.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ catches/reports its own exceptions.
-        let _ = crate::from_js_host_call_generic(self, || unsafe {
+        let _ = crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         });
     }

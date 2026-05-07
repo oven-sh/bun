@@ -469,11 +469,18 @@ impl Cmd {
 
         // Pre-install `Exec::Subproc` so `cmd_parent` callbacks fired during
         // `spawn_async` (immediate-exit / pipe-close) see a valid `exec` slot.
-        // `buffered_closed` is patched once stdio is known, below.
+        // `buffered_closed` is patched once stdio is known, below. `interp` is
+        // left null until `spawn_async` and the `did_exit_immediately`
+        // handling have returned: a synchronous `Cmd::on_exit` reached via the
+        // process exit handler would otherwise drive the trampoline (`Yield::
+        // run(&mut *interp)`) while this frame still holds `&mut Interpreter`,
+        // tearing the Cmd down (and freeing `child`) underneath the live `sub`
+        // borrow. With `interp` null, `on_exit` records `exit_code`/`state =
+        // Done` and returns; we resume via the Yield we hand back below.
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
             child: core::ptr::null_mut(),
             buffered_closed: BufferedIoClosed::default(),
-            interp: interp_ptr,
+            interp: core::ptr::null_mut(),
             this_id: this,
         }));
 
@@ -565,6 +572,9 @@ impl Cmd {
             // Spec (Cmd.zig initSubproc 533-541): `watch()` failed → process
             // already exited. Either we already reaped (status set) and need
             // to fire `onExit` ourselves, or we still need to `wait4()`.
+            // `SubprocExec::interp` is still null (see above), so the
+            // `Cmd::on_exit` reached from the exit handler records state but
+            // does not drive the trampoline reentrantly.
             if sub.has_exited() {
                 let status = sub.proc().status.clone();
                 let rusage = crate::api::bun::process::rusage_zeroed();
@@ -574,6 +584,18 @@ impl Cmd {
             }
         }
 
+        // Publish the interpreter backref now that all synchronous spawn-time
+        // callbacks have returned, so subsequent async pipe-close /
+        // process-exit notifications can drive the trampoline themselves. If a
+        // synchronous callback already finished the command (`state = Done`),
+        // resume here instead — the callback couldn't, with `interp` null.
+        let me = interp.as_cmd_mut(this);
+        if let Exec::Subproc(exec) = &mut me.exec {
+            exec.interp = interp_ptr;
+        }
+        if matches!(me.state, CmdState::Done) {
+            return Yield::Next(this);
+        }
         Yield::suspended()
     }
 

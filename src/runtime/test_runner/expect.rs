@@ -2843,10 +2843,10 @@ pub mod mock {
             }
         }
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        Err(global_this.throw2(
-                "Expected value must be a mock function with returns: {f}",
-                format_args!("{}", value.to_fmt(&mut formatter)),
-        ))
+        Err(global_this.throw(format_args!(
+            "Expected value must be a mock function with returns: {}",
+            value.to_fmt(&mut formatter),
+        )))
     }
 
     pub fn jest_mock_return_object_value(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {

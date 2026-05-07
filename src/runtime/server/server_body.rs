@@ -328,29 +328,6 @@ fn system_error_default() -> SystemError {
     }
 }
 
-// Local shim: `Box<ZStr>` constructor for an empty NUL-terminated string.
-// `ZStr` is a DST whose `len()` excludes the NUL; the backing allocation must
-// still own that NUL byte. We allocate `[0u8]` and reinterpret with `len = 0`.
-#[inline]
-fn zstr_empty_boxed() -> Box<ZStr> {
-    // SAFETY: backing `[0u8; 1]` is a valid `ZStr` of length 0 (NUL at index 0).
-    unsafe {
-        let raw: *mut [u8] = Box::into_raw(vec![0u8].into_boxed_slice());
-        Box::from_raw(core::ptr::slice_from_raw_parts_mut((*raw).as_mut_ptr(), 0) as *mut ZStr)
-    }
-}
-#[inline]
-fn zstr_from_boxed_with_nul(buf: Box<[u8]>) -> Box<ZStr> {
-    debug_assert!(buf.last() == Some(&0));
-    let len = buf.len().saturating_sub(1);
-    // SAFETY: caller guarantees trailing NUL; the backing allocation is `len+1`
-    // bytes and the fat pointer's metadata is `len` (NUL excluded).
-    unsafe {
-        let raw: *mut [u8] = Box::into_raw(buf);
-        Box::from_raw(core::ptr::slice_from_raw_parts_mut((*raw).as_mut_ptr(), len) as *mut ZStr)
-    }
-}
-
 // Module-level type aliases replacing the unstable inherent associated types
 // (`pub type App = …` inside `impl NewServer`).
 pub type ServerApp<const SSL: bool> = uws::NewApp<SSL>;
@@ -2035,11 +2012,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // PORT NOTE: StaticRouteEntry impls Drop; assigning over static_routes deinits the old ones.
         self.config.static_routes = mem::take(&mut new_config.static_routes);
 
-        for route in &self.config.negative_routes {
-            // Box<[u8]> drops automatically
-            let _ = route;
-        }
-        self.config.negative_routes.clear();
+        // Zig: per-element `allocator.free(route)` then free the slice — `Vec<Box<[u8]>>`
+        // drops both on assignment.
         self.config.negative_routes = mem::take(&mut new_config.negative_routes);
 
         if new_config.had_routes_object {
@@ -3927,7 +3901,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { (*signal).pending_activity_ref() };
         // SAFETY: signal is live; ref_() bumps for Request's copy.
         let _ = unsafe { (*signal).ref_() };
-        // TODO(port): RequestContext.signal field type vs raw +1 ref — see set_signal.
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(ctx as *const _),
@@ -5001,7 +4974,6 @@ impl AnyServer {
     }
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {
-        // TODO(port): getPlugins method does not exist on NewServer in this file — defined elsewhere
         any_server_dispatch!(self, |s| s.get_plugins())
     }
 
@@ -5011,7 +4983,6 @@ impl AnyServer {
         raw_plugins: &[&[u8]],
         bunfig_path: &[u8],
     ) {
-        // TODO(port): getPluginsAsync method does not exist on NewServer in this file — defined elsewhere
         any_server_dispatch!(self, |s| s.get_plugins_async(bundle, raw_plugins, bunfig_path))
     }
 

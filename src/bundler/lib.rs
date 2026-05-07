@@ -222,15 +222,27 @@ pub mod options {
 
     /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
     /// `options.zig` callers via `OutputFile.output_kind`.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    ///
+    /// `IntoStaticStr` provides the JS-facing tag (`"entry-point"` etc.) so
+    /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
+    /// a duplicate enum.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
     pub enum OutputKind {
+        #[strum(serialize = "chunk")]
         Chunk,
+        #[strum(serialize = "asset")]
         Asset,
+        #[strum(serialize = "entry-point")]
         EntryPoint,
+        #[strum(serialize = "sourcemap")]
         Sourcemap,
+        #[strum(serialize = "bytecode")]
         Bytecode,
+        #[strum(serialize = "module_info")]
         ModuleInfo,
+        #[strum(serialize = "metafile-json")]
         MetafileJson,
+        #[strum(serialize = "metafile-markdown")]
         MetafileMarkdown,
     }
 

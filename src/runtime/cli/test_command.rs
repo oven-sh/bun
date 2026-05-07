@@ -1624,8 +1624,17 @@ impl CommandLineReporter {
             // TODO(port): console_writer.flush() — Vec<u8> has nothing to flush
             console.write_all(&console_buffer)?;
             console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
-            if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() { return Ok(()); }
-            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() { return Ok(()); }
+            // Spec uses `catch return` (NOT `try`) — Zig's `errdefer` does not
+            // fire on a success-return, so disarm the lcov cleanup guard before
+            // the early `Ok(())` (matches Zig: temp file is left for the OS).
+            if console.splat_byte_all(b'-', max_filepath_length + 2).is_err() {
+                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
+                return Ok(());
+            }
+            if console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("|---------|---------|-------------------<r>\n")).is_err() {
+                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
+                return Ok(());
+            }
 
             opts.fractions.failing = failing;
             Output::flush();

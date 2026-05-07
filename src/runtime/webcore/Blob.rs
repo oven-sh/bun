@@ -1321,8 +1321,17 @@ impl BlobExt for Blob {
             };
             let proxy_url = proxy.map(|p| p.href);
 
+            // PORT NOTE: Zig passed `aws_options.credentials.dupe()` (a fresh
+            // heap `*S3Credentials`) when extra options were supplied, else the
+            // store's existing intrusive-rc'd pointer. Rust's `store::S3` holds
+            // an `Arc`, not an `IntrusiveRc`, so the else-arm pointer isn't
+            // shape-compatible with `upload_stream`'s `init_ref`. Always
+            // heap-dupe (matches `fetch.rs`); `upload_stream` bumps the ref and
+            // the MultiPartUpload derefs on completion.
+            // SAFETY: `into_raw` yields a fresh ref=1 heap S3Credentials.
+            let creds_heap = aws_options.credentials.dupe().into_raw();
             return crate::webcore::__s3_client::upload_stream(
-                if extra_options.is_some() { &aws_options.credentials } else { s3.get_credentials() },
+                unsafe { &mut *creds_heap },
                 path,
                 readable_stream,
                 global_this,

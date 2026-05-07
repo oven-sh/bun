@@ -373,7 +373,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // pointer (`StringOrTinyString` is self-referential and not
                 // `Clone`) so the loop body can read `name` after the
                 // `&mut task.callback` borrow ends.
-                let name_ptr: *const [u8] = name;
+                let name_ptr: *const [u8] = name.slice();
                 // SAFETY: `name` lives in `task.callback` which outlives this
                 // match arm (the task is only `put` back to the pool by a later
                 // resolve-task pass, never inside this loop iteration).

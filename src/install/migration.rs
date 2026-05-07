@@ -86,24 +86,8 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = lockfile.read_to_end() else {
             break 'yarn;
         };
-        // PORT NOTE: `yarn::migrate_yarn_lockfile` is typed against
-        // `lockfile_real::Lockfile`; the stub `Lockfile` here cannot be passed
-        // through directly. Surface the result as a generic migrating error so
-        // callers fall through to a fresh install until the stub/real Lockfile
-        // types unify.
-        // TODO(port): blocked_on: lockfile stub/real unification (reconciler-6)
-        let _ = (data, this as *mut _, manager as *mut _);
-        let migrate_result: Result<LoadResult<'_>, Error> = Err(err!("YarnMigrationStubMismatch"));
-        match migrate_result {
-            Ok(r) => {
-                if matches!(r, LoadResult::Ok { .. }) {
-                    Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-                    Output::pretty_error(" ");
-                    Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>");
-                    Output::flush();
-                }
-                return r;
-            }
+        let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir) {
+            Ok(r) => r,
             Err(e) => {
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::Migrating,
@@ -112,7 +96,16 @@ pub fn detect_and_load_other_lockfile<'a>(
                     format: LockfileFormat::Text,
                 });
             }
+        };
+
+        if matches!(migrate_result, LoadResult::Ok { .. }) {
+            Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
+            Output::pretty_error(" ");
+            Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>");
+            Output::flush();
         }
+
+        return migrate_result;
     }
 
     'pnpm: {

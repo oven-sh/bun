@@ -410,6 +410,18 @@ impl EventLoopHandle {
         }
     }
 
+    /// Zig: `loop.internal_loop_data.setParentEventLoop(jsc.EventLoopHandle.init(..))`.
+    /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
+    /// (the trait) and the `*mut Loop` deref dance in scope.
+    #[inline]
+    pub fn set_as_parent_of(self, uws_loop: *mut UwsLoop) {
+        let (tag, ptr) = self.into_tag_ptr();
+        // SAFETY: `uws_loop` is the live process-global loop returned by
+        // `AnyEventLoop::r#loop()`; `internal_loop_data` is the first field
+        // (#[repr(C)]) and outlives every event-loop user.
+        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
+    }
+
     pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner, vtable } => EventLoopHandle::Js {

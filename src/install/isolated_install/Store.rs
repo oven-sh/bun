@@ -286,6 +286,7 @@ impl<T: Copy> OrderedArraySet<T> {
 // directory to the workspace.
 pub mod entry {
     use super::*;
+    use crate::lockfile::package::PackageSliceExt as _;
 
     pub type Id = NewId<Entry>;
     pub type List = MultiArrayList<Entry>;
@@ -627,6 +628,7 @@ pub use entry::{EntryField, EntryListExt, EntrySliceExt};
 // from `pkg_id` and `peers`
 pub mod node {
     use super::*;
+    use crate::lockfile::package::PackageSliceExt as _;
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;

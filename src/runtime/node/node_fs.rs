@@ -313,35 +313,22 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     { ZStr::EMPTY }
 }
 
-/// `bun.StandaloneModuleGraph::get()` — singleton accessor. The graph type
-/// lives in the `bun_standalone_graph` crate which is not a dependency of
-/// `bun_runtime` (it sits above us in the link order). The Zig source only
-/// uses it to short-circuit `stat`/`exists`/`readFile` for embedded files in
-/// compiled binaries; returning `None` here is the correct behaviour for the
-/// non-standalone case and keeps the rest of the body live.
+/// `bun.StandaloneModuleGraph::get()` — singleton accessor. The real type
+/// lives in `bun_standalone_graph` (a dependency of this crate). Zig uses it
+/// to short-circuit `stat`/`exists`/`readFile` for embedded files in compiled
+/// binaries (`bun build --compile`). The graph stores `&mut self` accessors
+/// (`find`/`stat` mutate the lazy WTF-string cache on `File`), so callers
+/// borrow `&mut` through the raw singleton pointer — same shape as the Zig
+/// `?*StandaloneModuleGraph`.
+use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 #[inline]
-fn standalone_module_graph_get() -> Option<&'static StandaloneModuleGraphStub> { None }
-struct StandaloneModuleGraphStub;
-struct StandaloneFileStub;
-impl StandaloneFileStub {
-    #[inline] fn contents(&self) -> &[u8] { &[] }
-}
-impl StandaloneModuleGraphStub {
-    fn find(&self, _: &[u8]) -> Option<&StandaloneFileStub> { None }
-    fn stat(&self, _: &ZStr) -> Option<sys::Stat> { None }
-}
-
-/// `bun.getTotalMemorySize()` — Zig (bun.zig:3498) forwards to the linked C++
-/// `Bun__ramSize()` (src/jsc/bindings/c-bindings.cpp), which is cgroup/jetsam
-/// aware. PORTING.md §Forbidden: never hand-roll a Rust equivalent for linked
-/// C/C++ — declare the extern and forward.
-#[inline]
-fn get_total_memory_size() -> u64 {
-    unsafe extern "C" {
-        fn Bun__ramSize() -> usize;
-    }
-    // SAFETY: FFI into bun's C++ bindings; no invariants required.
-    unsafe { Bun__ramSize() as u64 }
+fn standalone_module_graph_get() -> Option<&'static mut StandaloneModuleGraph> {
+    // SAFETY: `get()` returns the process-static singleton (set once at
+    // startup, never freed). All FS access happens on a single thread per
+    // call site (sync FS) or while the graph's interior state is read-only
+    // (`find`/`stat` only mutate the per-file WTF cache, which `node_fs`
+    // never reaches), so the `&mut` is unique for the call duration.
+    StandaloneModuleGraph::get().map(|p| unsafe { &mut *p })
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is

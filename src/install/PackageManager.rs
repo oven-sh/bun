@@ -704,6 +704,19 @@ impl PackageManager {
         // (PackageManagerOptions.load); only read afterwards.
         unsafe { VERBOSE_INSTALL }
     }
+
+    /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
+    /// Associated-fn spelling that forwards to the free [`init`] so callers
+    /// can write `PackageManager::init(ctx, cli, subcommand)` (the Zig
+    /// `PackageManager.init` call shape).
+    #[inline]
+    pub fn init(
+        ctx: Command::Context,
+        cli: CommandLineArguments,
+        subcommand: Subcommand,
+    ) -> Result<(*mut PackageManager, Box<[u8]>), Error> {
+        init(ctx, cli, subcommand)
+    }
 }
 
 /// Hook (GENUINE b0): `bun.cli.Arguments.loadConfig(_, cli.config, ctx, .InstallCommand)`

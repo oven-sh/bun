@@ -727,31 +727,22 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = unsafe { &*options.vm.global };
 
     let generic_action = "while initializing development server";
-    // FileSystem is a process-lifetime singleton; leak the root path to satisfy
-    // its `&'static [u8]` parameter (Zig stored a borrowed `[:0]const u8`).
-    let root_static: &'static [u8] =
-        Box::leak(options.root.as_bytes().to_vec().into_boxed_slice());
-    let fs = match bun_resolver::fs::FileSystem::init(Some(root_static)) {
+    // FileSystem is a process-lifetime singleton; `init` interns the path into
+    // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
+    // needed for the `'static` it stores.
+    let fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
+    // SAFETY: `FileSystem::init` returns the process-global singleton; valid for `'static`.
+    let top_level_dir: &'static [u8] = unsafe { (*fs).top_level_dir };
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
     // `bun_watcher.start()`).
-    // SAFETY: `FileSystem::init` returns a 'static singleton; reborrow as `&'static`.
-    // PORT NOTE: `bun_watcher::FileSystem` is a forward-decl shim distinct from
-    // `bun_resolver::fs::FileSystem`; the watcher only reads `top_level_dir`, so
-    // construct (and leak — process-lifetime singleton) the shim from the resolver
-    // singleton's field until the two types are unified upstream.
-    let watcher_fs: &'static bun_watcher::FileSystem =
-        Box::leak(Box::new(bun_watcher::FileSystem {
-            top_level_dir: unsafe { (*fs).top_level_dir },
-        }));
-    let _ = fs;
-    let bun_watcher = match Watcher::init::<DevServer>(p, watcher_fs) {
+    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
             return Err(
@@ -768,9 +759,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as `*const DevServer` for later `concurrent_task.from(dev)`; not dereferenced
     // during construction.
-    // PORT NOTE: `WatcherAtomics::init` is typed against `dev_server::DevServer`;
-    // cast through the erased pointer while the two struct shapes converge.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p as *const () as *const crate::bake::dev_server::DevServer)) };
+    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)

@@ -1439,7 +1439,8 @@ impl<'a> PackageInstaller<'a> {
                             }
                         }
 
-                        match self.manager.enqueue_package_for_download(
+                        match package_manager::enqueue_package_for_download(
+                            self.manager,
                             pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
                             dependency_id,
                             package_id,
@@ -1453,10 +1454,9 @@ impl<'a> PackageInstaller<'a> {
                             patch_name_and_version_hash,
                         ) {
                             Ok(()) => {}
-                            Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
-                            Err(e) if e == bun_core::err!("InvalidURL") => self
+                            Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
+                            Err(ForTarballError::InvalidURL) => self
                                 .fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level),
-                            Err(_) => unreachable!(),
                         }
                     }
                     _ => {
@@ -1479,21 +1479,23 @@ impl<'a> PackageInstaller<'a> {
             // into cache, then install into node_modules
             if let Some(patch) = installer.patch.as_ref() {
                 if installer.patched_package_missing_from_cache(self.manager, package_id) {
-                    let mut task = PatchTask::new_apply_patch_hash(
+                    let task = PatchTask::new_apply_patch_hash(
                         self.manager,
                         package_id,
                         patch.contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
-                    task.callback.apply.install_context = Some(DependencyInstallContext {
-                        dependency_id,
-                        tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
-                    });
-                    // PORT NOTE: stub `enqueue_patch_task` is typed against the
-                    // crate-level `PatchTask` carrier; cast through it until the
-                    // real and stub PatchTask unify (`patch_install` ↔ lib.rs).
-                    self.manager.enqueue_patch_task(task.cast());
+                    // SAFETY: `task` was just `Box::into_raw`'d in `new_apply_patch_hash`;
+                    // we hold the only pointer until `enqueue_patch_task` takes ownership.
+                    if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback } {
+                        apply.install_context = Some(DependencyInstallContext {
+                            dependency_id,
+                            tree_id: self.current_tree_id,
+                            path: self.node_modules.path.as_slice() as *const [u8],
+                        });
+                    }
+                    // SAFETY: `task` was `Box::into_raw`'d above; reconstitute for the queue.
+                    package_manager::enqueue_patch_task(self.manager, unsafe { Box::from_raw(task) });
                     return;
                 }
             }
@@ -1509,7 +1511,7 @@ impl<'a> PackageInstaller<'a> {
                     .push(DependencyInstallContext {
                         dependency_id,
                         tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
+                        path: self.node_modules.path.as_slice() as *const [u8],
                     });
                 return;
             }
@@ -1522,15 +1524,15 @@ impl<'a> PackageInstaller<'a> {
                         if log_level != Options::LogLevel::Silent {
                             Output::err(
                                 err,
-                                format_args!(
-                                    "Failed to open node_modules folder for <r><red>{}<r> in {}",
+                                "Failed to open node_modules folder for <r><red>{}<r> in {}",
+                                (
                                     bstr::BStr::new(
                                         pkg_name
-                                            .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                            .slice(self.lockfile.buffers.string_bytes.as_slice()),
                                     ),
                                     bun_core::fmt::fmt_path(
                                         self.node_modules.path.as_slice(),
-                                        Default::default()
+                                        Default::default(),
                                     ),
                                 ),
                             );

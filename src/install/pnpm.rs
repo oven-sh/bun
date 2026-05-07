@@ -1229,7 +1229,7 @@ fn parse_append_package_dependencies(
                         name.hash,
                         version_sliced.slice,
                         &version_sliced,
-                        log,
+                        Some(&mut *log),
                         None,
                     ) {
                         Some(v) => v,
@@ -1269,23 +1269,20 @@ fn parse_append_package_dependencies(
             let (_, has_alias) = dependency::split_version_and_maybe_name(version_without_suffix);
 
             let mut alias: Option<ExternalString> = None;
-            let version_sliced = 'version: {
-                if let Some(alias_str) = has_alias {
-                    alias = Some(sbuf!(lockfile).append_external(alias_str)?);
-                    version_buf.clear();
-                    write!(
-                        &mut version_buf,
-                        "npm:{}",
-                        bstr::BStr::new(version_without_suffix)
-                    )
-                    .map_err(|_| AllocError)?;
-                    let version = sbuf!(lockfile).append(&version_buf)?;
-                    break 'version version.sliced(string_bytes!(lockfile));
-                }
-
-                let version = sbuf!(lockfile).append(version_without_suffix)?;
-                break 'version version.sliced(string_bytes!(lockfile));
+            let version: String = if let Some(alias_str) = has_alias {
+                alias = Some(sbuf!(lockfile).append_external(alias_str)?);
+                version_buf.clear();
+                write!(
+                    &mut version_buf,
+                    "npm:{}",
+                    bstr::BStr::new(version_without_suffix)
+                )
+                .map_err(|_| AllocError)?;
+                sbuf!(lockfile).append(&version_buf)?
+            } else {
+                sbuf!(lockfile).append(version_without_suffix)?
             };
+            let version_sliced = version.sliced(string_bytes!(lockfile));
 
             if let Some(peers) = package_obj.get(b"peerDependencies") {
                 if !peers.is_object() {
@@ -1339,7 +1336,7 @@ fn parse_append_package_dependencies(
                                 alias.map(|a| a.hash).unwrap_or(name.hash),
                                 version_sliced.slice,
                                 &version_sliced,
-                                log,
+                                Some(&mut *log),
                                 None,
                             ) {
                                 Some(v) => v,
@@ -1711,11 +1708,11 @@ fn update_package_json_after_migration(
                     let mut new_root_props = G::PropertyList::init_capacity(new_root_count)?;
                     for prop in e_object(&json).properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
-                            new_root_props.append(prop.clone())?;
+                            new_root_props.append(shallow_clone_prop(prop))?;
                             continue;
                         };
                         if key != b"pnpm" {
-                            new_root_props.append(prop.clone())?;
+                            new_root_props.append(shallow_clone_prop(prop))?;
                         }
                     }
 
@@ -1724,7 +1721,7 @@ fn update_package_json_after_migration(
                     let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count)?;
                     for prop in pnpm_obj.properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
-                            new_pnpm_props.append(prop.clone())?;
+                            new_pnpm_props.append(shallow_clone_prop(prop))?;
                             continue;
                         };
                         if moved_overrides && key == b"overrides" {
@@ -1733,7 +1730,7 @@ fn update_package_json_after_migration(
                         if moved_patched_deps && key == b"patchedDependencies" {
                             continue;
                         }
-                        new_pnpm_props.append(prop.clone())?;
+                        new_pnpm_props.append(shallow_clone_prop(prop))?;
                     }
 
                     pnpm_obj.properties = new_pnpm_props;

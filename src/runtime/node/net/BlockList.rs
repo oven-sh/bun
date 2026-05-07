@@ -191,11 +191,10 @@ impl BlockList {
         };
         if let Some(ord) = _compare(&start, &end) {
             if ord == Ordering::Greater {
-                // TODO(port): `JSGlobalObject::throw_invalid_argument_value_custom`
-                // is not yet exposed in bun_jsc; use `throw_invalid_arguments` shim.
-                let _ = start_js;
-                return Err(global.throw_invalid_arguments(
-                    "The \"start\" argument is invalid. It must come before end",
+                return Err(global.throw_invalid_argument_value_custom(
+                    b"start",
+                    start_js,
+                    b"must come before end",
                 ));
             }
         }
@@ -274,7 +273,7 @@ impl BlockList {
                 }
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
-                    clear_exception(global);
+                    global.clear_exception();
                     return Ok(JSValue::FALSE);
                 }
             }
@@ -415,7 +414,9 @@ impl BlockList {
         let int = match read_int_le_usize(buf, &mut pos) {
             Some(v) => v,
             None => {
-                return Err(global.throw("BlockList.onStructuredCloneDeserialize failed"));
+                return Err(global.throw(format_args!(
+                    "BlockList.onStructuredCloneDeserialize failed"
+                )));
             }
         };
 
@@ -431,27 +432,13 @@ impl BlockList {
         // SerializedScriptValue has no destroy hook for Bun-native tags, so that
         // ref is retained until a buffer-level deref exists (preferable to UAF).
         // SAFETY: `int` was produced by `on_structured_clone_serialize` from a
-        // live `*mut Self` whose ref was bumped at serialize time.
-        unsafe { (*this).ref_() };
-        Ok(Self::to_js_ptr(this, global))
-    }
-
-    /// Wrap an existing heap-allocated `*mut BlockList` in a fresh JS wrapper.
-    /// `JsClass::to_js` boxes by value; the structured-clone path needs to wrap
-    /// an *existing* refcounted pointer instead, so we bind `${T}__create`
-    /// directly (codegen-emitted; see generate-classes.ts).
-    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            // Signature must match the one emitted by `#[bun_jsc::JsClass]`
-            // (`*mut BlockList`, not `*mut c_void`) to avoid a clashing
-            // extern-declaration diagnostic.
-            #[link_name = "BlockList__create"]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut BlockList) -> JSValue;
+        // live `*mut Self` whose ref was bumped at serialize time. Ownership of
+        // one ref transfers to the C++ wrapper (released via `finalize` → `deref`).
+        // `to_js_ptr` is the `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
+        unsafe {
+            (*this).ref_();
+            Ok(Self::to_js_ptr(this, global))
         }
-        // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer
-        // whose ref was bumped for this wrapper. Ownership of one ref transfers
-        // to the C++ wrapper (released via `finalize` → `deref`).
-        unsafe { __create(global as *const _ as *mut _, this) }
     }
 }
 

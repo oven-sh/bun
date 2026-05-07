@@ -1262,7 +1262,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                         success = true;
-                        cleanup(&mut req, body_ptr, success);
+                        cleanup(&mut req, body, success);
                         return Ok(req);
                     }
 
@@ -1622,7 +1622,7 @@ impl Request {
         req.check_body_stream_ref(global_this);
         success = true;
 
-        cleanup(&mut req, body_ptr, success);
+        cleanup(&mut req, body, success);
         Ok(req)
     }
 

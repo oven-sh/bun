@@ -1045,6 +1045,29 @@ impl BufferReadStream {
         }
     }
 
+    /// Borrow the underlying libarchive handle.
+    ///
+    /// SAFETY (invariant): `self.archive` is set to a fresh non-null handle by
+    /// `Archive::read_new()` in `init()` and remains valid until `read_free()`
+    /// in `Drop`. All `Archive` methods take `&self` (FFI interior mutability),
+    /// so a shared borrow is sufficient.
+    #[inline]
+    fn archive(&self) -> &Archive {
+        // SAFETY: see doc comment — non-null for the lifetime of `self`.
+        unsafe { &*self.archive }
+    }
+
+    /// Borrow the input buffer.
+    ///
+    /// SAFETY (invariant): `self.buf` is a fat pointer captured from the
+    /// `&[u8]` passed to `init()`; the caller guarantees it outlives `self`
+    /// (see field comment). Never null, never mutated.
+    #[inline]
+    fn buf(&self) -> &[u8] {
+        // SAFETY: see doc comment — borrowed for `self`'s lifetime.
+        unsafe { &*self.buf }
+    }
+
     pub fn open_read(&mut self) -> lib::Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
@@ -1054,8 +1077,7 @@ impl BufferReadStream {
         // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
         // _ = lib.archive_read_set_callback_data(this.archive, this);
 
-        // SAFETY: archive was created by Archive::read_new() and is valid until Drop
-        let archive = unsafe { &mut *self.archive };
+        let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
         let _ = archive.read_support_format_gnutar();
@@ -1069,8 +1091,7 @@ impl BufferReadStream {
 
         // _ = lib.archive_read_support_filter_none(this.archive);
 
-        // SAFETY: buf outlives self (see field comment)
-        let rc = archive.read_open_memory(unsafe { &*self.buf });
+        let rc = archive.read_open_memory(self.buf());
 
         self.reading = (rc as c_int) > -1;
 
@@ -1081,8 +1102,7 @@ impl BufferReadStream {
 
     #[inline]
     pub fn buf_left(&self) -> &[u8] {
-        // SAFETY: buf outlives self (see field comment)
-        unsafe { &(&*self.buf)[self.pos..] }
+        &self.buf()[self.pos..]
     }
 
     #[inline]
@@ -1121,8 +1141,7 @@ impl BufferReadStream {
         // SAFETY: ctx is the *mut BufferReadStream we registered
         let this = unsafe { &mut *Self::from_ctx(ctx_) };
 
-        // SAFETY: buf outlives self (see field comment)
-        let buflen = isize::try_from(unsafe { &*this.buf }.len()).expect("int cast");
+        let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
 
         let proposed = pos + isize::try_from(offset).expect("int cast");
@@ -1140,8 +1159,7 @@ impl BufferReadStream {
         // SAFETY: ctx is the *mut BufferReadStream we registered
         let this = unsafe { &mut *Self::from_ctx(ctx_) };
 
-        // SAFETY: buf outlives self (see field comment)
-        let buflen = isize::try_from(unsafe { &*this.buf }.len()).expect("int cast");
+        let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
         let offset = isize::try_from(offset).expect("int cast");
 
@@ -1199,11 +1217,8 @@ impl BufferReadStream {
 
 impl Drop for BufferReadStream {
     fn drop(&mut self) {
-        // SAFETY: archive was created by Archive::read_new() and not yet freed
-        unsafe {
-            let _ = (*self.archive).read_close();
-            let _ = (*self.archive).read_free();
-        }
+        let _ = self.archive().read_close();
+        let _ = self.archive().read_free();
     }
 }
 

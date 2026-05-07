@@ -86,7 +86,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // We do need to always call hasException() to satisfy the need for an exception check.
     let has_exception = scope.has_exception_or_false_when_assertions_are_disabled();
     if ok {
-        debug_assert!(out.tag != Tag::Dead);
+        debug_assert!(out.tag() != Tag::Dead);
     } else {
         debug_assert!(has_exception);
     }
@@ -227,7 +227,7 @@ fn slice_with_underlying_string_to_js_with_options(
     global_object: &JSGlobalObject,
     transfer: bool,
 ) -> JsResult<JSValue> {
-    if (this.underlying.tag == Tag::Dead || this.underlying.tag == Tag::Empty)
+    if (this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty)
         && this.utf8.length() > 0
     {
         #[cfg(debug_assertions)]

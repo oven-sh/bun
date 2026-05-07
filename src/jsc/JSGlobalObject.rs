@@ -1085,7 +1085,7 @@ impl JSGlobalObject {
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        if (!opts.nullable && value.is_null())
+        if (!opts.allow_nullable && value.is_null())
             || (!opts.allow_array && value.is_array())
             || (!value.is_object() && (!opts.allow_function || !value.is_function()))
         {

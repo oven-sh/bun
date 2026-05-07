@@ -107,10 +107,10 @@ impl MacroContext {
     ) -> Result<Expr, Error> {
         ExprStore::set_disable_reset(true);
         StmtStore::set_disable_reset(true);
-        let _reset_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             ExprStore::set_disable_reset(false);
             StmtStore::set_disable_reset(false);
-        });
+        }
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
             &import_record_path[NAMESPACE_WITH_COLON.len()..]
@@ -206,7 +206,7 @@ impl MacroContext {
             };
             Output::flush();
         }
-        let _flush_guard = scopeguard::guard((), |_| Output::flush());
+        scopeguard::defer! { Output::flush(); }
 
         // PORT NOTE: reshaped for borrowck — Zig copies the Macro by value out
         // of the map. We snapshot the small POD fields we need (`disabled`,
@@ -221,10 +221,10 @@ impl MacroContext {
         let vm = macro_vm.expect("Macro.vm accessed on disabled sentinel").as_ptr();
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
         unsafe { (*vm).enable_macro_mode() };
-        let _mode_guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: `vm` outlives this guard (per-thread, lives for thread).
             unsafe { (*vm).disable_macro_mode() };
-        });
+        }
         // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 

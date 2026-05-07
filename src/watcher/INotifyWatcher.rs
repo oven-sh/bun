@@ -388,7 +388,7 @@ impl INotifyWatcher {
 /// Repeatedly called by the main watcher until the watcher is terminated.
 pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
-    scopeguard::defer! { Output::flush(); }
+    let _flush = Output::flush_guard();
 
     let events = this.platform.read()?;
     if events.is_empty() {

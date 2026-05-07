@@ -557,10 +557,7 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     code.contents_is_recycled = true;
 
     // Zig: defer { Stmt.Data.Store.reset(); Expr.Data.Store.reset(); }
-    let _store_reset = scopeguard::guard((), |_| {
-        js_ast::Stmt::Data::Store::reset();
-        js_ast::Expr::Data::Store::reset();
-    });
+    let _store_reset = js_ast::StoreResetGuard::new();
 
     // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
     // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
@@ -632,10 +629,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
     let opts = api::Transform::decode(&mut reader).expect("unreachable");
     let loader_ = opts.loader.unwrap_or(api::Loader::Tsx);
 
-    let _store_reset = scopeguard::guard((), |_| {
-        js_ast::Stmt::Data::Store::reset();
-        js_ast::Expr::Data::Store::reset();
-    });
+    let _store_reset = js_ast::StoreResetGuard::new();
     let loader: options_mod::Loader = match loader_ {
         api::Loader::Jsx => options_mod::Loader::Jsx,
         api::Loader::Js => options_mod::Loader::Js,
@@ -737,10 +731,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
     let opts = api::Scan::decode(&mut reader).expect("unreachable");
     let loader_ = opts.loader.unwrap_or(api::Loader::Tsx);
 
-    let _store_reset = scopeguard::guard((), |_| {
-        js_ast::Stmt::Data::Store::reset();
-        js_ast::Expr::Data::Store::reset();
-    });
+    let _store_reset = js_ast::StoreResetGuard::new();
     let loader: options_mod::Loader = match loader_ {
         api::Loader::Jsx => options_mod::Loader::Jsx,
         api::Loader::Js => options_mod::Loader::Js,

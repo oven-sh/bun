@@ -851,9 +851,9 @@ impl UpgradeCommand {
             }
 
             {
-                let _guard = scopeguard::guard((), |_| {
+                scopeguard::defer! {
                     let _ = sys::unlinkat(save_dir.fd(), tmpname);
-                });
+                }
 
                 #[cfg(unix)]
                 {
@@ -1044,9 +1044,9 @@ impl UpgradeCommand {
                         Err(core_err) => core_err.name().as_bytes(),
                     };
 
-                    let _delete_guard = scopeguard::guard((), |_| {
+                    scopeguard::defer! {
                         let _ = save_dir_.delete_tree(&version_name);
-                    });
+                    }
 
                     // Zig matched `error.FileNotFound`; the bun.sys spawn path tags
                     // it as ENOENT. Accept both to keep snapshot parity across
@@ -1294,9 +1294,9 @@ impl UpgradeCommand {
                     target_dir.fd(),
                     target_filename,
                 ) {
-                    let _delete_guard = scopeguard::guard((), |_| {
+                    scopeguard::defer! {
                         let _ = save_dir_.delete_tree(&version_name);
-                    });
+                    }
 
                     #[cfg(windows)]
                     {

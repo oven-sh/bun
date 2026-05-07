@@ -1158,6 +1158,28 @@ pub fn flush() {
     }
 }
 
+/// RAII guard that calls [`flush`] on `Drop`.
+///
+/// This is the Rust spelling of Zig's `defer Output.flush();` — hold one of
+/// these across a scope with early returns to guarantee buffered stdout/stderr
+/// is drained on every exit path.
+#[must_use = "FlushGuard flushes on Drop; binding to `_` drops it immediately"]
+pub struct FlushGuard(());
+
+impl Drop for FlushGuard {
+    #[inline]
+    fn drop(&mut self) {
+        flush();
+    }
+}
+
+/// Returns a guard that flushes buffered stdout & stderr when it goes out of
+/// scope. Equivalent to Zig's `defer Output.flush();`.
+#[inline]
+pub fn flush_guard() -> FlushGuard {
+    FlushGuard(())
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────

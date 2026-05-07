@@ -564,6 +564,7 @@ impl FileResponseStream {
     }
 }
 
+<<<<<<< Updated upstream
 /// RAII owner for one intrusive refcount on a `FileResponseStream`. Dropping
 /// calls [`FileResponseStream::deref`], which may free `*self.0` — so callers
 /// must not hold a live `&`/`&mut FileResponseStream` across the guard's drop
@@ -580,6 +581,24 @@ impl Drop for DerefOnDrop {
     }
 }
 
+||||||| Stash base
+=======
+/// RAII owner for one intrusive refcount on a `FileResponseStream`. Dropping
+/// calls [`FileResponseStream::deref`], which may free `*self.0` — so callers
+/// must not hold a live `&`/`&mut FileResponseStream` across the guard's drop
+/// point. Construct via [`FileResponseStream::ref_guard`] (which also bumps the
+/// count) or directly when adopting a ref taken elsewhere (e.g. the in-flight
+/// read ref taken before `reader.read()`).
+struct DerefOnDrop(*mut FileResponseStream);
+impl Drop for DerefOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // pointer with at least one outstanding ref owned by this guard.
+        unsafe { FileResponseStream::deref(self.0) }
+    }
+}
+
+>>>>>>> Stashed changes
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
 impl bun_io::BufferedReaderParent for FileResponseStream {

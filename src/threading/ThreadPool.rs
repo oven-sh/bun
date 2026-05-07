@@ -897,6 +897,34 @@ thread_local! {
     static CURRENT: Cell<*mut Thread> = const { Cell::new(ptr::null_mut()) };
 }
 
+/// RAII scope for a worker thread's active lifetime: publishes `thread` as
+/// `CURRENT` and registers it with `pool` on construction; on drop, unregisters
+/// from the pool and clears `CURRENT` (matching the Zig `defer` order).
+struct ThreadRegistration {
+    pool: *const ThreadPool,
+    thread: *mut Thread,
+}
+
+impl ThreadRegistration {
+    /// SAFETY: `pool` must outlive the returned guard (join() waits on workers),
+    /// and `thread` must point to the caller's stack-local `Thread`.
+    unsafe fn new(pool: *const ThreadPool, thread: *mut Thread) -> Self {
+        CURRENT.with(|c| c.set(thread));
+        // SAFETY: per fn contract.
+        unsafe { (*pool).register(thread) };
+        Self { pool, thread }
+    }
+}
+
+impl Drop for ThreadRegistration {
+    fn drop(&mut self) {
+        // SAFETY: per `new()` contract — pool outlives this worker; thread is
+        // our stack-local Thread.
+        unsafe { (*self.pool).unregister(self.thread) };
+        CURRENT.with(|c| c.set(ptr::null_mut()));
+    }
+}
+
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl Thread {

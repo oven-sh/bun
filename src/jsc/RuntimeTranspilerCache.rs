@@ -308,13 +308,11 @@ impl Entry {
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
         // Zig: `defer tmpfile.fd.close()` — close on all exit paths.
-        let tmpfile_fd = tmpfile.fd;
-        let _close_guard = scopeguard::guard((), move |_| {
-            tmpfile_fd.close();
-        });
+        let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            let using_tmpfile = tmpfile.using_tmpfile;
-            let errdefer = scopeguard::guard((), |_| {
+            // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)` — disarmed
+            // via `into_inner` on the success path below.
+            let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
                 if !using_tmpfile {
                     let _ = sys::unlinkat(destination_dir, tmpfilename);
                 }
@@ -437,7 +435,7 @@ impl Entry {
             }
 
             // disarm errdefer (success path)
-            scopeguard::ScopeGuard::into_inner(errdefer);
+            let _ = scopeguard::ScopeGuard::into_inner(errdefer);
         }
 
         // Zig: `@ptrCast(std.fs.path.basename(...))` — basename of a NUL-terminated
@@ -784,10 +782,11 @@ impl RuntimeTranspilerCache {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
         // Zig: `defer cache_fd.close()` — close on all exit paths.
-        let _close_guard = scopeguard::guard(cache_fd, |fd| fd.close());
-        // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the cache file.
-        let unlink_guard = scopeguard::guard((), |_| {
-            let _ = sys::unlink(cache_file_path.slice_assume_z());
+        let _close_guard = sys::CloseOnDrop::new(cache_fd);
+        // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
+        // cache file. Disarmed via `into_inner` on the success path below.
+        let unlink_guard = scopeguard::guard(cache_file_path, |p| {
+            let _ = sys::unlink(p.slice_assume_z());
         });
 
         let file = sys::File::from_fd(cache_fd);
@@ -820,7 +819,7 @@ impl RuntimeTranspilerCache {
         entry.load(&file)?;
 
         // disarm errdefer (success path)
-        scopeguard::ScopeGuard::into_inner(unlink_guard);
+        let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
     }
 

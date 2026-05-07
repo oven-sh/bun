@@ -64,14 +64,14 @@ impl InitCommand {
         .ok();
 
         #[cfg(windows)]
-        let _restore = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if let Some(mode) = original_mode {
                 // SAFETY: stdin handle is valid for the lifetime of the process.
                 unsafe {
                     let _ = bun_sys::windows::c::SetConsoleMode(Fd::stdin().native(), mode);
                 }
             }
-        });
+        };
 
         let mut input: Vec<u8> = Vec::new();
         // TODO(port): bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024)
@@ -111,11 +111,11 @@ impl InitCommand {
         if colors {
             Output::print(format_args!("\x1b[?25l")); // hide cursor
         }
-        let _show_cursor = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             if colors {
                 Output::print(format_args!("\x1b[?25h")); // show cursor
             }
-        });
+        };
 
         let mut selected: C = C::DEFAULT;
         let mut initial_draw = true;
@@ -294,7 +294,7 @@ impl InitCommand {
             let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
         }
 
-        let _restore = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             #[cfg(windows)]
             {
                 if let Some(mode) = original_mode {
@@ -308,7 +308,7 @@ impl InitCommand {
             {
                 let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
             }
-        });
+        };
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,

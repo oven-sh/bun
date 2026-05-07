@@ -728,26 +728,8 @@ impl Drop for SharedTempBufferBorrow {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
-    let chunk_ptr = get_shared_buffer().as_mut_ptr();
-    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
-    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
-    let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
-
-    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
-    SHARED_TEMP_BUFFER_PTR.with(|c| c.set(None));
-    let _guard = scopeguard::guard((), |_| {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing.as_ptr() as *mut u8 != chunk_ptr {
-                    // SAFETY: chunk_ptr was allocated via Box::into_raw above.
-                    drop(unsafe { Box::from_raw(chunk_ptr as *mut SharedTempBuffer) });
-                }
-            } else {
-                // SAFETY: chunk_ptr is non-null (came from Box::into_raw).
-                c.set(Some(unsafe { NonNull::new_unchecked(chunk_ptr as *mut SharedTempBuffer) }));
-            }
-        });
-    });
+    let mut borrow = SharedTempBufferBorrow::new();
+    let chunk = borrow.chunk();
 
     let mut slice = slice_;
 
@@ -767,26 +749,8 @@ pub fn format_utf16_type_with_path_options(
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
 ) -> fmt::Result {
-    let chunk_ptr = get_shared_buffer().as_mut_ptr();
-    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
-    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
-    let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
-
-    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
-    SHARED_TEMP_BUFFER_PTR.with(|c| c.set(None));
-    let _guard = scopeguard::guard((), |_| {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing.as_ptr() as *mut u8 != chunk_ptr {
-                    // SAFETY: chunk_ptr was allocated via Box::into_raw above.
-                    drop(unsafe { Box::from_raw(chunk_ptr as *mut SharedTempBuffer) });
-                }
-            } else {
-                // SAFETY: chunk_ptr is non-null.
-                c.set(Some(unsafe { NonNull::new_unchecked(chunk_ptr as *mut SharedTempBuffer) }));
-            }
-        });
-    });
+    let mut borrow = SharedTempBufferBorrow::new();
+    let chunk = borrow.chunk();
 
     let mut slice = slice_;
 
@@ -991,27 +955,9 @@ pub fn buf_print<'a>(
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let chunk_ptr = get_shared_buffer().as_mut_ptr();
-    // SAFETY: chunk_ptr was just obtained from get_shared_buffer() (Box-allocated, thread-local);
-    // we are the unique borrower for this scope and the cell is nulled below to guard recursion.
-    let chunk: &mut SharedTempBuffer = unsafe { &mut *(chunk_ptr as *mut SharedTempBuffer) };
+    let mut borrow = SharedTempBufferBorrow::new();
+    let chunk = borrow.chunk();
     let mut slice = slice_;
-
-    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
-    SHARED_TEMP_BUFFER_PTR.with(|c| c.set(None));
-    let _guard = scopeguard::guard((), |_| {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing.as_ptr() as *mut u8 != chunk_ptr {
-                    // SAFETY: chunk_ptr was allocated via Box::into_raw.
-                    drop(unsafe { Box::from_raw(chunk_ptr as *mut SharedTempBuffer) });
-                }
-            } else {
-                // SAFETY: chunk_ptr is non-null.
-                c.set(Some(unsafe { NonNull::new_unchecked(chunk_ptr as *mut SharedTempBuffer) }));
-            }
-        });
-    });
 
     while let Some(i) = strings::first_non_ascii(slice) {
         if i > 0 {

@@ -1696,7 +1696,9 @@ impl JSValkeyClient {
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime).
         let socket = unsafe {
-            (*client_ptr).address.connect(client_ptr, &mut *group, ssl_ctx_ref, is_tls)
+            (*client_ptr)
+                .address
+                .connect::<valkey::ValkeyClient>(client_ptr, &mut *group, ssl_ctx_ref, is_tls)
         }?;
         self.client.socket = socket;
         // Disarm errdefers on success.
@@ -1893,7 +1895,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         socket: SocketType<SSL>,
     ) -> JsTerminatedResult<()> {
         this.client.socket = Self::_socket(socket);
-        this.client.on_open(Self::_socket(socket))
+        narrow_terminated(this.client.on_open(Self::_socket(socket)))
     }
 
     pub fn on_handshake_(

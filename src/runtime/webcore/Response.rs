@@ -12,8 +12,13 @@ use bun_http_types::MimeType::MimeType;
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue};
-use super::blob::{Blob, Internal as InternalBlob};
+use super::blob::Internal as InternalBlob;
 use super::{FetchHeaders, ReadableStream, Request};
+
+// PORT NOTE: codegen (`generated_classes.rs`) re-exports `Blob` from
+// `crate::webcore::response` because the Zig `.classes.ts` source path is
+// `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
+pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 // C++ helper functions for AsyncLocalStorage integration

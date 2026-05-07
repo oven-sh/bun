@@ -722,6 +722,7 @@ impl WebWorker {
         // parent still gets a close event and the thread ref is dropped.
         if self.has_requested_terminate() {
             self.shutdown();
+            return;
         }
 
         if let Err(err) = self.start_vm() {
@@ -917,7 +918,11 @@ impl WebWorker {
 
     /// Phase 2: load the entry point, dispatch 'online', run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
-    fn spin(&self) -> ! {
+    ///
+    /// PORT NOTE: Zig's `spin` is `noreturn` (every path ends in `shutdown`
+    /// → `bun.exitThread`). The Rust port returns `()` so the thread can
+    /// unwind-free fall out of the `extern "C"` trampoline — see `shutdown`.
+    fn spin(&self) {
         log!("[{}] spin start", self.execution_context_id);
 
         // SAFETY: vm published in start_vm; non-null past this point. Kept
@@ -937,7 +942,7 @@ impl WebWorker {
         // JSC::VM built by initWorker is torn down rather than leaked.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
-            self.shutdown();
+            return self.shutdown();
         }
 
         // SAFETY: `vm` valid (see above); `preloads` is owned by `self` (heap
@@ -979,7 +984,7 @@ impl WebWorker {
                 }
                 resolve_error.deref();
                 self.flush_logs(vm);
-                self.shutdown();
+                return self.shutdown();
             }
         };
         resolve_error.deref();
@@ -987,7 +992,7 @@ impl WebWorker {
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
-            self.shutdown();
+            return self.shutdown();
         }
 
         // `path` borrows the resolver's process-lifetime string store, the
@@ -1002,7 +1007,7 @@ impl WebWorker {
                     unsafe { (*vm).exit_handler.exit_code = 1 };
                 }
                 self.flush_logs(vm);
-                self.shutdown();
+                return self.shutdown();
             }
         };
 
@@ -1014,7 +1019,7 @@ impl WebWorker {
                     (*vm).uncaught_exception(&*(*vm).global, (*promise).result(&*(*vm).jsc_vm), true);
                 if !handled {
                     (*vm).exit_handler.exit_code = 1;
-                    self.shutdown();
+                    return self.shutdown();
                 }
             } else {
                 let _ = (*promise).result(&*(*vm).jsc_vm);
@@ -1100,7 +1105,11 @@ impl WebWorker {
     ///   5. free loop/arena/pools     — no `this.*` dereferences below step 4.
     ///
     /// Does NOT free `this` — see ownership rule in the file header.
-    fn shutdown(&self) -> ! {
+    ///
+    /// PORT NOTE: Zig's `shutdown` is `noreturn` (ends in `bun.exitThread`).
+    /// The Rust port returns `()` and lets the thread fall out of the spawn
+    /// closure instead — see the note at the bottom of this fn.
+    fn shutdown(&self) {
         jsc::mark_binding();
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
@@ -1209,7 +1218,17 @@ impl WebWorker {
         bun_core::delete_all_pools_for_thread_exit();
         drop(arena.take());
 
-        bun_core::exit_thread();
+        // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
+        // Rust we MUST NOT — glibc's `pthread_exit` throws a `__forced_unwind`
+        // C++ exception to run destructors, and unwinding that out of the
+        // `extern "C"` `opaque_spin_trampoline` (a `nounwind` ABI boundary)
+        // makes Rust abort the whole process. Instead return normally:
+        // `shutdown()` → `spin()` → trampoline → C++ `holdAPILock` (releases
+        // its `JSLockHolder` via normal return) → `thread_main` → the
+        // `std::thread` spawn closure, which then exits the thread cleanly.
+        // No `this.*` is touched past `dispatchExit` above, so the
+        // `this`-may-be-freed contract still holds across the unwind-free
+        // return path.
     }
 
     /// process.exit() inside the worker. Worker-thread only.

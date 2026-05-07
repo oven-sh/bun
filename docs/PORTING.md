@@ -703,3 +703,38 @@ End your `.rs` with a trailer comment:
 `confidence: low` means "logic is probably wrong, re-read the Zig in Phase B".
 `medium` means "types/imports will need fixing but logic is right".
 `high` means "should compile with only mechanical import fixes".
+
+## Global mutable state (Zig `var instance: T` → Rust)
+
+Zig's `*T` has no aliasing requirement; Rust's `&mut T` is exclusive. Converting
+Zig's `var instance: T = undefined` + `pub fn get() *T` to `static mut` +
+`unsafe { &mut INSTANCE }` is **UB** the moment two `&mut` are live (which
+happens any time a method on the singleton calls another function that also
+`get()`s).
+
+**The right pattern depends on the access shape:**
+
+| Zig singleton | Rust pattern | Why |
+|---|---|---|
+| Per-JS-thread (`VirtualMachine`, `EventLoop`, `FileSystem`) | **Thread the pointer.** The C++ side already stores `*mut VirtualMachine` in `globalObject`'s user-data; host fns get it via `unsafe { &mut *(*global).bun_vm() }`. Boot-path code takes `vm: &mut VirtualMachine` as a param. **Do not add `VirtualMachine::get()`** — every caller either has a `globalObject` or is on the boot path. | Greenfield Rust would never have the global. The FFI re-entry point is the *only* place the raw-ptr escape lives, and JSC guarantees single-threaded re-entry there. |
+| Process-global, mutated post-init (`Output` color flags, env cache) | `static X: OnceLock<T>` where `T`'s mutable fields are `Atomic*` / `Mutex<_>` | Safe shared `&'static T`; mutation through interior types. |
+| Process-global, init-once-then-read-only (mime table, builtin module list) | `static X: LazyLock<T>` (or `OnceLock`), `fn get() -> &'static T` | No mutation = no aliasing problem. |
+| Arena-scoped (`Expr.Data.Store`, parser scratch) | Owned by the parse session, **not** a `static`. The arena handle is passed/owned; never `reset()` while a `StoreRef` into it is live. | The store is logically per-session, not global. |
+| "High tier registers a hook in low tier" (event-loop callbacks, blob ctor) | **Not a runtime registration.** Low crate declares `unsafe extern "Rust" { fn __bun_X(...) }`; high crate defines `#[no_mangle] pub fn __bun_X(...) { real body }`. Linker resolves. | Exactly one impl exists, so the linker is the registry. Zero runtime state. |
+
+**`*mut T` is the alias-allowed pointer.** Raw pointers carry no aliasing
+assertion — `unsafe { (*vm).field = x }` is fine even with other `*mut` live.
+UB only enters at `&mut *ptr` / `&*ptr`. So if you must hold a long-lived
+handle, hold `*mut T` and deref per-access; don't bind `let vm = &mut *get()`
+and hold it across calls.
+
+**`SyncUnsafeCell<T>` is the alias-allowed static cell.** When a `static`
+genuinely needs mutable access from a single thread without locking,
+`static X: SyncUnsafeCell<MaybeUninit<T>>` + `fn get() -> *mut T { X.get().cast() }`
+is the primitive. Callers stay in raw-ptr land.
+
+**Banned patterns** (verify-stage rejects):
+- `static mut X: T` + `unsafe { &mut X }` — use `SyncUnsafeCell` or restructure.
+- `&'static mut T` stored in a struct field — that asserts exclusive forever.
+- Runtime-registered vtable/hook with one consumer — use `extern "Rust"`.
+- `let x = unsafe { &mut *Singleton::get() }; ...calls something...; x.use()` — re-get after the call or pass `*mut`.

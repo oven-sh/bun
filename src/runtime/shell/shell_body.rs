@@ -93,67 +93,69 @@ impl ShellErr {
         ShellErr::Sys(e)
     }
 
-    pub fn throw_js(&self, global: &JSGlobalObject) -> bun_jsc::JsError {
-        // basically `transferToJS`. don't want to double deref the sys error
-        let result = match self {
+    /// Spec `ShellErr.throwJS` — "basically `transferToJS`". Consumes `self`:
+    /// each arm takes ownership of its payload and releases it exactly once.
+    pub fn throw_js(self, global: &JSGlobalObject) -> bun_jsc::JsError {
+        match self {
             ShellErr::Sys(sys) => {
-                // sys.toErrorInstance handles decrementing the ref count
-                let err = sys_error_to_jsc(sys).to_error_instance(global);
+                // `to_error_instance` decrements every string ref itself, so we
+                // must hand it the *owned* value (move) — no extra deref here.
+                let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
-                let err_value =
-                    BunString::clone_utf8(custom).to_error_instance(global);
+                let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
+                // `custom: Box<[u8]>` drops here (Zig: `allocator.free(this.custom)`).
                 global.throw_value(err_value)
             }
             ShellErr::InvalidArguments { val } => {
-                global.throw_invalid_arguments(format_args!(
-                    "{}",
-                    bstr::BStr::new(val)
-                ))
+                global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&*val)))
+                // `val` drops here.
             }
-            ShellErr::Todo(todo) => global.throw_todo(todo),
-        };
-        match self {
-            ShellErr::Sys(_) => {}
-            ShellErr::Custom(_) | ShellErr::InvalidArguments { .. } | ShellErr::Todo(_) => {
-                // TODO(port): Zig calls self.deinit(bun.default_allocator) here; in Rust the
-                // Box<[u8]> is dropped by the caller who owns `self`. Consider taking `self`
-                // by value to mirror "transfer" semantics.
-            }
+            ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
-        result
     }
 
+    /// Spec `ShellErr.throwMini` — print and `exit(1)`. Consumes `self`.
     pub fn throw_mini(self) -> ! {
-        match &self {
+        match self {
             ShellErr::Sys(err) => {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
                     err.message, err.path
                 ));
+                // Zig: `defer this.deinit()` → `.sys => this.sys.deref()`.
+                err.deref();
             }
             ShellErr::Custom(custom) => {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed due to error: <b>{}<r>",
-                    bstr::BStr::new(custom)
+                    bstr::BStr::new(&*custom)
                 ));
             }
             ShellErr::InvalidArguments { val } => {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {}<r>",
-                    bstr::BStr::new(val)
+                    bstr::BStr::new(&*val)
                 ));
             }
             ShellErr::Todo(todo) => {
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
-                    bstr::BStr::new(todo)
+                    bstr::BStr::new(&*todo)
                 ));
             }
         }
-        drop(self);
         bun_core::Global::exit(1)
+    }
+
+    /// Spec `ShellErr.deinit`. Explicit release for callers that drop a
+    /// `ShellErr` without throwing it (mirrors Zig's manual `deinit`; the
+    /// `Box<[u8]>` arms free on ordinary drop, so only `.sys` needs work).
+    pub fn deinit(self) {
+        if let ShellErr::Sys(sys) = self {
+            sys.deref();
+        }
     }
 }
 
@@ -170,39 +172,13 @@ impl fmt::Display for ShellErr {
     }
 }
 
-impl Drop for ShellErr {
-    fn drop(&mut self) {
-        match self {
-            ShellErr::Sys(sys) => {
-                // Spec `SystemError.deref()` — drop each owned bun.String field.
-                sys.code.deref();
-                sys.message.deref();
-                sys.path.deref();
-                sys.dest.deref();
-                sys.syscall.deref();
-                sys.hostname.deref();
-            }
-            // Box<[u8]> drops automatically; InvalidArguments empty in Zig deinit
-            _ => {}
-        }
-    }
-}
-
-/// Local shim: `bun_sys::SystemError` and `bun_jsc::SystemError` are
-/// structurally identical (CYCLEBREAK TYPE_ONLY duplication) but distinct
-/// nominal types. `to_error_instance` lives on the jsc copy only.
-fn sys_error_to_jsc(e: &bun_sys::SystemError) -> bun_jsc::SystemError {
-    bun_jsc::SystemError {
-        errno: e.errno,
-        code: e.code.clone(),
-        message: e.message.clone(),
-        path: e.path.clone(),
-        syscall: e.syscall.clone(),
-        hostname: e.hostname.clone(),
-        fd: e.fd,
-        dest: e.dest.clone(),
-    }
-}
+// PORT NOTE: no `impl Drop for ShellErr`. Zig's `ShellErr.deinit` is *manual*
+// and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
+// `toErrorInstance` already consumed those refs. An unconditional `Drop` would
+// re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
+// `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
+// on ordinary drop, and `.sys` is released exactly once on whichever consume
+// path runs.
 
 /// Local shim: `bun.String.indexOfAsciiChar` lives in the gated draft module.
 fn bunstr_index_of_ascii_char(s: &BunString, chr: u8) -> Option<usize> {

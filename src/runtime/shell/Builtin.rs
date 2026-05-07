@@ -975,21 +975,22 @@ impl Builtin {
         err: &bun_sys::Error,
     ) -> &'a [u8] {
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
-            let message = bun_sys::coreutils_error_map::COREUTILS_ERROR_MAP[sys_errno];
-            if !err.path.is_empty() {
+            if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
+                if !err.path.is_empty() {
+                    return Self::fmt_error_arena(
+                        interp,
+                        cmd,
+                        Some(kind),
+                        format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
+                    );
+                }
                 return Self::fmt_error_arena(
                     interp,
                     cmd,
                     Some(kind),
-                    format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
+                    format_args!("{}\n", message),
                 );
             }
-            return Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", message),
-            );
         }
         Self::fmt_error_arena(
             interp,

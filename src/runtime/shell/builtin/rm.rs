@@ -1232,28 +1232,36 @@ impl DirTask {
     unsafe fn run_from_thread_pool_impl(this: *mut DirTask) {
         // SAFETY: caller contract.
         let me = unsafe { &mut *this };
-        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
-        let tm = unsafe { &*me.task_manager };
+        let tm_ptr: *mut ShellRmTask = me.task_manager;
 
         // Root, get cwd path on Windows.
         #[cfg(windows)]
         if me.parent_task.is_null() {
             let mut buf = bun_paths::PathBuffer::uninit();
-            match bun_sys::get_fd_path(tm.cwd, &mut buf) {
+            // SAFETY: `tm_ptr` is live until pending_main_callbacks hits 0.
+            let cwd = unsafe { (*tm_ptr).cwd };
+            match bun_sys::get_fd_path(cwd, &mut buf) {
                 Ok(p) => {
-                    // SAFETY: root runs before any subtasks are spawned, so this
-                    // write is unique. Go through `task_manager` (the original
-                    // `*mut` from `Box::into_raw`) rather than casting `&tm`.
-                    unsafe { (*me.task_manager).cwd_path = Some(ZBox::from_bytes(&*p)) };
+                    // SAFETY: root runs before any subtasks are spawned, so
+                    // this write is unique. Stay on the raw `*mut` from
+                    // `Box::into_raw` — no `&ShellRmTask` exists yet, so no
+                    // shared-read tag is invalidated by the write.
+                    unsafe { (*tm_ptr).cwd_path = Some(ZBox::from_bytes(&*p)) };
                 }
                 Err(err) => {
-                    tm.handle_err(err);
+                    // SAFETY: `tm_ptr` is live.
+                    unsafe { (*tm_ptr).handle_err(err) };
                     // SAFETY: caller contract.
                     unsafe { Self::post_run(this) };
                     return;
                 }
             }
         }
+
+        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
+        // Derived *after* the optional `cwd_path` write above so the write
+        // cannot pop this borrow's tag under Stacked Borrows.
+        let tm = unsafe { &*tm_ptr };
 
         me.is_absolute = Platform::AUTO.is_absolute(me.path.as_bytes());
         if let Err(err) = tm.remove_entry(this, me.is_absolute) {

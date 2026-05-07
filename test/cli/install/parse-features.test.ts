@@ -3,10 +3,50 @@
 // peerDependencies / trustedDependencies / peerDependenciesMeta, across the root
 // package and workspace packages. Guards the refactor that made `features: Features`
 // a runtime parameter.
-import { write } from "bun";
+import { which, write } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+// `Package.parseWithJSON` and `Package.parseDependency` used to take
+// `comptime features: Features` / `comptime group: DependencyGroup`, which
+// stamped out a separate copy of each function for every (ResolverContext,
+// Features, group) combination — 9 and 17 respectively in a debug build.
+// After making those parameters runtime, the instance counts collapse to the
+// number of distinct ResolverContext types (parseWithJSON) and distinct
+// comptime `tag` values (parseDependency).
+//
+// This test reads the symbol table of the binary under test and asserts the
+// instance counts stay at the collapsed level. It's skipped when the binary
+// is stripped (CI release builds) or `nm` is unavailable.
+test.skipIf(isWindows || !which("nm"))(
+  "Package.parseWithJSON/parseDependency are not over-monomorphised on Features",
+  async () => {
+    // `nm` on a debug+ASAN binary emits hundreds of MB; pipe through grep so
+    // only the handful of matching lines reach this process.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `nm '${bunExe()}' 2>/dev/null | grep -E '\\.parseWithJSON|\\.parseDependency'`],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lines = stdout.split("\n").filter(Boolean);
+    const parseWithJSON = lines.filter(l => l.includes(".parseWithJSON"));
+    const parseDependency = lines.filter(l => l.includes(".parseDependency"));
+
+    // Binary is stripped (CI release) or nm failed — nothing to assert.
+    if (parseWithJSON.length === 0 && parseDependency.length === 0) return;
+
+    // Before: 9 parseWithJSON instances (one per (ResolverContext, Features) pair).
+    // After:  one per ResolverContext type (7 today).
+    expect(parseWithJSON.length).toBeLessThanOrEqual(7);
+
+    // Before: 17 parseDependency instances in debug (comptime group × features × tag).
+    // After:  one per comptime `tag` value (2: .workspace and null).
+    expect(parseDependency.length).toBeLessThanOrEqual(2);
+  },
+);
 
 test("parseWithJSON handles all dependency groups across root and workspace packages", async () => {
   using dir = tempDir("parse-features", {

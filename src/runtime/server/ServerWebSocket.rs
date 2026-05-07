@@ -2,7 +2,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{WebSocketUpgradeServer, Wrap};
+use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
 use bun_jsc::event_loop::EventLoop;

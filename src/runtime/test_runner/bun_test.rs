@@ -1221,7 +1221,12 @@ impl BunTest {
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
-                        let _ = result.then(global_this, bun_ptr::IntrusiveRc::into_raw(this_ref), bun_test_then_c, bun_test_catch_c);
+                        let _ = result.then(
+                            global_this,
+                            bun_ptr::IntrusiveRc::into_raw(this_ref),
+                            Bun__TestScope__Describe2__bunTestThen,
+                            Bun__TestScope__Describe2__bunTestCatch,
+                        );
                         // TODO: properly propagate exception upwards
                         return None;
                     }
@@ -1333,25 +1338,34 @@ impl Drop for BunTest {
 }
 
 // `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
-// PORT NOTE: `jsc::host_fn::to_js_host_fn` is a const-panicking stub (Zig used
-// `comptime` reflection); hand-roll the C-ABI thunks here so `JSValue::then`
-// gets a real fn pointer.
-unsafe extern "C" fn bun_test_then_c(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
+//
+// PORT NOTE: Zig's `export const X = jsc.toJSHostFn(f)` mints a *function*
+// symbol named `X` (the comptime wrapper is inlined into a fresh fn item).
+// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
+// `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
+// identity, so the Rust thunk MUST be the symbol itself — exporting a
+// `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
+// C++ sees never matches the local thunk we hand to `.then()`, tripping the
+// `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__TestScope__Describe2__bunTestThen(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
     // SAFETY: JSC passes non-null live pointers for both.
     let (global, frame) = unsafe { (&*global, &*frame) };
     jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
 }
-unsafe extern "C" fn bun_test_catch_c(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__TestScope__Describe2__bunTestCatch(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
     // SAFETY: JSC passes non-null live pointers for both.
     let (global, frame) = unsafe { (&*global, &*frame) };
     jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
 }
-
-#[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn = bun_test_then_c;
-
-#[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn = bun_test_catch_c;
 
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.

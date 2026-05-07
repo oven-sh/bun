@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor"]
 members = [
   "src/analytics",
   "src/api",

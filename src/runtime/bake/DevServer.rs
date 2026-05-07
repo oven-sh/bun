@@ -2639,8 +2639,8 @@ impl DevServer {
                 break 'generate route_ptr;
             }
         };
-        // TODO(port): SourceMapStore::add_weak_ref — gated; only remove_or_upgrade_weak_ref is un-gated
-        let _ = route_bundle.source_map_id();
+        // SAFETY: `source_maps` is disjoint from `route_bundles`.
+        unsafe { &mut *self_ptr }.source_maps.add_weak_ref(route_bundle.source_map_id());
         // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
         unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
     }

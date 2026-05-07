@@ -402,14 +402,17 @@ impl WebSocketProxyTunnel {
                 return;
             }
 
-            // Verify server identity. Short shared borrow scoped to this block; the
-            // boringssl call is pure and cannot re-enter the tunnel.
-            // SAFETY: ref_scope holds a ref; `this` is live.
+            // Verify server identity. Read the `ssl` snapshot + `sni_hostname` via
+            // raw field projections — never bind `&*this` (whole-struct), which
+            // would overlap `wrapper` and pop the `&mut SslWrapper` held by the
+            // `receive_data()` frame that fired us.
+            // SAFETY: ref_scope holds a ref; `this` is live. `ssl` is `Copy`;
+            // `sni_hostname` autoref covers only that field's bytes.
             let failed_identity = unsafe {
-                let t = &*this;
-                match (t.wrapper.as_ref().and_then(|w| w.ssl), t.sni_hostname.as_deref()) {
+                match ((*this).ssl, (*this).sni_hostname.as_deref()) {
                     (Some(ssl_ptr), Some(hostname)) => {
-                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper.
+                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper
+                        // (heap-allocated by BoringSSL; disjoint from the tunnel struct).
                         !boringssl::check_server_identity(&mut *ssl_ptr.as_ptr(), hostname)
                     }
                     _ => false,
@@ -482,31 +485,36 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called with encrypted data to send to network
     fn write_encrypted(this: *mut WebSocketProxyTunnel, encrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during
-        // callbacks. This callback only touches `write_buffer`/`socket` and makes no
-        // outbound call that can re-enter the tunnel, so a whole-struct `&mut` scoped
-        // to this body is sound — the callers (`receive`/`on_writable`/`write`/`shutdown`)
-        // hold no `&mut Self` across the SslWrapper drive that fires us.
-        let this = unsafe { &mut *this };
+        // callbacks. The driving frame (`receive`/`on_writable`/`write`/`shutdown`/
+        // `start`) holds a live `&mut SslWrapper` derived from `(*this).wrapper`, so
+        // a whole-struct `&mut *this` here would alias it (Stacked Borrows UB).
+        // Project to the disjoint `write_buffer`/`socket` fields only.
+        let (write_buffer, socket) = unsafe {
+            (
+                &mut *ptr::addr_of_mut!((*this).write_buffer),
+                &*ptr::addr_of!((*this).socket),
+            )
+        };
         bun_core::scoped_log!(WebSocketProxyTunnel, "writeEncrypted: {} bytes", encrypted_data.len());
 
         // If data is already buffered, queue this to maintain TLS record ordering
-        if this.write_buffer.is_not_empty() {
-            this.write_buffer.write(encrypted_data);
+        if write_buffer.is_not_empty() {
+            bun_core::handle_oom(write_buffer.write(encrypted_data));
             return;
         }
 
         // Try direct write to socket
-        let written = this.socket.write(encrypted_data);
+        let written = socket.write(encrypted_data);
         if written < 0 {
             // Write failed - buffer data for retry when socket becomes writable
-            this.write_buffer.write(encrypted_data);
+            bun_core::handle_oom(write_buffer.write(encrypted_data));
             return;
         }
 
         // Buffer remaining data
         let written_usize = usize::try_from(written).unwrap();
         if written_usize < encrypted_data.len() {
-            this.write_buffer.write(&encrypted_data[written_usize..]);
+            bun_core::handle_oom(write_buffer.write(&encrypted_data[written_usize..]));
         }
     }
 

@@ -40,7 +40,6 @@ pub enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer),
 }
 
-// Gated: calls Blob::store()/deref_count() (webcore method surface not yet real).
 
 impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
@@ -58,9 +57,7 @@ impl Drop for BlobOrStringOrBuffer {
     }
 }
 
-// Gated: every method body calls JSC/webcore methods (`.shared_view()`,
 // `.js_type()`, `.throw_invalid_arguments()`, `Blob::store()`).
-// TODO(b2-blocked): un-gate once bun_jsc + webcore method surface lands.
 
 impl BlobOrStringOrBuffer {
     pub fn slice(&self) -> &[u8] {
@@ -252,8 +249,6 @@ impl StringOrBuffer {
     }
 }
 
-// Gated: SliceWithUnderlyingString/ZigStringSlice deinit() are stubbed.
-// TODO(b2-blocked): un-gate once bun_str::SliceWithUnderlyingString is real.
 
 impl Drop for StringOrBuffer {
     fn drop(&mut self) {
@@ -270,9 +265,7 @@ impl Drop for StringOrBuffer {
     }
 }
 
-// Gated: every body calls JSC methods (`.protect()`, `.as_array_buffer()`,
 // `.js_type()`, `bun_str::String::from_js`, `.vm()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 impl StringOrBuffer {
     pub fn to_thread_safe(&mut self) {
@@ -753,7 +746,6 @@ impl Encoding {
 }
 
 // TODO(port): move to runtime_sys
- // TODO(b2-blocked): JSGlobalObject/JSValue are opaque shims; FFI ABI not yet stable.
 unsafe extern "C" {
     fn WebCore_BufferEncodingType_toJS(global_object: *const JSGlobalObject, encoding: Encoding) -> JSValue;
 }
@@ -761,7 +753,6 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// This is used on the windows implementation of realpath, which is in javascript
-// TODO(b2-blocked): #[bun_jsc::host_fn] attribute macro not yet available.
 
 pub fn js_assert_encoding_valid(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let value = call_frame.argument(0);
@@ -792,8 +783,7 @@ impl PathOrBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CallbackTask<Result> {
-    // TODO(b2-blocked): bun_jsc::c::JSObjectRef — opaque pointer until bun_jsc lands.
-    pub callback: *mut core::ffi::c_void,
+    pub callback: jsc::C::JSObjectRef,
     pub option: CallbackTaskOption<Result>,
     pub success: bool,
 }
@@ -1148,8 +1138,6 @@ impl PathLikeExt for PathLike {
 
 pub struct Valid;
 
-// Gated: every body calls `ctx.throw_value()` / `ctx.err()` (bun_jsc methods).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1226,8 +1214,6 @@ impl VectorArrayBuffer {
     }
 }
 
-// Gated: body calls JSC methods (`.js_type()`, `.get_length()`, `.get_index()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 impl VectorArrayBuffer {
     pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
@@ -1265,8 +1251,6 @@ impl VectorArrayBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// Gated: body calls JSC methods (`.is_number()`, `.to_zig_string()`, validators).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
     let mode_int: u32 = if value.is_number() {
@@ -1364,9 +1348,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 
 
-// Gated: bodies call JSC methods (`arguments.next()`, `Fd::from_js_validated`,
 // `path.to_thread_safe()` reaches `.protect()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 
 
@@ -1402,8 +1384,6 @@ impl FileSystemFlags {
     }
 }
 
-// Gated: bodies call JSC methods (`.is_number()`, `.coerce_i32()`, `ctx.err()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
@@ -1548,8 +1528,6 @@ impl FileSystemFlags {
 }
 
 // TODO(port): phf custom hasher — Zig used `getWithEql(str, ZigString.eqlComptime)`.
-// Gated: `O::SYNC` not yet defined in `bun_sys::O` (B-2 stub crate).
-// TODO(b2-blocked): un-gate once bun_sys::O::SYNC is exported.
 
 static FILE_SYSTEM_FLAGS_MAP: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"r" => O::RDONLY,
@@ -1639,7 +1617,6 @@ pub struct Dirent {
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys
- // TODO(b2-blocked): jsc::JSString opaque; FFI ABI not yet stable.
 unsafe extern "C" {
     fn Bun__JSDirentObjectConstructor(global: *const JSGlobalObject) -> JSValue;
     fn Bun__Dirent__toJS(
@@ -1717,8 +1694,6 @@ pub enum PathOrBlob {
     Blob(Blob),
 }
 
-// Gated: body calls JSC methods (`args.next_eat()`, `arg.as_::<Blob>()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
 
 impl PathOrBlob {
     pub fn from_js_no_copy(ctx: &JSGlobalObject, args: &mut ArgumentsSlice) -> JsResult<PathOrBlob> {

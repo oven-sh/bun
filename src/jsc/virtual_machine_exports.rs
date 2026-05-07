@@ -51,9 +51,7 @@ pub extern "C" fn Bun__readOriginTimerStart(vm: &VirtualMachine) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bool {
     use crate::virtual_machine::IPCInstanceUnion;
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let vm = unsafe { &*global.bun_vm() };
-    match &vm.ipc {
+    match &global.bun_vm().ipc {
         Some(IPCInstanceUnion::Initialized(inst)) => {
             // SAFETY: `inst` was produced by `IPCInstance::new` (Box::into_raw)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
@@ -66,8 +64,7 @@ pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bo
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__hasIPC(global: &JSGlobalObject) -> bool {
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    unsafe { (*global.bun_vm()).ipc.is_some() }
+    global.bun_vm().ipc.is_some()
 }
 
 #[unsafe(no_mangle)]

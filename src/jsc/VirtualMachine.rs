@@ -4327,9 +4327,12 @@ impl VirtualMachine {
             }
             // PERF(port): Zig cached `(hash → ism)` across iterations.
             // Slow path: drops and re-acquires the source_mappings lock around
-            // resolve_source_mapping().
+            // resolve_source_mapping(). The `false` write is dead today (the
+            // loop body always re-locks before loop-end) but keeps the
+            // lock-state invariant explicit per the Zig spec.
             self.source_mappings.unlock();
-            table_locked = false;
+            #[allow(unused_assignments)]
+            { table_locked = false; }
             if let Some(lookup) = self.resolve_source_mapping(
                 path,
                 frame.position.line,

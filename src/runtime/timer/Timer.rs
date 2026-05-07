@@ -510,8 +510,8 @@ impl DateHeaderTimer {
 // C-ABI export thunks
 // ════════════════════════════════════════════════════════════════════════════
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__internal_drainTimers(vm: *mut VirtualMachine) {
+// HOST_EXPORT(Bun__internal_drainTimers, c)
+pub fn drain_timers_export(vm: *mut VirtualMachine) {
     let all = timer_all();
     if all.is_null() {
         return;
@@ -524,80 +524,64 @@ pub extern "C" fn Bun__internal_drainTimers(vm: *mut VirtualMachine) {
 // Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.
 // `wrapN` reflects on the Zig fn signature and emits an `extern "C" fn` that
 // forwards through `toJSHostCall` (ExceptionValidationScope + JsResult→JSValue
-// normalization). Rust has no signature reflection, so the seven thunks are
-// hand-rolled against `host_fn::to_js_host_call` — same pattern as
-// `NodeModuleModule__findPath` in `src/jsc/NodeModuleModule.rs`.
+// normalization). Rust has no signature reflection; `generate-host-exports.ts`
+// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
+// `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
 // these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.
-//
-//   Bun__Timer__getNextID -> All::Bun__Timer__getNextID (already #[no_mangle] above)
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__setImmediate(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__Timer__setImmediate, c)
+pub fn set_immediate_export(
+    global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
-) -> JSValue {
-    // SAFETY: C++ caller (`functionSetImmediate`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::set_immediate(global, callback, arguments))
+) -> JsResult<JSValue> {
+    All::set_immediate(global, callback, arguments)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__sleep(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__Timer__sleep, c)
+pub fn sleep_export(
+    global: &JSGlobalObject,
     promise: JSValue,
     countdown: JSValue,
-) -> JSValue {
-    // SAFETY: C++ caller (`BunObject.cpp` `functionBunSleep`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::sleep(global, promise, countdown))
+) -> JsResult<JSValue> {
+    All::sleep(global, promise, countdown)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__setTimeout(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__Timer__setTimeout, c)
+pub fn set_timeout_export(
+    global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
     countdown: JSValue,
-) -> JSValue {
-    // SAFETY: C++ caller (`functionSetTimeout`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::set_timeout(global, callback, arguments, countdown))
+) -> JsResult<JSValue> {
+    All::set_timeout(global, callback, arguments, countdown)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__setInterval(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__Timer__setInterval, c)
+pub fn set_interval_export(
+    global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
     countdown: JSValue,
-) -> JSValue {
-    // SAFETY: C++ caller (`functionSetInterval`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::set_interval(global, callback, arguments, countdown))
+) -> JsResult<JSValue> {
+    All::set_interval(global, callback, arguments, countdown)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__clearImmediate(global: *mut JSGlobalObject, id: JSValue) -> JSValue {
-    // SAFETY: C++ caller (`functionClearImmediate`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::clear_immediate(global, id))
+// HOST_EXPORT(Bun__Timer__clearImmediate, c)
+pub fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    All::clear_immediate(global, id)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__clearTimeout(global: *mut JSGlobalObject, id: JSValue) -> JSValue {
-    // SAFETY: C++ caller (`functionClearTimeout`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::clear_timeout(global, id))
+// HOST_EXPORT(Bun__Timer__clearTimeout, c)
+pub fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    All::clear_timeout(global, id)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__clearInterval(global: *mut JSGlobalObject, id: JSValue) -> JSValue {
-    // SAFETY: C++ caller (`functionClearInterval`) guarantees non-null global.
-    let global = unsafe { &*global };
-    to_js_host_call(global, || All::clear_interval(global, id))
+// HOST_EXPORT(Bun__Timer__clearInterval, c)
+pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    All::clear_interval(global, id)
 }
 
 pub mod internal_bindings {

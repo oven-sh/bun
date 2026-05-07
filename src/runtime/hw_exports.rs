@@ -28,64 +28,66 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFra
 use crate::webcore::BlobExt as _;
 
 // ─── VirtualMachine.zig ──────────────────────────────────────────────────────
+//
+// `#[no_mangle] extern "C"` thunks for these are emitted by
+// `src/codegen/generate-host-exports.ts` into `generated_host_exports.rs`;
+// the safe-signature impls below are what the thunks call. Each `// HOST_EXPORT`
+// marker is the scrape input — keep it on the line immediately above `pub fn`.
 
 /// `export fn Bun__isMainThreadVM() callconv(.c) bool { return get().is_main_thread; }`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__isMainThreadVM() -> bool {
-    // SAFETY: `get()` returns the live per-thread VM raw ptr.
+// HOST_EXPORT(Bun__isMainThreadVM, c)
+pub fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
 /// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
-#[unsafe(no_mangle)]
-#[bun_jsc::host_call]
-pub fn Bun__drainMicrotasksFromJS(global: *mut JSGlobalObject, _callframe: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC passes a live global.
-    unsafe { &*global }.bun_vm().as_mut().drain_microtasks();
+///
+/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
+/// deref+call with no `ExceptionValidationScope` — matching the .zig spec's
+/// bare `callconv(jsc.conv)` body and the prior `#[bun_jsc::host_call]`
+/// rewrite. `drain_microtasks()` runs arbitrary microtasks; wrapping in a
+/// scope would trip `assert_exception_presence_matches(false)` if one left an
+/// exception pending while we return `UNDEFINED`.
+// HOST_EXPORT(Bun__drainMicrotasksFromJS)
+pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
+    global.bun_vm().as_mut().drain_microtasks();
     JSValue::UNDEFINED
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__logUnhandledException(exception: JSValue) {
-    // SAFETY: `get()` returns the live per-thread VM raw ptr; mutator thread.
+// HOST_EXPORT(Bun__logUnhandledException, c)
+pub fn log_unhandled_exception(exception: JSValue) {
     VirtualMachine::get().as_mut().run_error_handler(exception, None);
 }
 
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
 /// **may run on the heap-collector thread** (see oven-sh/bun#17087); the
 /// underlying method serializes on `remap_stack_frames_mutex`.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__remapStackFramePositions(
-    vm: *mut VirtualMachine,
+// HOST_EXPORT(Bun__remapStackFramePositions, c)
+pub fn remap_stack_frame_positions(
+    vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame,
     frames_count: usize,
 ) {
-    // SAFETY: `vm` is the C++-side ZigGlobalObject's m_bunVM; live for the call.
-    unsafe { (*vm).remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
+    // the raw ptr because it forwards to the C++-side remapper.
+    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VirtualMachine__setOverrideModuleRunMain(
-    vm: *mut VirtualMachine,
-    is_patched: bool,
-) {
-    // SAFETY: `vm` is the live per-thread VM (called from `node:module` patch hook).
-    let vm = unsafe { &mut *vm };
+// HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
+pub fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
     if vm.is_in_preload {
         vm.has_patched_run_main = is_patched;
     }
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(
-    vm: *mut VirtualMachine,
+// HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
+pub fn set_override_module_run_main_promise(
+    vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
-    // SAFETY: `vm` is the live per-thread VM; `promise` is a live JSC heap cell.
-    let vm = unsafe { &mut *vm };
     if vm.pending_internal_promise.is_none() {
         vm.pending_internal_promise = Some(promise);
         vm.pending_internal_promise_is_protected = false;
@@ -93,10 +95,8 @@ pub extern "C" fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(
 }
 
 /// `@export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" })`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__setEntryPointEvalResultESM(this: *mut VirtualMachine, result: JSValue) {
-    // SAFETY: `this` is the live per-thread VM.
-    let this = unsafe { &mut *this };
+// HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
+pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
         // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
@@ -107,10 +107,8 @@ pub extern "C" fn Bun__VM__setEntryPointEvalResultESM(this: *mut VirtualMachine,
 }
 
 /// `@export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" })`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__setEntryPointEvalResultCJS(this: *mut VirtualMachine, value: JSValue) {
-    // SAFETY: `this` is the live per-thread VM.
-    let this = unsafe { &mut *this };
+// HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
+pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
         // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
         // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
@@ -121,13 +119,8 @@ pub extern "C" fn Bun__VM__setEntryPointEvalResultCJS(this: *mut VirtualMachine,
 }
 
 /// `@export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" })`
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__specifierIsEvalEntryPoint(
-    this: *mut VirtualMachine,
-    specifier: JSValue,
-) -> bool {
-    // SAFETY: `this` is the live per-thread VM.
-    let this = unsafe { &mut *this };
+// HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
+pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
         // Zig: `specifier.toBunString(this.global) catch @panic("unexpected exception")`
@@ -144,10 +137,9 @@ pub extern "C" fn Bun__VM__specifierIsEvalEntryPoint(
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__closeChildIPC(global: *mut JSGlobalObject) {
-    // SAFETY: `global` is live.
-    let vm = unsafe { &*global }.bun_vm().as_mut();
+// HOST_EXPORT(Bun__closeChildIPC, c)
+pub fn close_child_ipc(global: &JSGlobalObject) {
+    let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = vm.get_ipc_instance() {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
         unsafe { (*current_ipc).data.close_socket_next_tick(true) };
@@ -289,7 +281,7 @@ pub(crate) mod sql_hooks {
 
 // ─── bun.js.zig — entry-point promise reactions (used by `--print`) ──────────
 
-#[bun_jsc::host_fn(export = "Bun__onResolveEntryPointResult")]
+// HOST_EXPORT(Bun__onResolveEntryPointResult)
 pub fn on_resolve_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
@@ -312,7 +304,7 @@ pub fn on_resolve_entry_point_result(
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
-#[bun_jsc::host_fn(export = "Bun__onRejectEntryPointResult")]
+// HOST_EXPORT(Bun__onRejectEntryPointResult)
 pub fn on_reject_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
@@ -520,11 +512,9 @@ fn bindgen_out<T>(global: &JSGlobalObject, out: *mut T, r: bun_jsc::JsResult<T>)
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchCpus1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::cpus(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchCpus1)
+pub fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::cpus(global)
 }
 
 #[unsafe(no_mangle)]
@@ -558,25 +548,19 @@ pub extern "C" fn bindgen_Node_os_dispatchHomedir1(
     bindgen_out(global, out, node_os::homedir(global))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchHostname1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::hostname(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchHostname1)
+pub fn bindgen_node_os_hostname(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::hostname(global)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchLoadavg1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::loadavg(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchLoadavg1)
+pub fn bindgen_node_os_loadavg(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::loadavg(global)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchNetworkInterfaces1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::network_interfaces(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchNetworkInterfaces1)
+pub fn bindgen_node_os_network_interfaces(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::network_interfaces(global)
 }
 
 #[unsafe(no_mangle)]

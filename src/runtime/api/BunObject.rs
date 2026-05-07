@@ -406,19 +406,12 @@ pub mod bun_object {
     // (BunObject__createBunStdin / Stderr / Stdout exported at file scope below.)
     // --- LazyProperty initializers ---
 
-    // --- Getters ---
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_getter_main(g: *mut JSGlobalObject) -> JSValue {
-        unsafe { super::get_main(&*g) }
-    }
-    // --- Getters ---
-
-    // --- Setters ---
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> bool {
-        unsafe { super::set_main(&*g, v) }
-    }
-    // --- Setters ---
+    // --- Getters / Setters ---
+    // `BunObject_getter_main` / `BunObject_setter_main` thunks are emitted by
+    // `generate-host-exports.ts` from the `// HOST_EXPORT` markers on
+    // `super::{get_main, set_main}` below (SYSV_ABI on win-x64 — matches the
+    // `extern "C" SYSV_ABI` decl in BunObject.cpp:1103).
+    // --- Getters / Setters ---
 }
 
 pub fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
@@ -731,10 +724,8 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     Ok(ret)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__inspect(global_this: *mut JSGlobalObject, value: JSValue) -> BunString {
-    // SAFETY: caller is C++ passing a live global.
-    let global_this = unsafe { &*global_this };
+// HOST_EXPORT(Bun__inspect, c)
+pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
@@ -745,13 +736,8 @@ pub extern "C" fn Bun__inspect(global_this: *mut JSGlobalObject, value: JSValue)
     BunString::clone_utf8(&array)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__inspect_singleline(
-    global_this: *mut JSGlobalObject,
-    value: JSValue,
-) -> BunString {
-    // SAFETY: caller is C++ passing a live global.
-    let global_this = unsafe { &*global_this };
+// HOST_EXPORT(Bun__inspect_singleline, c)
+pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -848,7 +834,10 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
-// callconv(jsc.conv) — emitted by #[bun_jsc::host_call]; see PORTING.md §FFI.
+// callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
+// plain `JSValue` so the generated thunk is a bare deref+call (no
+// `ExceptionValidationScope`), matching the .zig spec's bare body.
+// HOST_EXPORT(BunObject_getter_main, jsc)
 pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
@@ -918,6 +907,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     ZigString::init(vm.main()).to_js(global_this)
 }
 
+// HOST_EXPORT(BunObject_setter_main, jsc)
 pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     global_this.bun_vm().as_mut()
@@ -1100,11 +1090,9 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     Ok(JSValue::UNDEFINED)
 }
 
-pub use Bun__gc as gc;
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
-    // SAFETY: caller is C++ passing a live VM.
-    unsafe { (*vm).garbage_collect(sync) }
+// HOST_EXPORT(Bun__gc, c)
+pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+    vm.garbage_collect(sync)
 }
 
 #[bun_jsc::host_fn]
@@ -3206,22 +3194,19 @@ mod stdio_stores {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStdin(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stdin(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStdin)
+pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stdin(global_this)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStderr(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stderr(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStderr)
+pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stderr(global_this)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStdout(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stdout(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStdout)
+pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stdout(global_this)
 }
 
 

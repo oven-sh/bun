@@ -1416,6 +1416,8 @@ pub use self::js_string::JSString;
 pub mod ref_string;
 pub use self::ref_string as RefString;
 
+pub mod ffi_imports;
+
 #[path = "Debugger.rs"] pub mod debugger;
 pub use self::debugger as Debugger;
 #[path = "SavedSourceMap.rs"] pub mod saved_source_map;

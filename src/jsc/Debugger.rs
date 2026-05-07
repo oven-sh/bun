@@ -215,8 +215,8 @@ impl BunFrontendDevServerAgent {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
+// HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
+pub fn frontend_dev_server_agent_set_enabled(
     agent: *mut InspectorBunFrontendDevServerAgentHandle,
 ) {
     // SAFETY: called on the JS thread with a live VM (C++ inspector agent
@@ -817,8 +817,8 @@ impl Debugger {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Debugger__didConnect() {
+// HOST_EXPORT(Debugger__didConnect, c)
+pub fn did_connect() {
     let this = VirtualMachine::get().as_mut();
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread. Spec: `this.debugger.?` would safety-panic; we early-
@@ -1076,8 +1076,8 @@ impl TestReporterHandle {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
+// HOST_EXPORT(Bun__TestReporterAgentEnable, c)
+pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
@@ -1098,8 +1098,8 @@ pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__TestReporterAgentDisable(_agent: *mut TestReporterHandle) {
+// HOST_EXPORT(Bun__TestReporterAgentDisable, c)
+pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
@@ -1189,8 +1189,8 @@ impl LifecycleHandle {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
+// HOST_EXPORT(Bun__LifecycleAgentEnable, c)
+pub fn lifecycle_agent_enable(agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
@@ -1199,8 +1199,8 @@ pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentDisable(_agent: *mut LifecycleHandle) {
+// HOST_EXPORT(Bun__LifecycleAgentDisable, c)
+pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {

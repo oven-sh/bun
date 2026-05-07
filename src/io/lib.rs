@@ -13,6 +13,8 @@
 
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
+// kqueue path uses an enum const-generic (`ApplyAction`).
+#![cfg_attr(any(target_os = "macos", target_os = "freebsd"), feature(adt_const_params))]
 
 // ── submodules ──────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
@@ -534,7 +536,7 @@ impl Loop {
             );
 
             match sys::get_errno(rc) {
-                sys::Errno::INTR => continue,
+                sys::Errno::EINTR => continue,
                 sys::Errno::SUCCESS => {}
                 e => bun_core::Output::panic(format_args!(
                     "kevent failed: {}",
@@ -1023,7 +1025,7 @@ impl Poll {
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
                     // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
-                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::Kevent),
+                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
         } else {

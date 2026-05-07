@@ -66,8 +66,16 @@ mod zig_std_debug {
             }
             #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
             {
+                // The libc crate only binds getcontext(3) on Linux/macOS;
+                // FreeBSD has it (sys/ucontext.h) but the binding is missing.
+                #[cfg(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd"))]
+                unsafe extern "C" {
+                    fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
+                }
+                #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd")))]
+                use libc::getcontext;
                 // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
-                let result = unsafe { libc::getcontext(context) } == 0;
+                let result = unsafe { getcontext(context) } == 0;
                 // On aarch64-macos, the system getcontext doesn't write anything into the pc
                 // register slot, it only writes lr. This makes the context consistent with
                 // other aarch64 getcontext implementations which write the current lr
@@ -486,7 +494,7 @@ mod zig_std_debug {
                 let phdrs =
                     unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
                 for phdr in phdrs {
-                    if phdr.p_type != libc::PT_LOAD {
+                    if phdr.p_type != bun_sys::elf::PT_LOAD {
                         continue;
                     }
                     // Overflowing addition is used to handle the case of VSDOs having a p_vaddr = 0xffffffffff700000
@@ -618,7 +626,7 @@ mod zig_std_debug {
             let phdrs =
                 unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
             for phdr in phdrs {
-                if phdr.p_type != libc::PT_LOAD {
+                if phdr.p_type != bun_sys::elf::PT_LOAD {
                     continue;
                 }
                 let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);

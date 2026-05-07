@@ -25,45 +25,49 @@ pub mod posix {
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
     /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
+    ///
+    /// Constants are typed `u32` (the cross-platform `Mode` width) rather than
+    /// FreeBSD's native `mode_t` (u16) so that `Mode`-typed expressions like
+    /// `S::IRUSR | S::IWUSR` and `(st_mode as u32) & S::IFMT` compile uniformly
+    /// across platforms; the libc-boundary cast to `mode_t` happens in
+    /// `bun_sys`.
     pub mod S {
-        use super::mode_t;
+        pub const IFMT:   u32 = 0o170000;
+        pub const IFSOCK: u32 = 0o140000;
+        pub const IFLNK:  u32 = 0o120000;
+        pub const IFREG:  u32 = 0o100000;
+        pub const IFBLK:  u32 = 0o060000;
+        pub const IFDIR:  u32 = 0o040000;
+        pub const IFCHR:  u32 = 0o020000;
+        pub const IFIFO:  u32 = 0o010000;
+        pub const IFWHT:  u32 = 0o160000; // BSD whiteout
 
-        pub const IFMT:   mode_t = 0o170000;
-        pub const IFSOCK: mode_t = 0o140000;
-        pub const IFLNK:  mode_t = 0o120000;
-        pub const IFREG:  mode_t = 0o100000;
-        pub const IFBLK:  mode_t = 0o060000;
-        pub const IFDIR:  mode_t = 0o040000;
-        pub const IFCHR:  mode_t = 0o020000;
-        pub const IFIFO:  mode_t = 0o010000;
-        pub const IFWHT:  mode_t = 0o160000; // BSD whiteout
+        pub const ISUID: u32 = 0o4000;
+        pub const ISGID: u32 = 0o2000;
+        pub const ISVTX: u32 = 0o1000;
+        pub const IRWXU: u32 = 0o0700;
+        pub const IRUSR: u32 = 0o0400;
+        pub const IWUSR: u32 = 0o0200;
+        pub const IXUSR: u32 = 0o0100;
+        pub const IRWXG: u32 = 0o0070;
+        pub const IRGRP: u32 = 0o0040;
+        pub const IWGRP: u32 = 0o0020;
+        pub const IXGRP: u32 = 0o0010;
+        pub const IRWXO: u32 = 0o0007;
+        pub const IROTH: u32 = 0o0004;
+        pub const IWOTH: u32 = 0o0002;
+        pub const IXOTH: u32 = 0o0001;
 
-        pub const ISUID: mode_t = 0o4000;
-        pub const ISGID: mode_t = 0o2000;
-        pub const ISVTX: mode_t = 0o1000;
-        pub const IRWXU: mode_t = 0o0700;
-        pub const IRUSR: mode_t = 0o0400;
-        pub const IWUSR: mode_t = 0o0200;
-        pub const IXUSR: mode_t = 0o0100;
-        pub const IRWXG: mode_t = 0o0070;
-        pub const IRGRP: mode_t = 0o0040;
-        pub const IWGRP: mode_t = 0o0020;
-        pub const IXGRP: mode_t = 0o0010;
-        pub const IRWXO: mode_t = 0o0007;
-        pub const IROTH: mode_t = 0o0004;
-        pub const IWOTH: mode_t = 0o0002;
-        pub const IXOTH: mode_t = 0o0001;
-
-        #[inline] pub const fn ISREG(m: mode_t)  -> bool { m & IFMT == IFREG }
-        #[inline] pub const fn ISDIR(m: mode_t)  -> bool { m & IFMT == IFDIR }
-        #[inline] pub const fn ISCHR(m: mode_t)  -> bool { m & IFMT == IFCHR }
-        #[inline] pub const fn ISBLK(m: mode_t)  -> bool { m & IFMT == IFBLK }
-        #[inline] pub const fn ISFIFO(m: mode_t) -> bool { m & IFMT == IFIFO }
-        #[inline] pub const fn ISLNK(m: mode_t)  -> bool { m & IFMT == IFLNK }
-        #[inline] pub const fn ISSOCK(m: mode_t) -> bool { m & IFMT == IFSOCK }
+        #[inline] pub const fn ISREG(m: u32)  -> bool { m & IFMT == IFREG }
+        #[inline] pub const fn ISDIR(m: u32)  -> bool { m & IFMT == IFDIR }
+        #[inline] pub const fn ISCHR(m: u32)  -> bool { m & IFMT == IFCHR }
+        #[inline] pub const fn ISBLK(m: u32)  -> bool { m & IFMT == IFBLK }
+        #[inline] pub const fn ISFIFO(m: u32) -> bool { m & IFMT == IFIFO }
+        #[inline] pub const fn ISLNK(m: u32)  -> bool { m & IFMT == IFLNK }
+        #[inline] pub const fn ISSOCK(m: u32) -> bool { m & IFMT == IFSOCK }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         // FreeBSD libc: `int *__error(void)`
         fn __error() -> *mut c_int;
     }
@@ -181,7 +185,7 @@ pub enum SystemErrno {
 }
 
 impl SystemErrno {
-    pub const MAX: i32 = 98;
+    pub const MAX: u16 = 98;
 
     /// On FreeBSD `ENOTSUP` is not a distinct errno; libc aliases it to
     /// `EOPNOTSUPP` (45). Provide the alias so cross-platform call sites that
@@ -190,23 +194,23 @@ impl SystemErrno {
 
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
-        debug_assert!((n as i32) < Self::MAX);
+        debug_assert!(n < Self::MAX);
         // SAFETY: SystemErrno is #[repr(u16)] and contiguous 0..=97; caller has
         // range-checked against MAX above.
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
     }
 
-    // TODO(port): Zig `code: anytype` accepted any integer width; using Into<i32>
-    // covers i8/i16/i32/u8/u16. Widen if call sites pass i64/isize.
-    pub fn init(code: impl Into<i32>) -> Option<SystemErrno> {
-        let code: i32 = code.into();
+    // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
+    // i64 covers every concrete call site (errno-range values); revisit if a
+    // caller passes u64/usize directly.
+    pub fn init(code: i64) -> Option<SystemErrno> {
         if code < 0 {
-            if code <= -Self::MAX {
+            if code <= -(Self::MAX as i64) {
                 return None;
             }
             return Some(Self::from_raw((-code) as u16));
         }
-        if code >= Self::MAX {
+        if code >= Self::MAX as i64 {
             return None;
         }
         Some(Self::from_raw(code as u16))
@@ -216,7 +220,18 @@ impl SystemErrno {
 #[allow(non_upper_case_globals)]
 pub mod uv_e {
     use super::SystemErrno;
-    use windows_sys::libuv;
+    // libuv errno-space fallbacks for codes FreeBSD lacks natively. Values are
+    // `-UV_E*` from libuv's <uv/errno.h> (see src/libuv_sys/libuv.zig:873-932).
+    // PORT NOTE: Zig pulled these from `bun.windows.libuv`; that crate is
+    // Windows-only in the Rust workspace, so inline the constants.
+    mod libuv {
+        pub const UV_ECHARSET: i32 = -4080;
+        pub const UV_ENONET: i32 = -4056;
+        pub const UV_ENOTSUP: i32 = -4049;
+        pub const UV_EREMOTEIO: i32 = -4030;
+        pub const UV_ENODATA: i32 = -4024;
+        pub const UV_EUNATCH: i32 = -4023;
+    }
 
     // PORT NOTE: Zig `@"2BIG"` (raw ident starting with digit) — Rust idents
     // cannot start with a digit; prefixed with underscore.
@@ -297,20 +312,37 @@ pub use uv_e as UV_E;
 // kernel -1 arrives as maxInt(usize) — comparing that to comptime -1 is always
 // false. Bitcast unsigned inputs to signed first (matches linux_errno.zig).
 //
-// TODO(port): Zig used `@typeInfo(T)` to branch on signedness and bitcast
-// unsigned → signed before the `== -1` check. Rust has no type-level
-// reflection; Phase B should introduce a small `ErrnoRc` trait impl'd for
-// {isize, i32, i64, usize, u32, u64} whose `is_neg_one()` does the
-// width-correct bitcast. For now this takes `isize`; unsigned call sites must
-// `as isize` (which performs the bitcast for same-width types).
-pub fn get_errno(rc: isize) -> E {
-    let is_neg1 = rc == -1;
-    if is_neg1 {
-        // CYCLEBREAK: bun_sys::c::_errno MOVE_DOWN → crate::posix (landed)
-        return E::from_raw(crate::posix::errno() as u16);
-    }
-    E::SUCCESS
+// PORT NOTE: Zig used `@typeInfo(T)` to branch on signedness and bitcast
+// unsigned → signed before the `== -1` check. Rust models this as a trait
+// with per-type impls — call as `rc.get_errno()` or `get_errno(rc)`.
+pub trait GetErrno: Copy {
+    fn get_errno(self) -> E;
 }
+
+#[inline]
+pub fn get_errno<T: GetErrno>(rc: T) -> E {
+    rc.get_errno()
+}
+
+// FreeBSD has no raw-syscall return convention (unlike Linux's `-errno` in
+// `usize`); every kernel entry goes through libc, so all widths route to the
+// thread-local `__error()` slot.
+macro_rules! impl_get_errno_libc {
+    ($($t:ty),+ $(,)?) => {$(
+        impl GetErrno for $t {
+            #[inline]
+            fn get_errno(self) -> E {
+                // `as i64` bit-reinterprets same-width unsigned MAX → -1.
+                if self as i64 == -1 {
+                    // CYCLEBREAK: bun_sys::c::_errno MOVE_DOWN → crate::posix (landed)
+                    return E::from_raw(crate::posix::errno() as u16);
+                }
+                E::SUCCESS
+            }
+        }
+    )+};
+}
+impl_get_errno_libc!(i32, u32, isize, usize, i64);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

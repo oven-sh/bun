@@ -70,35 +70,41 @@ fn to_u64<T: ToU64>(value: T) -> u64 {
 /// names.
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // The Rust `libc` crate flattens `struct timespec st_atim` into
+    // `st_atime` + `st_atime_nsec` on Linux/Android *and* the BSDs (FreeBSD,
+    // NetBSD, OpenBSD, DragonFly). Only Apple targets keep the nested
+    // `st_atimespec` field name.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
     { Timespec { sec: s.st_atime as i64, nsec: s.st_atime_nsec as i64 } }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     { Timespec { sec: s.st_atimespec.tv_sec as i64, nsec: s.st_atimespec.tv_nsec as i64 } }
     #[cfg(windows)]
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
 pub fn stat_mtime(s: &Stat) -> Timespec {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
     { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     { Timespec { sec: s.st_mtimespec.tv_sec as i64, nsec: s.st_mtimespec.tv_nsec as i64 } }
     #[cfg(windows)]
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
 pub fn stat_ctime(s: &Stat) -> Timespec {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
     { Timespec { sec: s.st_ctime as i64, nsec: s.st_ctime_nsec as i64 } }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     { Timespec { sec: s.st_ctimespec.tv_sec as i64, nsec: s.st_ctimespec.tv_nsec as i64 } }
     #[cfg(windows)]
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     { Timespec { sec: s.st_birthtimespec.tv_sec as i64, nsec: s.st_birthtimespec.tv_nsec as i64 } }
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { Timespec { sec: s.st_birthtime as i64, nsec: s.st_birthtime_nsec as i64 } }
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]
     { let _ = s; Timespec::EPOCH }
 }

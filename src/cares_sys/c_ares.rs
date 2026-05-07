@@ -56,7 +56,12 @@ impl EAI {
     pub const FAIL: Self = Self(libc::EAI_FAIL);
     pub const FAMILY: Self = Self(libc::EAI_FAMILY);
     pub const MEMORY: Self = Self(libc::EAI_MEMORY);
+    // RFC 3493 dropped EAI_NODATA; FreeBSD's <netdb.h> only exposes it under
+    // __BSD_VISIBLE (historical value 7) and the libc crate omits it entirely.
+    #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
     pub const NODATA: Self = Self(libc::EAI_NODATA);
+    #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+    pub const NODATA: Self = Self(7);
     pub const NONAME: Self = Self(libc::EAI_NONAME);
     pub const SERVICE: Self = Self(libc::EAI_SERVICE);
     pub const SOCKTYPE: Self = Self(libc::EAI_SOCKTYPE);

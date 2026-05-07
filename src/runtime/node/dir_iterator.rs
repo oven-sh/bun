@@ -196,24 +196,37 @@ mod platform {
 mod platform {
     use super::*;
 
+    // FreeBSD libc exposes `getdirentries(2)` (the public API; `getdents` is a
+    // legacy compat shim). The Rust `libc` crate binds neither, so declare it.
+    unsafe extern "C" {
+        fn getdirentries(
+            fd: core::ffi::c_int,
+            buf: *mut core::ffi::c_char,
+            nbytes: usize,
+            basep: *mut libc::off_t,
+        ) -> isize;
+    }
+
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
         // TODO(port): align(@alignOf(posix.system.dirent))
         pub buf: [u8; 8192],
         pub index: usize,
         pub end_index: usize,
+        pub seek: libc::off_t,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
         pub fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
-                    // SAFETY: FFI getdents
+                    // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
                     let rc = unsafe {
-                        libc::getdents(
+                        getdirentries(
                             self.dir.native(),
                             self.buf.as_mut_ptr() as *mut libc::c_char,
                             self.buf.len(),
+                            &mut self.seek,
                         )
                     };
                     if rc < 0 {
@@ -256,7 +269,8 @@ mod platform {
                     libc::DT_LNK => EntryKind::SymLink,
                     libc::DT_REG => EntryKind::File,
                     libc::DT_SOCK => EntryKind::UnixDomainSocket,
-                    libc::DT_WHT => EntryKind::Whiteout,
+                    // FreeBSD <sys/dirent.h> DT_WHT = 14; libc crate omits it.
+                    14 => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
@@ -818,11 +832,24 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
                 },
             };
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(target_os = "linux")]
         {
             return Self {
                 iter: NewIterator {
                     dir,
+                    index: 0,
+                    end_index: 0,
+                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    buf: [0u8; 8192],
+                },
+            };
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            return Self {
+                iter: NewIterator {
+                    dir,
+                    seek: 0,
                     index: 0,
                     end_index: 0,
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]

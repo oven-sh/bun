@@ -1188,7 +1188,10 @@ fn thread_id() -> u64 {
     // Use the OS tid via libc; matches Zig `Thread.getCurrentId()` semantics.
     #[cfg(target_os = "linux")]
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "freebsd")]
+    // SAFETY: pthread_getthreadid_np() is infallible and returns the kernel LWP id.
+    unsafe { libc::pthread_getthreadid_np() as u64 }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     { std::thread::current().id().as_u64().into() } // PERF(port): unstable; Phase B
 }
 

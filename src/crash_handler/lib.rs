@@ -1711,7 +1711,9 @@ impl StackLine {
                 // SAFETY: dlpi_phdr points to dlpi_phnum entries.
                 let phdrs = unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
                 for phdr in phdrs {
-                    if phdr.p_type != libc::PT_LOAD { continue; }
+                    // libc only exposes PT_LOAD on Linux; the ELF gABI value (1)
+                    // is identical everywhere.
+                    if phdr.p_type != bun_sys::elf::PT_LOAD { continue; }
 
                     // Overflowing addition is used to handle the case of VSDOs
                     // having a p_vaddr = 0xffffffffff700000

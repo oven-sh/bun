@@ -103,6 +103,18 @@ function ClientRequest(input, options, cb) {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
       startFetch();
+    } else if (writeCount === 1) {
+      // Node sends headers + first chunk immediately on the first write().
+      // We defer by a tick so that `write(chunk); end();` in the same tick
+      // still takes the non-duplex fast path via send(). If end() hasn't been
+      // called by then, start the request in duplex mode so the server can
+      // respond while the body stream stays open (docker-modem relies on this
+      // for `container.exec` with stdin: true).
+      process.nextTick(self => {
+        if (!fetching && !self.destroyed && !self.finished) {
+          startFetch();
+        }
+      }, this);
     }
     resolveNextChunk?.(false);
   };
@@ -442,9 +454,10 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
-          handleResponse();
-        }
+        // Emit the response as soon as headers arrive, even when the request
+        // body is still being streamed (duplex mode). Node.js emits 'response'
+        // independently of whether req.end() has been called.
+        handleResponse();
 
         onEnd();
       });

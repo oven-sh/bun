@@ -149,6 +149,8 @@ impl<T: Copy> ExternOptional<T> {
 
 /// `bindgen.ExternArrayList(T)` — `extern struct { data: ?[*]T, length: c_uint,
 /// capacity: c_uint }`.
+// Clone/Copy: bitwise OK — FFI mirror of a C++ buffer; Rust treats it as a
+// borrowed view and adopts ownership exactly once at the call site.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ExternArrayList<T> {

@@ -1357,6 +1357,8 @@ pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn = bun_
 #[unsafe(no_mangle)]
 pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn = bun_test_catch_c;
 
+// Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
+// `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
 pub struct EntryData {
     pub sequence_index: usize,
@@ -1364,6 +1366,9 @@ pub struct EntryData {
     pub remaining_repeat_count: i64,
 }
 
+// Clone: bitwise OK — `active_scope` is a non-owning borrow of a
+// `DescribeScope` whose lifetime spans the async boundary (see field note);
+// `EntryData.entry` likewise borrows.
 #[derive(Clone)]
 pub enum RefDataValue {
     Start,

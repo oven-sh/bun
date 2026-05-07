@@ -14,6 +14,8 @@ bun_core::declare_scope!(ArrayBuffer, visible);
 // ArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
+// Clone/Copy: bitwise OK — `ptr` borrows the backing store of the JS
+// ArrayBuffer kept alive by `value`; this struct is a non-owning view.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBuffer {

@@ -1239,6 +1239,8 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
+// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
+// keeps alive for the print pass; `callback` is POD.
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
     pub ctx: Option<NonNull<()>>,

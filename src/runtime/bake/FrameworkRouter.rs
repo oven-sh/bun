@@ -308,6 +308,7 @@ impl FrameworkRouter {
 
 /// Route patterns are serialized in a stable byte format so it can be treated
 /// as a string, while easily decodable as []Part.
+// Clone: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Clone)]
 pub struct EncodedPattern {
     // ARENA: backed by pattern_string_arena (raw slice; arena owns the bytes)

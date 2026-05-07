@@ -65,6 +65,9 @@ pub enum OutKind {
     Ignore,
 }
 
+// Clone: bitwise OK for `captured` — it is a non-owning backref into
+// `ShellExecEnv::_buffered_{stdout,stderr}`; the env owns the Vec. `writer`
+// is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
 pub struct OutFd {
     pub writer: std::sync::Arc<IOWriter>,

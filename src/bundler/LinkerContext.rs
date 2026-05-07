@@ -1284,6 +1284,8 @@ impl SourceMapData {
     }
 }
 
+// Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
+// other fields are POD.
 #[derive(Clone)]
 pub struct MatchImport {
     alias: *const [u8], // TODO(port): lifetime — Zig string borrowed from AST arena

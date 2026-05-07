@@ -581,6 +581,8 @@ impl Default for FindCacheSlot {
     }
 }
 
+// Clone/Copy: bitwise OK — `data` is the blob's identity pointer (borrowed,
+// compared for equality only); see `InternalSourceMap` doc.
 #[derive(Copy, Clone)]
 struct FindCacheKey {
     data: *const u8,

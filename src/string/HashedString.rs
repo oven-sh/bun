@@ -1,5 +1,7 @@
 use bun_wyhash::hash;
 
+// Clone/Copy: bitwise OK — `ptr` borrows the caller-owned string passed to
+// `init`; `HashedString` is a non-owning (ptr,len,hash) view.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct HashedString {

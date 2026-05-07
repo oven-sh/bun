@@ -115,6 +115,7 @@ pub enum Qualifier {
 }
 
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types).
+// Clone: bitwise OK — `Custom` borrows arena-owned parser input (non-owning).
 #[derive(Debug, Clone)]
 pub enum MediaType {
     /// `all` (default).

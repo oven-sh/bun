@@ -415,7 +415,9 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
 pub mod random {
     use super::*;
 
-    #[derive(Clone)]
+    // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
+    // `bytes` borrows into that ArrayBuffer. Cloning would alias the protect/unprotect
+    // pair and the borrowed buffer. `CryptoJob::init` moves the ctx by value.
     pub struct JobCtx {
         pub value: JSValue,
         pub bytes: *mut u8,

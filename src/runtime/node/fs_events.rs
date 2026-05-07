@@ -152,6 +152,8 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 
+// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
+// process lifetime (never dlclosed); the rest are resolved fn pointers.
 #[derive(Clone, Copy)]
 pub struct CoreFoundation {
     pub handle: *mut c_void,
@@ -207,6 +209,8 @@ impl CoreFoundation {
     // }
 }
 
+// Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
+// process lifetime (never dlclosed); the rest are resolved fn pointers.
 #[derive(Clone, Copy)]
 pub struct CoreServices {
     pub handle: *mut c_void,

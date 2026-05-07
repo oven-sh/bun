@@ -30,6 +30,7 @@ pub enum StringEncoding {
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
 
+// Clone: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
 #[derive(Clone)]
 struct SrcAscii {
     bytes: *const [u8], // PORT NOTE: raw slice ptr — Zig held a borrowed `[]const u8`; lifetime erased (BACKREF).

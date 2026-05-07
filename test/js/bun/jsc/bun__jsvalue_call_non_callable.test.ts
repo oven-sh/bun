@@ -32,18 +32,19 @@ test("Bun__JSValue__call on non-callable value does not abort", async () => {
             data() {}, close() {}, drain() {}, error() {},
           },
         });
+        // Wait for the TypeError the fix produces, so the test fails
+        // loudly if the close path is ever changed to bypass .call().
+        const { promise, resolve } = Promise.withResolvers();
+        process.on("uncaughtException", e => resolve(e));
         const client = new Bun.RedisClient(
           "redis://127.0.0.1:" + server.port,
           { autoReconnect: false, maxRetries: 0, connectionTimeout: 5000 },
         );
         // Non-callable. The internal close path will try to .call() this.
         client.onclose = {};
-        // Swallow the unhandled TypeError the fix produces.
-        process.on("uncaughtException", () => {});
         try { await client.connect(); } catch {}
-        // Give the close microtask a chance to fire.
-        await Bun.sleep(50);
-        console.log("OK");
+        const err = await promise;
+        console.log("CAUGHT " + err?.name);
       `,
     ],
     env: bunEnv,
@@ -53,11 +54,11 @@ test("Bun__JSValue__call on non-callable value does not abort", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // With the fix: clean exit, "OK" printed.
-  // Without the fix: the subprocess aborts (SIGABRT / non-zero exit),
-  // and "OK" never gets printed.
+  // With the fix: clean exit, TypeError caught in the subprocess.
+  // Without the fix: the subprocess aborts (ASSERT_ENABLED) before the
+  // uncaughtException handler ever sees anything.
   expect({ stdout, stderr, exitCode }).toMatchObject({
-    stdout: expect.stringContaining("OK"),
+    stdout: expect.stringContaining("CAUGHT TypeError"),
     exitCode: 0,
   });
 });

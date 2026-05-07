@@ -1281,7 +1281,7 @@ pub extern "C" fn Bun__resolveSync(
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
+        || do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1334,7 +1334,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
+        || do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1354,7 +1354,7 @@ pub extern "C" fn Bun__resolveSyncWithStrings(
     bun_output::scoped_log!(importMetaResolve, "source: {}, specifier: {}", source, specifier);
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false),
+        || do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false),
     )
 }
 
@@ -1381,7 +1381,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     }
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, *specifier_str, *source, is_esm, is_user_require_resolve),
+        || do_resolve_with_args::<true>(global, *specifier_str, *source, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1689,7 +1689,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     let path_str = path.to_slice(global_this)?;
                     if path_str.slice().len() > MAX_PATH_BYTES {
                         return Err(global_this
-                            .throw_invalid_arguments("Path too long"));
+                            .throw_invalid_arguments(format_args!("Path too long")));
                     }
                     let paths = &[path_str.slice()];
                     break 'brk bun_paths::resolve_path::join_abs_string_buf::<
@@ -1701,7 +1701,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                     );
                 }
             }
-            return Err(global_this.throw_invalid_arguments("Expected a path"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));
         };
 
         let path_len = path.len();
@@ -1735,9 +1735,9 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             if let Some(value) = opts.get(global_this, "size")? {
                 let size_value = value.coerce_to_int64(global_this)?;
                 if size_value < 0 {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "size must be a non-negative integer",
-                    ));
+                    )));
                 }
                 map_size = Some(usize::try_from(size_value).unwrap());
             }
@@ -1745,9 +1745,9 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             if let Some(value) = opts.get(global_this, "offset")? {
                 let offset_value = value.coerce_to_int64(global_this)?;
                 if offset_value < 0 {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "offset must be a non-negative integer",
-                    ));
+                    )));
                 }
                 offset = usize::try_from(offset_value).unwrap();
                 // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
@@ -1833,7 +1833,7 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // types are in scope and store the cached value through the public
     // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
-    use bun_jsc::Strong;
+    use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = unsafe { &mut *global_this.bun_vm() };
     let rare = vm.rare_data();
@@ -1843,7 +1843,7 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
     let env = unsafe { &mut *vm.transpiler.env };
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
-        env.get_s3_credentials().clone(),
+        env.get_s3_credentials(),
         Default::default(),
         None,
         None,
@@ -1863,10 +1863,11 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         options: aws_options.options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,
+        request_payer: aws_options.request_payer,
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = Strong::create(js_client, global_this);
+    rare.s3_default_client = StrongOptional::create(js_client, global_this);
     js_client
 }
 
@@ -2309,7 +2310,7 @@ pub mod JSZlib {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return Err(global_this
-                .throw_invalid_arguments("Expected options to be an object"));
+                .throw_invalid_arguments(format_args!("Expected options to be an object")));
         } else {
             None
         };
@@ -2319,7 +2320,7 @@ pub mod JSZlib {
         }
 
         Err(global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
+            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
     #[bun_jsc::host_fn]
@@ -2382,15 +2383,15 @@ pub mod JSZlib {
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
                     return Err(global_this
-                        .throw_invalid_arguments("Expected library to be a string"));
+                        .throw_invalid_arguments(format_args!("Expected library to be a string")));
                 }
 
                 library = match LIBRARY_MAP.from_js(global_this, library_value)? {
                     Some(v) => v,
                     None => {
-                        return Err(global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(format_args!(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                        ))
+                        )))
                     }
                 };
             }
@@ -2441,7 +2442,7 @@ pub mod JSZlib {
                         // scrutinee's temporary; it drops on `return` anyway.
                         if err == zlib::ZlibError::InvalidArgument {
                             return Err(global_this
-                                .throw("Zlib error: Invalid argument"));
+                                .throw(format_args!("Zlib error: Invalid argument")));
                         }
                         return Err(global_this.throw_error(err.into(), "Zlib error"));
                     }
@@ -2563,15 +2564,15 @@ pub mod JSZlib {
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
                     return Err(global_this
-                        .throw_invalid_arguments("Expected library to be a string"));
+                        .throw_invalid_arguments(format_args!("Expected library to be a string")));
                 }
 
                 library = match LIBRARY_MAP.from_js(global_this, library_value)? {
                     Some(v) => v,
                     None => {
-                        return Err(global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(format_args!(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                        ))
+                        )))
                     }
                 };
             }
@@ -2615,7 +2616,7 @@ pub mod JSZlib {
                         // scrutinee's temporary; it drops on `return` anyway.
                         if err == zlib::ZlibError::InvalidArgument {
                             return Err(global_this
-                                .throw("Zlib error: Invalid argument"));
+                                .throw(format_args!("Zlib error: Invalid argument")));
                         }
                         return Err(global_this.throw_error(err.into(), "Zlib error"));
                     }
@@ -2736,7 +2737,7 @@ pub mod JSZstd {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return Err(global_this
-                .throw_invalid_arguments("Expected options to be an object"));
+                .throw_invalid_arguments(format_args!("Expected options to be an object")));
         } else {
             None
         };
@@ -2746,7 +2747,7 @@ pub mod JSZstd {
         }
 
         Err(global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
+            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2758,9 +2759,9 @@ pub mod JSZstd {
                 }
 
                 if value < 1 || value > 22 {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "Compression level must be between 1 and 22",
-                    ));
+                    )));
                 }
 
                 return Ok(value);
@@ -2785,7 +2786,7 @@ pub mod JSZstd {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
             return Err(global_this
-                .throw_invalid_arguments("Expected options to be an object"));
+                .throw_invalid_arguments(format_args!("Expected options to be an object")));
         } else {
             None
         };
@@ -2803,7 +2804,7 @@ pub mod JSZstd {
         }
 
         Err(global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
+            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
     #[bun_jsc::host_fn]

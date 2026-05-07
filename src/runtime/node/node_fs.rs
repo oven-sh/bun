@@ -5406,7 +5406,17 @@ impl NodeFS {
                     Maybe::Ok(StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: str, ..Default::default() }))
                 }
                 ret::ReadFileWithOptions::String(s) => {
-                    let str = node::SliceWithUnderlyingString::transcode_from_owned_slice(s, args.encoding);
+                    // `SliceWithUnderlyingString::transcodeFromOwnedSlice` lives in
+                    // bun_string but depends on `webcore::encoding` (higher tier).
+                    // Inline its body here to keep the layering clean.
+                    let str = if s.is_empty() {
+                        node::SliceWithUnderlyingString::default()
+                    } else {
+                        node::SliceWithUnderlyingString {
+                            underlying: webcore::encoding::to_bun_string_from_owned_slice(s.into_vec(), args.encoding),
+                            ..Default::default()
+                        }
+                    };
                     if str.underlying.is_dead() && str.utf8.slice().is_empty() {
                         return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                     }
@@ -6181,7 +6191,9 @@ impl NodeFS {
         debug_assert!(flavor == Flavor::Sync);
         // `create_stat_watcher` consumes `args` (the `PathLike` is moved into
         // the new `StatWatcher`); capture what the error path needs first.
-        let global_this = args.global_this;
+        // SAFETY: `args.global_this` was captured from a live JS call frame and
+        // outlives this synchronous call; it is never null.
+        let global_this = unsafe { &*args.global_this };
         let path: Vec<u8> = args.path.slice().to_vec();
         match args.create_stat_watcher() {
             Ok(watcher) => Maybe::Ok(watcher),
@@ -6193,7 +6205,7 @@ impl NodeFS {
                     errno: 0,
                     message: BunString::init(&buf[..]),
                     code: BunString::init(err.name()),
-                    path: BunString::init(&path),
+                    path: BunString::init(path.as_slice()),
                     syscall: BunString::default(),
                     hostname: BunString::default(),
                     fd: -1,
@@ -6295,7 +6307,7 @@ impl NodeFS {
         }
     }
 
-    pub fn os_path_into_sync_error_buf_overlap(&mut self, slice: &[OSPathChar]) -> &[u8] {
+    pub fn os_path_into_sync_error_buf_overlap<'a>(&'a mut self, slice: &'a [OSPathChar]) -> &'a [u8] {
         #[cfg(windows)]
         {
             let mut tmp = paths::os_path_buffer_pool().get();
@@ -6306,7 +6318,9 @@ impl NodeFS {
         {
             // PORT NOTE: Zig has no POSIX arm here — every call site is inside
             // an `if (Environment.isWindows)` branch. On POSIX `OSPathChar == u8`,
-            // so the input is already the canonical byte slice.
+            // so the input is already the canonical byte slice; tie both inputs
+            // to the same `'a` so the borrow checker accepts the passthrough.
+            let _ = &mut self.sync_error_buf;
             slice
         }
     }

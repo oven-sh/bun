@@ -170,17 +170,17 @@ pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
 
 pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.is_server() {
-        return Err(global.throw("Cannot issue SNI from a TLS server-side socket"));
+        return Err(global.throw(format_args!("Cannot issue SNI from a TLS server-side socket")));
     }
 
     let args = frame.arguments_old::<1>();
     if args.len < 1 {
-        return Err(global.throw("Expected 1 argument"));
+        return Err(global.throw(format_args!("Expected 1 argument")));
     }
 
     let server_name = args.ptr[0];
     if !server_name.is_string() {
-        return Err(global.throw("Expected \"serverName\" to be a string"));
+        return Err(global.throw(format_args!("Expected \"serverName\" to be a string")));
     }
 
     let slice: Box<[u8]> = server_name.get_zig_string(global)?.to_owned_slice().into_boxed_slice();
@@ -194,7 +194,7 @@ pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFram
         // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
         if unsafe { boringssl::SSL_is_init_finished(ssl_ptr) } != 0 {
             // match node.js exceptions
-            return Err(global.throw("Already started."));
+            return Err(global.throw(format_args!("Already started.")));
         }
         let host_z = bun_core::ZBox::from_bytes(host);
         // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
@@ -250,19 +250,19 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
     let args = frame.arguments_old::<1>();
 
     if args.len < 1 {
-        return Err(global.throw("Expected size to be a number"));
+        return Err(global.throw(format_args!("Expected size to be a number")));
     }
 
     let arg = args.ptr[0];
     if !arg.is_number() {
-        return Err(global.throw("Expected size to be a number"));
+        return Err(global.throw(format_args!("Expected size to be a number")));
     }
     let size = args.ptr[0].coerce_to_int64(global)?;
     if size < 1 {
-        return Err(global.throw("Expected size to be greater than 1"));
+        return Err(global.throw(format_args!("Expected size to be greater than 1")));
     }
     if size > 16384 {
-        return Err(global.throw("Expected size to be less than 16385"));
+        return Err(global.throw(format_args!("Expected size to be less than 16385")));
     }
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
@@ -280,7 +280,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
     if args.len > 0 {
         let arg = args.ptr[0];
         if !arg.is_boolean() {
-            return Err(global.throw("Expected abbreviated to be a boolean"));
+            return Err(global.throw(format_args!("Expected abbreviated to be a boolean")));
         }
         abbreviated = arg.to_boolean();
     }
@@ -561,21 +561,21 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
 
     let args = frame.arguments_old::<3>();
     if args.len < 2 {
-        return Err(global.throw("Expected length and label to be provided"));
+        return Err(global.throw(format_args!("Expected length and label to be provided")));
     }
     let length_arg = args.ptr[0];
     if !length_arg.is_number() {
-        return Err(global.throw("Expected length to be a number"));
+        return Err(global.throw(format_args!("Expected length to be a number")));
     }
 
     let length = length_arg.coerce_to_int64(global)?;
     if length < 0 {
-        return Err(global.throw("Expected length to be a positive number"));
+        return Err(global.throw(format_args!("Expected length to be a positive number")));
     }
 
     let label_arg = args.ptr[1];
     if !label_arg.is_string() {
-        return Err(global.throw("Expected label to be a string"));
+        return Err(global.throw(format_args!("Expected label to be a string")));
     }
 
     let label = label_arg.to_slice_or_null(global)?;
@@ -611,7 +611,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
             }
             Ok(buffer)
         } else {
-            Err(global.throw("Expected context to be a string, Buffer or TypedArray"))
+            Err(global.throw(format_args!("Expected context to be a string, Buffer or TypedArray")))
         }
     } else {
         let buffer_size = usize::try_from(length).unwrap();
@@ -758,7 +758,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
     let args = frame.arguments_old::<1>();
 
     if args.len < 1 {
-        return Err(global.throw("Expected session to be a string, Buffer or TypedArray"));
+        return Err(global.throw(format_args!("Expected session to be a string, Buffer or TypedArray")));
     }
 
     let session_arg = args.ptr[0];
@@ -785,7 +785,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         }
         Ok(JSValue::UNDEFINED)
     } else {
-        Err(global.throw("Expected session to be a string, Buffer or TypedArray"))
+        Err(global.throw(format_args!("Expected session to be a string, Buffer or TypedArray")))
     }
 }
 
@@ -843,12 +843,12 @@ pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFra
     let args = frame.arguments_old::<2>();
 
     if args.len < 2 {
-        return Err(global.throw("Expected requestCert and rejectUnauthorized arguments"));
+        return Err(global.throw(format_args!("Expected requestCert and rejectUnauthorized arguments")));
     }
     let request_cert_js = args.ptr[0];
     let reject_unauthorized_js = args.ptr[1];
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
-        return Err(global.throw("Expected requestCert and rejectUnauthorized arguments to be boolean"));
+        return Err(global.throw(format_args!("Expected requestCert and rejectUnauthorized arguments to be boolean")));
     }
 
     let request_cert = request_cert_js.to_boolean();

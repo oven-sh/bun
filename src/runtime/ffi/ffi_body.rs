@@ -86,30 +86,20 @@ impl JSValueFfiExt for JSValue {
 /// `toTypeError` create and return the JS Error without throwing, which the
 /// upstream `bun_jsc` surface only offers as throwing variants.
 pub(super) trait GlobalObjectFfiExt {
-    fn to_invalid_arguments(&self, msg: impl core::fmt::Display) -> JSValue;
-    fn to_type_error(&self, code: jsc::ErrorCode, msg: impl core::fmt::Display) -> JSValue;
-    fn make_napi_env_for_ffi(&self) -> *mut napi::NapiEnv;
+    fn to_invalid_arguments(&self, msg: fmt::Arguments<'_>) -> JSValue;
+    fn to_type_error(&self, code: jsc::ErrorCode, msg: fmt::Arguments<'_>) -> JSValue;
 }
 impl GlobalObjectFfiExt for JSGlobalObject {
     #[inline]
-    fn to_invalid_arguments(&self, msg: impl core::fmt::Display) -> JSValue {
+    fn to_invalid_arguments(&self, msg: fmt::Arguments<'_>) -> JSValue {
         // PORT NOTE: Zig wraps this with `ERR_INVALID_ARG_TYPE`; the
         // type-error instance is the closest non-throwing surface today.
         self.create_type_error_instance(msg)
     }
     #[inline]
-    fn to_type_error(&self, _code: jsc::ErrorCode, msg: impl core::fmt::Display) -> JSValue {
+    fn to_type_error(&self, _code: jsc::ErrorCode, msg: fmt::Arguments<'_>) -> JSValue {
         // TODO(port): attach `_code` once `ErrorBuilder` exposes a non-throwing path.
         self.create_type_error_instance(msg)
-    }
-    #[inline]
-    fn make_napi_env_for_ffi(&self) -> *mut napi::NapiEnv {
-        unsafe extern "C" {
-            fn ZigGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject)
-                -> *mut napi::NapiEnv;
-        }
-        // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the VM.
-        unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
     }
 }
 

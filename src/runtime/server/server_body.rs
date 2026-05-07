@@ -777,29 +777,28 @@ impl AnyRoute {
                 }
 
                 // trim the /*
-                // SAFETY: `path` is a route key owned by `init_ctx`
-                // (`ServerInitContext.user_routes` / `js_string_allocations`)
-                // and outlives the `framework_router_list` it is pushed into —
-                // identical to the borrow `StringRefList::track` returns for
-                // `relative_root`. The `&'static` on `FileSystemRouterType`
-                // fields is the Phase-A erasure of that owner lifetime.
-                let prefix: &'static [u8] = if path.len() == 2 {
-                    b"/"
+                // PORT NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
+                // Zig stored a borrow into the route key (arena-backed). Rather
+                // than erasing the lifetime through a raw-pointer round-trip
+                // (banned per PORTING.md), copy the prefix bytes here — the
+                // route table is built once at server startup, so the extra
+                // allocation is cold.
+                use std::borrow::Cow;
+                let prefix: Cow<'static, [u8]> = if path.len() == 2 {
+                    Cow::Borrowed(b"/")
                 } else {
-                    unsafe { &*(&path[..path.len() - 2] as *const [u8]) }
+                    Cow::Owned(path[..path.len() - 2].to_vec())
                 };
-                static IGNORE_DIRS: &[&[u8]] = &[b"node_modules", b".git"];
-                static EXTENSIONS: &[&[u8]] = &[b".tsx", b".jsx"];
                 init_ctx.framework_router_list.push(bake::FileSystemRouterType {
-                    root: relative_root,
+                    root: Cow::Owned(relative_root.to_vec()),
                     style,
                     prefix,
                     // TODO: customizable framework option.
-                    entry_client: Some(b"bun-framework-react/client.tsx"),
-                    entry_server: b"bun-framework-react/server.tsx",
+                    entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                    entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
                     ignore_underscores: true,
-                    ignore_dirs: IGNORE_DIRS,
-                    extensions: EXTENSIONS,
+                    ignore_dirs: vec![Cow::Borrowed(b"node_modules".as_slice()), Cow::Borrowed(b".git".as_slice())],
+                    extensions: vec![Cow::Borrowed(b".tsx".as_slice()), Cow::Borrowed(b".jsx".as_slice())],
                     allow_layouts: true,
                 });
 
@@ -1456,22 +1455,12 @@ where
         }
     }
 
-    pub fn get_plugins_async(
-        &mut self,
-        _bundle: &mut html_bundle::HTMLBundleRoute,
-        _raw_plugins: &[&[u8]],
-        _bunfig_path: &[u8],
-    ) {
-        // PORT NOTE: `getPluginsAsync` does not exist on `ThisServer` in
-        // server.zig — it's only referenced from `AnyServer.getPluginsAsync`
-        // (server.zig:3442), which dispatches to a method that the Zig source
-        // never defines (dead path; bundle-side wiring in HTMLBundle.zig calls
-        // `getOrLoadPlugins` instead). Mirror that by routing through
-        // `get_or_load_plugins` with the html-bundle callback.
-        // TODO(port): wire `loadAndResolvePluginsForHtmlBundle` once the
-        // HTMLBundle-side caller is ported and the actual contract is clear.
-        let _ = self.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(_bundle));
-    }
+    // PORT NOTE: `getPluginsAsync` is referenced from `AnyServer.loadAndResolvePlugins`
+    // (server.zig:3440-3447) but never defined on `ThisServer`. Zig's lazy
+    // compilation means the dispatch arm is dead. The Rust port omits both the
+    // method and the `AnyServer` dispatcher rather than guess a contract that
+    // would silently change behavior if a caller is later wired up. The live
+    // HTMLBundle path goes through `get_or_load_plugins`.
 
     /// Returns:
     /// - .ready if no plugin has to be loaded
@@ -2161,11 +2150,10 @@ where
 
         let first_arg = args.next_eat().unwrap();
         let mut body = BodyValue::Null;
-        let mut existing_request: Request;
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        if first_arg.is_string() {
+        let existing_request: Box<Request> = if first_arg.is_string() {
             let url_zig_str = arguments[0].to_slice(ctx)?;
             let temp_url_str = url_zig_str.slice();
 
@@ -2223,21 +2211,26 @@ where
                 }
             }
 
-            existing_request = Request::init2(
+            Box::new(Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
                 // PERF(port): Zig routes through `vm.initRequestBodyValue` (HiveRef pool);
                 // Box matches the `Request::init2` signature until that hook is type-erased.
                 Box::new(body),
                 method,
-            );
+            ))
         } else if let Some(request_) = first_arg
             .is_object()
             .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
             .flatten()
         {
             // SAFETY: JsClass::from_js returns a live *mut Request.
-            unsafe { (*request_).clone_into(ctx, &mut existing_request)? };
+            // PORT NOTE: Zig `request_.cloneInto(&existing_request, alloc, ctx, false)`
+            // wrote into a default-initialized `var existing_request: Request = .{}`.
+            // `Request::clone()` (Request.rs:1627) seeds a fully-initialized
+            // sentinel and calls `clone_into(.., preserve_url=false)` — same
+            // observable result without taking `&mut` to uninitialized memory.
+            unsafe { (*request_).clone(ctx)? }
         } else {
             // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
             // `first_arg.as_ref()` produces a valid `JSValueRef`.
@@ -2248,9 +2241,9 @@ where
                 .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
-        }
+        };
 
-        let mut request = Box::new(existing_request);
+        let mut request = existing_request;
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)

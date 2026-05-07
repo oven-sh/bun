@@ -52,6 +52,16 @@ pub type VTable = AllocatorVTable;
 unsafe impl Send for StdAllocator {}
 unsafe impl Sync for StdAllocator {}
 
+impl Default for StdAllocator {
+    /// Zig: `bun.memory.initDefault(std.mem.Allocator)` → `bun.default_allocator`
+    /// (mimalloc-backed `c_allocator`). Lets `AllocationScopeIn<StdAllocator>`
+    /// satisfy its `A: Default` bound for `init_default()`.
+    #[inline]
+    fn default() -> Self {
+        basic::C_ALLOCATOR
+    }
+}
+
 impl StdAllocator {
     /// Zig: `Allocator.rawAlloc`.
     #[inline]

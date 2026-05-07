@@ -347,7 +347,7 @@ pub fn apply_static_route<const SSL: bool, T>(
     T: StaticRouteLike<SSL>,
 {
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { &*entry }.set_server(server);
+    unsafe { T::set_server(entry, server) };
 
     // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
     // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
@@ -360,22 +360,15 @@ pub fn apply_static_route<const SSL: bool, T>(
         // SAFETY: uWS invokes this with non-null `resp`/`req` for the duration
         // of the callback; `user_data` is the `entry` pointer registered below,
         // kept alive by the route table for the lifetime of the app.
-        let route: &T = unsafe { &*(user_data as *const T) };
-        let req: &mut uws::Request = unsafe { &mut *req };
-        let resp: &mut uws::NewAppResponse<SSL> =
-            unsafe { &mut *uws::NewAppResponse::<SSL>::cast_res(resp) };
-        if SSL {
-            // SAFETY: SSL == true ⇒ NewAppResponse<SSL> is NewAppResponse<true>;
-            // both are `#[repr(C)]` opaques over the same `uws_res`.
-            let resp: &mut uws::NewAppResponse<true> =
-                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<true>) };
-            route.on_request(RequestUnion::H1(req), ResponseUnion::Ssl(resp));
-        } else {
-            // SAFETY: SSL == false ⇒ NewAppResponse<SSL> is NewAppResponse<false>.
-            let resp: &mut uws::NewAppResponse<false> =
-                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<false>) };
-            route.on_request(RequestUnion::H1(req), ResponseUnion::Tcp(resp));
-        }
+        let route = user_data as *mut T;
+        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
+        unsafe {
+            T::on_request(
+                route,
+                bun_uws_sys::AnyRequest::H1(req),
+                bun_uws_sys::AnyResponse::from_const::<SSL>(resp),
+            )
+        };
     }
 
     extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
@@ -384,21 +377,15 @@ pub fn apply_static_route<const SSL: bool, T>(
         user_data: *mut core::ffi::c_void,
     ) {
         // SAFETY: see `handler` above.
-        let route: &T = unsafe { &*(user_data as *const T) };
-        let req: &mut uws::Request = unsafe { &mut *req };
-        let resp: &mut uws::NewAppResponse<SSL> =
-            unsafe { &mut *uws::NewAppResponse::<SSL>::cast_res(resp) };
-        if SSL {
-            // SAFETY: see `handler` above.
-            let resp: &mut uws::NewAppResponse<true> =
-                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<true>) };
-            route.on_head_request(RequestUnion::H1(req), ResponseUnion::Ssl(resp));
-        } else {
-            // SAFETY: see `handler` above.
-            let resp: &mut uws::NewAppResponse<false> =
-                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<false>) };
-            route.on_head_request(RequestUnion::H1(req), ResponseUnion::Tcp(resp));
-        }
+        let route = user_data as *mut T;
+        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
+        unsafe {
+            T::on_head_request(
+                route,
+                bun_uws_sys::AnyRequest::H1(req),
+                bun_uws_sys::AnyResponse::from_const::<SSL>(resp),
+            )
+        };
     }
 
     let user_data = entry as *mut core::ffi::c_void;
@@ -427,21 +414,27 @@ pub fn apply_static_route_h3<T>(
     T: StaticRouteLike<false>,
 {
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { &*entry }.set_server(server);
+    unsafe { T::set_server(entry, server) };
 
     fn handler<T: StaticRouteLike<false>>(
         route: &mut T,
         req: &mut uws::h3::Request,
         resp: &mut uws::h3::Response,
     ) {
-        route.on_request(RequestUnion::H3(req), ResponseUnion::H3(resp));
+        // SAFETY: `route` is the `entry` userdata kept alive by the route table.
+        unsafe {
+            T::on_request(route, bun_uws_sys::AnyRequest::H3(req), bun_uws_sys::AnyResponse::H3(resp))
+        };
     }
     fn head<T: StaticRouteLike<false>>(
         route: &mut T,
         req: &mut uws::h3::Request,
         resp: &mut uws::h3::Response,
     ) {
-        route.on_head_request(RequestUnion::H3(req), ResponseUnion::H3(resp));
+        // SAFETY: see `handler` above.
+        unsafe {
+            T::on_head_request(route, bun_uws_sys::AnyRequest::H3(req), bun_uws_sys::AnyResponse::H3(resp))
+        };
     }
 
     app.head(path, entry, head::<T>);
@@ -456,23 +449,72 @@ pub fn apply_static_route_h3<T>(
     }
 }
 
-// TODO(port): helper trait introduced to express `comptime T: type` constraint from Zig.
-// Phase B: replace with the real trait bound on AnyRoute-like types.
+/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over —
+/// expresses Zig's `comptime T: type` (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
+/// Receivers are raw `*mut Self` because the route is registered as the uWS
+/// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
+/// `*mut` to mutate state and stash `self` into onAborted callbacks.
 pub trait StaticRouteLike<const SSL: bool>: 'static {
-    fn set_server(&self, server: AnyServer);
-    fn on_request(&self, req: RequestUnion<'_>, resp: ResponseUnion<'_>);
-    fn on_head_request(&self, req: RequestUnion<'_>, resp: ResponseUnion<'_>);
+    /// SAFETY: `this` is a live route pointer for the lifetime of the app.
+    unsafe fn set_server(this: *mut Self, server: AnyServer);
+    /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles
+    /// valid for the duration of the uWS callback.
+    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse);
+    /// SAFETY: see `on_request`.
+    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse);
 }
 
-// TODO(port): these unions mirror the anon struct literals `.{ .h1 = req }` / `.{ .SSL = resp }`.
-pub enum RequestUnion<'a> {
-    H1(&'a mut bun_uws_sys::Request),
-    H3(&'a mut bun_uws_sys::h3::Request),
+// PORT NOTE (layering): the Phase-A `RequestUnion`/`ResponseUnion` placeholders
+// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
+// model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
+// so any straggler reference resolves to the canonical opaque.
+pub use bun_uws_sys::AnyRequest as RequestUnion;
+pub use bun_uws_sys::AnyResponse as ResponseUnion;
+
+impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live; `server` is a Cell so &mut
+        // is not required.
+        unsafe { (*this).server.set(Some(server)) };
+    }
+    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_request(this, req, resp) }
+    }
+    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_head_request(this, req, resp) }
+    }
 }
-pub enum ResponseUnion<'a> {
-    Ssl(&'a mut bun_uws_sys::NewAppResponse<true>),
-    Tcp(&'a mut bun_uws_sys::NewAppResponse<false>),
-    H3(&'a mut bun_uws_sys::h3::Response),
+
+impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live.
+        unsafe { (*this).set_server(Some(server)) };
+    }
+    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_request(this, req, resp) }
+    }
+    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_head_request(this, req, resp) }
+    }
+}
+
+impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live.
+        unsafe { (*this).server.set(Some(server)) };
+    }
+    unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_request(this, req, resp) }
+    }
+    unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
+        // SAFETY: forwarded to the inherent impl with the same contract.
+        unsafe { Self::on_head_request(this, req, resp) }
+    }
 }
 
 impl ServerConfig {

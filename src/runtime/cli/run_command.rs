@@ -438,7 +438,11 @@ impl RunCommand {
             }
 
             SpawnStatus::Signaled(_) => {
-                if let Some(sig) = spawn_result.status.signal_code() {
+                // Zig: only the *print* is gated on `signal.valid()`;
+                // `suppressReporting` + `raiseIgnoringPanicHandler(signal)`
+                // run unconditionally (run_command.zig:342-353).
+                let signal_code = spawn_result.status.signal_code();
+                if let Some(sig) = signal_code {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
@@ -448,13 +452,18 @@ impl RunCommand {
                         );
                         Output::flush();
                     }
+                }
 
-                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
-                        bun_crash_handler::suppress_reporting();
-                    }
+                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() == Some(true) {
+                    bun_crash_handler::suppress_reporting();
+                }
 
+                if let Some(sig) = signal_code {
                     Global::raise_ignoring_panic_handler(sig);
                 }
+                // `.signaled` always carries 1..=31 in practice; fallback only
+                // for type-totality (Zig re-raised the raw u8 unconditionally).
+                Global::exit(1);
             }
 
             SpawnStatus::Err(ref err) => {
@@ -734,17 +743,19 @@ impl RunCommand {
         vm.argv = std::mem::take(&mut ctx.passthrough);
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
-        // TODO(port): `VirtualMachine::main` is still `&'static [u8]`; it should
-        // be `Box<[u8]>` so ownership transfers (PORTING.md §Forbidden patterns).
-        // `vm.main` is a BACKREF (`*const [u8]`); `entry_path: Box<[u8]>` is
-        // process-lifetime here (the runner never returns), matching Zig's
-        // `allocator.dupe` + no-free.
-        vm.set_main(&entry_path);
+        // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
+        // heap pointer now (Zig: `allocator.dupe` + never-free) so the address
+        // is stable for both `set_main` and the `RUN` write below. The runner
+        // never returns, so the allocation is process-lifetime by construction.
+        let entry_ptr: *const [u8] = Box::into_raw(entry_path);
+        // SAFETY: freshly-allocated heap bytes, never freed (see above).
+        let entry: &[u8] = unsafe { &*entry_ptr };
+        vm.set_main(entry);
 
         // Zig: `vm.main_is_html_entrypoint = (loader orelse
         //   vm.transpiler.options.loader(ext)) == .html`.
         vm.main_is_html_entrypoint = loader
-            .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(&entry_path)))
+            .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
 
         // ctx → transpiler/resolver option mapping (bun.js.zig:110-170).
@@ -774,19 +785,16 @@ impl RunCommand {
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
-        // `MaybeUninit<Run>` is layout-transparent over `Run`, so `.cast()` +
-        // `ptr::write` is the bitwise initialization Zig expresses with
-        // `var run: Run = undefined;` followed by field stores.
         unsafe {
-            (&raw mut RUN).cast::<Run>().write(Run {
+            (&raw mut RUN).write(Run {
+                ctx: ctx as *mut ContextData,
                 vm: vm_ptr,
-                entry_path,
-                eval_and_print: ctx.runtime_options.eval.eval_and_print,
+                entry_path: entry_ptr,
             });
         }
         // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
-        // b2-cycle widens it to `cli::HotReload`); the watcher run-loop arm in
-        // `Run::start` keys off `vm.is_watcher_enabled()` instead.
+        // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
+        // from `self.ctx` to drive the hot-reloader enable.
         vm.hot_reload = ctx.debug.hot_reload as u8;
 
         extern "C" fn trampoline(ctx: *mut c_void) {

@@ -2,7 +2,7 @@ use core::fmt::Write as _;
 
 use bun_core::output;
 use bun_http::Method;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsClass as _};
 use crate::node::{PathLike, PathOrBlob};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::{self, Blob, BlobExt};
@@ -693,9 +693,9 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
                 method = match method_from_js(global, method_)? {
                     Some(m) => m,
                     None => {
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
-                        ));
+                        )));
                     }
                 };
             }

@@ -1152,11 +1152,14 @@ impl CommandLineReporter {
         // dispatch on enum value. Demoted to runtime match.
         // PERF(port): was comptime monomorphization — profile in Phase B
         let result = sequence.result;
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write provenance
-        // from `enter_file`'s `&mut`; single-threaded; reporter outlives every BunTest.
-        let reporter_ref: Option<&CommandLineReporter> =
-            buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
+            // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+            // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
+            // every BunTest. Scoped to this block so the SharedReadOnly tag is dead
+            // before `maybe_print_junit_line` derives `&mut` from the same `NonNull`
+            // (stacked-borrows hygiene — Zig re-reads `buntest.reporter.?` per site).
+            let reporter_ref: Option<&CommandLineReporter> =
+                buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(basic, bun_test::BasicResult::Pass | bun_test::BasicResult::Skip | bun_test::BasicResult::Todo | bun_test::BasicResult::Pending);
@@ -1199,13 +1202,13 @@ impl CommandLineReporter {
             }
         }
         // always print junit if needed (creates `&mut CommandLineReporter` from
-        // the same `NonNull` — `reporter_ref` above must not be reused after
-        // this point under stacked borrows; re-derive below).
+        // the same `NonNull` — any earlier shared borrow must be dead first).
         Self::maybe_print_junit_line(result, buntest, sequence, test_entry, elapsed_ns);
 
         let formatted_line = &output_buf[initial_length..];
-        // SAFETY: see `reporter_ref` SAFETY above — re-derived post-junit to
-        // avoid holding a shared ref across the `&mut` in `maybe_print_junit_line`.
+        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>`; re-derived
+        // here (not held across `maybe_print_junit_line`'s `&mut`) per stacked
+        // borrows. Mirrors Zig's per-site `buntest.reporter.?` deref.
         let worker_idx = buntest
             .reporter
             .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });

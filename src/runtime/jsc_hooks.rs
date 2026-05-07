@@ -228,11 +228,9 @@ unsafe fn init_runtime_state(
     // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
     // zeroed bytes are not a valid `Transpiler` to drop).
     //
-    // PORT NOTE: `InitOptions` is the minimal-surface stub (no `args:
-    // api::TransformOptions` yet), so pass `Default` and inline the body of
-    // `configure_transform_options_for_bun_vm` (the `bun_jsc::config` module
-    // is ``-gated). Once the full `Options<'a>` un-gates, swap
-    // `Default::default()` for `opts.args`.
+    // PORT NOTE: `configure_transform_options_for_bun_vm` lives in the
+    // ``-gated `bun_jsc::config` module; its body (3 field overwrites) is
+    // inlined below over the caller-supplied `opts.transform_options`.
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
     let log: *mut bun_logger::Log =
@@ -244,7 +242,7 @@ unsafe fn init_runtime_state(
     // not replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
         use bun_options_types::schema::api;
-        let mut args = api::TransformOptions::default();
+        let mut args = opts.transform_options.clone();
         // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
         args.resolve = Some(api::ResolveMode::Lazy);
@@ -290,10 +288,12 @@ unsafe fn init_runtime_state(
     // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
     // The low-tier `VirtualMachine::init` doc-comment delegates this here; not
     // arming it means a child Bun process won't exit when its parent dies.
-    // Gate on `_opts.is_main_thread` once `bun_aio::parent_death_watchdog`
+    // Gate on `opts.is_main_thread` once `bun_aio::parent_death_watchdog`
     // un-gates.
-    // TODO(b2-cycle): `Debugger::configure(vm, opts.debugger)` — `Debugger.rs`
-    // gated; spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)`.
+    // TODO(b2-cycle): `Debugger::configure(vm, &opts.debugger)` —
+    // `Debugger.rs::configure` gated; spec VirtualMachine.zig:1321
+    // `vm.configureDebugger(opts.debugger)`. The config is now plumbed through
+    // `InitOptions.debugger`; wire the call once `Debugger::configure` un-gates.
 
     state.cast()
 }

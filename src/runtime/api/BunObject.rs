@@ -1757,8 +1757,8 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         }
 
         let map: &'static mut [u8] = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            bun_sys::Maybe::Ok(map) => map,
-            bun_sys::Maybe::Err(err) => {
+            Ok(map) => map,
+            Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -3147,8 +3147,8 @@ mod stdio_stores {
     fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
         let fd = bun_sys::Fd::from_uv(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
-            bun_sys::Maybe::Ok(stat) => bun_sys::Mode::try_from(stat.st_mode).unwrap_or(0),
-            bun_sys::Maybe::Err(_) => 0,
+            Ok(stat) => bun_sys::Mode::try_from(stat.st_mode).unwrap_or(0),
+            Err(_) => 0,
         };
         // PORT NOTE: Zig set `ref_count = 2` to account for the RareData slot
         // plus the Blob; with `StoreRef` (intrusive RAII) the slot is +1 and

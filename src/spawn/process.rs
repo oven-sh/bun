@@ -1747,7 +1747,7 @@ pub fn spawn_process_windows(
                     if let Some(err) = rc.to_error(bun_sys::Syscall::Open) {
                         failed = true;
                         cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Maybe::Err(err));
+                        return Ok(Err(err));
                     }
                     stdio.flags = uv::UV_INHERIT_FD;
                     let fd = rc.int();
@@ -1772,7 +1772,7 @@ pub fn spawn_process_windows(
             if fd_i == 1 {
                 if let Some(e) = uv::uv_pipe(&mut dup_fds, 0, 0).err_enum() {
                     cleanup_uv_files(&uv_files_to_close, loop_);
-                    return Ok(Maybe::Err(bun_sys::Error::from_code(e, bun_sys::Syscall::Pipe)));
+                    return Ok(Err(bun_sys::Error::from_code(e, bun_sys::Syscall::Pipe)));
                 }
             }
             stdio.flags = uv::UV_INHERIT_FD;
@@ -1808,7 +1808,7 @@ pub fn spawn_process_windows(
                 if let Some(err) = rc.to_error(bun_sys::Syscall::Open) {
                     failed = true;
                     cleanup_uv_files(&uv_files_to_close, loop_);
-                    return Ok(Maybe::Err(err));
+                    return Ok(Err(err));
                 }
                 stdio.flags = uv::StdioFlags::INHERIT_FD;
                 let fd = rc.int();
@@ -1897,7 +1897,7 @@ pub fn spawn_process_windows(
             (*process).close();
             (*process).deref();
         }
-        return Ok(Maybe::Err(err));
+        return Ok(Err(err));
     }
 
     // SAFETY: process is valid, poller is Uv
@@ -2307,7 +2307,7 @@ pub mod sync {
     ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
         let loop_ = options.windows.loop_.platform_event_loop();
         let mut spawned = match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-            Maybe::Err(err) => return Ok(Maybe::Err(err)),
+            Err(err) => return Ok(Err(err)),
             Ok(proces) => proces,
         };
 
@@ -2349,7 +2349,7 @@ pub mod sync {
     ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
         let loop_: EventLoopHandle = options.windows.loop_;
         let mut spawned = match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-            Maybe::Err(err) => return Ok(Maybe::Err(err)),
+            Err(err) => return Ok(Err(err)),
             Ok(process) => process,
         };
         // Single-pointer ownership (mirrors Zig `bun.TrivialNew`): the
@@ -2404,7 +2404,7 @@ pub mod sync {
                 // `start` consumes the Box and transfers ownership to libuv
                 // via pipe.data (Box::into_raw inside).
                 match reader.start() {
-                    Maybe::Err(err) => {
+                    Err(err) => {
                         // SAFETY: sync spawn — `(*this_ptr).process` is the only
                         // handle and no uv callback has fired yet.
                         unsafe {
@@ -2728,8 +2728,8 @@ pub mod sync {
         let _signals = SignalForwarding::register();
 
         let process = match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
-            Maybe::Err(err) => return Ok(Maybe::Err(err)),
-            Maybe::Ok(proces) => proces,
+            Err(err) => return Ok(Err(err)),
+            Ok(proces) => proces,
         };
         // Negative → kill() in the C++ signal forwarder targets the pgroup, so
         // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
@@ -2782,8 +2782,8 @@ pub mod sync {
                     // the disarm defer above drops it (LIFO: this runs first).
                     loop {
                         match posix_spawn::wait4(-1, libc::WNOHANG as u32, None) {
-                            Maybe::Err(_) => break,
-                            Maybe::Ok(w) => {
+                            Err(_) => break,
+                            Ok(w) => {
                                 if w.pid <= 0 {
                                     break;
                                 }
@@ -2860,11 +2860,11 @@ pub mod sync {
                 };
                 if let Some(maybe) = r {
                     match maybe {
-                        Maybe::Err(err) => {
+                        Err(err) => {
                             cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-                            return Ok(Maybe::Err(err));
+                            return Ok(Err(err));
                         }
-                        Maybe::Ok(st) => break 'blk st,
+                        Ok(st) => break 'blk st,
                     }
                 }
                 // null: kqueue()/kevent-receipt failed — fall through to the
@@ -2879,7 +2879,7 @@ pub mod sync {
                         drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
                     {
                         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-                        return Ok(Maybe::Err(err));
+                        return Ok(Err(err));
                     }
                 }
 
@@ -2909,7 +2909,7 @@ pub mod sync {
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                     err => {
                         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-                        return Ok(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
+                        return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
                     }
                 }
             }
@@ -2930,7 +2930,7 @@ pub mod sync {
         let stdout = core::mem::take(&mut out[0]);
         let stderr = core::mem::take(&mut out[1]);
         cleanup_spawn_posix(&mut out, &out_fds, &process, success);
-        Ok(Maybe::Ok(Result { status, stdout, stderr }))
+        Ok(Ok(Result { status, stdout, stderr }))
     }
 
     #[cfg(unix)]
@@ -3051,7 +3051,7 @@ pub mod sync {
         // SAFETY: zeroed kevent is valid
         let mut receipts: [libc::kevent; 5] = unsafe { core::mem::zeroed() };
         match bun_sys::kevent(kq_fd, &changes_buf[..changes_len], &mut receipts[..changes_len], None) {
-            Maybe::Err(err) => return Some(Maybe::Err(err)),
+            Err(err) => return Some(Err(err)),
             Ok(_) => {}
         }
         for r in &receipts[..changes_len] {
@@ -3099,7 +3099,7 @@ pub mod sync {
         let mut child_status: Option<Status> = None;
         loop {
             let got = match bun_sys::kevent(kq_fd, &[], &mut events[..], None) {
-                Maybe::Err(err) => return Some(Maybe::Err(err)),
+                Err(err) => return Some(Err(err)),
                 Ok(c) => c,
             };
             let mut saw_fork = false;
@@ -3155,7 +3155,7 @@ pub mod sync {
                     if let Some(err) =
                         drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
                     {
-                        return Some(Maybe::Err(err));
+                        return Some(Err(err));
                     }
                 }
             }
@@ -3240,8 +3240,8 @@ pub mod sync {
         let mut ppid_fd = AutoCloseFd::invalid();
         if ppid > 1 {
             match bun_sys::pidfd_open(ppid, 0) {
-                Maybe::Ok(fd) => ppid_fd = AutoCloseFd::new(fd),
-                Maybe::Err(e) => {
+                Ok(fd) => ppid_fd = AutoCloseFd::new(fd),
+                Err(e) => {
                     if e.get_errno() == bun_sys::E::ESRCH {
                         Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                     }
@@ -3293,8 +3293,8 @@ pub mod sync {
             loop {
                 let r = posix_spawn::wait4(-1, wopts, None);
                 let w = match &r {
-                    Maybe::Err(_) => break,
-                    Maybe::Ok(w) => *w,
+                    Err(_) => break,
+                    Ok(w) => *w,
                 };
                 if w.pid <= 0 {
                     break;
@@ -3316,7 +3316,7 @@ pub mod sync {
                 if let Some(err) =
                     drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
                 {
-                    return Some(Maybe::Err(err));
+                    return Some(Err(err));
                 }
             }
 
@@ -3351,7 +3351,7 @@ pub mod sync {
                 bun_sys::E::SUCCESS => {}
                 bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
                 err => {
-                    return Some(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)))
+                    return Some(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)))
                 }
             }
 
@@ -3380,7 +3380,7 @@ pub mod sync {
         for i in 0..2 {
             let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
         }
-        Some(Maybe::Ok(child_status.unwrap()))
+        Some(Ok(child_status.unwrap()))
     }
 
     /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
@@ -3402,13 +3402,13 @@ pub mod sync {
                 core::slice::from_raw_parts_mut(spare.as_mut_ptr() as *mut u8, spare.len())
             };
             match bun_sys::recv_non_block(*fd, spare_slice) {
-                Maybe::Err(err) => {
+                Err(err) => {
                     if err.is_retry() || err.get_errno() == bun_sys::E::EPIPE {
                         return None;
                     }
                     return Some(err);
                 }
-                Maybe::Ok(bytes_read) => {
+                Ok(bytes_read) => {
                     // SAFETY: recv wrote `bytes_read` bytes into spare capacity
                     unsafe { bytes.set_len(bytes.len() + bytes_read) };
                     if bytes_read == 0 {

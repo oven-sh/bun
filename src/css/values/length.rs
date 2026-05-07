@@ -385,12 +385,12 @@ impl LengthValue {
         match token {
             Token::Dimension(dim) => {
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
-                    return Maybe::Ok(v);
+                    return Ok(v);
                 }
             }
             _ => {}
         }
-        Maybe::Err(())
+        Err(())
     }
 
     pub fn to_unit_value(&self) -> (CSSNumber, &'static [u8]) {

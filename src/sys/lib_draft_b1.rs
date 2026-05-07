@@ -4749,63 +4749,38 @@ pub mod node {
     #[cfg(windows)]
     pub type TimeLike = f64;
 
-    /// `bun.api.node.Maybe<R, E>` — tagged result mirroring Zig's `union(Tag){err,result}`.
-    ///
-    /// Kept as a distinct enum (not `core::result::Result`) so the `errno_sys*`
-    /// associated helpers and `.err`/`.result` field-style usage port 1:1.
-    #[must_use]
-    #[derive(Debug)]
-    pub enum Maybe<R, E = Error> {
-        Err(E),
-        Ok(R),
+    /// `bun.api.node.Maybe<R, E>` — tagged result mirroring Zig's
+    /// `union(Tag){err,result}`. Phase F: collapsed to `core::result::Result`;
+    /// the `errno_sys*` helpers move to the [`MaybeSysExt`] extension trait so
+    /// `Maybe::<T>::errno_sys(..)` call sites keep resolving.
+    pub type Maybe<R, E = Error> = core::result::Result<R, E>;
+
+    pub trait MaybeSysExt<R>: Sized {
+        fn retry() -> Self;
+        fn aborted() -> Self;
+        fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self>;
+        fn errno_sys_fd(rc: impl Into<i64>, syscall: Tag, fd: Fd) -> Option<Self>;
+        fn errno_sys_p(rc: impl Into<i64>, syscall: Tag, path: &[u8]) -> Option<Self>;
+        fn get_errno(&self) -> E;
     }
 
-    impl<R, E> Maybe<R, E> {
+    impl<R> MaybeSysExt<R> for Maybe<R, Error> {
         #[inline]
-        pub fn init_err(e: E) -> Self { Maybe::Err(e) }
-        #[inline]
-        pub fn init_result(r: R) -> Self { Maybe::Ok(r) }
-
-        #[inline]
-        pub fn as_err(&self) -> Option<&E> {
-            match self { Maybe::Err(e) => Some(e), Maybe::Ok(_) => None }
-        }
-        #[inline]
-        pub fn as_value(self) -> Option<R> {
-            match self { Maybe::Ok(r) => Some(r), Maybe::Err(_) => None }
-        }
-        #[inline]
-        pub fn unwrap_or(self, default_value: R) -> R {
-            match self { Maybe::Ok(r) => r, Maybe::Err(_) => default_value }
-        }
-        #[inline]
-        pub fn is_ok(&self) -> bool { matches!(self, Maybe::Ok(_)) }
-        #[inline]
-        pub fn is_err(&self) -> bool { matches!(self, Maybe::Err(_)) }
-    }
-
-    impl<R: Default, E> Maybe<R, E> {
-        #[inline]
-        pub fn success() -> Self { Maybe::Ok(R::default()) }
-    }
-
-    impl<R> Maybe<R, Error> {
-        #[inline]
-        pub fn retry() -> Self { Maybe::Err(Error::retry()) }
+        fn retry() -> Self { Err(Error::retry()) }
 
         /// Zig `Maybe(T).aborted` — placeholder err for an aborted `AbortSignal`.
         #[inline]
-        pub fn aborted() -> Self {
-            Maybe::Err(Error { errno: E::INTR as _, syscall: Tag::access, ..Error::default() })
+        fn aborted() -> Self {
+            Err(Error { errno: E::INTR as _, syscall: Tag::access, ..Error::default() })
         }
 
         /// Zig `Maybe(T).errnoSys(rc, syscall)`: `Some(Err)` if `rc` indicates
         /// failure (errno set), else `None` so the caller proceeds with `rc`.
         #[inline]
-        pub fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self> {
+        fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self> {
             let rc: i64 = rc.into();
             if rc != -1 { return None; }
-            Some(Maybe::Err(Error {
+            Some(Err(Error {
                 errno: super::get_errno() as _,
                 syscall,
                 ..Error::default()
@@ -4814,10 +4789,10 @@ pub mod node {
 
         /// `errnoSys` variant that records the fd on the error.
         #[inline]
-        pub fn errno_sys_fd(rc: impl Into<i64>, syscall: Tag, fd: Fd) -> Option<Self> {
+        fn errno_sys_fd(rc: impl Into<i64>, syscall: Tag, fd: Fd) -> Option<Self> {
             let rc: i64 = rc.into();
             if rc != -1 { return None; }
-            Some(Maybe::Err(Error {
+            Some(Err(Error {
                 errno: super::get_errno() as _,
                 syscall,
                 fd,
@@ -4827,36 +4802,21 @@ pub mod node {
 
         /// `errnoSys` variant that records a path slice on the error.
         #[inline]
-        pub fn errno_sys_p(rc: impl Into<i64>, syscall: Tag, path: &[u8]) -> Option<Self> {
+        fn errno_sys_p(rc: impl Into<i64>, syscall: Tag, path: &[u8]) -> Option<Self> {
             let rc: i64 = rc.into();
             if rc != -1 { return None; }
-            Some(Maybe::Err(
+            Some(Err(
                 Error { errno: super::get_errno() as _, syscall, ..Error::default() }
                     .with_path(path),
             ))
         }
 
         #[inline]
-        pub fn get_errno(&self) -> E {
+        fn get_errno(&self) -> E {
             match self {
-                Maybe::Err(e) => e.get_errno(),
-                Maybe::Ok(_) => E::SUCCESS,
+                Err(e) => e.get_errno(),
+                Ok(_) => E::SUCCESS,
             }
-        }
-
-        #[inline]
-        pub fn unwrap(self) -> R {
-            match self {
-                Maybe::Ok(r) => r,
-                Maybe::Err(e) => panic!("called `Maybe::unwrap()` on an `Err` value: {:?}", e),
-            }
-        }
-    }
-
-    impl<R, E> From<Maybe<R, E>> for core::result::Result<R, E> {
-        #[inline]
-        fn from(m: Maybe<R, E>) -> Self {
-            match m { Maybe::Ok(r) => Ok(r), Maybe::Err(e) => Err(e) }
         }
     }
 

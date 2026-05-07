@@ -3524,12 +3524,12 @@ impl FormDataContext {
                                 crate::node::fs::Flavor::Sync,
                             );
                             match res {
-                                bun_sys::Maybe::Err(err) => {
+                                Err(err) => {
                                     self.failed = true;
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
-                                bun_sys::Maybe::Ok(result) => {
+                                Ok(result) => {
                                     // PORT NOTE: Zig handed `result.buffer.allocator`
                                     // to the joiner so it freed in-place.
                                     // `StringOrBuffer::slice()` borrows; clone into

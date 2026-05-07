@@ -3,8 +3,6 @@
 // NOTE: the Zig `comptime { _ = @import(...) }` force-reference block is
 // dropped — Rust links what's `pub`.
 
-use core::fmt;
-
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/nodejs_error_code.rs"]
 pub mod nodejs_error_code;
@@ -194,10 +192,13 @@ pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 ///
 /// We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
 /// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
-pub enum Maybe<R, E> {
-    Err(E),
-    Result(R),
-}
+///
+/// Phase F: collapsed from a bespoke `enum Maybe { Err, Result }` into a plain
+/// `core::result::Result` alias. The Zig-parity helper methods (`todo`,
+/// `success`, `errno_sys*`, `to_js`, …) move to the [`MaybeExt`] /
+/// [`MaybeSysExt`] / [`MaybeToJsExt`] extension traits below so call sites can
+/// keep using `Maybe::<T>::helper()` while gaining `?` propagation for free.
+pub type Maybe<R, E = bun_sys::Error> = core::result::Result<R, E>;
 
 // `union(enum)` → Rust enum is the tagged union; the explicit `Tag` enum is
 // kept only for source parity with the Zig.
@@ -207,13 +208,28 @@ pub enum MaybeTag {
     Result,
 }
 
-impl<R, E> Maybe<R, E> {
-    // PORT NOTE: Zig `pub const ErrorType = ErrorTypeT` etc. would be inherent
-    // associated types in Rust, which are unstable. Dropped — callers use the
-    // generic params directly. `Tag` is exposed at module scope as `MaybeTag`.
+/// Generic helper surface that the Zig `Maybe(R, E)` carried as inherent
+/// methods. `unwrap_or`/`is_ok`/`is_err`/`map_err` are already provided by
+/// `core::result::Result`, so only the Zig-specific constructors remain here.
+pub trait MaybeExt<R, E>: Sized {
+    fn todo() -> Self
+    where
+        E: MaybeErrorTodo;
+    fn init_err(e: E) -> Self;
+    fn init_result(result: R) -> Self;
+    fn as_err(&self) -> Option<&E>;
+    fn as_value(&self) -> Option<&R>;
+    fn success() -> Self
+    where
+        R: Default;
+    fn retry() -> Self
+    where
+        E: MaybeErrorRetry;
+}
 
+impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     #[inline]
-    pub fn todo() -> Self
+    fn todo() -> Self
     where
         E: MaybeErrorTodo,
     {
@@ -225,87 +241,57 @@ impl<R, E> Maybe<R, E> {
         // TODO(port): Zig used `@hasDecl(E, "todo")` to optionally call
         // `E::todo()` else default-construct. Modeled via `MaybeErrorTodo`
         // trait with a default impl returning `E::default()`.
-        Maybe::Err(E::todo())
+        Err(E::todo())
     }
 
     #[inline]
-    pub fn unwrap_or(self, default_value: R) -> R {
-        match self {
-            Maybe::Result(v) => v,
-            Maybe::Err(_) => default_value,
-        }
+    fn init_err(e: E) -> Self {
+        Err(e)
     }
 
     #[inline]
-    pub fn init_err(e: E) -> Maybe<R, E> {
-        Maybe::Err(e)
+    fn init_result(result: R) -> Self {
+        Ok(result)
     }
 
     #[inline]
-    pub fn as_err(&self) -> Option<&E> {
-        if let Maybe::Err(e) = self {
-            return Some(e);
-        }
-        None
+    fn as_err(&self) -> Option<&E> {
+        self.as_ref().err()
     }
 
     #[inline]
-    pub fn as_value(&self) -> Option<&R> {
-        if let Maybe::Result(r) = self {
-            return Some(r);
-        }
-        None
+    fn as_value(&self) -> Option<&R> {
+        self.as_ref().ok()
     }
 
     #[inline]
-    pub fn is_ok(&self) -> bool {
-        match self {
-            Maybe::Result(_) => true,
-            Maybe::Err(_) => false,
-        }
-    }
-
-    #[inline]
-    pub fn is_err(&self) -> bool {
-        match self {
-            Maybe::Result(_) => false,
-            Maybe::Err(_) => true,
-        }
-    }
-
-    #[inline]
-    pub fn init_result(result: R) -> Maybe<R, E> {
-        Maybe::Result(result)
-    }
-
-    #[inline]
-    pub fn map_err<E2>(self, err_fn: fn(E) -> E2) -> Maybe<R, E2> {
-        match self {
-            Maybe::Result(v) => Maybe::Result(v),
-            Maybe::Err(e) => Maybe::Err(err_fn(e)),
-        }
-    }
-}
-
-impl<R, E: Default> Maybe<R, E> {
-    pub fn success() -> Self
+    fn success() -> Self
     where
         R: Default,
     {
         // PORT NOTE: Zig used `std.mem.zeroes(ReturnType)`. Mapped to
         // `Default` here since the generic `R` may contain non-POD fields.
-        // TODO(port): if any caller relied on literal zero-bytes semantics for
-        // a non-`Default` `R`, revisit with `core::mem::zeroed()` + SAFETY note.
-        Maybe::Result(R::default())
+        Ok(R::default())
+    }
+
+    #[inline]
+    fn retry() -> Self
+    where
+        E: MaybeErrorRetry,
+    {
+        Err(E::retry())
     }
 }
 
-// TODO(port): Zig `pub const retry` was gated on `@hasDecl(ErrorTypeT, "retry")`.
-// Modeled via the `MaybeErrorRetry` trait below; types that have a `retry`
-// value implement it.
-impl<R, E: MaybeErrorRetry> Maybe<R, E> {
-    pub fn retry() -> Self {
-        Maybe::Err(E::retry())
+/// `Maybe<bool, E>::is_true()` — Zig `if (comptime ReturnType != bool)
+/// @compileError(...)` enforced by impl bound.
+pub trait MaybeBoolExt {
+    fn is_true(self) -> bool;
+}
+impl<E> MaybeBoolExt for Maybe<bool, E> {
+    #[inline]
+    fn is_true(self) -> bool {
+        matches!(self, Ok(true))
     }
 }
 
@@ -338,24 +324,58 @@ impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
     }
 }
 
-impl<E> Maybe<bool, E> {
-    pub fn is_true(self) -> bool {
-        // Zig: `if (comptime ReturnType != bool) @compileError(...)` — enforced
-        // here by the impl bound `R = bool`.
-        match self {
-            Maybe::Result(r) => r,
-            _ => false,
-        }
-    }
+// ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
+
+/// Extension surface for `Maybe<R, bun_sys::Error>` carrying the Zig
+/// `Maybe(T)` errno helpers (`aborted`, `init_err_with_p`, `to_array_buffer`,
+/// `errno*`). Kept as a trait now that `Maybe` is a `Result` alias and can no
+/// longer host inherent impls.
+pub trait MaybeSysExt<R>: Sized {
+    fn aborted() -> Self;
+    fn init_err_with_p(
+        e: bun_sys::SystemErrno,
+        syscall: bun_sys::Tag,
+        file_path: impl AsRef<[u8]>,
+    ) -> Self;
+    fn to_array_buffer(
+        self,
+        global_object: &crate::jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue>
+    where
+        R: Into<Vec<u8>>;
+    fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self;
+    fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self>;
+    fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(
+        rc: Rc,
+        syscall: bun_sys::Tag,
+        fd: bun_sys::Fd,
+    ) -> Option<Self>;
+    fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
+        rc: Rc,
+        syscall: bun_sys::Tag,
+        file_path: impl AsRef<[u8]>,
+    ) -> Option<Self>;
+    fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
+        rc: Rc,
+        syscall: bun_sys::Tag,
+        fd: bun_sys::Fd,
+        file_path: impl AsRef<[u8]>,
+    ) -> Option<Self>;
+    fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
+        rc: Rc,
+        syscall: bun_sys::Tag,
+        file_path: impl AsRef<[u8]>,
+        dest: impl AsRef<[u8]>,
+    ) -> Option<Self>;
 }
 
-// ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
-impl<R> Maybe<R, bun_sys::Error> {
+impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     /// This value is technically garbage, but that is okay as `.aborted` is
     /// only meant to be returned in an operation when there is an aborted
     /// `AbortSignal` object associated with the operation.
-    pub fn aborted() -> Self {
-        Maybe::Err(bun_sys::Error {
+    #[inline]
+    fn aborted() -> Self {
+        Err(bun_sys::Error {
             // PORT NOTE: Zig `posix.E.INTR` → `SystemErrno::EINTR` (variants keep `E` prefix).
             errno: bun_sys::posix::E::EINTR as bun_sys::ErrorInt,
             syscall: bun_sys::Tag::access,
@@ -363,21 +383,13 @@ impl<R> Maybe<R, bun_sys::Error> {
         })
     }
 
-    pub fn unwrap(self) -> Result<R, bun_core::Error> {
-        // TODO(port): narrow error set
-        match self {
-            Maybe::Result(r) => Ok(r),
-            Maybe::Err(e) => Err(bun_core::errno_to_zig_err(e.errno as i32)),
-        }
-    }
-
     #[inline]
-    pub fn init_err_with_p(
+    fn init_err_with_p(
         e: bun_sys::SystemErrno,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
-    ) -> Maybe<R, bun_sys::Error> {
-        Maybe::Err(bun_sys::Error {
+    ) -> Self {
+        Err(bun_sys::Error {
             errno: e as bun_sys::ErrorInt,
             syscall,
             path: file_path.as_ref().into(),
@@ -385,7 +397,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         })
     }
 
-    pub fn to_array_buffer(
+    fn to_array_buffer(
         self,
         global_object: &crate::jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<crate::jsc::JSValue>
@@ -394,7 +406,7 @@ impl<R> Maybe<R, bun_sys::Error> {
     {
         use bun_jsc::SysErrorJsc as _;
         match self {
-            Maybe::Result(r) => {
+            Ok(r) => {
                 // PORT NOTE: Zig hands the result slice straight to
                 // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
                 // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
@@ -407,38 +419,21 @@ impl<R> Maybe<R, bun_sys::Error> {
                 bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer)
                     .to_js(global_object)
             }
-            Maybe::Err(e) => Ok(e.to_js(global_object)),
+            Err(e) => Ok(e.to_js(global_object)),
         }
     }
 
-    pub fn get_errno(self) -> bun_sys::posix::E {
-        match self {
-            Maybe::Result(_) => bun_sys::posix::E::SUCCESS,
-            Maybe::Err(e) => {
-                // Checked conversion: `errno` originates from raw syscalls/libc
-                // and is not guaranteed to map to a `SystemErrno` variant on
-                // every platform; transmuting an out-of-range discriminant into
-                // a Rust enum is UB. Mirrors Zig debug-mode `@enumFromInt`
-                // (panics on bad value) without the UB.
-                bun_sys::posix::E::init(i64::from(e.errno)).expect("errno out of range")
-            }
-        }
-    }
-
-    pub fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self {
-        Maybe::Err(bun_sys::Error {
+    #[inline]
+    fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self {
+        Err(bun_sys::Error {
             // always truncate
             errno: translate_to_err_int(err),
             syscall,
             ..Default::default()
         })
     }
-}
 
-// `errno_sys*` family: bound `Rc: bun_sys::GetErrno` so the per-platform
-// `bun_sys::get_errno` accepts it (Zig used `rc: anytype`).
-impl<R> Maybe<R, bun_sys::Error> {
-    pub fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
+    fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -449,7 +444,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
         match bun_sys::get_errno(rc) {
             bun_sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(bun_sys::Error {
+            e => Some(Err(bun_sys::Error {
                 // always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -458,7 +453,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
+    fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -469,7 +464,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
         match bun_sys::get_errno(rc) {
             bun_sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(bun_sys::Error {
+            e => Some(Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -479,7 +474,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -496,7 +491,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
         match bun_sys::get_errno(rc) {
             bun_sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(bun_sys::Error {
+            e => Some(Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -506,7 +501,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         fd: bun_sys::Fd,
@@ -522,7 +517,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
         match bun_sys::get_errno(rc) {
             bun_sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(bun_sys::Error {
+            e => Some(Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -533,7 +528,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
     }
 
-    pub fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -550,7 +545,7 @@ impl<R> Maybe<R, bun_sys::Error> {
         }
         match bun_sys::get_errno(rc) {
             bun_sys::posix::E::SUCCESS => None,
-            e => Some(Maybe::Err(bun_sys::Error {
+            e => Some(Err(bun_sys::Error {
                 // Always truncate
                 errno: translate_to_err_int(e),
                 syscall,
@@ -562,36 +557,45 @@ impl<R> Maybe<R, bun_sys::Error> {
     }
 }
 
-// phase-c: bun_css is feature-gated off the bun_bin dep graph; this inherent
-// impl only exists when the `css` feature is enabled.
+// phase-c: bun_css is feature-gated off the bun_bin dep graph; this extension
+// trait only exists when the `css` feature is enabled.
 #[cfg(feature = "css")]
-impl<R> Maybe<R, bun_css::BasicParseError> {
+pub trait MaybeCssExt<R>: Sized {
+    fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>>;
+}
+#[cfg(feature = "css")]
+impl<R> MaybeCssExt<R> for Maybe<R, bun_css::BasicParseError> {
     #[inline]
-    pub fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {
+    fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {
         // Zig comptime-switched on `ErrorTypeT`; in Rust we express each arm
-        // as a separate inherent impl. The `ParseError(ParserError)` and
+        // as a separate trait impl. The `ParseError(ParserError)` and
         // catch-all arms were `@compileError`s and need no Rust body.
-        match self {
-            Maybe::Result(v) => Maybe::Result(v),
-            Maybe::Err(e) => Maybe::Err(e.into_default_parse_error()),
-        }
+        self.map_err(|e| e.into_default_parse_error())
     }
 }
 
 // ─── to_js: comptime @typeInfo dispatch → trait ───────────────────────────
 
-impl<R, E> Maybe<R, E>
+/// `Maybe::to_js` — extension trait now that `Maybe` is a `Result` alias.
+pub trait MaybeToJsExt {
+    fn to_js(
+        self,
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue>;
+}
+
+impl<R, E> MaybeToJsExt for Maybe<R, E>
 where
     R: MaybeToJs,
     E: MaybeToJs,
 {
-    pub fn to_js(
+    fn to_js(
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         match self {
-            Maybe::Result(r) => r.maybe_to_js(global_object),
-            Maybe::Err(e) => e.maybe_to_js(global_object),
+            Ok(r) => r.maybe_to_js(global_object),
+            Err(e) => e.maybe_to_js(global_object),
         }
     }
 }
@@ -649,7 +653,7 @@ impl MaybeToJs for Vec<u8> {
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
         // PORT NOTE: ownership transfers to JSC (freed via
         // `MarkedArrayBuffer_deallocator` → `mi_free`); see
-        // `Maybe::to_array_buffer` above for the full rationale.
+        // `MaybeSysExt::to_array_buffer` above for the full rationale.
         let bytes: &mut [u8] = Vec::leak(self);
         bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer).to_js(global_object)
     }
@@ -700,18 +704,9 @@ impl MaybeToJs for bun_sys::Error {
 // such `R` implements `MaybeToJs` directly at its definition site (no blanket
 // `@typeInfo` reflection available); add per-type impls alongside the type.
 
-// ─── Display ──────────────────────────────────────────────────────────────
-
-impl<R, E: fmt::Debug> fmt::Display for Maybe<R, E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Maybe::Result(_) => write!(f, "Result(...)"),
-            // PORT NOTE: Zig used `bun.deprecated.autoFormatLabelFallback(E, "{any}")`,
-            // which is effectively `Debug`.
-            Maybe::Err(e) => write!(f, "Error({:?})", e),
-        }
-    }
-}
+// PORT NOTE: the Zig `Maybe.format` (Display) impl is dropped — `Maybe` is now
+// `core::result::Result`, which already has `Debug`, and a foreign `Display`
+// impl on a foreign type is not expressible. No call sites depended on it.
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -753,7 +748,9 @@ fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> u16 {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node.zig (367 lines)
-//   notes:      Maybe<R,E> ported as Rust enum; @hasDecl/@typeInfo dispatch
-//               replaced with MaybeErrorRetry/MaybeErrorTodo/MaybeToJs/
-//               SyscallRc/IntoErrInt traits. All node/ submodules wired.
+//   notes:      Maybe<R,E> is now `type = Result<R,E>`; Zig inherent helpers
+//               moved to MaybeExt/MaybeSysExt/MaybeBoolExt/MaybeToJsExt
+//               extension traits. @hasDecl/@typeInfo dispatch replaced with
+//               MaybeErrorRetry/MaybeErrorTodo/MaybeToJs/SyscallRc/IntoErrInt
+//               traits. All node/ submodules wired.
 // ──────────────────────────────────────────────────────────────────────────

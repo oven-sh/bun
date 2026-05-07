@@ -618,13 +618,6 @@ impl String {
         Self::clone_utf8(self.byte_slice())
     }
 
-    /// `bun.String.githubAction` (string.zig:606) — render `self` with the
-    /// GitHub Actions `::error`-annotation escaping (`\n` → `%0A`, ANSI
-    /// stripped). Delegates to [`ZigString::github_action`].
-    pub fn github_action(&self) -> GithubActionFormatter {
-        self.to_zig_string().github_action()
-    }
-
     /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
     pub fn to_zig_string(&self) -> ZigString {
         match self.tag {
@@ -1158,11 +1151,6 @@ impl ZigString {
         if self.is_globally_allocated() { out.mark_global(); }
         out
     }
-    /// `ZigString.githubAction` (ZigString.zig:518).
-    #[inline]
-    pub fn github_action(self) -> GithubActionFormatter {
-        GithubActionFormatter { text: self }
-    }
     /// `ZigString.substring` (ZigString.zig:183).
     #[inline]
     pub fn substring(self, start_index: usize) -> ZigString {
@@ -1321,29 +1309,6 @@ impl ZigStringSlice {
                 v
             }
         }
-    }
-}
-impl ZigStringSlice {
-    /// `ZigString.Slice.length()` — byte length of the underlying UTF-8/Latin-1 view.
-    #[inline]
-    pub fn length(&self) -> usize {
-        match self {
-            Self::Static(_, l) => *l,
-            Self::Owned(v) => v.len(),
-            Self::WTF { len, .. } => *len,
-        }
-    }
-    /// True iff this slice owns its allocation (Zig: `allocator.get().is_some()`).
-    /// `Static` borrows return `false`; `Owned`/`WTF` return `true`.
-    #[inline]
-    pub fn is_allocated(&self) -> bool {
-        !matches!(self, Self::Static(..))
-    }
-    /// True iff this slice is backed by a WTFStringImpl ref
-    /// (Zig: `String.isWTFAllocator(allocator)`).
-    #[inline]
-    pub fn is_wtf_allocated(&self) -> bool {
-        matches!(self, Self::WTF { .. })
     }
 }
 impl Drop for ZigStringSlice {

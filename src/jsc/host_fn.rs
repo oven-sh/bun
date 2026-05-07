@@ -15,8 +15,11 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
-use jsc::ZigString;
+
+use crate::{
+    self as jsc, CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult,
+    TopExceptionScope, ZigString,
+};
 
 // ───────────────────────────── type aliases ──────────────────────────────
 
@@ -105,8 +108,8 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
                 "Assertion failed",
                 "Native function returned a non-zero JSValue while an exception is pending\n\
                  \n\
-                 \x20   fn: {s}\n\
-                 \x20value: {f}\n",
+                 \x20   fn: {}\n\
+                 \x20value: {}\n",
                 (func, value.to_fmt(&mut formatter)),
             );
             Output::flush();

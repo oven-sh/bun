@@ -24,7 +24,7 @@ extern crate bun_standalone_graph as bun_standalone_module_graph;
 fn cli_start_time() -> i128 {
     // SAFETY: `START_TIME` is written exactly once during single-threaded
     // CLI startup before any command body runs; read-only thereafter.
-    unsafe { crate::cli::START_TIME }
+    unsafe { crate::cli::START_TIME.read() }
 }
 
 /// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no

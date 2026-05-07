@@ -1779,11 +1779,7 @@ impl TestCommand {
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
-        // SAFETY: `isBunTest` is a process-global written once at startup
-        // (before the VM thread spawns) and only read thereafter.
-        unsafe {
-            jsc::virtual_machine::isBunTest = true;
-        }
+        jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
         // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
@@ -1929,11 +1925,10 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         vm.preload = core::mem::take(&mut ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
-        // SAFETY: set once at startup before the HTTP thread spawns; only read on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, core::sync::atomic::Ordering::Relaxed);
         vm.transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;

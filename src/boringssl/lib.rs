@@ -55,16 +55,17 @@ use x509 as X509;
 /// BoringSSL's translated C API
 pub use boring as c;
 
-static mut LOADED: bool = false;
+static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub fn load() {
-    // SAFETY: matches Zig's non-atomic global; callers are expected to invoke
-    // this on a single thread during startup before any concurrent BoringSSL use.
+    // Callers are expected to invoke this on a single thread during startup
+    // before any concurrent BoringSSL use; the atomic just removes the
+    // `static mut` aliasing hazard.
+    if LOADED.swap(true, core::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    // SAFETY: BoringSSL FFI init calls.
     unsafe {
-        if LOADED {
-            return;
-        }
-        LOADED = true;
         boring::CRYPTO_library_init();
         // NB: do NOT fold this into `debug_assert!` — that macro elides its
         // argument entirely in release builds, which would skip the call.
@@ -119,37 +120,37 @@ unsafe extern "C" fn noop_custom_verify(
     ssl_verify_ok
 }
 
-static mut CTX_STORE: Option<*mut boring::SSL_CTX> = None;
+static CTX_STORE: core::sync::atomic::AtomicPtr<boring::SSL_CTX> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 // Zig: `threadlocal var auto_crypto_buffer_pool` — only ever populated on the
-// first `init_client()` call (guarded by `CTX_STORE`), so a plain static under
+// first `init_client()` call (guarded by `CTX_STORE`), so a plain atomic under
 // the same single-threaded-startup assumption is equivalent.
-static mut AUTO_CRYPTO_BUFFER_POOL: *mut CRYPTO_BUFFER_POOL = ptr::null_mut();
+static AUTO_CRYPTO_BUFFER_POOL: core::sync::atomic::AtomicPtr<CRYPTO_BUFFER_POOL> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
 pub fn init_client() -> *mut boring::SSL {
-    // SAFETY: matches Zig's non-atomic global; single-threaded startup assumption.
+    use core::sync::atomic::Ordering::Relaxed;
+    // SAFETY: BoringSSL FFI; single-threaded startup assumption (matches Zig).
     unsafe {
-        if let Some(ctx) = CTX_STORE {
+        let mut ctx = CTX_STORE.load(Relaxed);
+        if !ctx.is_null() {
             let _ = boring::SSL_CTX_up_ref(ctx);
-        }
-
-        let ctx = match CTX_STORE {
-            Some(ctx) => ctx,
-            None => 'brk: {
-                // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
-                //   1. SSL_CTX_new(TLS_with_buffers_method())
-                //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
-                //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
-                let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
-                SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
-                if AUTO_CRYPTO_BUFFER_POOL.is_null() {
-                    AUTO_CRYPTO_BUFFER_POOL = CRYPTO_BUFFER_POOL_new();
-                }
-                SSL_CTX_set0_buffer_pool(ctx, AUTO_CRYPTO_BUFFER_POOL);
-                let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
-                CTX_STORE = Some(ctx);
-                break 'brk ctx;
+        } else {
+            // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
+            //   1. SSL_CTX_new(TLS_with_buffers_method())
+            //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
+            //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
+            ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
+            SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
+            let mut pool = AUTO_CRYPTO_BUFFER_POOL.load(Relaxed);
+            if pool.is_null() {
+                pool = CRYPTO_BUFFER_POOL_new();
+                AUTO_CRYPTO_BUFFER_POOL.store(pool, Relaxed);
             }
-        };
+            SSL_CTX_set0_buffer_pool(ctx, pool);
+            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
+            CTX_STORE.store(ctx, Relaxed);
+        }
 
         // Zig: `SSL.init(ctx)` = `SSL_new(ctx)`
         let ssl = boring::SSL_new(ctx);

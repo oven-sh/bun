@@ -152,7 +152,21 @@ pub fn handle_error_return_trace<E>(_err: E) {
 pub use env as Environment;
 /// Zig: `pub const FeatureFlags = @import("./bun_core/feature_flags.zig")`.
 pub use feature_flags as FeatureFlags;
-#[inline] pub fn start_time() -> i128 { 0 } // TODO(port): wire to a global set at main()
+/// Process start time in nanoseconds. Written once during single-threaded
+/// startup (`main`/`Cli::start`) and read freely thereafter. `i128` has no
+/// atomic; `RacyCell` is sound because the write happens before any thread
+/// spawn.
+static START_TIME: util::RacyCell<i128> = util::RacyCell::new(0);
+#[inline]
+pub fn start_time() -> i128 {
+    // SAFETY: written once during single-threaded startup.
+    unsafe { START_TIME.read() }
+}
+#[inline]
+pub fn set_start_time(ns: i128) {
+    // SAFETY: called once from `main` before any thread spawn.
+    unsafe { START_TIME.write(ns) }
+}
 
 /// `bun.Timer` / `std.time.Timer` — minimal monotonic stopwatch. Mirrors Zig's
 /// `std.time.Timer.{start,read}` so callers ported verbatim (e.g.

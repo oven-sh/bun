@@ -3082,12 +3082,8 @@ fn get_hardcoded_module(
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !cfg!(debug_assertions) {
-                // SAFETY: plain `static mut` matching Zig's mutable global;
-                // only written during init on the JS thread (see
-                // `module_loader::set_is_allowed_to_use_internal_testing_apis`).
-                let allowed = unsafe {
-                    bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                };
+                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                    .load(core::sync::atomic::Ordering::Relaxed);
                 if !allowed {
                     return None;
                 }

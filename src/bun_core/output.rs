@@ -321,22 +321,24 @@ thread_local! {
 }
 
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
-// TODO(port): lifetime — guarded by STDOUT_STREAM_SET (write-once at startup before threads)
-static mut STDERR_STREAM: StreamType = StreamType::ZEROED;
-static mut STDOUT_STREAM: StreamType = StreamType::ZEROED;
+// Guarded by STDOUT_STREAM_SET (write-once at startup before threads).
+static STDERR_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
+static STDOUT_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
 static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 
-// Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr)
+// Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr).
+// `RacyCell<[i32;3]>` is `repr(transparent)` over `UnsafeCell<[i32;3]>`, so the
+// `#[no_mangle]` symbol layout is identical to a plain `[i32;3]` for C readers.
 #[unsafe(no_mangle)]
-pub static mut bun_stdio_tty: [i32; 3] = [0, 0, 0];
+pub static bun_stdio_tty: crate::RacyCell<[i32; 3]> = crate::RacyCell::new([0, 0, 0]);
 
 // TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
-pub static mut TERMINAL_SIZE: crate::Winsize = crate::Winsize {
+pub static TERMINAL_SIZE: crate::RacyCell<crate::Winsize> = crate::RacyCell::new(crate::Winsize {
     row: 0,
     col: 0,
     xpixel: 0,
     ypixel: 0,
-};
+});
 
 // ──────────────────────────────────────────────────────────────────────────
 // Source
@@ -443,7 +445,7 @@ impl Source {
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM, STDERR_STREAM) });
+        SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read()) });
         crate::StackCheck::configure_thread();
     }
 
@@ -494,7 +496,7 @@ impl Source {
     pub fn color_depth() -> ColorDepth {
         COLOR_DEPTH_ONCE.call_once(get_color_depth_once);
         // SAFETY: written exactly once under COLOR_DEPTH_ONCE.
-        unsafe { LAZY_COLOR_DEPTH }
+        unsafe { LAZY_COLOR_DEPTH.read() }
     }
 
     pub fn set_init(stdout: StreamType, stderr: StreamType) {
@@ -506,16 +508,16 @@ impl Source {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 // SAFETY: bun_stdio_tty is plain data written at startup.
-                let is_stdout_tty = unsafe { bun_stdio_tty[1] } != 0;
+                let is_stdout_tty = unsafe { (*bun_stdio_tty.get())[1] } != 0;
                 if is_stdout_tty {
                     // SAFETY: write-once at startup under STDOUT_STREAM_SET guard before threads.
-                    unsafe { STDOUT_DESCRIPTOR_TYPE = OutputStreamDescriptor::Terminal };
+                    unsafe { STDOUT_DESCRIPTOR_TYPE.write(OutputStreamDescriptor::Terminal) };
                 }
 
-                let is_stderr_tty = unsafe { bun_stdio_tty[2] } != 0;
+                let is_stderr_tty = unsafe { (*bun_stdio_tty.get())[2] } != 0;
                 if is_stderr_tty {
                     // SAFETY: write-once at startup under STDOUT_STREAM_SET guard before threads.
-                    unsafe { STDERR_DESCRIPTOR_TYPE = OutputStreamDescriptor::Terminal };
+                    unsafe { STDERR_DESCRIPTOR_TYPE.write(OutputStreamDescriptor::Terminal) };
                 }
 
                 let mut enable_color: Option<bool> = None;
@@ -535,8 +537,8 @@ impl Source {
 
             // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
             unsafe {
-                STDOUT_STREAM = stdout;
-                STDERR_STREAM = stderr;
+                STDOUT_STREAM.write(stdout);
+                STDERR_STREAM.write(stderr);
             }
         }
     }
@@ -554,9 +556,12 @@ pub mod windows_stdio {
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is
     /// best-effort, and may not be applied if the process is killed abruptly.
-    pub static mut CONSOLE_MODE: [Option<u32>; 3] = [None, None, None];
-    pub static mut CONSOLE_CODEPAGE: u32 = 0;
-    pub static mut CONSOLE_OUTPUT_CODEPAGE: u32 = 0;
+    pub static CONSOLE_MODE: crate::RacyCell<[Option<u32>; 3]> =
+        crate::RacyCell::new([None, None, None]);
+    pub static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 =
+        core::sync::atomic::AtomicU32::new(0);
+    pub static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
+        core::sync::atomic::AtomicU32::new(0);
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__restoreWindowsStdio() {
@@ -572,21 +577,22 @@ pub mod windows_stdio {
 
         let handles = [stdin, stdout, stderr];
         // SAFETY: CONSOLE_MODE is only mutated at init/restore on the main thread.
-        for (mode, handle) in unsafe { CONSOLE_MODE }.iter().zip(handles.iter()) {
+        for (mode, handle) in unsafe { CONSOLE_MODE.read() }.iter().zip(handles.iter()) {
             if let Some(m) = *mode {
                 // SAFETY: FFI call; `handle` is a valid console handle from the PEB.
                 unsafe { c::SetConsoleMode(*handle, m) };
             }
         }
 
-        // SAFETY: CONSOLE_*_CODEPAGE are plain `u32` written once at init on the main
-        // thread; FFI calls have no preconditions beyond a valid codepage id.
+        let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
+        let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
+        // SAFETY: FFI calls have no preconditions beyond a valid codepage id.
         unsafe {
-            if CONSOLE_OUTPUT_CODEPAGE != 0 {
-                c::SetConsoleOutputCP(CONSOLE_OUTPUT_CODEPAGE);
+            if out_cp != 0 {
+                c::SetConsoleOutputCP(out_cp);
             }
-            if CONSOLE_CODEPAGE != 0 {
-                c::SetConsoleCP(CONSOLE_CODEPAGE);
+            if in_cp != 0 {
+                c::SetConsoleCP(in_cp);
             }
         }
     }
@@ -604,33 +610,29 @@ pub mod windows_stdio {
         let invalid = w::INVALID_HANDLE_VALUE;
         // SAFETY: single-threaded startup; these statics are write-once caches.
         unsafe {
-            fd_internals::WINDOWS_CACHED_STDERR =
-                if stderr != invalid { Fd::from_system(stderr) } else { Fd::INVALID };
-            fd_internals::WINDOWS_CACHED_STDOUT =
-                if stdout != invalid { Fd::from_system(stdout) } else { Fd::INVALID };
-            fd_internals::WINDOWS_CACHED_STDIN =
-                if stdin != invalid { Fd::from_system(stdin) } else { Fd::INVALID };
+            fd_internals::WINDOWS_CACHED_STDERR
+                .write(if stderr != invalid { Fd::from_system(stderr) } else { Fd::INVALID });
+            fd_internals::WINDOWS_CACHED_STDOUT
+                .write(if stdout != invalid { Fd::from_system(stdout) } else { Fd::INVALID });
+            fd_internals::WINDOWS_CACHED_STDIN
+                .write(if stdin != invalid { Fd::from_system(stdin) } else { Fd::INVALID });
         }
         #[cfg(debug_assertions)]
-        // SAFETY: single-threaded startup; write-once debug flag.
-        unsafe {
-            fd_internals::WINDOWS_CACHED_FD_SET = true;
-        }
+        fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
         unsafe {
-            BUFFERED_STDIN.fd = Fd::stdin();
+            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
         }
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
-        // SAFETY: single-threaded startup; FFI calls have no preconditions; statics are
-        // write-once caches restored in `restore()`.
+        // SAFETY: single-threaded startup; FFI calls have no preconditions.
         unsafe {
-            CONSOLE_OUTPUT_CODEPAGE = c::GetConsoleOutputCP();
+            CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
             c::SetConsoleOutputCP(CP_UTF8);
 
-            CONSOLE_CODEPAGE = c::GetConsoleCP();
+            CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
             c::SetConsoleCP(CP_UTF8);
         }
 
@@ -639,9 +641,11 @@ pub mod windows_stdio {
         // INVALID_HANDLE_VALUE, which Get/SetConsoleMode reject with 0); CONSOLE_MODE /
         // bun_stdio_tty are write-once caches.
         unsafe {
+            let console_mode = &mut *CONSOLE_MODE.get();
+            let stdio_tty = &mut *bun_stdio_tty.get();
             if c::GetConsoleMode(stdin, &mut mode) != 0 {
-                CONSOLE_MODE[0] = Some(mode);
-                bun_stdio_tty[0] = 1;
+                console_mode[0] = Some(mode);
+                stdio_tty[0] = 1;
                 // There are no flags to set on standard in, but just in case something
                 // later modifies the mode, we can still reset it at the end of program run
                 //
@@ -650,8 +654,8 @@ pub mod windows_stdio {
             }
 
             if c::GetConsoleMode(stdout, &mut mode) != 0 {
-                CONSOLE_MODE[1] = Some(mode);
-                bun_stdio_tty[1] = 1;
+                console_mode[1] = Some(mode);
+                stdio_tty[1] = 1;
                 c::SetConsoleMode(
                     stdout,
                     w::ENABLE_PROCESSED_OUTPUT
@@ -662,8 +666,8 @@ pub mod windows_stdio {
             }
 
             if c::GetConsoleMode(stderr, &mut mode) != 0 {
-                CONSOLE_MODE[2] = Some(mode);
-                bun_stdio_tty[2] = 1;
+                console_mode[2] = Some(mode);
+                stdio_tty[2] = 1;
                 c::SetConsoleMode(
                     stderr,
                     w::ENABLE_PROCESSED_OUTPUT
@@ -742,12 +746,12 @@ pub enum ColorDepth {
     C16m,
 }
 
-static mut LAZY_COLOR_DEPTH: ColorDepth = ColorDepth::None;
+static LAZY_COLOR_DEPTH: crate::RacyCell<ColorDepth> = crate::RacyCell::new(ColorDepth::None);
 static COLOR_DEPTH_ONCE: std::sync::Once = std::sync::Once::new();
 
 fn get_color_depth_once() {
     // SAFETY: only called under COLOR_DEPTH_ONCE.
-    let set = |d| unsafe { LAZY_COLOR_DEPTH = d };
+    let set = |d| unsafe { LAZY_COLOR_DEPTH.write(d) };
 
     if let Some(depth) = Source::get_force_color_depth() {
         set(depth);
@@ -876,8 +880,10 @@ pub static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE
 pub static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
-pub static mut STDERR_DESCRIPTOR_TYPE: OutputStreamDescriptor = OutputStreamDescriptor::Unknown;
-pub static mut STDOUT_DESCRIPTOR_TYPE: OutputStreamDescriptor = OutputStreamDescriptor::Unknown;
+pub static STDERR_DESCRIPTOR_TYPE: crate::RacyCell<OutputStreamDescriptor> =
+    crate::RacyCell::new(OutputStreamDescriptor::Unknown);
+pub static STDOUT_DESCRIPTOR_TYPE: crate::RacyCell<OutputStreamDescriptor> =
+    crate::RacyCell::new(OutputStreamDescriptor::Unknown);
 
 /// Downstream alias (Zig: `Output.OutputStreamDescriptor`). Several call sites
 /// refer to it as `Output::DescriptorType` for brevity.
@@ -887,29 +893,29 @@ pub type DescriptorType = OutputStreamDescriptor;
 #[inline]
 pub fn stderr_descriptor_type() -> OutputStreamDescriptor {
     // SAFETY: written once during single-threaded startup (Source::set_init).
-    unsafe { STDERR_DESCRIPTOR_TYPE }
+    unsafe { STDERR_DESCRIPTOR_TYPE.read() }
 }
-/// Safe getter for the `static mut` (Zig: `Output.stdout_descriptor_type`).
+/// Safe getter (Zig: `Output.stdout_descriptor_type`).
 #[inline]
 pub fn stdout_descriptor_type() -> OutputStreamDescriptor {
     // SAFETY: written once during single-threaded startup (Source::set_init).
-    unsafe { STDOUT_DESCRIPTOR_TYPE }
+    unsafe { STDOUT_DESCRIPTOR_TYPE.read() }
 }
 
 #[inline]
 pub fn is_stdout_tty() -> bool {
     // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { bun_stdio_tty[1] != 0 }
+    unsafe { (*bun_stdio_tty.get())[1] != 0 }
 }
 #[inline]
 pub fn is_stderr_tty() -> bool {
     // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { bun_stdio_tty[2] != 0 }
+    unsafe { (*bun_stdio_tty.get())[2] != 0 }
 }
 #[inline]
 pub fn is_stdin_tty() -> bool {
     // SAFETY: bun_stdio_tty is plain data written once at startup before threads.
-    unsafe { bun_stdio_tty[0] != 0 }
+    unsafe { (*bun_stdio_tty.get())[0] != 0 }
 }
 
 pub fn is_github_action() -> bool {
@@ -2076,7 +2082,7 @@ pub fn _scoped_use_ansi() -> bool {
         && {
             // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
             // init; `QuietWriter` is Copy POD so reading it is always sound.
-            let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER };
+            let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
             sw.context_handle() == raw_writer().handle()
         }
 }
@@ -2537,7 +2543,8 @@ impl ErrName for crate::Error {
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub static mut SCOPED_FILE_WRITER: QuietWriter = QuietWriter::ZEROED;
+    pub static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
+        crate::RacyCell::new(QuietWriter::ZEROED);
 
     thread_local! {
         pub static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };
@@ -2615,8 +2622,8 @@ pub fn init_scoped_debug_writer_at_startup() {
             let _ = &fd; // windows
             // SAFETY: single-threaded startup.
             unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER =
-                    (output_sink().quiet_writer_from_fd)(fd);
+                scoped_debug_writer::SCOPED_FILE_WRITER
+                    .write((output_sink().quiet_writer_from_fd)(fd));
             }
             return;
         }
@@ -2624,8 +2631,8 @@ pub fn init_scoped_debug_writer_at_startup() {
 
     // SAFETY: single-threaded startup.
     unsafe {
-        scoped_debug_writer::SCOPED_FILE_WRITER =
-            (output_sink().quiet_writer_from_fd)(SOURCE.with_borrow(|s| s.raw_stream).0);
+        scoped_debug_writer::SCOPED_FILE_WRITER
+            .write((output_sink().quiet_writer_from_fd)(SOURCE.with_borrow(|s| s.raw_stream).0));
     }
 }
 
@@ -2640,7 +2647,7 @@ fn scoped_writer() -> QuietWriter {
         "scopedWriter() should only be called in debug mode",
     );
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER }
+    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
@@ -2668,7 +2675,7 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub static mut BUFFERED_STDIN: BufferedStdin = BufferedStdin {
+pub static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
     fd: {
         #[cfg(windows)]
         {
@@ -2682,7 +2689,7 @@ pub static mut BUFFERED_STDIN: BufferedStdin = BufferedStdin {
     buf: [0; 4096],
     start: 0,
     end: 0,
-};
+});
 
 /// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
 /// Layout is local to bun_core; bun_sys never casts into this (it only fills
@@ -2821,8 +2828,7 @@ pub fn stdin_reader() -> StdinReader {
 /// from the main JS/CLI thread while blocked on user input).
 #[inline]
 pub fn buffered_stdin() -> *mut BufferedStdin {
-    // SAFETY: taking a raw pointer to a `static mut` is always sound.
-    unsafe { core::ptr::addr_of_mut!(BUFFERED_STDIN) }
+    BUFFERED_STDIN.get()
     // TODO(port): self-ref pointer escape — see error_writer()
 }
 

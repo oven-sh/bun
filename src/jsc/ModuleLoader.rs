@@ -42,13 +42,12 @@ pub struct ModuleLoader {
     pub eval_source: Option<Box<logger::Source>>,
 }
 
-pub static mut IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: bool = false;
-// TODO(port): Zig used a plain mutable global; Phase B may want AtomicBool.
+pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
-    // SAFETY: only written during init on the JS thread.
-    unsafe { IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS = v };
+    IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.store(v, core::sync::atomic::Ordering::Relaxed);
 }
 
 impl ModuleLoader {

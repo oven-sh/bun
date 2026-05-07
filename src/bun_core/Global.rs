@@ -289,28 +289,26 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub static mut RESOLVE_BREAKPOINTS: &[&[u8]] = &[];
+    pub static RESOLVE_BREAKPOINTS: crate::RacyCell<&[&[u8]]> = crate::RacyCell::new(&[]);
     #[cfg(debug_assertions)]
-    pub static mut PRINT_BREAKPOINTS: &[&[u8]] = &[];
+    pub static PRINT_BREAKPOINTS: crate::RacyCell<&[&[u8]]> = crate::RacyCell::new(&[]);
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        unsafe {
-            for bp in RESOLVE_BREAKPOINTS {
-                if crate::strings::includes(str_, bp) { return true; }
-            }
+        // SAFETY: written once during single-threaded CLI startup.
+        for bp in unsafe { RESOLVE_BREAKPOINTS.read() } {
+            if crate::strings::includes(str_, bp) { return true; }
         }
         false
     }
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        unsafe {
-            for bp in PRINT_BREAKPOINTS {
-                if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
-                    return true;
-                }
+        // SAFETY: written once during single-threaded CLI startup.
+        for bp in unsafe { PRINT_BREAKPOINTS.read() } {
+            if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
+                return true;
             }
         }
         let _ = (pretty, text);
@@ -476,20 +474,15 @@ pub fn set_thread_name(name: &ZStr) {
 
 pub type ExitFn = unsafe extern "C" fn();
 
-// PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. We mirror
-// that with `static mut` to preserve behavior; callers are expected to be
-// single-threaded around exit. Phase B may want a `Mutex<Vec<_>>` if races
-// surface.
-static mut ON_EXIT_CALLBACKS: Vec<ExitFn> = Vec::new();
+// PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. Registration
+// can happen from any thread (FFI `Bun__atexit`), so guard with a Mutex.
+static ON_EXIT_CALLBACKS: parking_lot::Mutex<Vec<ExitFn>> = parking_lot::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__atexit(function: ExitFn) {
-    // SAFETY: matches unsynchronized Zig global; see PORT NOTE above.
-    unsafe {
-        let cbs = &mut *core::ptr::addr_of_mut!(ON_EXIT_CALLBACKS);
-        if !cbs.iter().any(|f| *f as usize == function as usize) {
-            cbs.push(function);
-        }
+    let mut cbs = ON_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|f| *f as usize == function as usize) {
+        cbs.push(function);
     }
 }
 
@@ -498,13 +491,11 @@ pub fn add_exit_callback(function: ExitFn) {
 }
 
 pub fn run_exit_callbacks() {
-    // SAFETY: matches unsynchronized Zig global; called once during process exit.
-    unsafe {
-        let cbs = &mut *core::ptr::addr_of_mut!(ON_EXIT_CALLBACKS);
-        for callback in cbs.iter() {
-            callback();
-        }
-        cbs.clear();
+    // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
+    let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
+    for callback in &cbs {
+        // SAFETY: callbacks are `unsafe extern "C" fn()`; called once at exit.
+        unsafe { callback() };
     }
 }
 

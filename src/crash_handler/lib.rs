@@ -188,7 +188,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt;
 use core::fmt::Write as _;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_collections::BoundedArray;
@@ -281,7 +281,7 @@ const DEFAULT_REPORT_BASE_URL: &str = "https://bun.report";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
 /// flow is not returned to the main application.
-static mut HAS_PRINTED_MESSAGE: bool = false;
+static HAS_PRINTED_MESSAGE: AtomicBool = AtomicBool::new(false);
 
 /// Non-zero whenever the program triggered a panic.
 /// The counter is incremented/decremented atomically.
@@ -630,7 +630,7 @@ pub fn crash_handler(
                 };
 
                 // SAFETY: single-threaded mutation under panic_mutex
-                if unsafe { !HAS_PRINTED_MESSAGE } {
+                if !HAS_PRINTED_MESSAGE.load(Ordering::Relaxed) {
                     Output::flush();
                     Output::source::stdio::restore();
 
@@ -654,7 +654,7 @@ pub fn crash_handler(
                         let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
                         if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(name)))).is_err() { abort(); }
                         // SAFETY: single-threaded mutation under panic_mutex
-                        unsafe { HAS_PRINTED_MESSAGE = true; }
+                        HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
                     }
                 } else {
                     if enable_ansi_colors_stderr() {
@@ -753,7 +753,7 @@ pub fn crash_handler(
 
                 if debug_trace {
                     // SAFETY: single-threaded mutation under panic_mutex
-                    unsafe { HAS_PRINTED_MESSAGE = true; }
+                    HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
 
                     dump_stack_trace(trace, WriteStackTraceLimits::default());
 
@@ -764,9 +764,9 @@ pub fn crash_handler(
                     }).is_err() { abort(); }
                 } else {
                     // SAFETY: single-threaded read under panic_mutex
-                    if unsafe { !HAS_PRINTED_MESSAGE } {
+                    if !HAS_PRINTED_MESSAGE.load(Ordering::Relaxed) {
                         // SAFETY: single-threaded mutation under panic_mutex
-                        unsafe { HAS_PRINTED_MESSAGE = true; }
+                        HAS_PRINTED_MESSAGE.store(true, Ordering::Relaxed);
                         if writer.write_all(b"oh no").is_err() { abort(); }
                         if enable_ansi_colors_stderr() {
                             if writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> ")).is_err() { abort(); }
@@ -1073,8 +1073,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
     }
 
     if show_trace {
-        // SAFETY: single-threaded write on the crash/exit path; VERBOSE_ERROR_TRACE is only read on the same thread before process exit
-        unsafe { VERBOSE_ERROR_TRACE = show_trace; }
+        VERBOSE_ERROR_TRACE.store(show_trace, Ordering::Relaxed);
         handle_error_return_trace_extra::<true>(err, error_return_trace);
     }
 
@@ -1151,28 +1150,30 @@ extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *
 }
 
 #[cfg(unix)]
-static mut DID_REGISTER_SIGALTSTACK: bool = false;
+static DID_REGISTER_SIGALTSTACK: AtomicBool = AtomicBool::new(false);
+/// 512K alternate signal stack. The kernel writes here during signal delivery;
+/// Rust never reads/writes the bytes, so `RacyCell` only needs to provide a
+/// stable `*mut u8` for `sigaltstack(2)`.
 #[cfg(unix)]
-static mut SIGALTSTACK: [u8; 512 * 1024] = [0; 512 * 1024];
+static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> = bun_core::RacyCell::new([0; 512 * 1024]);
 
 #[cfg(unix)]
 fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Result<(), bun_core::Error> {
     if let Some(act_) = act.as_deref_mut() {
         // SAFETY: single global; only mutated during signal-handler setup
-        if unsafe { !DID_REGISTER_SIGALTSTACK } {
+        if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
             let stack = libc::stack_t {
                 ss_flags: 0,
-                // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; taking its len requires only a shared ref to a `static mut`
-                ss_size: unsafe { SIGALTSTACK.len() },
+                ss_size: 512 * 1024,
                 // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
-                ss_sp: unsafe { SIGALTSTACK.as_mut_ptr().cast() },
+                ss_sp: SIGALTSTACK.get().cast(),
             };
 
             // SAFETY: stack points to a valid static buffer
             if unsafe { libc::sigaltstack(&stack, core::ptr::null_mut()) } == 0 {
                 act_.sa_flags |= libc::SA_ONSTACK;
                 // SAFETY: single global; only mutated during signal-handler setup
-                unsafe { DID_REGISTER_SIGALTSTACK = true; }
+                DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -1189,7 +1190,8 @@ fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Resul
 }
 
 #[cfg(windows)]
-static mut WINDOWS_SEGFAULT_HANDLE: Option<bun_sys::windows::HANDLE> = None;
+static WINDOWS_SEGFAULT_HANDLE: bun_core::RacyCell<Option<bun_sys::windows::HANDLE>> =
+    bun_core::RacyCell::new(None);
 
 #[cfg(unix)]
 pub fn reset_on_posix() {
@@ -1214,7 +1216,7 @@ pub fn init() {
     {
         // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
         unsafe {
-            WINDOWS_SEGFAULT_HANDLE = Some(bun_sys::windows::kernel32::AddVectoredExceptionHandler(0, handle_segfault_windows));
+            WINDOWS_SEGFAULT_HANDLE.write(Some(bun_sys::windows::kernel32::AddVectoredExceptionHandler(0, handle_segfault_windows)));
         }
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
@@ -1253,9 +1255,9 @@ pub fn reset_segfault_handler() {
     #[cfg(windows)]
     {
         // SAFETY: WINDOWS_SEGFAULT_HANDLE is only mutated on the crash path
-        if let Some(handle) = unsafe { WINDOWS_SEGFAULT_HANDLE } {
+        if let Some(handle) = unsafe { WINDOWS_SEGFAULT_HANDLE.read() } {
             let rc = unsafe { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
-            unsafe { WINDOWS_SEGFAULT_HANDLE = None; }
+            unsafe { WINDOWS_SEGFAULT_HANDLE.write(None); }
             debug_assert!(rc != 0);
         }
         return;
@@ -1307,9 +1309,11 @@ unsafe extern "C" {
     fn gnu_get_libc_version() -> *const c_char;
 }
 
-// Only populated after JSC::VM::tryCreate
+// Only populated after JSC::VM::tryCreate. C++ writes this as a plain
+// `size_t`; `AtomicUsize` has the same size/alignment as `usize` so the
+// symbol layout is unchanged, and the Rust side reads it race-free.
 #[unsafe(no_mangle)]
-pub static mut Bun__reported_memory_size: usize = 0;
+pub static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
 pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     #[cfg(debug_assertions)]
@@ -1437,8 +1441,9 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         ).map_err(fmt_err)?;
 
         // SAFETY: read-only access to exported global
-        if unsafe { Bun__reported_memory_size } > 0 {
-            write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size })).map_err(fmt_err)?;
+        let reported = Bun__reported_memory_size.load(Ordering::Relaxed);
+        if reported > 0 {
+            write!(writer, " | Machine: {}", bun_fmt::bytes(reported)).map_err(fmt_err)?;
         }
 
         writer.write_all(b"\n")?;
@@ -2109,7 +2114,7 @@ fn crash() -> ! {
     }
 }
 
-pub static mut VERBOSE_ERROR_TRACE: bool = false;
+pub static VERBOSE_ERROR_TRACE: AtomicBool = AtomicBool::new(false);
 
 #[cold]
 #[inline(never)]
@@ -2138,7 +2143,7 @@ fn cold_handle_error_return_trace<const IS_ROOT: bool>(
     if is_debug {
         if IS_ROOT {
             // SAFETY: read-only access
-            if unsafe { VERBOSE_ERROR_TRACE } {
+            if VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) {
                 Output::note("Release build will not have this trace by default:");
             }
         } else {
@@ -2174,7 +2179,7 @@ fn handle_error_return_trace_extra<const IS_ROOT: bool>(err: bun_core::Error, ma
         return;
     }
     // SAFETY: read-only access
-    if unsafe { !VERBOSE_ERROR_TRACE } && !IS_ROOT {
+    if !VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) && !IS_ROOT {
         return;
     }
 

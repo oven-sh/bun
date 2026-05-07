@@ -714,7 +714,9 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 // Please prefer `bun::FD::Optional::none` over this
 pub const invalid_fd: FD = FD::INVALID;
 
-pub static mut start_time: i128 = 0;
+/// Process start time in nanoseconds. Written once during single-threaded
+/// startup; read freely thereafter. Re-exports the `bun_core` accessor.
+pub use bun_core::{start_time, set_start_time};
 
 // ─── file open helpers (TODO: move to bun_sys) ────────────────────────────────
 // PORT NOTE: these wrap std.fs.File/Dir which are banned in Rust port; they
@@ -1122,7 +1124,7 @@ pub unsafe fn zero<T>() -> T {
 }
 
 // ─── getFdPath ────────────────────────────────────────────────────────────────
-static mut NEEDS_PROC_SELF_WORKAROUND: bool = false;
+static NEEDS_PROC_SELF_WORKAROUND: AtomicBool = AtomicBool::new(false);
 
 /// TODO: move to bun.sys
 fn get_fd_path_via_cwd(fd: bun_sys::RawFd, buf: &mut PathBuffer) -> Result<&mut [u8], bun_core::Error> {
@@ -1170,11 +1172,10 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
     {
         static HAS_CHECKED: AtomicBool = AtomicBool::new(false);
         if !HAS_CHECKED.swap(true, Ordering::Relaxed) {
-            // SAFETY: single writer guarded by HAS_CHECKED
-            unsafe {
-                NEEDS_PROC_SELF_WORKAROUND =
-                    bun_core::env_var::BUN_NEEDS_PROC_SELF_WORKAROUND.get();
-            }
+            NEEDS_PROC_SELF_WORKAROUND.store(
+                bun_core::env_var::BUN_NEEDS_PROC_SELF_WORKAROUND.get(),
+                Ordering::Relaxed,
+            );
         }
     }
     #[cfg(all(not(debug_assertions), not(target_os = "linux")))]
@@ -1182,15 +1183,17 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
         return bun_sys::get_fd_path(fd.native(), buf);
     }
 
-    // SAFETY: read of plain static; benign race
-    if unsafe { NEEDS_PROC_SELF_WORKAROUND } {
+    if NEEDS_PROC_SELF_WORKAROUND.load(Ordering::Relaxed) {
         return get_fd_path_via_cwd(fd.native(), buf);
     }
 
     match bun_sys::get_fd_path(fd.native(), buf) {
         Ok(v) => Ok(v),
-        Err(err) if err == bun_core::err!("FileNotFound") && unsafe { !NEEDS_PROC_SELF_WORKAROUND } => {
-            unsafe { NEEDS_PROC_SELF_WORKAROUND = true };
+        Err(err)
+            if err == bun_core::err!("FileNotFound")
+                && !NEEDS_PROC_SELF_WORKAROUND.load(Ordering::Relaxed) =>
+        {
+            NEEDS_PROC_SELF_WORKAROUND.store(true, Ordering::Relaxed);
             get_fd_path_via_cwd(fd.native(), buf)
         }
         Err(err) => Err(err),
@@ -1440,7 +1443,7 @@ pub fn reload_process<const MAY_RETURN: bool>(clear_terminal: bool) {
     }
 }
 
-pub static mut auto_reload_on_crash: bool = false;
+pub use bun_core::{auto_reload_on_crash, set_auto_reload_on_crash};
 
 // ─── StringSet ────────────────────────────────────────────────────────────────
 pub struct StringSet {
@@ -1717,13 +1720,17 @@ pub type StatFS = bun_sys::c::struct_statfs;
 pub type StatFS = bun_sys::windows::libuv::uv_statfs_t;
 
 // ─── argv ─────────────────────────────────────────────────────────────────────
-static mut ARGV: Vec<Box<bun_str::ZStr>> = Vec::new();
+// Initialized once in `init_argv()` during single-threaded startup, then read
+// freely. `RacyCell` (not `OnceLock`) because the BUN_OPTIONS path mutates it
+// twice (set, take, set again) before the program goes multi-threaded.
+static ARGV: bun_core::RacyCell<Vec<Box<bun_str::ZStr>>> = bun_core::RacyCell::new(Vec::new());
 /// Number of arguments injected by BUN_OPTIONS environment variable.
-pub static mut bun_options_argc: usize = 0;
+pub use bun_core::{bun_options_argc, set_bun_options_argc};
 
 pub fn argv() -> &'static [Box<bun_str::ZStr>] {
-    // SAFETY: ARGV is initialized once in init_argv() and never resized after
-    unsafe { &ARGV }
+    // SAFETY: ARGV is initialized once in init_argv() during single-threaded
+    // startup and never resized after.
+    unsafe { &*ARGV.get() }
 }
 
 /// Trait for arg types accepted by `append_options_env` (replaces `comptime ArgType`).
@@ -1887,7 +1894,7 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             out.push(bun_str::ZStr::from_bytes(s));
         }
         // SAFETY: single-threaded init
-        unsafe { ARGV = out };
+        unsafe { *ARGV.get() = out };
     }
     #[cfg(windows)]
     {
@@ -1920,17 +1927,18 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             out_argv.push(s);
         }
         // SAFETY: single-threaded init
-        unsafe { ARGV = out_argv };
+        unsafe { *ARGV.get() = out_argv };
     }
 
     if let Some(opts) = bun_core::env_var::BUN_OPTIONS.get() {
         // SAFETY: single-threaded init
         unsafe {
-            let original_len = ARGV.len();
-            let mut argv_list = core::mem::take(&mut ARGV);
+            let argv = &mut *ARGV.get();
+            let original_len = argv.len();
+            let mut argv_list = core::mem::take(argv);
             append_options_env::<Box<bun_str::ZStr>>(opts, &mut argv_list)?;
-            ARGV = argv_list;
-            bun_options_argc = ARGV.len() - original_len;
+            *argv = argv_list;
+            set_bun_options_argc(argv.len() - original_len);
         }
     }
     Ok(())
@@ -2375,33 +2383,31 @@ pub fn linux_kernel_version() -> bun_semver::Version {
 // ─── selfExePath ──────────────────────────────────────────────────────────────
 pub fn self_exe_path() -> Result<&'static bun_str::ZStr, bun_core::Error> {
     struct Memo {
-        set: AtomicBool,
         value: [u8; 4096 + 1],
         len: usize,
-        lock: Mutex,
     }
-    static mut MEMO: Memo = Memo {
-        set: AtomicBool::new(false),
-        value: [0; 4097],
-        len: 0,
-        lock: Mutex::new(),
-    };
+    static MEMO: bun_core::RacyCell<Memo> = bun_core::RacyCell::new(Memo { value: [0; 4097], len: 0 });
+    static SET: AtomicBool = AtomicBool::new(false);
+    static LOCK: Mutex = Mutex::new();
 
-    // SAFETY: MEMO is internally synchronized
-    unsafe {
-        if MEMO.set.load(Ordering::Acquire) {
-            return Ok(bun_str::ZStr::from_raw(MEMO.value.as_ptr(), MEMO.len));
-        }
-        let _guard = MEMO.lock.lock_guard();
-        if MEMO.set.load(Ordering::Acquire) {
-            return Ok(bun_str::ZStr::from_raw(MEMO.value.as_ptr(), MEMO.len));
-        }
-        let init = bun_sys::self_exe_path(&mut MEMO.value)?;
-        MEMO.len = init.len();
-        MEMO.value[MEMO.len] = 0;
-        MEMO.set.store(true, Ordering::Release);
-        Ok(bun_str::ZStr::from_raw(MEMO.value.as_ptr(), MEMO.len))
+    // Double-checked init: `SET` (acquire/release) + `LOCK` guard the `RacyCell`.
+    if SET.load(Ordering::Acquire) {
+        // SAFETY: `SET` acquire pairs with the release below; payload is frozen.
+        let memo = unsafe { &*MEMO.get() };
+        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
     }
+    let _guard = LOCK.lock_guard();
+    if SET.load(Ordering::Acquire) {
+        let memo = unsafe { &*MEMO.get() };
+        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
+    }
+    // SAFETY: exclusive access under `LOCK` while `SET` is false.
+    let memo = unsafe { &mut *MEMO.get() };
+    let init = bun_sys::self_exe_path(&mut memo.value)?;
+    memo.len = init.len();
+    memo.value[memo.len] = 0;
+    SET.store(true, Ordering::Release);
+    Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) })
 }
 
 #[cfg(windows)]
@@ -3083,7 +3089,10 @@ pub fn get_use_system_ca(
     _global: &bun_jsc::JSGlobalObject,
     _frame: &bun_jsc::CallFrame,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    Ok(bun_jsc::JSValue::from(bun_runtime::cli::Arguments::Bun__Node__UseSystemCA()))
+    Ok(bun_jsc::JSValue::from(
+        bun_runtime::cli::Arguments::Bun__Node__UseSystemCA
+            .load(core::sync::atomic::Ordering::Relaxed),
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

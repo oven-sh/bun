@@ -395,12 +395,18 @@ pub static BASE_RUNTIME_TRANSPILER_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::
 });
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
+// `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
+// `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
+// as plain `bool`. Rust writes go through `.store(.., Relaxed)`.
 #[unsafe(no_mangle)]
-pub static mut Bun__Node__ZeroFillBuffers: bool = false;
+pub static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub static mut Bun__Node__ProcessNoDeprecation: bool = false;
+pub static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub static mut Bun__Node__ProcessThrowDeprecation: bool = false;
+pub static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -410,9 +416,11 @@ pub enum BunCAStore {
     System,
 }
 #[unsafe(no_mangle)]
-pub static mut Bun__Node__CAStore: BunCAStore = BunCAStore::Bundled;
+pub static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
-pub static mut Bun__Node__UseSystemCA: bool = false;
+pub static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): `loadConfig` / `loadConfigPath` / `loadConfigWithCmdArgs` and
@@ -473,9 +481,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // PORT NOTE: Zig gated on `builtin.have_error_return_tracing`; see
     // `maybe_verbose_error_trace!` above for the Rust mapping.
     if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        // SAFETY: single-threaded CLI startup; this static is read on the
-        // crash/exit path on the same thread.
-        unsafe { bun_crash_handler::VERBOSE_ERROR_TRACE = true };
+        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
@@ -1036,18 +1042,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     Global::exit(1);
                 }
             };
-            // SAFETY: single-threaded startup; mirrors Zig `http.max_http_header_size = …`
-            unsafe {
-                bun_http::MAX_HTTP_HEADER_SIZE = if size == 0 { 1024 * 1024 * 1024 } else { size };
-            }
+            bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
             // SAFETY: single-threaded startup; argv slices returned by
             // `clap::Args::option` borrow process-lifetime `argv` storage.
-            unsafe {
-                bun_http::OVERRIDDEN_DEFAULT_USER_AGENT = user_agent;
-            }
+            unsafe { bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.write(user_agent) };
         }
 
         ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
@@ -1242,22 +1243,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         if args.flag(b"--no-deprecation") {
-            // SAFETY: single-threaded startup; mirrors Zig export var write
-            unsafe { Bun__Node__ProcessNoDeprecation = true };
+            Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if args.flag(b"--throw-deprecation") {
-            // SAFETY: single-threaded startup
-            unsafe { Bun__Node__ProcessThrowDeprecation = true };
+            Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(title) = args.option(b"--title") {
             // SAFETY: single-threaded startup. Static is `Option<Box<[u8]>>` so
             // `process.title = "..."` can drop the previous value; box the
             // argv-borrowed slice up front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
-            unsafe { cli::Bun__Node__ProcessTitle = Some(title.into()) };
+            unsafe { *cli::Bun__Node__ProcessTitle.get() = Some(title.into()) };
         }
         if args.flag(b"--zero-fill-buffers") {
-            // SAFETY: single-threaded startup
-            unsafe { Bun__Node__ZeroFillBuffers = true };
+            Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         let use_system_ca = args.flag(b"--use-system-ca");
         let use_openssl_ca = args.flag(b"--use-openssl-ca");
@@ -1272,21 +1270,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         // CLI overrides env var (NODE_USE_SYSTEM_CA)
-        // SAFETY: single-threaded startup; exported globals read by C++
-        unsafe {
-            if use_bundled_ca {
-                Bun__Node__CAStore = BunCAStore::Bundled;
-            } else if use_openssl_ca {
-                Bun__Node__CAStore = BunCAStore::Openssl;
-            } else if use_system_ca {
-                Bun__Node__CAStore = BunCAStore::System;
-            } else if env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
-                Bun__Node__CAStore = BunCAStore::System;
-            }
-
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA = Bun__Node__CAStore == BunCAStore::System;
-        }
+        let store = if use_bundled_ca {
+            BunCAStore::Bundled
+        } else if use_openssl_ca {
+            BunCAStore::Openssl
+        } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
+            BunCAStore::System
+        } else {
+            // SAFETY: only this thread writes during startup; default is Bundled.
+            unsafe { core::mem::transmute::<u8, BunCAStore>(Bun__Node__CAStore.load(core::sync::atomic::Ordering::Relaxed)) }
+        };
+        Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
+        // Back-compat boolean used by native code until fully migrated
+        Bun__Node__UseSystemCA.store(store == BunCAStore::System, core::sync::atomic::Ordering::Relaxed);
     }
 
     if opts.port.is_some() && opts.origin.is_none() {
@@ -2042,9 +2038,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     if bun_core::env::SHOW_CRASH_TRACE {
         // SAFETY: single-threaded CLI startup; argv slices are process-lifetime.
         unsafe {
-            cli::debug_flags::RESOLVE_BREAKPOINTS =
+            *cli::debug_flags::RESOLVE_BREAKPOINTS.get() =
                 args.options(b"--breakpoint-resolve").to_vec();
-            cli::debug_flags::PRINT_BREAKPOINTS = args.options(b"--breakpoint-print").to_vec();
+            *cli::debug_flags::PRINT_BREAKPOINTS.get() =
+                args.options(b"--breakpoint-print").to_vec();
         }
     }
 

@@ -385,14 +385,16 @@ pub fn init_watch_trigger() {
         };
 
         let set: &'static mut StringSet = Box::leak(Box::new(StringSet::new()));
-        // SAFETY: written once on the main thread before the watcher thread
-        // starts; after that only the watcher thread touches these. See doc
-        // on `hot_reloader::WATCH_CHANGED_PATHS`.
+        // Written once on the main thread before the watcher thread starts;
+        // after that only the watcher thread touches these. See doc on
+        // `hot_reloader::WATCH_CHANGED_PATHS`.
+        // SAFETY: single-threaded init; trigger-file slot has no concurrent reader yet.
         unsafe {
-            jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(set as *mut StringSet);
-            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE =
-                Some(Box::leak(Box::new(path)).as_zstr());
+            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
+                .write(Some(Box::leak(Box::new(path)).as_zstr()));
         }
+        jsc::hot_reloader::WATCH_CHANGED_PATHS
+            .store(set as *mut StringSet, core::sync::atomic::Ordering::Release);
     }
 }
 

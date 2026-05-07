@@ -5340,9 +5340,7 @@ impl NodeFS {
             Encoding::Base64 | Encoding::Base64url => (size / 3).saturating_sub(1),
             Encoding::Ascii | Encoding::Latin1 | Encoding::Buffer => size,
         };
-        // SAFETY: `SYNTHETIC_ALLOCATION_LIMIT` is a `static mut` written once at
-        // startup (`VirtualMachine` init); reads after that point are race-free.
-        if adjusted_size > unsafe { bun_jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT }
+        if adjusted_size > bun_jsc::virtual_machine::synthetic_allocation_limit()
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             || (cfg!(target_os = "linux") && size as u64 >= bun_core::get_total_memory_size() as u64)
         {
@@ -5876,7 +5874,7 @@ impl NodeFS {
             let mut outbuf = PathBuffer::uninit();
             let inbuf = &mut self.sync_error_buf;
             // SAFETY: single-threaded init flag (resolver/fs.rs).
-            debug_assert!(unsafe { bun_resolver::fs::INSTANCE_LOADED });
+            debug_assert!(bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
             let path_slice = args.path.slice();
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.

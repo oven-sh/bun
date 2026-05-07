@@ -939,8 +939,7 @@ fn start_queued_task(http: *mut AsyncHttp) {
 fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     // SAFETY: same single-thread invariant as http_thread().
     unsafe {
-        (*core::ptr::addr_of_mut!(crate::SOCKET_ASYNC_HTTP_ABORT_TRACKER))
-            .get_or_insert_with(ArrayHashMap::new)
+        (*crate::SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new)
     }
 }
 
@@ -974,7 +973,7 @@ mod _event_loop_draft {
         // SAFETY: `init_once` runs under `Once`; no other thread reads
         // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
         unsafe {
-            crate::HTTP_THREAD = Some(HttpThread::new());
+            *crate::HTTP_THREAD.get() = Some(HttpThread::new());
         }
         bun_libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();

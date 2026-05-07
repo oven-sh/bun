@@ -145,8 +145,8 @@ static TITLE_MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
     let _guard = TITLE_MUTEX.lock();
     // SAFETY: TITLE_MUTEX held; the static is only mutated under this lock or
-    // during single-threaded CLI startup, so `&raw const` + shared read is sound.
-    let str_ = unsafe { (*(&raw const crate::cli::Bun__Node__ProcessTitle)).as_deref() }
+    // during single-threaded CLI startup, so a shared read is sound.
+    let str_ = unsafe { (*crate::cli::Bun__Node__ProcessTitle.get()).as_deref() }
         .unwrap_or(b"bun");
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
@@ -171,7 +171,7 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
     // — assigning into the `Option<Box<[u8]>>` static drops the previous box.
     // SAFETY: TITLE_MUTEX held; we are the exclusive writer.
     unsafe {
-        crate::cli::Bun__Node__ProcessTitle = Some(new_title);
+        *crate::cli::Bun__Node__ProcessTitle.get() = Some(new_title);
     }
 }
 

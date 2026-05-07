@@ -477,10 +477,8 @@ impl<'a> MiniEventLoop<'a> {
 
             // Zig builds Blob.Store with intrusive `ref_count = 2` and
             // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`.
-            // SAFETY: STDERR_DESCRIPTOR_TYPE is plain data written once at
-            // startup (Output::Source::set) before the event loop runs.
             let is_atty =
-                unsafe { Output::STDERR_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
+                Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             // SAFETY: link-time extern; allocates a fresh Store.
             let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
             self.stderr_store = NonNull::new(store);
@@ -498,10 +496,8 @@ impl<'a> MiniEventLoop<'a> {
                 mode = stat.st_mode as Mode;
             }
 
-            // SAFETY: STDOUT_DESCRIPTOR_TYPE is plain data written once at
-            // startup (Output::Source::set) before the event loop runs.
             let is_atty =
-                unsafe { Output::STDOUT_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
+                Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             // SAFETY: link-time extern; allocates a fresh Store.
             let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
             self.stdout_store = NonNull::new(store);

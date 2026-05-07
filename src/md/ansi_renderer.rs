@@ -2365,11 +2365,7 @@ fn probe_kitty_graphics() -> bool {
     }
     #[cfg(unix)]
     {
-        // SAFETY: bun_stdio_tty is plain data written once at startup.
-        let (tty0, tty1) = unsafe {
-            (bun_core::Output::bun_stdio_tty[0], bun_core::Output::bun_stdio_tty[1])
-        };
-        if tty0 == 0 || tty1 == 0 {
+        if !bun_core::Output::is_stdin_tty() || !bun_core::Output::is_stdout_tty() {
             return false;
         }
         // Honor an explicit opt-out.

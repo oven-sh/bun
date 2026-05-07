@@ -158,7 +158,7 @@ fn on_open(ctx: *mut HTTPClient) {
             crate::configure_http_client_with_alpn(ssl_ptr.as_ptr(), core::ptr::null(), AlpnOffer::H1);
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
-            let temp_hostname = unsafe { &mut crate::TEMP_HOSTNAME };
+            let temp_hostname = unsafe { &mut *crate::TEMP_HOSTNAME.get() };
             if _hostname.len() < temp_hostname.len() {
                 temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
                 temp_hostname[_hostname.len()] = 0;

@@ -789,16 +789,18 @@ pub type DynShiftInt = u32;
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Don't modify this value.  Ideally it would go in const data so
-// modifications would cause a bus error, but the only way
-// to discard a const qualifier is through ptrToInt, which
-// cannot currently round trip at comptime.
-static mut EMPTY_MASKS_DATA: [usize; 2] = [0, 0];
+// Never modified — the Zig comment about needing `static mut` was a Zig
+// limitation (no const-ptr → mut-ptr cast at comptime). Rust has no such
+// constraint: keep it in `.rodata` and cast to `*mut` at the boundary. The
+// only writes through `self.masks` are guarded by `num_masks() > 0`, which is
+// false for the empty sentinel (bit_length == 0).
+static EMPTY_MASKS_DATA: [usize; 2] = [0, 0];
 
 #[inline(always)]
 fn empty_masks_ptr() -> *mut usize {
     // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
-    unsafe { (&raw mut EMPTY_MASKS_DATA).cast::<usize>().add(1) }
+    // The `*mut` is never written through while pointing at this static.
+    unsafe { (&raw const EMPTY_MASKS_DATA).cast::<usize>().add(1).cast_mut() }
 }
 
 impl Default for DynamicBitSetUnmanaged {

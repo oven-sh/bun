@@ -810,7 +810,7 @@ impl<'a> Repl<'a> {
 
         // Get terminal size
         // SAFETY: TERMINAL_SIZE is a process-global populated once during Output init.
-        let ts = unsafe { Output::TERMINAL_SIZE };
+        let ts = unsafe { Output::TERMINAL_SIZE.read() };
         if ts.col > 0 {
             self.terminal_width = ts.col;
             self.terminal_height = ts.row;

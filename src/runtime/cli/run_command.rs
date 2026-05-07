@@ -908,14 +908,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
         vm.env_loader().load_tracy();
 
-        // SAFETY: set once at startup before the HTTP thread spawns; only read
-        // on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, ::core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, ::core::sync::atomic::Ordering::Relaxed);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // Zig: `vm.main_is_html_entrypoint = (loader orelse
@@ -1069,14 +1065,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
-        // SAFETY: set once at startup before the HTTP thread spawns; only read
-        // on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, ::core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, ::core::sync::atomic::Ordering::Relaxed);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
@@ -1684,8 +1676,7 @@ impl RunCommand {
         optional_bun_path: &mut &[u8],
     ) -> Result<(), bun_core::Error> {
         // If we are already running as "node", the path should exist
-        // SAFETY: PRETEND_TO_BE_NODE is a process-startup flag (single-threaded write).
-        if unsafe { cli::PRETEND_TO_BE_NODE } {
+        if cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
 
@@ -2720,7 +2711,7 @@ impl RunCommand {
         // during CLI startup (mod.rs:693).
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD } == Some(CommandTag::AutoCommand)
+            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -2979,7 +2970,7 @@ impl RunCommand {
     pub fn exec_as_if_node(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
-        debug_assert!(unsafe { crate::cli::PRETEND_TO_BE_NODE });
+        debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd

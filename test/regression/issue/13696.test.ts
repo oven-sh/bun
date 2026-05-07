@@ -5,20 +5,18 @@
 // is why testcontainers' default HostPortWaitStrategy hung until timeout.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Runs a fixture that simulates docker-modem's chunked POST with an open
 // request body, against a raw TCP server that responds before the request is
 // finished. Prints "recv:<text>" for each response chunk as it arrives, and
 // "request-seen" once the server has received the headers.
-const fixture = (socketMode: "tcp" | "unix") => `
+const fixture = (socketPath: string | undefined) => `
 const net = require("net");
 const http = require("http");
-const os = require("os");
-const path = require("path");
-const fs = require("fs");
 
-const socketMode = ${JSON.stringify(socketMode)};
+const socketPath = ${JSON.stringify(socketPath)};
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -45,22 +43,12 @@ const server = net.createServer((sock) => {
   });
 });
 
-let listenArgs;
-let requestOpts;
-if (socketMode === "unix") {
-  const socketPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "bun-13696-")), "docker.sock");
-  listenArgs = [socketPath];
-  requestOpts = { socketPath, path: "/exec/abc/start" };
-} else {
-  listenArgs = [0, "127.0.0.1"];
-  requestOpts = undefined; // filled in after listen
-}
+const listenArgs = socketPath ? [socketPath] : [0, "127.0.0.1"];
 
 server.listen(...listenArgs, () => {
-  if (socketMode === "tcp") {
-    const { port } = server.address();
-    requestOpts = { host: "127.0.0.1", port, path: "/exec/abc/start" };
-  }
+  const requestOpts = socketPath
+    ? { socketPath, path: "/exec/abc/start" }
+    : { host: "127.0.0.1", port: server.address().port, path: "/exec/abc/start" };
 
   // docker-modem passes an empty callback here and attaches 'response'
   // separately via req.on('response', ...).
@@ -110,8 +98,11 @@ setTimeout(() => process.exit(0), 3000).unref();
 
 for (const socketMode of ["tcp", "unix"] as const) {
   test(`http.request delivers response while request body stream is still open (${socketMode})`, async () => {
+    using dir = tempDir("issue-13696", {});
+    const socketPath = socketMode === "unix" ? join(String(dir), "docker.sock") : undefined;
+
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture(socketMode)],
+      cmd: [bunExe(), "-e", fixture(socketPath)],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

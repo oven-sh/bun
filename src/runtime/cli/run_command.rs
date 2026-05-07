@@ -986,10 +986,11 @@ impl Run {
         let vm = unsafe { &mut *self.vm };
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // TODO(b2-blocked): CPU/heap profiler start, `addConditionalGlobals`,
-        // redis/sql preconnect, hot-reloader enable — see `src/bun.js.rs`
-        // `Run::start` lines 414-535. All depend on gated `bun_runtime`
-        // siblings (`CPUProfiler`, `valkey`, `hot_reloader::enable_*`).
+        // TODO(port): CPU/heap profiler start, `addConditionalGlobals`,
+        // redis/sql preconnect, hot-reloader enable (bun.js.zig:312-390). The
+        // `CPUProfiler`/`HeapProfiler` config types are `Option<()>` placeholders
+        // on `VirtualMachine` and `valkey`/`hot_reloader::enable_*` route through
+        // `RuntimeHooks` slots not yet populated.
 
         // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }` —
         // `vm.transpiler.fs` is a b2-cycle placeholder; skip the rewrite.

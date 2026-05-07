@@ -157,9 +157,8 @@ pub struct VirtualMachine {
     pub smol: bool,
     // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
-    // TODO(b2-cycle): `cpu_profiler_config` / `heap_profiler_config` from gated siblings.
-    pub cpu_profiler_config: Option<()>,
-    pub heap_profiler_config: Option<()>,
+    pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
+    pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
     // TODO(b2-cycle): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
@@ -1047,17 +1046,21 @@ impl VirtualMachine {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
-        if let Some(_config) = self.cpu_profiler_config.take() {
-            // TODO(b2-cycle): `CPUProfiler::stop_and_write_profile(self.jsc_vm,
-            // config)` — `bun_cpu_profiler` sibling is gated and the config
-            // field is an `Option<()>` placeholder.
+        if let Some(config) = self.cpu_profiler_config.take() {
+            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
+            let _ = crate::bun_cpu_profiler::stop_and_write_profile(
+                unsafe { &mut *self.jsc_vm },
+                &config,
+            );
         }
         // Write heap profile if profiling was enabled - do this after CPU
         // profile but before shutdown.
-        if let Some(_config) = self.heap_profiler_config.take() {
-            // TODO(b2-cycle): `HeapProfiler::generate_and_write_profile(
-            // self.jsc_vm, config)` — `bun_heap_profiler` sibling is gated and
-            // the config field is an `Option<()>` placeholder.
+        if let Some(config) = self.heap_profiler_config.take() {
+            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
+            let _ = crate::bun_heap_profiler::generate_and_write_profile(
+                unsafe { &mut *self.jsc_vm },
+                config,
+            );
         }
 
         let vm = self as *mut VirtualMachine;

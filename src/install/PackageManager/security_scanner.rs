@@ -746,14 +746,18 @@ impl<'a> JSONBuilder<'a> {
                 json_buf.extend_from_slice(b",\n");
             }
 
+            // SAFETY: `PackageCollector::collect_packages_from_root` only inserts
+            // packages whose resolution tag is `Tag::Npm` into `package_paths`,
+            // so the `npm` union variant is the active field here.
+            let npm = unsafe { &pkg_res.value.npm };
             if dep_id == invalid_dependency_id {
                 write!(
                     &mut json_buf,
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": \"{}\",\n    \"tarball\": {}\n  }}",
                     bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    pkg_res.value.npm.version.fmt(string_buf),
-                    pkg_res.value.npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf), json_opts),
+                    npm.version.fmt(string_buf),
+                    npm.version.fmt(string_buf),
+                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
                 )?;
             } else {
                 let dep_version =
@@ -762,9 +766,9 @@ impl<'a> JSONBuilder<'a> {
                     &mut json_buf,
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
                     bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    pkg_res.value.npm.version.fmt(string_buf),
+                    npm.version.fmt(string_buf),
                     bun_core::fmt::format_json_string_utf8(dep_version.literal.slice(string_buf), json_opts),
-                    bun_core::fmt::format_json_string_utf8(pkg_res.value.npm.url.slice(string_buf), json_opts),
+                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
                 )?;
             }
 
@@ -1495,7 +1499,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
                 ErrorCode::InvalidVersion => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string() {
+                        if let Some(msg_str) = msg.as_string(&bump) {
                             Output::err_generic(
                                 "Security scanner error: {}",
                                 (BStr::new(msg_str),),

@@ -70,12 +70,10 @@ pub struct Entry {
     /// - For route bundle client scripts, +1 until invalidation.
     pub ref_count: u32,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    /// Outer slice is owned, inner slice is shared with IncrementalGraph.
-    // PORT NOTE (LIFETIMES.tsv): inner `&[u8]` borrows IncrementalGraph's
-    // `bundled_files.keys()` for the lifetime of this entry. `'static` is the
-    // Phase-A self-referential placeholder; revisit once `DevServer` carries a
-    // lifetime parameter.
-    pub paths: Box<[&'static [u8]]>,
+    // PORT NOTE: Zig borrowed inner slices from `IncrementalGraph.bundled_files
+    // .keys()`; that is self-referential w.r.t. `DevServer`, so the port stores
+    // owned copies instead. See PERF(port) in `IncrementalGraph::take_source_map`.
+    pub paths: Box<[Box<[u8]>]>,
     /// Indexes are off by one because this excludes the HMR Runtime.
     // PORT NOTE: Zig used `bun.MultiArrayList(PackedMap.Shared)` (SoA over a
     // tagged union). `MultiArrayElement` cannot be derived for an enum and the
@@ -135,6 +133,7 @@ impl Entry {
         let mut buf = bun_paths::path_buffer_pool::get();
 
         for native_file_path in paths.iter() {
+            let native_file_path: &[u8] = native_file_path;
             source_map_strings.extend_from_slice(b",");
             #[cfg(windows)]
             let path: &[u8] =
@@ -460,7 +459,7 @@ impl EntryIndex {
 pub struct GetResult<'a> {
     pub index: EntryIndex,
     pub mappings: source_map::mapping::List,
-    pub file_paths: &'a [&'static [u8]],
+    pub file_paths: &'a [Box<[u8]>],
     pub entry_files: &'a [packed_map::Shared],
 }
 // PORT NOTE: Zig `GetResult.deinit` only freed `mappings`; Rust drops it

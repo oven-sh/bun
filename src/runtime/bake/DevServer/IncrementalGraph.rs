@@ -15,7 +15,7 @@ use crate::bake::dev_server::{
 };
 use crate::bake::dev_server::incremental_graph as ig;
 use crate::bake::dev_server_body::CachedFileIndex;
-use super::serialized_failure::Owner as FailureOwner;
+use super::serialized_failure::{self, Owner as FailureOwner, OwnerPacked, SerializedFailure};
 use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
@@ -1025,9 +1025,20 @@ impl IncrementalGraph<Client> {
 
             // Free a failure if it exists
             if existing.failed {
-                let _ = (file_index,);
-                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
-                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
+                // PORT NOTE: `bundling_failures` is keyed by `OwnerPacked`
+                // directly (Zig used a custom adapter to look up by `Owner`
+                // inside a `SerializedFailure`-keyed set).
+                let owner = OwnerPacked::new(Side::Client, file_index.get());
+                let dev = self.owner();
+                let (_, kv) = dev
+                    .bundling_failures
+                    .fetch_swap_remove(&owner)
+                    .unwrap_or_else(|| {
+                        Output::panic(format_args!(
+                            "Missing SerializedFailure in IncrementalGraph",
+                        ))
+                    });
+                dev.incremental_result.failures_removed.push(kv);
             }
 
             // Persist some data
@@ -1205,9 +1216,21 @@ impl IncrementalGraph<Server> {
                     .client_components_added
                     .push(ig::ServerFileIndex::init(file_index.get()));
             } else if self.bundled_files.values()[gop_index].is_client_component_boundary {
-                let _key_owned = self.bundled_files.keys()[gop_index].clone();
-                let _client_graph = &mut self.owner().client_graph;
-                // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/disconnect_and_delete_file
+                // PORT NOTE: reshaped for borrowck — clone the key so the
+                // `client_graph` borrow (via `owner()`) does not overlap the
+                // `bundled_files` slice borrow.
+                let key_owned = self.bundled_files.keys()[gop_index].clone();
+                {
+                    let client_graph = &mut self.owner().client_graph;
+                    let client_index = client_graph
+                        .get_file_index(&key_owned)
+                        .unwrap_or_else(|| {
+                            Output::panic(format_args!(
+                                "Client graph's SCB was already deleted",
+                            ))
+                        });
+                    client_graph.disconnect_and_delete_file(client_index);
+                }
                 // re-fetch value_ptr
                 self.bundled_files.values_mut()[gop_index]
                     .is_client_component_boundary = false;
@@ -1218,11 +1241,22 @@ impl IncrementalGraph<Server> {
                     .push(ig::ServerFileIndex::init(file_index.get()));
             }
 
-            let value = &mut self.bundled_files.values_mut()[gop_index];
-            if value.failed {
-                value.failed = false;
-                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
-                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
+            // PORT NOTE: reshaped for borrowck — read & clear `failed` before
+            // calling `self.owner()` (which reborrows `self`).
+            let was_failed = {
+                let value = &mut self.bundled_files.values_mut()[gop_index];
+                core::mem::replace(&mut value.failed, false)
+            };
+            if was_failed {
+                let owner = OwnerPacked::new(Side::Server, file_index.get());
+                let dev = self.owner();
+                let (_, kv) = dev
+                    .bundling_failures
+                    .fetch_swap_remove(&owner)
+                    .unwrap_or_else(|| {
+                        Output::panic(format_args!("Missing failure in IncrementalGraph"))
+                    });
+                dev.incremental_result.failures_removed.push(kv);
             }
         }
 
@@ -1817,8 +1851,17 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 let file = g.get_file_by_index(file_index);
                 if file.is_client_component_boundary || file.kind == FileKind::Css {
                     let key = g.bundled_files.keys()[file_index.get() as usize].clone();
-                    let _ = (&key, &g.owner().client_graph, &mut *gts, goal);
-                    // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/trace_imports
+                    {
+                        // `g.owner().client_graph` is the keystone graph; recurse there.
+                        let client_graph = &mut g.owner().client_graph;
+                        let index = client_graph.get_file_index(&key).unwrap_or_else(|| {
+                            Output::panic(format_args!(
+                                "Client Incremental Graph is missing component for {}",
+                                bun_fmt::quote(&key),
+                            ))
+                        });
+                        client_graph.trace_imports(index, gts, goal)?;
+                    }
 
                     if cfg!(debug_assertions) && file.kind == FileKind::Css {
                         // Server CSS files never have imports. They are
@@ -1829,9 +1872,16 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     }
                 }
                 if goal == TraceImportGoal::FindErrors && file.failed {
-                    let _ = &g.owner().bundling_failures;
-                    // TODO(port): blocked_on: bun_collections::ArrayHashMap::get_key_adapted
-                    todo!("blocked_on: bun_collections::ArrayHashMap::get_key_adapted");
+                    let owner = OwnerPacked::new(Side::Server, file_index.get());
+                    let dev = g.owner();
+                    let fail = dev
+                        .bundling_failures
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            Output::panic(format_args!("Failed to get bundling failure"))
+                        });
+                    dev.incremental_result.failures_added.push(fail);
                 }
             }
             Side::Client => {

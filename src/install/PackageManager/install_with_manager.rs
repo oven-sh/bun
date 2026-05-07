@@ -1281,22 +1281,50 @@ fn print_install_summary(
 
     let mut printed_timestamp = false;
     if this.options.do_.summary {
-        // TODO(port): `lockfile_real::Printer` is typed against `lockfile_real::Lockfile` /
-        // `package_manager_real::Options`; the stub `PackageManager` carries the stub
-        // `Lockfile` / `PackageManagerOptionsStub`. Construct via the tree-printer
-        // entrypoint directly once the type unification lands (reconciler-6).
-        let _ = (&mut this.lockfile, &this.update_requests, &install_summary.successfully_installed);
+        // PORT NOTE: reshaped for borrowck — Zig builds `Printer` borrowing
+        // `this.lockfile` / `this.options` while also passing `this` (the
+        // PackageManager) to `Tree::print`. Route through a single `*mut
+        // PackageManager` provenance root and reborrow disjoint fields
+        // through it (Zig `*T` semantics): `Tree::print` only reads
+        // `manager.{updating_packages, workspace_name_hash}` and writes
+        // `manager.track_installed_bin`, none of which overlap `lockfile` /
+        // `options` / `update_requests`.
+        let mgr: *mut PackageManager = this;
+        // SAFETY: `mgr` is the sole provenance root from here through the
+        // `Tree::print` call; the `Printer` reborrows shared `lockfile` /
+        // `options` / `update_requests`, and the `&mut *mgr` passed to
+        // `Tree::print` only touches disjoint `PackageManager` fields.
+        let printer = Printer {
+            lockfile: unsafe { &(*mgr).lockfile },
+            options: unsafe { &(*mgr).options },
+            updates: unsafe { &(*mgr).update_requests },
+            successfully_installed: install_summary.successfully_installed.as_ref(),
+        };
 
         {
             Output::flush();
             // Ensure at this point buffering is enabled.
             // We deliberately do not disable it after this.
             Output::enable_buffering();
-            let _writer = Output::writer_buffered();
-            // Runtime bool → comptime dispatch
-            // TODO(port): blocked_on lockfile_real::printer::Tree::print — see Printer note above.
-            let _ = Output::enable_ansi_colors_stdout();
+            let writer = Output::writer_buffered();
+            // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
+            if Output::enable_ansi_colors_stdout() {
+                LockfilePrinter::Tree::print::<_, true>(
+                    &printer,
+                    unsafe { &mut *mgr },
+                    writer,
+                    log_level,
+                )?;
+            } else {
+                LockfilePrinter::Tree::print::<_, false>(
+                    &printer,
+                    unsafe { &mut *mgr },
+                    writer,
+                    log_level,
+                )?;
+            }
         }
+        drop(printer);
 
         if !did_meta_hash_change {
             this.summary.remove = 0;
@@ -1525,7 +1553,11 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 //   confidence: medium
 //   notes:      Output::pretty multi-arg fmt needs a real API; heavy borrowck
 //               reshaping around manager.lockfile aliases routes through raw
-//               ptrs (Zig *T semantics). Compile depends on the
+//               ptrs (Zig *T semantics). `Printer` retyped against the stub
+//               `crate::Lockfile` / `PackageManagerOptionsStub` so
+//               `print_install_summary` and `write_yarn_lock` route through
+//               the file-backed tree/yarn printers without a stub→real
+//               conversion. Compile still depends on the
 //               lockfile::Lockfile / lockfile_real::Lockfile unification
 //               (reconciler-6) for Package::parse / Diff::generate /
 //               OverrideMap::clone — same pre-existing constraint as the

@@ -2948,15 +2948,12 @@ impl S3BlobDownloadTask {
         // SAFETY: just allocated.
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let env = unsafe { &(*global_this.bun_vm()).transpiler.env };
         let store::Data::S3(s3_store) = &this_ref.blob.store.as_ref().unwrap().data else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
-        let _ = env;
         this_ref.poll_ref.ref_(vm_ctx());
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
@@ -4521,9 +4518,15 @@ impl Blob {
                 if LIFETIME == Lifetime::Temporary {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
-                // Ownership of the UTF-16 buffer transfers to JSC's external-string finalizer.
-                let external = Box::leak(external.into_boxed_slice());
-                return Ok(zig_string_to_external_u16(external.as_ptr(), external.len(), global));
+                // Ownership of the UTF-16 buffer transfers to JSC's external-string
+                // finalizer (which calls back into the default allocator's `free`).
+                // `into_raw` is the explicit ownership-transfer-to-FFI API; the
+                // matching free lives on the C++ side.
+                let external = Box::into_raw(external.into_boxed_slice());
+                // SAFETY: `external` is a fresh non-null `*mut [u16]`; reborrow only
+                // to read ptr/len for the FFI call.
+                let (ptr, len) = unsafe { ((*external).as_ptr(), (*external).len()) };
+                return Ok(zig_string_to_external_u16(ptr, len, global));
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -4540,9 +4543,13 @@ impl Blob {
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Transfer => {
-                let store = self.store.as_ref().unwrap().clone();
+                // Zig: `const store = this.store.?` (no ref bump) → `this.transfer()`
+                // (sets null, no deref). Cloning the StoreRef here would bump the
+                // intrusive count by +1 *and* `transfer()` would leak the original
+                // +1, leaving an unmatched ref. Move the existing ref out instead;
+                // `into_raw` then hands that single ref to JSC.
+                let store = self.store.take().expect("transfer with null store");
                 debug_assert!(matches!(store.data, store::Data::Bytes(_)));
-                self.transfer();
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Share => {
@@ -4774,9 +4781,10 @@ impl Blob {
                     self.detach();
                     return Err(global.throw_out_of_memory());
                 }
-                let store = self.store.as_ref().unwrap().clone();
-                self.transfer();
-                // SAFETY: see `Share` arm. After `transfer()` the store ref is moved
+                // Move the existing +1 out (Zig: `this.store.?` then `transfer()`
+                // nulls without deref). Cloning then `transfer()` would leak a ref.
+                let store = self.store.take().expect("transfer with null store");
+                // SAFETY: see `Share` arm. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
                 jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,

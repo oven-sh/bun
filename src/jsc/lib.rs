@@ -676,30 +676,13 @@ pub use self::zig_stack_trace::ZigStackTrace;
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use abort_signal::AbortSignal;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects.
-//
-// Unlike the simple re-exports above, these carry an `UnsafeCell`
-// marker so a shared `&VM` / `&JSGlobalObject` does **not** assert
-// immutability of the pointee. The Zig spec (`VM.zig`, `JSGlobalObject.zig`)
-// passes `*VM` / `*JSGlobalObject` everywhere — Zig pointers freely alias and
-// the C++ side mutates through them. Modelling that in Rust as `&T` without
-// interior mutability would make every `&T -> *mut T` cast (and any C++ write
-// behind it) UB under Stacked Borrows. The `UnsafeCell` field opts the bytes
-// out of the noalias/readonly guarantee so `as_mut_ptr()` is sound.
-//
-// Rust never reads or writes these bytes directly; all access is via FFI.
-// ──────────────────────────────────────────────────────────────────────────
-#[repr(C)]
-pub struct VM {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _marker: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-#[repr(C)]
-pub struct JSGlobalObject {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _marker: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+// `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
+// once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and
+// re-exported here so `crate::VM` and `crate::vm::VM` name the same nominal
+// type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
+// so `&T → *mut T` for FFI is sound under Stacked Borrows.
+pub use self::vm::{HeapType, Lock as ApiLock, VM};
+pub use self::js_global_object::JSGlobalObject;
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// Mirrors Zig's `IntegerRange` (comptime min/max collapsed to i128 so every
@@ -725,86 +708,6 @@ impl Default for IntegerRange {
 }
 /// Back-compat alias — earlier ports spelled this `IntegerRangeOptions`.
 pub type IntegerRangeOptions = IntegerRange;
-
-impl VM {
-    /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
-    /// `UnsafeCell`, so `&VM` carries interior-mutable provenance and the
-    /// `*const -> *mut` cast does not launder a read-only pointer.
-    #[inline]
-    pub fn as_mut_ptr(&self) -> *mut VM {
-        // UnsafeCell::get yields `*mut` with write provenance from `&self`.
-        self._opaque.get() as *mut VM
-    }
-
-    /// Spec `VM.zig` `getAPILock` — RAII JSLockHolder. Prefer this over the
-    /// callback-style [`Self::hold_api_lock`] when the locked region spans the
-    /// rest of a function body (mirrors Zig's `defer api_lock.release()`).
-    pub fn get_api_lock(&self) -> ApiLock<'_> {
-        unsafe extern "C" {
-            fn JSC__VM__getAPILock(vm: *mut VM);
-        }
-        // SAFETY: `self` is a live opaque JSC VM handle.
-        unsafe { JSC__VM__getAPILock(self.as_mut_ptr()) }
-        ApiLock { vm: self }
-    }
-
-    /// Spec `VM.zig:34` `holdAPILock` — wraps `JSC__VM__holdAPILock`.
-    pub fn hold_api_lock(
-        &self,
-        ctx: *mut core::ffi::c_void,
-        callback: extern "C" fn(ctx: *mut core::ffi::c_void),
-    ) {
-        unsafe extern "C" {
-            fn JSC__VM__holdAPILock(
-                vm: *mut VM,
-                ctx: *mut core::ffi::c_void,
-                callback: extern "C" fn(ctx: *mut core::ffi::c_void),
-            );
-        }
-        // SAFETY: `self` is a live opaque JSC VM handle (interior-mutable via
-        // `UnsafeCell`); `callback` is a valid C fn pointer.
-        unsafe { JSC__VM__holdAPILock(self.as_mut_ptr(), ctx, callback) }
-    }
-
-    /// Spec `VM.zig` `executionForbidden` — wraps `JSC__VM__executionForbidden`.
-    #[inline]
-    pub fn execution_forbidden(&self) -> bool {
-        unsafe extern "C" {
-            fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
-        }
-        // SAFETY: `self` is a live opaque JSC VM handle.
-        unsafe { JSC__VM__executionForbidden(self.as_mut_ptr()) }
-    }
-}
-
-/// RAII guard returned by [`VM::get_api_lock`]. Mirrors Zig `JSC.VM.Lock`
-/// (`defer api_lock.release()` → `Drop`).
-pub struct ApiLock<'a> {
-    vm: &'a VM,
-}
-impl ApiLock<'_> {
-    /// Explicit release (Zig spelling). Equivalent to `drop(self)`.
-    #[inline]
-    pub fn release(self) {}
-}
-impl Drop for ApiLock<'_> {
-    fn drop(&mut self) {
-        unsafe extern "C" {
-            fn JSC__VM__releaseAPILock(vm: *mut VM);
-        }
-        // SAFETY: lock was acquired via JSC__VM__getAPILock on this VM.
-        unsafe { JSC__VM__releaseAPILock(self.vm.as_mut_ptr()) }
-    }
-}
-
-impl JSGlobalObject {
-    /// Raw `*mut JSGlobalObject` for FFI. See [`VM::as_mut_ptr`] for the
-    /// soundness argument (interior mutability via `UnsafeCell`).
-    #[inline]
-    pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
-        self._opaque.get() as *mut JSGlobalObject
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ResolvedSource — un-gated (B-2). `#[repr(C)]` mirror of the C struct in

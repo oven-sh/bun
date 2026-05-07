@@ -2930,16 +2930,12 @@ impl DevServer<'_> {
                     let index = owner.file();
                     match owner.side() {
                         bake::Side::Client => self.client_graph.insert_failure(
-                            incremental_graph::InsertFailureKey::Index(
-                                incremental_graph::BodyFileIndex::init(index.get()),
-                            ),
+                            incremental_graph::InsertFailureKey::Index(index),
                             log,
                             false,
                         )?,
                         bake::Side::Server => self.server_graph.insert_failure(
-                            incremental_graph::InsertFailureKey::Index(
-                                incremental_graph::BodyFileIndex::init(index.get()),
-                            ),
+                            incremental_graph::InsertFailureKey::Index(index),
                             log,
                             true,
                         )?,
@@ -4682,20 +4678,14 @@ impl DevServer<'_> {
         &mut self,
         route: route_bundle::UnresolvedIndex,
     ) -> Result<route_bundle::Index, bun_core::Error> {
-        let index_location: *mut route_bundle::IndexOptional = match &route {
+        let index_location: *mut route_bundle::IndexOptional = match route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                &mut self.router.route_ptr_mut(*route_index).bundle
+                &mut self.router.route_ptr_mut(route_index).bundle
             }
             route_bundle::UnresolvedIndex::Html(html) => {
-                // PORT NOTE: `UnresolvedIndex::Html` borrows `&HTMLBundleRoute`
-                // (LIFETIMES.tsv BORROW_PARAM); Zig stored a `*HTMLBundle.Route`
-                // and mutated through it. Cast away the shared borrow to obtain
-                // the writable slot — the route outlives this call and is
-                // single-threaded here.
-                // SAFETY: see PORT NOTE above.
-                unsafe {
-                    &mut (*(*html as *const HTMLBundleRoute as *mut HTMLBundleRoute)).dev_server_id
-                }
+                // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
+                // allocation; single-threaded (uws JS-thread callback).
+                unsafe { core::ptr::addr_of_mut!((*html).dev_server_id) }
             }
         };
         // SAFETY: index_location points into self/html which outlive this fn
@@ -4726,17 +4716,22 @@ impl DevServer<'_> {
                     })
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
+                    // SAFETY: caller guarantees `html` is live; single-threaded.
+                    let html_ref = unsafe { &mut *html };
                     let incremental_graph_index = self
                         .client_graph
-                        .insert_stale_extra(&html.bundle.path, false, true)?;
+                        .insert_stale_extra(&html_ref.bundle.path, false, true)?;
                     let file =
                         &mut self.client_graph.bundled_files.values_mut()[incremental_graph_index.get() as usize];
                     // PORT NOTE: Zig packs/unpacks; the un-gated `incremental_graph::File`
                     // is unpacked already.
                     file.html_route_bundle_index = Some(bundle_index);
+                    // Zig `.initRef(html)` — bump intrusive refcount; matched by
+                    // `RouteBundle::deinit`'s deref of `html_bundle`.
+                    // SAFETY: `html` is a live IntrusiveRc-managed allocation.
+                    unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        // TODO(b2-blocked): bun_ptr::RefPtr<HTMLBundleRoute>::init_ref once RefCounted impl is real.
-                        html_bundle: html as *const HTMLBundleRoute as *mut HTMLBundleRoute,
+                        html_bundle: html,
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,

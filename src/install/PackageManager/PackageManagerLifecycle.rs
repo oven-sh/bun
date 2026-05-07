@@ -183,11 +183,17 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
+                // SAFETY: each arm reads the union variant that matches the
+                // `pkg.resolution.tag` just dispatched on; `Resolution` is
+                // zero-initialised (`Value::zero()`) so even a stale tag yields
+                // POD bytes, never uninit.
                 let folder_path: &ZStr = match pkg.resolution.tag {
-                    ResolutionTag::Git => self
-                        .cached_git_folder_name_print_auto(&pkg.resolution.value.git, patch_hash),
+                    ResolutionTag::Git => self.cached_git_folder_name_print_auto(
+                        unsafe { &pkg.resolution.value.git },
+                        patch_hash,
+                    ),
                     ResolutionTag::Github => self.cached_github_folder_name_print_auto(
-                        &pkg.resolution.value.github,
+                        unsafe { &pkg.resolution.value.github },
                         patch_hash,
                     ),
                     ResolutionTag::Npm => {
@@ -196,14 +202,16 @@ impl PackageManager {
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
                         self.cached_npm_package_folder_name(
                             name,
-                            pkg.resolution.value.npm.version,
+                            unsafe { pkg.resolution.value.npm.version },
                             patch_hash,
                         )
                     }
-                    ResolutionTag::LocalTarball => self
-                        .cached_tarball_folder_name(pkg.resolution.value.local_tarball, patch_hash),
+                    ResolutionTag::LocalTarball => self.cached_tarball_folder_name(
+                        unsafe { pkg.resolution.value.local_tarball },
+                        patch_hash,
+                    ),
                     ResolutionTag::RemoteTarball => self.cached_tarball_folder_name(
-                        pkg.resolution.value.remote_tarball,
+                        unsafe { pkg.resolution.value.remote_tarball },
                         patch_hash,
                     ),
                     _ => ZStr::EMPTY,

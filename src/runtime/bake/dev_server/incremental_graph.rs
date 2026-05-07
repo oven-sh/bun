@@ -474,7 +474,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    fn disconnect_and_delete_file(&mut self, file_index: FileIndex<SIDE>) {
+    pub(super) fn disconnect_and_delete_file(&mut self, file_index: FileIndex<SIDE>) {
         debug_assert!(self.first_dep[file_index.get() as usize].is_none()); // must have no dependencies
 
         // Disconnect all imports.

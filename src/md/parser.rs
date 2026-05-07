@@ -2,14 +2,15 @@
 
 use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
 
-// TODO(b1): bun_collections::StaticBitSet missing from lower-tier stub surface
-#[derive(Copy, Clone, Default)]
-pub struct StaticBitSet<const N: usize>(());
-impl<const N: usize> StaticBitSet<N> {
-    pub fn init_empty() -> Self { Self(()) }
-    pub fn set(&mut self, _i: usize) {}
-    pub fn is_set(&self, _i: usize) -> bool { false }
-}
+use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
+
+// Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
+// (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
+// generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
+// inline scanner in inlines.rs depends on `is_set()` being real — a no-op
+// stub here makes every byte fall through the fast path and disables all
+// inline-span recognition (emphasis, links, code, entities, breaks).
+pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 // TODO(b1): bun_core::StackCheck — confirm crate; local stub for now
 #[derive(Default)]
 pub struct StackCheck(());
@@ -59,7 +60,7 @@ pub struct Parser<'a> {
     pub doc_ends_with_newline: bool,
 
     // Mark character map — bitset of characters that need special handling
-    pub mark_char_map: StaticBitSet<256>,
+    pub mark_char_map: MarkCharMap,
 
     // Dynamic arrays
     pub marks: Vec<Mark>,
@@ -177,7 +178,7 @@ impl<'a> Parser<'a> {
             link_nesting_level: 0,
             code_indent_offset: if flags.no_indented_code_blocks { u32::MAX } else { 4 },
             doc_ends_with_newline: size > 0 && helpers::is_newline(text[(size - 1) as usize]),
-            mark_char_map: StaticBitSet::<256>::init_empty(),
+            mark_char_map: MarkCharMap::init_empty(),
             marks: Vec::new(),
             containers: Vec::new(),
             block_bytes: Vec::new(),

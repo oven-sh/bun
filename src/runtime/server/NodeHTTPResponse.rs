@@ -623,9 +623,7 @@ impl NodeHTTPResponse {
         let arguments = callframe.arguments_undef::<3>();
 
         if self.is_requested_completed_or_ended() {
-            return global_object
-                .err_stream_already_finished("Stream is already ended")
-                .throw();
+            return err_throw(global_object, ErrorCode::ERR_STREAM_ALREADY_FINISHED, "Stream is already ended");
         }
 
         if self.flags.contains(Flags::SOCKET_CLOSED)
@@ -683,9 +681,7 @@ impl NodeHTTPResponse {
         }
 
         if state.is_http_status_called() {
-            return global_object
-                .err_http_headers_sent("Stream already started")
-                .throw();
+            return err_throw(global_object, ErrorCode::ERR_HTTP_HEADERS_SENT, "Stream already started");
         }
 
         // Validate status message does not contain invalid characters (defense-in-depth
@@ -694,9 +690,7 @@ impl NodeHTTPResponse {
         if status_message_slice.slice().len() > 0 {
             for &c in status_message_slice.slice() {
                 if c != b'\t' && (c < 0x20 || c == 0x7f) {
-                    return global_object
-                        .err_invalid_char("Invalid character in statusMessage")
-                        .throw();
+                    return err_throw(global_object, ErrorCode::ERR_INVALID_CHAR, "Invalid character in statusMessage");
                 }
             }
         }
@@ -1239,9 +1233,7 @@ impl NodeHTTPResponse {
         this_value: JSValue,
     ) -> JsResult<JSValue> {
         if self.is_requested_completed_or_ended() {
-            return global_object
-                .err_stream_write_after_end("Stream already ended")
-                .throw();
+            return err_throw(global_object, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "Stream already ended");
         }
 
         // Loosely mimicking this code:
@@ -1264,9 +1256,7 @@ impl NodeHTTPResponse {
         // instead of holding a borrow across &mut self method calls.
         let state = self.raw_response.as_ref().unwrap().state();
         if !state.is_response_pending() {
-            return global_object
-                .err_stream_write_after_end("Stream already ended")
-                .throw();
+            return err_throw(global_object, ErrorCode::ERR_STREAM_WRITE_AFTER_END, "Stream already ended");
         }
 
         let input_value: JSValue = if arguments.len() > 0 {
@@ -1373,14 +1363,10 @@ impl NodeHTTPResponse {
 
             if IS_END {
                 if bytes_written as u64 != content_length {
-                    return global_object
-                        .err_http_content_length_mismatch("Content-Length mismatch")
-                        .throw();
+                    return err_throw(global_object, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch");
                 }
             } else if bytes_written as u64 > content_length {
-                return global_object
-                    .err_http_content_length_mismatch("Content-Length mismatch")
-                    .throw();
+                return err_throw(global_object, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch");
             }
             self.bytes_written = bytes_written;
         } else {
@@ -1725,9 +1711,7 @@ impl NodeHTTPResponse {
             || self.flags.contains(Flags::SOCKET_CLOSED)
             || self.flags.contains(Flags::UPGRADED)
         {
-            return global_object
-                .err_stream_already_finished("Stream is already ended")
-                .throw();
+            return err_throw(global_object, ErrorCode::ERR_STREAM_ALREADY_FINISHED, "Stream is already ended");
         }
 
         let mut result: JSValue = JSValue::ZERO;

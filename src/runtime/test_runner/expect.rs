@@ -1549,7 +1549,7 @@ impl Expect {
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
@@ -1622,7 +1622,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
-        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1641,7 +1641,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();

@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::mem::{align_of, size_of};
 
 use bun_collections::multi_array_list::{MultiArrayElement, Slice as MalSlice};

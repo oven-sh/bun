@@ -13,6 +13,7 @@
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
 extern crate bun_string as bun_str;
+use bun_collections::VecExt;
 use bun_logger as logger;
 
 // ── B-2 un-gated sibling modules ──────────────────────────────────────────
@@ -1148,7 +1149,7 @@ pub fn parse_json(
 
                         map_data.mappings.names = names_list.into_boxed_slice();
                         map_data.mappings.names_buffer =
-                            bun_collections::BabyList::move_from_list(names_buffer);
+                            names_buffer;
                     }
                 }
             }

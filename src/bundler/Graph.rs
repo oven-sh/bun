@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_alloc::Arena as ThreadLocalArena;
-use bun_collections::{BabyList, MultiArrayList};
+use bun_collections::{VecExt, MultiArrayList};
 use bun_js_parser::ast::server_component_boundary;
 use bun_js_parser::BundledAst as JSAst;
 use bun_logger as logger;
@@ -94,9 +94,9 @@ pub struct Graph {
 #[derive(Default)]
 pub struct HtmlImports {
     /// Source index of the server file doing the import
-    pub server_source_indices: BabyList<IndexInt>,
+    pub server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
-    pub html_source_indices: BabyList<IndexInt>,
+    pub html_source_indices: Vec<IndexInt>,
 }
 
 #[derive(Default, bun_collections::MultiArrayElement)]
@@ -108,7 +108,7 @@ pub struct InputFile {
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator = bun.default_allocator`
     // here so deinit could free `source`/`secondary_path` with the right alloc.
     // In Rust the owned fields (Box/Vec) carry their allocator; field dropped.
-    pub additional_files: BabyList<AdditionalFile>,
+    pub additional_files: Vec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8]>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
@@ -150,11 +150,11 @@ impl InputFileListExt for bun_collections::multi_array_list::Slice<InputFile> {
     #[inline] fn items_side_effects_mut(&mut self) -> &mut [SideEffects] {
         unsafe { self.items_mut::<SideEffects>(InputFileField::side_effects) }
     }
-    #[inline] fn items_additional_files(&self) -> &[BabyList<AdditionalFile>] {
-        unsafe { self.items::<BabyList<AdditionalFile>>(InputFileField::additional_files) }
+    #[inline] fn items_additional_files(&self) -> &[Vec<AdditionalFile>] {
+        unsafe { self.items::<Vec<AdditionalFile>>(InputFileField::additional_files) }
     }
-    #[inline] fn items_additional_files_mut(&mut self) -> &mut [BabyList<AdditionalFile>] {
-        unsafe { self.items_mut::<BabyList<AdditionalFile>>(InputFileField::additional_files) }
+    #[inline] fn items_additional_files_mut(&mut self) -> &mut [Vec<AdditionalFile>] {
+        unsafe { self.items_mut::<Vec<AdditionalFile>>(InputFileField::additional_files) }
     }
     #[inline] fn items_unique_key_for_additional_file(&self) -> &[Box<[u8]>] {
         unsafe { self.items::<Box<[u8]>>(InputFileField::unique_key_for_additional_file) }

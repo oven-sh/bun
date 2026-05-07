@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 

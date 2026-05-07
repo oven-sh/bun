@@ -1,7 +1,7 @@
 use core::mem::offset_of;
 
-use bun_collections::{BabyList, HashMap, OffsetByteList};
-type ByteList = BabyList<u8>;
+use bun_collections::{VecExt, HashMap, OffsetByteList};
+type ByteList = Vec<u8>;
 use crate::jsc::JSValue;
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
@@ -483,7 +483,7 @@ impl MySQLConnection {
 
                         self.read_buffer.head = 0;
                         self.last_message_start = 0;
-                        self.read_buffer.byte_list.len = 0;
+                        self.read_buffer.byte_list.clear();
                         self.read_buffer
                             .write(&data[offset.get()..])
                             .unwrap_or_else(|_| panic!("failed to write to read buffer"));
@@ -528,7 +528,7 @@ impl MySQLConnection {
                             "Received short read: last_message_start: {}, head: {}, len: {}",
                             self.last_message_start,
                             self.read_buffer.head,
-                            self.read_buffer.byte_list.len
+                            self.read_buffer.byte_list.len()
                         );
                     }
 
@@ -1542,8 +1542,8 @@ impl ReaderContext for Reader {
         }
 
         let ucount: usize = usize::try_from(count).unwrap();
-        if rb.head as usize + ucount > rb.byte_list.len as usize {
-            rb.head = rb.byte_list.len;
+        if rb.head as usize + ucount > rb.byte_list.len() as usize {
+            rb.head = rb.byte_list.len() as u32;
             return;
         }
 

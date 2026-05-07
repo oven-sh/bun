@@ -30,6 +30,7 @@
 //! `self.parent` now take `(&mut Interpreter, this: NodeId)` and look their
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

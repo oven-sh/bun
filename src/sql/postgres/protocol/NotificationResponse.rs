@@ -12,7 +12,7 @@ pub struct NotificationResponse {
 }
 
 // PORT NOTE: Zig `deinit` only freed `channel`/`payload` via `clearAndFree(bun.default_allocator)`.
-// `ByteList` (= `BabyList<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
+// `ByteList` (= `Vec<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
 // is needed here.
 
 impl NotificationResponse {

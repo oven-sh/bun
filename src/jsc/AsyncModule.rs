@@ -10,6 +10,7 @@
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet (see PORT STATUS).
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 

@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_options_types::ImportRecord;
 use bun_string::strings;
 
@@ -31,7 +31,7 @@ impl Url {
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &BabyList<ImportRecord>) -> bool {
+    pub fn is_absolute(&self, import_records: &Vec<ImportRecord>) -> bool {
         let url: &[u8] = import_records.at(self.import_record_idx as usize).path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.

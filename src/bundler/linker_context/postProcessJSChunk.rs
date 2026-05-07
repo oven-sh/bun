@@ -16,6 +16,7 @@ use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
     ResolvedExports, ThreadPool,
 };
+use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
 use bun_core::perf;
 use bun_js_parser::ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
@@ -119,7 +120,7 @@ pub fn post_process_js_chunk(
         };
 
         let mut cross_chunk_import_records: Vec<ImportRecord> =
-            Vec::with_capacity(chunk.cross_chunk_imports.len as usize);
+            Vec::with_capacity(chunk.cross_chunk_imports.len() as usize);
         // PERF(port): was initCapacity catch unreachable
         for import_record in chunk.cross_chunk_imports.slice() {
             // PERF(port): was appendAssumeCapacity

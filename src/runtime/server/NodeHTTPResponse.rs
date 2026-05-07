@@ -5,7 +5,7 @@ use core::ptr;
 use bitflags::bitflags;
 use bstr::BStr;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_str::{ZigString, ZigStringSlice};
@@ -47,7 +47,7 @@ pub struct NodeHTTPResponse {
     /// We might've already read from the socket.
     /// So we need to buffer that data.
     /// This should be pretty uncommon though.
-    pub buffered_request_body_data_during_pause: BabyList<u8>,
+    pub buffered_request_body_data_during_pause: Vec<u8>,
     pub bytes_written: usize,
 
     pub upgrade_context: UpgradeCTX,
@@ -466,7 +466,7 @@ impl NodeHTTPResponse {
         _callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        if self.buffered_request_body_data_during_pause.cap > 0 {
+        if self.buffered_request_body_data_during_pause.capacity() > 0 {
             self.buffered_request_body_data_during_pause.clear_and_free();
         }
         if !self.flags.contains(Flags::REQUEST_HAS_COMPLETED) {
@@ -546,7 +546,7 @@ impl NodeHTTPResponse {
             BodyReadState::Pending => result |= 1 << 1,
             BodyReadState::Done => result |= 1 << 2,
         }
-        if self.buffered_request_body_data_during_pause.len > 0 {
+        if self.buffered_request_body_data_during_pause.len() > 0 {
             result |= 1 << 3;
         }
         if self.flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST) {
@@ -889,14 +889,14 @@ impl NodeHTTPResponse {
         scoped_log!(
             NodeHTTPResponse,
             "drainBufferedRequestBodyFromPause {}",
-            self.buffered_request_body_data_during_pause.len
+            self.buffered_request_body_data_during_pause.len()
         );
-        if self.buffered_request_body_data_during_pause.len > 0 {
+        if self.buffered_request_body_data_during_pause.len() > 0 {
             let result = JSValue::create_buffer(
                 global_object,
                 self.buffered_request_body_data_during_pause.slice_mut(),
             );
-            self.buffered_request_body_data_during_pause = BabyList::default();
+            self.buffered_request_body_data_during_pause = Vec::new();
             return Some(result);
         }
         None
@@ -1069,8 +1069,8 @@ impl NodeHTTPResponse {
         // right now the socket instead of emitting an error event it will reportUncaughtException
         // this makes the behavior aligned with current implementation, but not ideal
         let bytes: JSValue = 'brk: {
-            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.len > 0 {
-                let paused_len = self.buffered_request_body_data_during_pause.len as usize;
+            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.len() > 0 {
+                let paused_len = self.buffered_request_body_data_during_pause.len() as usize;
                 // PORT NOTE: `JSValue::create_buffer_from_length` is gated upstream;
                 // build the contiguous buffer locally then `ArrayBuffer::create_buffer`.
                 let mut combined: Vec<u8> = Vec::with_capacity(paused_len + chunk.len());
@@ -1830,7 +1830,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         poll_ref: jsc::Ref::default(),
         body_read_ref: jsc::Ref::default(),
         promise: StrongOptional::empty(),
-        buffered_request_body_data_during_pause: BabyList::default(),
+        buffered_request_body_data_during_pause: Vec::new(),
         bytes_written: 0,
         auto_flusher: AutoFlusher::default(),
     }));

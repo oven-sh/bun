@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::ArrayHashMap;
 
 pub use bun_js_parser::Index;

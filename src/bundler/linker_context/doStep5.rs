@@ -10,7 +10,7 @@ use core::mem::{offset_of, MaybeUninit};
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, BabyList, HashMap};
+use bun_collections::{ArrayHashMap, VecExt, HashMap};
 use bun_logger::Loc;
 use bun_string::strings;
 
@@ -89,7 +89,7 @@ impl LinkerContext<'_> {
                 let mut inner_count: usize = 0;
                 // Re-exporting multiple symbols with the same name causes an ambiguous
                 // export. These names cannot be used and should not end up in generated code.
-                if export_.potentially_ambiguous_export_star_refs.len > 0 {
+                if export_.potentially_ambiguous_export_star_refs.len() > 0 {
                     // SAFETY: see above.
                     let main_data = match unsafe { &(*imports_to_bind)[this_id as usize] }
                         .get(&export_.data.import_ref)
@@ -110,7 +110,7 @@ impl LinkerContext<'_> {
                         if main_data.import_ref != ambig_ref {
                             continue 'next_alias;
                         }
-                        inner_count += ambig.re_exports.len as usize;
+                        inner_count += ambig.re_exports.len() as usize;
                     }
                 }
 
@@ -171,12 +171,6 @@ impl LinkerContext<'_> {
         let our_imports_to_bind: &RefImportData = unsafe { &(*imports_to_bind)[id as usize] };
         // SAFETY: see above.
         'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
-            // Previously owned by `c.allocator()`, which is a `MimallocArena` (from
-            // `BundleV2.graph.heap`).
-            // PORT NOTE: Rust `BabyList::transfer_ownership` is a no-op stub (no
-            // per-allocator tracking yet); kept for spec parity.
-            part.dependencies.transfer_ownership();
-
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -284,11 +278,10 @@ impl LinkerContext<'_> {
                         *local.value_ptr = u32::try_from(part_index).unwrap();
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies
-                            .append(Dependency {
+                            .push(Dependency {
                                 source_index: js_ast::Index::source(source_index as usize),
                                 part_index: other_part_index,
-                            })
-                            .expect("unreachable");
+                            });
                     }
                 }
 
@@ -297,8 +290,7 @@ impl LinkerContext<'_> {
                 if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
                     existing
                         .local_parts_with_uses
-                        .append(u32::try_from(part_index).unwrap())
-                        .expect("OOM");
+                        .push(u32::try_from(part_index).unwrap());
                 }
             }
         }
@@ -369,7 +361,7 @@ impl LinkerContext<'_> {
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
         let mut ns_export_dependencies =
-            BabyList::<Dependency>::init_capacity(re_exports_count).expect("OOM");
+            Vec::<Dependency>::init_capacity(re_exports_count).expect("OOM");
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
@@ -509,7 +501,7 @@ impl LinkerContext<'_> {
         if !properties.is_empty() {
             export_ref = self.runtime_function(b"__export");
             // PORT NOTE: `bumpalo::Vec` → `BabyList` via the global heap;
-            // `G::PropertyList` is `BabyList<Property>` and currently has no
+            // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own. PERF(port).
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
             owned_props.extend(properties.drain(..));

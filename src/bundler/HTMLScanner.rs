@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use bun_collections::{BabyList, BoundedArray};
+use bun_collections::{VecExt, BoundedArray};
 use bun_logger::{Loc, Log, Range, Source};
 use bun_lolhtml_sys::lol_html as lol;
 use bun_options_types::{
@@ -19,7 +19,7 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 // (LIFETIMES.tsv had no row for this file; classified locally as BORROW_PARAM).
 pub struct HTMLScanner<'a> {
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: BabyList<ImportRecord>, // Zig: ImportRecord.List
+    pub import_records: Vec<ImportRecord>, // Zig: ImportRecord.List
     pub log: &'a mut Log,
     pub source: &'a Source,
 }
@@ -27,7 +27,7 @@ pub struct HTMLScanner<'a> {
 impl<'a> HTMLScanner<'a> {
     pub fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
         HTMLScanner {
-            import_records: BabyList::default(),
+            import_records: Vec::new(),
             log,
             source,
         }
@@ -86,7 +86,7 @@ impl<'a> HTMLScanner<'a> {
             flags: ImportRecordFlags::default(),
         };
 
-        self.import_records.append(record)?;
+        self.import_records.push(record);
         Ok(())
     }
 

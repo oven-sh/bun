@@ -1,5 +1,5 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use bun_logger::Log;
@@ -151,7 +151,7 @@ pub fn testing_impl(
         opts
     };
 
-    let mut import_records = BabyList::<ImportRecord>::default();
+    let mut import_records = Vec::<ImportRecord>::default();
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
         source.slice(),
@@ -385,7 +385,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let parser_options = ParserOptions::default(Some(&mut log));
 
-    let mut import_records = BabyList::<ImportRecord>::default();
+    let mut import_records = Vec::<ImportRecord>::default();
     match StyleAttribute::parse(
         alloc,
         source.slice(),

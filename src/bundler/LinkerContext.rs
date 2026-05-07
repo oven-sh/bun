@@ -5,7 +5,7 @@ use core::mem::offset_of;
 
 use bun_core::{self as bun, Output, Environment, FeatureFlags, Error as BunError};
 use bun_alloc::{Arena as Bump, AllocError};
-use bun_collections::{BabyList, MultiArrayList, AutoBitSet, ArrayHashMap, HashMap};
+use bun_collections::{VecExt, MultiArrayList, AutoBitSet, ArrayHashMap, HashMap};
 use bun_logger as Logger;
 use bun_logger::{Loc, Range, Data, Source, Log};
 use bun_string::{strings, MutableString, string_joiner::StringJoiner};
@@ -372,10 +372,10 @@ impl<'a> LinkerContext<'a> {
         self.resolver = core::ptr::from_mut(&mut transpiler.resolver).cast();
         self.cycle_detector = Vec::new();
 
-        // PORT NOTE: `reachable_files` is `BabyList<Index>`; clone the
+        // PORT NOTE: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena. PERF(port): Zig pointed at
         // the slice in-place; revisit once BabyList grows a borrowed-view ctor.
-        self.graph.reachable_files = BabyList::from_slice(reachable).map_err(BunError::from)?;
+        self.graph.reachable_files = reachable.to_vec();
 
         // SAFETY: parse_graph is valid backref just assigned above
         let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -516,7 +516,7 @@ impl<'a> LinkerContext<'a> {
         // we go through raw pointers and reborrow per use.
         let parse_graph: *mut Graph = self.parse_graph;
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
-        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len };
+        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
@@ -536,7 +536,7 @@ impl<'a> LinkerContext<'a> {
                     });
 
                 // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe { (*parse_graph).html_imports.html_source_indices.append(source_index) }.expect("OOM");
+                unsafe { (*parse_graph).html_imports.html_source_indices.push(source_index) };
 
                 // S.LazyExport is a call to __jsonParse.
                 // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer;
@@ -614,7 +614,7 @@ impl<'a> LinkerContext<'a> {
             // and reborrow per call to satisfy borrowck (`&mut self` is held
             // across the recursion).
             let parse_graph: *mut Graph = self.parse_graph;
-            let import_records_list: *const [BabyList<ImportRecord>] = self.graph.ast.items_import_records();
+            let import_records_list: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
             let tla_keywords: *const [Range] = unsafe { (*parse_graph).ast.items_top_level_await_keyword() };
             let tla_checks: *mut [TlaCheck] = unsafe { (*parse_graph).ast.items_tla_check_mut() };
             let input_files: *const [Source] = unsafe { (*parse_graph).input_files.items_source() };
@@ -712,8 +712,8 @@ impl<'a> LinkerContext<'a> {
         // Zig held them simultaneously. The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
-        let parts: *mut [BabyList<Part>] = self.graph.ast.items_parts_mut();
-        let import_records: *const [BabyList<ImportRecord>] = self.graph.ast.items_import_records();
+        let parts: *mut [Vec<Part>] = self.graph.ast.items_parts_mut();
+        let import_records: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
         let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         // SAFETY: parse_graph backref
         let side_effects: *const [SideEffects] = unsafe { (*self.parse_graph).input_files.items_side_effects() };
@@ -1500,7 +1500,7 @@ impl<'a> LinkerContext<'a> {
         input_files: &[Source],
         import_records: &[ImportRecord],
         meta_flags: &mut [crate::ungate_support::js_meta::Flags],
-        ast_import_records: &[BabyList<ImportRecord>],
+        ast_import_records: &[Vec<ImportRecord>],
     ) -> Result<TlaCheck, AllocError> {
         // PORT NOTE: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
         // calls that also mutate tla_checks. We re-index after each recursion.
@@ -1645,7 +1645,7 @@ impl<'a> LinkerContext<'a> {
             stmts.inside_wrapper_prefix.append_non_dependency(
                 Stmt::alloc(
                     S::Local {
-                        decls: BabyList::<G::Decl>::from_slice(&[G::Decl {
+                        decls: bun_collections::BabyList::<G::Decl>::from_slice(&[G::Decl {
                             binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                             value: Some(Expr::init(
                                 E::RequireString { import_record_index, ..Default::default() },
@@ -1674,7 +1674,7 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_non_dependency(
                     Stmt::alloc(
                         S::Local {
-                            decls: BabyList::<G::Decl>::from_slice(&[G::Decl {
+                            decls: bun_collections::BabyList::<G::Decl>::from_slice(&[G::Decl {
                                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                                 value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
                             }])?,
@@ -1896,7 +1896,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         let all_css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
-        let all_symbols: &[BabyList<Symbol>] = self.graph.ast.items_symbols();
+        let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
@@ -2112,8 +2112,8 @@ impl<'a> LinkerContext<'a> {
         // Spec (LinkerContext.zig:1579) passes `parts: []BabyList(Part)` and only
         // reads it. `&mut` here forced an aliased reborrow against the
         // `parts_in_file` slice below — borrowck conflict in un-gated code.
-        parts: &[BabyList<Part>],
-        import_records: &[BabyList<ImportRecord>],
+        parts: &[Vec<Part>],
+        import_records: &[Vec<ImportRecord>],
         file_entry_bits: &mut [AutoBitSet],
         css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
@@ -2206,8 +2206,8 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         source_index: crate::IndexInt,
         side_effects: &[SideEffects],
-        parts: &mut [BabyList<Part>],
-        import_records: &[BabyList<ImportRecord>],
+        parts: &mut [Vec<Part>],
+        import_records: &[Vec<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
         css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
@@ -2356,8 +2356,8 @@ impl<'a> LinkerContext<'a> {
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
         side_effects: &[SideEffects],
-        parts: &mut [BabyList<Part>],
-        import_records: &[BabyList<ImportRecord>],
+        parts: &mut [Vec<Part>],
+        import_records: &[Vec<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
         css_reprs: &[Option<*mut core::ffi::c_void>],
     ) {
@@ -2639,7 +2639,7 @@ impl<'a> LinkerContext<'a> {
 
                 // generate a dummy part that depends on the "__commonJS" symbol.
                 let dependencies: DependencyList = if self.options.output_format != Format::InternalBakeDev {
-                    let mut deps = BabyList::<Dependency>::init_capacity(common_js_parts.len()).expect("OOM");
+                    let mut deps = Vec::<Dependency>::init_capacity(common_js_parts.len()).expect("OOM");
                     for &part in common_js_parts {
                         deps.append_assume_capacity(Dependency {
                             part_index: part,
@@ -2731,7 +2731,7 @@ impl<'a> LinkerContext<'a> {
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
                 let mut dependencies =
-                    BabyList::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len()).expect("OOM");
+                    Vec::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len()).expect("OOM");
                 for &part in esm_parts {
                     dependencies.append_assume_capacity(Dependency { part_index: part, source_index: js_ast::Index::RUNTIME });
                 }
@@ -3322,7 +3322,7 @@ impl<'a> LinkerContext<'a> {
                     imports_to_bind.put(
                         import_ref,
                         crate::ImportData {
-                            re_exports: BabyList::<Dependency>::move_from_list(re_exports),
+                            re_exports: Vec::<Dependency>::move_from_list(re_exports),
                             data: ImportTracker {
                                 source_index: crate::Index::init(result.source_index),
                                 import_ref: result.r#ref,
@@ -3347,7 +3347,7 @@ impl<'a> LinkerContext<'a> {
                     imports_to_bind.put(
                         import_ref,
                         crate::ImportData {
-                            re_exports: BabyList::<Dependency>::move_from_list(re_exports),
+                            re_exports: Vec::<Dependency>::move_from_list(re_exports),
                             data: ImportTracker {
                                 source_index: crate::Index::init(result.source_index),
                                 import_ref: result.r#ref,
@@ -3460,7 +3460,7 @@ impl<'a> LinkerContext<'a> {
 
         self.graph.generate_symbol_import_and_use(source_index, part_index, module_ref, 1, crate::Index::init(source_index))?;
         let top_level = &mut self.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, BabyList::<u32>::from_slice(&[part_index])?)?;
+        top_level.put(r#ref, Vec::<u32>::from_slice(&[part_index])?)?;
 
         let resolved_exports = &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
         resolved_exports.put(alias, crate::ExportData {
@@ -3563,7 +3563,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 crate::chunk::QueryKind::HtmlImport => {
                     // SAFETY: parse_graph backref
-                    if index >= unsafe { (*self.parse_graph).html_imports.server_source_indices.len } as usize {
+                    if index >= unsafe { (*self.parse_graph).html_imports.server_source_indices.len() } as usize {
                         if cfg!(debug_assertions) {
                             Output::debug_warn(format_args!("Invalid output piece boundary"));
                         }
@@ -3585,7 +3585,7 @@ impl<'a> LinkerContext<'a> {
         pieces.push(OutputPiece::init(output, crate::chunk::Query::NONE));
 
         Ok(crate::chunk::IntermediateOutput::Pieces(
-            BabyList::<OutputPiece>::from_owned_slice(pieces.into_boxed_slice()),
+            Vec::<OutputPiece>::from_owned_slice(pieces.into_boxed_slice()),
         ))
     }
 }
@@ -3694,11 +3694,11 @@ impl InsideWrapperPrefix {
 
             let promise_all = Expr::init(E::Identifier { ref_: promise_all_ref, ..Default::default() }, Loc::EMPTY);
 
-            let mut items: BabyList<Expr> = BabyList::init_capacity(2)?;
+            let mut items: bun_collections::BabyList<Expr> = bun_collections::BabyList::init_capacity(2)?;
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
             // PERF(port): was assume_capacity
 
-            let mut args: BabyList<Expr> = BabyList::init_capacity(1)?;
+            let mut args: bun_collections::BabyList<Expr> = bun_collections::BabyList::init_capacity(1)?;
             args.append_assume_capacity(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY));
             // PERF(port): was assume_capacity
 

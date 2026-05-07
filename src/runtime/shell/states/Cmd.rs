@@ -3,6 +3,7 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use bun_collections::{VecExt, ByteVecExt};
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
 use crate::shell::interpreter::{log, ByteList, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};

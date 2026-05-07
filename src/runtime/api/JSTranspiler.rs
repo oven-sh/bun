@@ -1,5 +1,6 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
+use bun_collections::{VecExt, ByteVecExt};
 use bun_alloc::ArenaVecExt as _;
 use std::io::Write as _;
 

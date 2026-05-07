@@ -68,7 +68,7 @@ pub fn encode(destination: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, destination, false)
 }
 
-pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was BabyList<u8>
+pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was Vec<u8>
     // TODO(port): narrow error set (Zig was `!bun.ByteList`; OOM now aborts)
     let len = encode_len(source);
     let mut destination = vec![0u8; len];

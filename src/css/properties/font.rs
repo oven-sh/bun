@@ -33,7 +33,7 @@ use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_string::strings;
 
 type CssResult<T> = css::CssResult<T>;
@@ -719,12 +719,12 @@ impl LineHeight {
 }
 
 /// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-// PORT NOTE: no `#[derive(Clone, PartialEq)]` — `BabyList<T>` derives neither.
+// PORT NOTE: no `#[derive(Clone, PartialEq)]` — `Vec<T>` derives neither.
 // Zig's `eql`/`deepClone` were reflection-based (`css.implementEql` / `css.
 // implementDeepClone`); Phase B provides those via the generics blanket.
 pub struct Font {
     /// The font family.
-    pub family: BabyList<FontFamily>,
+    pub family: Vec<FontFamily>,
     /// The font size.
     pub size: FontSize,
     /// The font style.
@@ -825,7 +825,7 @@ impl Font {
         // list and packed it; route through `parse_comma_separated` + move.
         let family = input
             .parse_comma_separated(FontFamily::parse)
-            .map(BabyList::<FontFamily>::move_from_list)?;
+            .map(Vec::<FontFamily>::move_from_list)?;
 
         Ok(Font {
             family,
@@ -868,7 +868,7 @@ impl Font {
 
         dest.write_char(b' ')?;
 
-        let len = self.family.len as usize;
+        let len = self.family.len();
         for (idx, val) in self.family.slice_const().iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {
@@ -949,7 +949,7 @@ impl FontProperty {
 
 #[derive(Default)]
 pub struct FontHandler {
-    family: Option<BabyList<FontFamily>>,
+    family: Option<Vec<FontFamily>>,
     size: Option<FontSize>,
     style: Option<FontStyle>,
     weight: Option<FontWeight>,
@@ -1080,7 +1080,7 @@ impl FontHandler {
 
         self.has_any = false;
 
-        let mut family: Option<BabyList<FontFamily>> = self.family.take();
+        let mut family: Option<Vec<FontFamily>> = self.family.take();
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
             family = compatible_font_family(
                 family,
@@ -1096,13 +1096,13 @@ impl FontHandler {
         let variant_caps: Option<FontVariantCaps> = self.variant_caps.take();
 
         if let Some(f) = family.as_mut() {
-            if f.len > 1 {
+            if f.len() > 1 {
                 // Dedupe
                 // PERF(port): was std.heap.stackFallback(664, default_allocator) — profile in Phase B
                 let mut seen: FontFamilyHashMap<()> = Default::default();
 
                 let mut i: usize = 0;
-                while (i as u32) < f.len {
+                while i < f.len() {
                     // TODO(port): seen.getOrPut equivalent — using entry API
                     let key = f.at(i).clone();
                     if seen.contains_key(&key) {
@@ -1206,9 +1206,9 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
 // blocked_on: BabyList::insert allocator threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
-    _family: Option<BabyList<FontFamily>>,
+    _family: Option<Vec<FontFamily>>,
     is_supported: bool,
-) -> Option<BabyList<FontFamily>> {
+) -> Option<Vec<FontFamily>> {
     let mut family = _family;
     if is_supported {
         return family;
@@ -1224,9 +1224,7 @@ fn compatible_font_family(
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
                 // TODO(port): families.insert(allocator, idx, val) — BabyList::insert with arena
-                bun_core::handle_oom(
-                    families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8])),
-                );
+                families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
             }
         }
     }

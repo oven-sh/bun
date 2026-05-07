@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
 use crate::SmallList;

@@ -714,8 +714,8 @@ pub mod symbol {
     #[allow(unused_imports)]
     use super::{BabyList, Ref, Symbol};
 
-    pub type List = BabyList<Symbol>;
-    pub type NestedList = BabyList<List>;
+    pub type List = Vec<Symbol>;
+    pub type NestedList = Vec<List>;
 
     /// Two-level array indexed by `(source_index, inner_index)`. See comment on `Ref`.
     ///
@@ -737,11 +737,7 @@ pub mod symbol {
         }
 
         pub fn init_with_one_list(list: List) -> Map {
-            let mut nested = NestedList::default();
-            // PERF(port): Zig used `fromBorrowedSliceDangerous((&list)[0..1])` (no alloc).
-            // BabyList::append owns; revisit if this shows up in profiles.
-            let _ = nested.append(list);
-            Map { symbols_for_source: UnsafeCell::new(nested) }
+            Map { symbols_for_source: UnsafeCell::new(vec![list]) }
         }
 
         /// Raw-pointer lookup. Never materializes a `&mut` along the path so
@@ -758,10 +754,10 @@ pub mod symbol {
             // the BabyList raw `ptr` fields directly (no intermediate `&mut`).
             unsafe {
                 let nested: *mut NestedList = self.symbols_for_source.get();
-                debug_assert!(src < (*nested).len as usize);
-                let list: *mut List = (*nested).ptr.as_ptr().add(src);
-                debug_assert!(inner < (*list).len as usize);
-                Some((*list).ptr.as_ptr().add(inner))
+                debug_assert!(src < (*nested).len());
+                let list: *mut List = (*nested).as_mut_ptr().add(src);
+                debug_assert!(inner < (*list).len());
+                Some((*list).as_mut_ptr().add(inner))
             }
         }
 
@@ -781,11 +777,7 @@ pub mod symbol {
             }
             // SAFETY: shared read of the table; no concurrent mutation.
             let nested = unsafe { &*self.symbols_for_source.get() };
-            Some(
-                nested
-                    .at(r.source_index() as usize)
-                    .at(r.inner_index() as usize),
-            )
+            Some(&nested[r.source_index() as usize][r.inner_index() as usize])
         }
 
         /// Like `get`, but follows one `link` hop. Returns `*mut Symbol` for the
@@ -874,12 +866,12 @@ pub mod symbol {
             // raw-pointer-only, so the inner `sym` pointer stays valid across
             // the recursive call.
             let nested: *mut NestedList = self.symbols_for_source.get();
-            let outer_len = unsafe { (*nested).len as usize };
+            let outer_len = unsafe { (*nested).len() };
             for i in 0..outer_len {
-                let list: *mut List = unsafe { (*nested).ptr.as_ptr().add(i) };
-                let inner_len = unsafe { (*list).len as usize };
+                let list: *mut List = unsafe { (*nested).as_mut_ptr().add(i) };
+                let inner_len = unsafe { (*list).len() };
                 for j in 0..inner_len {
-                    let sym: *mut Symbol = unsafe { (*list).ptr.as_ptr().add(j) };
+                    let sym: *mut Symbol = unsafe { (*list).as_mut_ptr().add(j) };
                     unsafe {
                         if !(*sym).has_link() {
                             continue;

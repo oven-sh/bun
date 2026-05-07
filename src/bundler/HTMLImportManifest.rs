@@ -35,6 +35,7 @@
 
 use core::fmt;
 
+use bun_collections::VecExt;
 use bun_collections::AutoBitSet;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
@@ -244,7 +245,7 @@ pub fn write<W: Write + ?Sized>(
     // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
     // When there's only one HTML import, all browser chunks belong to that manifest.
     // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
-    let has_single_html_import = graph.html_imports.html_source_indices.len == 1;
+    let has_single_html_import = graph.html_imports.html_source_indices.len() == 1;
     for ch in chunks.iter() {
         if ch.entry_bits().has_intersection(&entry_point_bits)
             || (has_single_html_import

@@ -19,6 +19,8 @@
 use core::fmt;
 
 use bun_collections::{ArrayHashMap, BabyList, MultiArrayList, StringHashMap};
+use bun_collections::VecExt;
+pub use bun_collections::VecExt as _VecExtReexport;
 use bun_core::Output;
 use bun_logger as logger;
 
@@ -1091,7 +1093,7 @@ impl Default for Dependency {
     }
 }
 
-pub type DependencyList = BabyList<Dependency>;
+pub type DependencyList = Vec<Dependency>;
 
 pub type ExprList = Vec<Expr>;
 pub type StmtList = Vec<Stmt>;
@@ -1148,8 +1150,8 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = BabyList<u32>;
-pub type PartList = BabyList<Part>;
+pub type PartImportRecordIndices = Vec<u32>;
+pub type PartList = Vec<Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
@@ -1250,7 +1252,7 @@ impl StmtOrExpr {
 
 pub struct NamedImport {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: BabyList<u32>,
+    pub local_parts_with_uses: Vec<u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:

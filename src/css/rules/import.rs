@@ -6,7 +6,7 @@ use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_options_types::ImportRecord;
 
 /// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
@@ -122,7 +122,7 @@ impl ImportConditions {
     pub fn clone_with_import_records(
         &self,
         allocator: &Arena,
-        import_records: &mut BabyList<ImportRecord>,
+        import_records: &mut Vec<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
             layer: self.layer.as_ref().map(|layer| Layer {
@@ -242,7 +242,7 @@ impl ImportRule {
     pub fn conditions_with_import_records(
         &self,
         allocator: &Arena,
-        import_records: &mut BabyList<ImportRecord>,
+        import_records: &mut Vec<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
             layer: self.layer.as_ref().map(|layer| Layer {
@@ -357,7 +357,7 @@ const _: () = {
 
 // silence unused-import warnings on the gated bodies' deps
 #[allow(unused_imports)]
-use {Arena as _Arena, BabyList as _BabyList, ImportRecord as _ImportRecord};
+use {Arena as _Arena, ImportRecord as _ImportRecord};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -4,7 +4,7 @@ use crate::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger, CSSIntegerF
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_string::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
@@ -23,36 +23,36 @@ pub enum TrackSizing {
 /// See [TrackSizing](TrackSizing).
 pub struct TrackList {
     /// A list of line names.
-    pub line_names: BabyList<CustomIdentList>,
+    pub line_names: Vec<CustomIdentList>,
     /// A list of grid track items.
-    pub items: BabyList<TrackListItem>,
+    pub items: Vec<TrackListItem>,
 }
 
 impl TrackList {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        let mut line_names = BabyList::<CustomIdentList>::default();
-        let mut items = BabyList::<TrackListItem>::default();
+        let mut line_names = Vec::<CustomIdentList>::default();
+        let mut items = Vec::<TrackListItem>::default();
 
         loop {
             let line_name = input
                 .try_parse(parse_line_names)
                 .ok()
                 .unwrap_or_else(CustomIdentList::default);
-            line_names.append(line_name).unwrap();
+            line_names.push(line_name);
 
             if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
                 // TODO: error handling
                 // TODO(port): Zig original omits allocator arg here (`items.append(.{...})`); mirroring with input.allocator()
-                items.append(TrackListItem::TrackSize(track_size)).unwrap();
+                items.push(TrackListItem::TrackSize(track_size));
             } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
                 // TODO: error handling
-                items.append(TrackListItem::TrackRepeat(repeat)).unwrap();
+                items.push(TrackListItem::TrackRepeat(repeat));
             } else {
                 break;
             }
         }
 
-        if items.len == 0 {
+        if items.is_empty() {
             return Err(input.new_custom_error(css::ParserError::invalid_declaration));
         }
 
@@ -68,7 +68,7 @@ impl TrackList {
                 serialize_line_names(names.slice(), dest)?;
             }
 
-            if items_index < self.items.len {
+            if items_index < self.items.len() {
                 let item = self.items.at(items_index as usize);
                 items_index += 1;
 
@@ -297,9 +297,9 @@ pub struct TrackRepeat {
     /// The repeat count.
     pub count: RepeatCount,
     /// The line names to repeat.
-    pub line_names: BabyList<CustomIdentList>,
+    pub line_names: Vec<CustomIdentList>,
     /// The track sizes to repeat.
-    pub track_sizes: BabyList<TrackSize>,
+    pub track_sizes: Vec<TrackSize>,
 }
 
 impl TrackRepeat {
@@ -314,19 +314,19 @@ impl TrackRepeat {
 
             // TODO: this code will not compile if used
             // TODO(port): Zig calls `bun.BabyList(T).init(i.allocator)` — using default + push(alloc, ..) here
-            let mut line_names = BabyList::<CustomIdentList>::default();
-            let mut track_sizes = BabyList::<TrackSize>::default();
+            let mut line_names = Vec::<CustomIdentList>::default();
+            let mut track_sizes = Vec::<TrackSize>::default();
 
             loop {
                 let line_name = i
                     .try_parse(parse_line_names)
                     .unwrap_or_else(|_| CustomIdentList::default());
-                line_names.append(line_name).unwrap();
+                line_names.push(line_name);
 
                 // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
                 if let Some(track_size) = i.try_parse(TrackSize::parse).ok() {
                     // TODO: error handling
-                    track_sizes.append(track_size).unwrap();
+                    track_sizes.push(track_size);
                 } else {
                     break;
                 }
@@ -352,7 +352,7 @@ impl TrackRepeat {
                 serialize_line_names(names.slice(), dest)?;
             }
 
-            if track_sizes_index < self.track_sizes.len {
+            if track_sizes_index < self.track_sizes.len() {
                 let size = self.track_sizes.at(track_sizes_index as usize);
                 track_sizes_index += 1;
 

@@ -8,7 +8,7 @@ use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use bun_collections::{ArrayHashMap, BabyList, MapEntry, StaticBitSet};
+use bun_collections::{ArrayHashMap, VecExt, MapEntry, StaticBitSet};
 use bun_logger::{self as logger, Log};
 use bun_string::strings;
 
@@ -767,8 +767,8 @@ pub trait CustomAtRuleParser {
     /// when `P == BundlerAtRuleParser` (css_parser.zig:3324); Rust can't
     /// type-specialize at the call site, so this is a trait hook with a
     /// default no-op for parsers that don't track layers.
-    fn take_layer_names(_this: &mut Self) -> BabyList<LayerName> {
-        BabyList::default()
+    fn take_layer_names(_this: &mut Self) -> Vec<LayerName> {
+        Vec::new()
     }
 }
 
@@ -851,8 +851,8 @@ pub struct BundlerAtRuleParser<'a> {
     /// SharedRW provenance (see `parse_bundler`); each materialises a
     /// short-lived `&mut` only at the point of use, so accesses interleave
     /// soundly under Stacked Borrows.
-    pub import_records: *mut BabyList<ImportRecord>,
-    pub layer_names: BabyList<LayerName>,
+    pub import_records: *mut Vec<ImportRecord>,
+    pub layer_names: Vec<LayerName>,
     pub options: &'a ParserOptions<'a>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
@@ -903,9 +903,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         // runs synchronously between parser accesses, so the fresh `&mut`
         // created here is the only live reference for its scope.
         let import_records = unsafe { &mut *this.import_records };
-        let import_record_index = import_records.len;
+        let import_record_index = import_records.len() as u32;
         import_rule.import_record_idx = import_record_index;
-        bun_core::handle_oom(import_records.append(ImportRecord {
+        import_records.push(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
             range: logger::Range {
@@ -920,7 +920,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             module_id: 0,
             original_path: b"",
             flags: Default::default(),
-        }));
+        });
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
@@ -954,7 +954,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.enclosing_layer.v.append_slice(name.v.slice());
     }
 
-    fn take_layer_names(this: &mut Self) -> BabyList<LayerName> {
+    fn take_layer_names(this: &mut Self) -> Vec<LayerName> {
         core::mem::take(&mut this.layer_names)
     }
 
@@ -1282,7 +1282,7 @@ impl<'a> ComposesCtx for NestedComposesCtx<'a> {
     fn record_composes(&mut self, composes: &mut Composes) {
         for ref_ in self.composes_refs.slice() {
             let entry = self.composes.entry(*ref_).or_insert_with(ComposesEntry::default);
-            let _ = entry.composes.append(composes.deep_clone(self.allocator));
+            entry.composes.push(composes.deep_clone(self.allocator));
         }
     }
 }
@@ -2157,7 +2157,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
              {
             let len = input.position() - location;
             let mut usage = PropertyBitset::init_empty();
-            let mut custom_properties: BabyList<&'static [u8]> = BabyList::default();
+            let mut custom_properties: Vec<&'static [u8]> = Vec::new();
             fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
             let custom_properties_slice = custom_properties.slice();
@@ -2382,7 +2382,7 @@ pub type ComposesMap = ArrayHashMap<bun_logger::Ref, ComposesEntry>;
 
 #[derive(Default)]
 pub struct ComposesEntry {
-    pub composes: BabyList<Composes>,
+    pub composes: Vec<Composes>,
 }
 
 pub struct PropertyUsage {
@@ -2417,7 +2417,7 @@ pub type PropertyBitset = StaticBitSet<{ 1024 }>;
 pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,
     block: &DeclarationBlock<'_>,
-    custom_properties: &mut BabyList<&'static [u8]>,
+    custom_properties: &mut Vec<&'static [u8]>,
 ) {
     for prop in block.declarations.iter() {
         let tag = match prop {
@@ -2427,7 +2427,7 @@ pub fn fill_property_bit_set(
                 // callers can move `block` afterwards. Re-thread once
                 // `PropertyUsage` carries the arena lifetime (TODO at field def).
                 let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
-                let _ = custom_properties.append(name);
+                custom_properties.push(name);
                 continue;
             }
             Property::Unparsed(u) => u.property_id.tag(),
@@ -2442,7 +2442,7 @@ pub fn fill_property_bit_set(
             Property::Custom(c) => {
                 // SAFETY: see above.
                 let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
-                let _ = custom_properties.append(name);
+                custom_properties.push(name);
                 continue;
             }
             Property::Unparsed(u) => u.property_id.tag(),
@@ -2475,7 +2475,7 @@ pub struct StyleSheet<AtRule> {
     // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
     // TODO(port): conditional field; for now Option<Box<_>> always.
     pub tailwind: Option<Box<BundlerTailwindState>>,
-    pub layer_names: BabyList<LayerName>,
+    pub layer_names: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2495,7 +2495,7 @@ impl<AtRule> StyleSheet<AtRule> {
             license_comments: Vec::new(),
             options: ParserOptions::default(None),
             tailwind: None,
-            layer_names: BabyList::default(),
+            layer_names: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2696,7 +2696,7 @@ impl<AtRule> StyleSheet<AtRule> {
         allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
-        import_records: Option<&mut BabyList<ImportRecord>>,
+        import_records: Option<&mut Vec<ImportRecord>>,
         source_index: SrcIndex,
     ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
         // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
@@ -2723,7 +2723,7 @@ impl<AtRule> StyleSheet<AtRule> {
         code: &[u8],
         options: ParserOptions<'static>,
         at_rule_parser: &mut P,
-        import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
+        import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
         // TODO(port): 'bump lifetime threading — every arena-backed slice the
@@ -2822,7 +2822,7 @@ impl<AtRule> StyleSheet<AtRule> {
         if !cfg!(debug_assertions) {
             return;
         }
-        let _layer_names_field_len = self.layer_names.len;
+        let _layer_names_field_len = self.layer_names.len();
         let mut actual_layer_rules_len: usize = 0;
         for rule in self.rules.v.iter() {
             if matches!(rule, CssRule::LayerBlock(_)) {
@@ -2862,7 +2862,7 @@ impl<AtRule> StyleSheet<AtRule> {
             license_comments: Vec::new(),
             options,
             tailwind: None,
-            layer_names: BabyList::default(),
+            layer_names: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2876,7 +2876,7 @@ impl<AtRule> StyleSheet<AtRule> {
     pub fn pluck_imports(
         &mut self,
         out: &mut CssRuleList<AtRule>,
-        new_import_records: &mut BabyList<ImportRecord>,
+        new_import_records: &mut Vec<ImportRecord>,
     ) {
         // PORT NOTE: the Zig fn takes `*const @This()` but writes
         // `rule.* = .ignored;` through it (Zig has no const-transitivity).
@@ -2920,9 +2920,9 @@ impl<AtRule> StyleSheet<AtRule> {
                     if !saw_imports {
                         saw_imports = true;
                     }
-                    let import_record_idx = new_import_records.len;
+                    let import_record_idx = new_import_records.len() as u32;
                     import_rule.import_record_idx = import_record_idx;
-                    bun_core::handle_oom(new_import_records.append(ImportRecord {
+                    new_import_records.push(ImportRecord {
                         path: ast::fs::path_init(import_rule.url),
                         kind: if import_rule.supports.is_some() {
                             ImportKind::AtConditional
@@ -2938,7 +2938,7 @@ impl<AtRule> StyleSheet<AtRule> {
                         module_id: 0,
                         original_path: b"",
                         flags: Default::default(),
-                    }));
+                    });
                     // PORT NOTE: reshaped for borrowck — Zig did
                     // `out.v.appendAssumeCapacity(rule.*)` (bitwise copy) then
                     // `rule.* = .ignored`. Rust moves the rule out via
@@ -2966,7 +2966,7 @@ impl StyleAttribute {
         allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions,
-        import_records: &mut BabyList<ImportRecord>,
+        import_records: &mut Vec<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<StyleAttribute, Err<ParserError>> {
         // TODO(port): 'bump lifetime threading — `DeclarationBlock<'static>` in
@@ -3041,7 +3041,7 @@ impl StyleSheet<BundlerAtRule> {
         allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
-        import_records: &mut BabyList<ImportRecord>,
+        import_records: &mut Vec<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
         // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
@@ -3067,7 +3067,7 @@ impl StyleSheet<BundlerAtRule> {
             allocator,
             import_records: import_records_ptr.as_ptr(),
             options: &options,
-            layer_names: BabyList::default(),
+            layer_names: Vec::new(),
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
@@ -3353,7 +3353,7 @@ pub struct Parser<'a> {
     /// be invalidated under Stacked Borrows the moment `on_import_rule`
     /// derives its own `&mut` from the sibling raw pointer. Each access site
     /// materialises a fresh short-lived `&mut` instead.
-    pub import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
+    pub import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
     pub extra: Option<&'a mut ParserExtra>,
 }
 
@@ -3388,12 +3388,12 @@ impl<'a> Parser<'a> {
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
-                let inner_index = symbols.len;
-                bun_core::handle_oom(symbols.append(bun_logger::Symbol {
+                let inner_index = symbols.len() as u32;
+                symbols.push(bun_logger::Symbol {
                     kind: bun_logger::SymbolKind::LocalCss,
                     original_name: name_static,
                     ..Default::default()
-                }));
+                });
                 v.insert(LocalEntry { ref_: CssRef::new(inner_index, tag), loc })
             }
             MapEntry::Occupied(o) => {
@@ -3421,13 +3421,13 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc — sole live `&mut`
             // for this scope; provenance shared only with raw-pointer aliases.
             let import_records = unsafe { &mut *ptr.as_ptr() };
-            let idx = import_records.len;
+            let idx = import_records.len() as u32;
             // SAFETY: `url` borrows the parser source / arena which outlives
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
             // the Zig original stores the same borrowed slice; Phase-A
             // erases the lifetime to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { &*(url as *const [u8]) };
-            bun_core::handle_oom(import_records.append(ImportRecord {
+            import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
                 range: logger::Range {
@@ -3441,7 +3441,7 @@ impl<'a> Parser<'a> {
                 module_id: 0,
                 original_path: b"",
                 flags: Default::default(),
-            }));
+            });
             Ok(idx)
         } else {
             // SAFETY: same lifetime erasure as above; the error token is only
@@ -3463,7 +3463,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<core::ptr::NonNull<BabyList<ImportRecord>>>,
+        import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {
@@ -3972,7 +3972,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| unsafe { (*ptr.as_ptr()).len })
+                .map(|ptr| unsafe { (*ptr.as_ptr()).len() as u32 })
                 .unwrap_or(0),
         }
     }
@@ -6389,7 +6389,7 @@ pub mod parse_utility {
         parse_one: fn(&mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
         // I hope this is okay
-        let mut import_records = BabyList::<ImportRecord>::default();
+        let mut import_records = Vec::<ImportRecord>::default();
         let mut i = ParserInput::new(input, allocator);
         let mut parser = Parser::new(
             &mut i,
@@ -6448,13 +6448,13 @@ pub mod to_css {
     }
 
     pub fn from_baby_list<T: generic::ToCss>(
-        this: &BabyList<T>,
+        this: &Vec<T>,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
-        let len = this.len;
+        let len = this.len();
         for (idx, val) in this.slice_const().iter().enumerate() {
             val.to_css(dest)?;
-            if (idx as u32) < len - 1 {
+            if idx + 1 < len {
                 dest.delim(b',', false)?;
             }
         }

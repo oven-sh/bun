@@ -8,7 +8,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
+use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
 use bun_core::ThreadLock;
 use bun_logger as Logger;
 
@@ -100,7 +100,7 @@ pub struct BundleV2<'a> {
 
     /// There is a race condition where an onResolve plugin may schedule a task
     /// on the bundle thread before its parsing task completes.
-    pub resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, BabyList<PendingImport>>,
+    pub resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, Vec<PendingImport>>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub free_list: Vec<Box<[u8]>>,
@@ -291,7 +291,7 @@ use bun_core::{self as bun, Environment, FeatureFlags, Output, Error};
 use crate::transpiler::Transpiler;
 use crate::ungate_support::bun_str::strings;
 use bun_alloc::{Arena as ThreadLocalArena, AllocError};
-use bun_collections::{BabyList, MultiArrayList, ArrayHashMap, StringHashMap, StringArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged};
+use bun_collections::{VecExt, MultiArrayList, ArrayHashMap, StringHashMap, StringArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged};
 use bun_logger as Logger;
 use bun_js_parser::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
 use crate::Index;
@@ -1906,7 +1906,7 @@ impl<'a> ReachableFileVisitor<'a> {
         // when there are no import records, v index will be invalid
         if (import_record_list_id.get() as usize) < self.all_import_records.len() {
             // PORT NOTE: reshaped for borrowck — split borrow of all_import_records
-            let import_records_len = self.all_import_records[import_record_list_id.get() as usize].len as usize;
+            let import_records_len = self.all_import_records[import_record_list_id.get() as usize].len() as usize;
             for ir_idx in 0..import_records_len {
                 let import_record = &mut self.all_import_records[import_record_list_id.get() as usize].slice_mut()[ir_idx];
                 let mut other_source = import_record.source_index;
@@ -2097,10 +2097,10 @@ impl<'a> BundleV2<'a> {
         let input_files_len = input_files_slice.len();
         // SAFETY: SoA columns are disjoint; the slab does not resize for the
         // duration of this loop and no other `&mut` to these columns exists.
-        let additional_files: &mut [BabyList<crate::AdditionalFile>] = unsafe {
+        let additional_files: &mut [Vec<crate::AdditionalFile>] = unsafe {
             core::slice::from_raw_parts_mut(
                 input_files_slice
-                    .items_raw::<BabyList<crate::AdditionalFile>>(crate::Graph::InputFileField::additional_files),
+                    .items_raw::<Vec<crate::AdditionalFile>>(crate::Graph::InputFileField::additional_files),
                 input_files_len,
             )
         };
@@ -2332,7 +2332,7 @@ impl<'a> BundleV2<'a> {
                             ).expect("oom");
 
                             // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                            self.graph.ast.items_parts_mut()[import_record.importer_source_index as usize].len = 0;
+                            unsafe { self.graph.ast.items_parts_mut()[import_record.importer_source_index as usize].set_len((0) as usize) };
                         }
                     }
 
@@ -2555,8 +2555,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins as entry points
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
+                let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -2635,8 +2635,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins as entry points
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
+                let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -3247,8 +3247,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins
         if !self.enqueue_on_load_plugin_if_needed(task) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
+                let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -3329,8 +3329,8 @@ impl<'a> BundleV2<'a> {
         // Handle onLoad plugins
         if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
             if loader.should_copy_for_bundling() {
-                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get())).expect("oom");
+                let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
@@ -3708,7 +3708,7 @@ impl<'a> BundleV2<'a> {
                 let index = reachable_source.get() as usize;
                 let key: &[u8] = &unique_key_for_additional_files[index];
                 if !key.is_empty() {
-                    let mut template: options::PathTemplate = if self.graph.html_imports.server_source_indices.len != 0
+                    let mut template: options::PathTemplate = if self.graph.html_imports.server_source_indices.len() != 0
                         && self.transpiler.options.asset_naming.is_empty()
                     {
                         options::PathTemplate::ASSET_WITH_TARGET.into()
@@ -3773,7 +3773,7 @@ impl<'a> BundleV2<'a> {
                         is_executable: false,
                         ..Default::default()
                     }));
-                    additional_files[index].append(crate::AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
+                    additional_files[index].push(crate::AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32));
                 }
             }
 
@@ -3861,8 +3861,8 @@ impl<'a> BundleV2<'a> {
                 let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                 if should_copy_for_bundling {
                     let source_index = load.source_index;
-                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                    let _ = additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get()));
+                    let additional_files: &mut Vec<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                    let _ = additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
                     this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     this.graph.estimated_file_loader_count += 1;
                 }
@@ -4150,8 +4150,8 @@ impl<'a> BundleV2<'a> {
 
                         if !this.enqueue_on_load_plugin_if_needed(task) {
                             if loader.should_copy_for_bundling() {
-                                let additional_files: &mut BabyList<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
+                                let additional_files: &mut Vec<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
+                                additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
                                 this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -4178,14 +4178,14 @@ impl<'a> BundleV2<'a> {
                         let _ = this.graph.entry_point_original_names.put(source_index.get(), &resolve.import_record.specifier);
                     } else {
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()[resolve.import_record.importer_source_index as usize];
-                        if source_import_records.len <= resolve.import_record.import_record_index {
+                        if source_import_records.len() as u32 <= resolve.import_record.import_record_index {
                             let entry = this.resolve_tasks_waiting_for_import_source_index.get_or_put(
                                 resolve.import_record.importer_source_index,
                             ).expect("oom");
                             if !entry.found_existing {
-                                *entry.value_ptr = BabyList::default();
+                                *entry.value_ptr = Vec::new();
                             }
-                            let _ = entry.value_ptr.append(PendingImport {
+                            let _ = entry.value_ptr.push(PendingImport {
                                 to_source_index: source_index,
                                 import_record_index: resolve.import_record.import_record_index,
                             });
@@ -4501,7 +4501,7 @@ impl<'a> BundleV2<'a> {
                 // These files are filtered out via the lack of any parts.
                 //
                 // Actual empty files will contain a part exporting an empty object.
-                if part_list.len != 0 {
+                if part_list.len() != 0 {
                     if maybe_css.is_some() {
                         // CSS has restrictions on what files can be imported.
                         // This means the file can become an error after
@@ -4555,7 +4555,7 @@ impl<'a> BundleV2<'a> {
                             // SAFETY: `source_index < ast.len()` (validated above); read
                             // via the raw column ptr so we don't reborrow `asts.parts()`
                             // while `import_records` (a sibling column) is held `&mut`.
-                            if unsafe { (*parts_col.add(record.source_index.get() as usize)).len } == 0 {
+                            if unsafe { (*parts_col.add(record.source_index.get() as usize)).len() } == 0 {
                                 record.source_index = Index::INVALID;
                                 continue;
                             }
@@ -4636,7 +4636,7 @@ impl<'a> BundleV2<'a> {
         // Quoted contents will be default-allocated
         if cfg!(debug_assertions) {
             for idx in js_reachable_files {
-                debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len != 0); // will create a memory leak
+                debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
             }
         }
         // SAFETY: Index is repr(transparent) over u32
@@ -4653,7 +4653,7 @@ impl<'a> BundleV2<'a> {
             *part_range = crate::ungate_support::PartRange {
                 source_index: *source_index,
                 part_index_begin: 0,
-                part_index_end: parts[source_index.get() as usize].len,
+                part_index_end: parts[source_index.get() as usize].len() as u32,
             };
         }
 
@@ -4684,8 +4684,8 @@ impl<'a> BundleV2<'a> {
             #[cfg(feature = "css")]
             let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &self.graph.heap, &[*entry_point]);
             #[cfg(not(feature = "css"))]
-            let order: BabyList<chunk::CssImportOrder> = BabyList::default();
-            let order_len = order.len as usize;
+            let order: Vec<chunk::CssImportOrder> = Vec::new();
+            let order_len = order.len() as usize;
             chunks.push(Chunk {
                 entry_point: chunk::EntryPoint::new(entry_point.get(), entry_point.get(), false, false),
                 content: chunk::Content::Css(chunk::CssChunk {
@@ -5679,8 +5679,8 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(new_task.source_index.get())).expect("oom");
+                    let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    additional_files.push(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
                     self.graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
@@ -5690,8 +5690,8 @@ impl<'a> BundleV2<'a> {
                 if loader.should_copy_for_bundling() {
                     // SAFETY: value_ptr is valid (see above).
                     let existing_idx = unsafe { *value_ptr };
-                    let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.append(crate::AdditionalFile::SourceIndex(existing_idx)).expect("oom");
+                    let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
+                    additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -5799,7 +5799,7 @@ impl<'a> BundleV2<'a> {
                     .alloc_str(&format!(
                         "{:x}H{:08}",
                         self.unique_key,
-                        self.graph.html_imports.server_source_indices.len,
+                        self.graph.html_imports.server_source_indices.len(),
                     ))
                     .as_bytes(),
             )
@@ -5837,7 +5837,7 @@ impl<'a> BundleV2<'a> {
 
         import_record.source_index = Index::init(fake_source_index.0);
         self.path_to_source_index_map(target).put(path_text.into(), fake_source_index.0);
-        self.graph.html_imports.server_source_indices.append(fake_source_index.0);
+        self.graph.html_imports.server_source_indices.push(fake_source_index.0);
         self.ensure_client_transpiler();
         Ok(())
     }
@@ -5978,7 +5978,7 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
                     result_source_index,
                     bstr::BStr::new(source_path_text),
-                    result.ast.import_records.len as usize,
+                    result.ast.import_records.len() as usize,
                     result.ast.named_exports.count());
 
                 if result.ast.css.is_some() {
@@ -6006,7 +6006,7 @@ impl<'a> BundleV2<'a> {
                 // `input_files.items_flags_mut()` (disjoint columns).
                 let result_ast_target = result.ast.target;
                 for star_record_idx in result.ast.export_star_import_records.iter() {
-                    if (*star_record_idx as usize) < import_records.len as usize {
+                    if (*star_record_idx as usize) < import_records.len() as usize {
                         let star_ir = &import_records.slice()[*star_record_idx as usize];
                         let resolved_index = if star_ir.source_index.is_valid() {
                             star_ir.source_index.get()
@@ -6196,7 +6196,7 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if cfg!(debug_assertions) && this.dev_server.is_some() {
-                    debug_assert!(this.graph.ast.items_parts()[err.source_index.get() as usize].len == 0);
+                    debug_assert!(this.graph.ast.items_parts()[err.source_index.get() as usize].len() == 0);
                 }
             }
         }
@@ -6243,7 +6243,7 @@ pub struct ImportData {
     // then this may not be the result of a single chain but may instead form
     // a diamond shape if this same symbol was re-exported multiple times from
     // different files.
-    pub re_exports: BabyList<Dependency>,
+    pub re_exports: Vec<Dependency>,
 
     pub data: ImportTracker,
 }
@@ -6271,7 +6271,7 @@ pub struct ExportData {
     // In this case "entry.js" should have two exports "x" and "y", neither of
     // which are ambiguous. To handle this case, ambiguity resolution must be
     // deferred until import resolution time. That is done using this array.
-    pub potentially_ambiguous_export_star_refs: BabyList<ImportData>,
+    pub potentially_ambiguous_export_star_refs: Vec<ImportData>,
 
     // This is the file that the named export above came from. This will be
     // different from the file that contains this object if this is a re-export.
@@ -6596,7 +6596,7 @@ impl CrossChunkImport {
             // would leave the map slot empty and break that consumer.
             list.push(CrossChunkImport {
                 chunk_index,
-                sorted_import_items: import_items.shallow_copy(),
+                sorted_import_items: core::mem::ManuallyDrop::into_inner(import_items.shallow_copy()),
             });
         }
 

@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 

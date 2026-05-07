@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena;
-use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
 use bun_core::handle_oom;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 
@@ -63,18 +63,18 @@ fn fs_path_from_import_record(p: &bun_paths::fs::Path<'static>) -> bun_fs::Path<
 /// wip_order.clearRetainingCapacity();` — bitwise move of arena-backed entries
 /// from `wip` back into `order`'s buffer (which always has `cap >= wip.len`).
 #[inline]
-unsafe fn memcpy_and_reset(order: &mut BabyList<CssImportOrder>, wip: &mut BabyList<CssImportOrder>) {
-    debug_assert!(order.cap >= wip.len);
+unsafe fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
+    debug_assert!(order.capacity() >= wip.len());
     unsafe {
         core::ptr::copy_nonoverlapping(
-            wip.ptr.as_ptr() as *const CssImportOrder,
-            order.ptr.as_ptr(),
-            wip.len as usize,
+            wip.as_mut_ptr() as *const CssImportOrder,
+            order.as_mut_ptr(),
+            wip.len() as usize,
         );
     }
-    order.len = wip.len;
+    unsafe { order.set_len((wip.len()) as usize) };
     // PORT NOTE: do not Drop the moved-from entries — they were bitwise-moved.
-    wip.len = 0;
+    unsafe { wip.set_len((0) as usize) };
 }
 
 /// CSS files are traversed in depth-first postorder just like JavaScript. But
@@ -104,7 +104,7 @@ pub fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_allocator: &'a Arena,
     entry_points: &[Index],
-) -> BabyList<CssImportOrder> {
+) -> Vec<CssImportOrder> {
     let _ = temp_allocator;
 
     struct Visitor<'a> {
@@ -112,7 +112,7 @@ pub fn find_imported_files_in_css_order<'a>(
         // PORT NOTE: `BundledAst.css` SoA column is type-erased to `*mut c_void`
         // (js_parser cannot depend on bun_css); cast back at the deref site.
         css_asts: &'a [Option<*mut core::ffi::c_void>],
-        all_import_records: &'a [BabyList<ImportRecord>],
+        all_import_records: &'a [Vec<ImportRecord>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
         // dropped here to avoid an aliasing `&mut this.graph` borrow against
@@ -120,8 +120,8 @@ pub fn find_imported_files_in_css_order<'a>(
         parse_graph: *mut Graph,
 
         has_external_import: bool,
-        visited: BabyList<Index>,
-        order: BabyList<CssImportOrder>,
+        visited: Vec<Index>,
+        order: Vec<CssImportOrder>,
     }
 
     impl<'a> Visitor<'a> {
@@ -136,8 +136,8 @@ pub fn find_imported_files_in_css_order<'a>(
         pub fn visit(
             &mut self,
             source_index: Index,
-            wrapping_conditions: &mut BabyList<ImportConditions>,
-            wrapping_import_records: &mut BabyList<ImportRecord>,
+            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_import_records: &mut Vec<ImportRecord>,
         ) {
             debug!(
                 "Visit file: {}={}",
@@ -164,7 +164,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            handle_oom(self.visited.append(source_index));
+            self.visited.push(source_index);
 
             // SAFETY: pointer comes from `Box<BundlerStyleSheet>` in `BundledAst.css`
             // (type-erased to `*mut c_void`); valid for the link step.
@@ -252,15 +252,15 @@ pub fn find_imported_files_in_css_order<'a>(
                                     &mut all_import_records,
                                 ),
                             );
-                            handle_oom(self.order.append(CssImportOrder {
+                            self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(
                                     fs_path_from_import_record(&record.path),
                                 ),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
-                            }));
+                            });
                         } else {
-                            handle_oom(self.order.append(CssImportOrder {
+                            self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(
                                     fs_path_from_import_record(&record.path),
                                 ),
@@ -269,7 +269,7 @@ pub fn find_imported_files_in_css_order<'a>(
                                 condition_import_records: unsafe {
                                     bitwise_copy(wrapping_import_records)
                                 },
-                            }));
+                            });
                         }
                         debug!(
                             "Push external: {}={}",
@@ -304,7 +304,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 );
             }
             // Accumulate imports in depth-first postorder
-            handle_oom(self.order.append(CssImportOrder {
+            self.order.push(CssImportOrder {
                 // PORT NOTE: `crate::Index` (= `bun_options_types::Index`) and the
                 // `bun_js_parser::Index` carried by `CssImportOrderKind::SourceIndex`
                 // are CYCLEBREAK TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
@@ -312,8 +312,8 @@ pub fn find_imported_files_in_css_order<'a>(
                 kind: CssImportOrderKind::SourceIndex(AstIndex { value: source_index.get() }),
                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                condition_import_records: BabyList::default(),
-            }));
+                condition_import_records: Vec::new(),
+            });
 
             // PORT NOTE: explicit pop replacing `defer { _ = visitor.visited.pop(); }`
             let _ = self.visited.pop();
@@ -323,13 +323,13 @@ pub fn find_imported_files_in_css_order<'a>(
     // PORT NOTE: reshaped for borrowck — read MultiArrayList columns before constructing visitor.
     // `items_css()` is type-erased (`*mut c_void`); cast back to `BundlerStyleSheet` at use sites.
     let css_asts_slice: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
-    let all_import_records_slice: &[BabyList<ImportRecord>] = this.graph.ast.items_import_records();
+    let all_import_records_slice: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
     let allocator = this.graph.allocator();
 
     let mut visitor = Visitor {
         allocator,
         parse_graph: this.parse_graph,
-        visited: handle_oom(BabyList::<Index>::init_capacity(16)),
+        visited: handle_oom(Vec::<Index>::init_capacity(16)),
         // SAFETY: re-borrow the same column slices; lifetime erased to decouple
         // from the shared `this.graph` borrow (Zig holds these as raw slice views).
         css_asts: unsafe {
@@ -342,10 +342,10 @@ pub fn find_imported_files_in_css_order<'a>(
             )
         },
         has_external_import: false,
-        order: BabyList::default(),
+        order: Vec::new(),
     };
-    let mut wrapping_conditions: BabyList<ImportConditions> = BabyList::default();
-    let mut wrapping_import_records: BabyList<ImportRecord> = BabyList::default();
+    let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
+    let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
     // Include all files reachable from any entry point
     for entry_point in entry_points {
         visitor.visit(*entry_point, &mut wrapping_conditions, &mut wrapping_import_records);
@@ -354,7 +354,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let has_external_import = visitor.has_external_import;
     let mut order = visitor.order;
     let mut wip_order =
-        handle_oom(BabyList::<CssImportOrder>::init_capacity(order.len as usize));
+        handle_oom(Vec::<CssImportOrder>::init_capacity(order.len() as usize));
 
     let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe {
         core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
@@ -373,7 +373,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
                 || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
-                handle_oom(wip_order.append(unsafe { bitwise_copy(entry) }));
+                wip_order.push(unsafe { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
                 is_at_layer_prefix = false;
@@ -386,7 +386,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
                 && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
-                handle_oom(wip_order.append(unsafe { bitwise_copy(entry) }));
+                wip_order.push(unsafe { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
                 is_at_layer_prefix = false;
@@ -402,18 +402,18 @@ pub fn find_imported_files_in_css_order<'a>(
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
     {
-        let mut source_index_duplicates: ArrayHashMap<u32, BabyList<u32>> = ArrayHashMap::new();
-        let mut external_path_duplicates: StringArrayHashMap<BabyList<u32>> =
+        let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
+        let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> =
             StringArrayHashMap::new();
 
-        let mut i: u32 = order.len;
+        let mut i: u32 = order.len() as u32;
         // PORT NOTE: reshaped for borrowck — `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
         // pointers into the BabyList buffer (Zig used the same pattern via
         // `*const` slice returns); `order.mut_(i)` only writes `.kind` and
         // never reallocates, so the conditions pointer stays valid.
-        let order_ptr = order.ptr.as_ptr();
+        let order_ptr = order.as_mut_ptr();
         'next_backward: while i != 0 {
             i -= 1;
             // SAFETY: i < order.len; buffer is not reallocated in this loop.
@@ -423,7 +423,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     let idx = *idx;
                     let gop = handle_oom(source_index_duplicates.get_or_put(idx.get()));
                     if !gop.found_existing {
-                        *gop.value_ptr = BabyList::<u32>::default();
+                        *gop.value_ptr = Vec::<u32>::default();
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
@@ -441,20 +441,20 @@ pub fn find_imported_files_in_css_order<'a>(
                                 &(*(css_asts[idx.get() as usize].unwrap()
                                     as *const BundlerStyleSheet))
                                     .layer_names
-                                    as *const BabyList<_>
-                                    as *const BabyList<LayerName>
+                                    as *const Vec<_>
+                                    as *const Vec<LayerName>
                             };
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
                             continue 'next_backward;
                         }
                     }
-                    handle_oom(gop.value_ptr.append(i));
+                    gop.value_ptr.push(i);
                 }
                 CssImportOrderKind::ExternalPath(p) => {
                     let gop = handle_oom(external_path_duplicates.get_or_put(p.text));
                     if !gop.found_existing {
-                        *gop.value_ptr = BabyList::<u32>::default();
+                        *gop.value_ptr = Vec::<u32>::default();
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
@@ -464,11 +464,11 @@ pub fn find_imported_files_in_css_order<'a>(
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list.
                             order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::Owned(BabyList::default()));
+                                CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
                             continue 'next_backward;
                         }
                     }
-                    handle_oom(gop.value_ptr.append(i));
+                    gop.value_ptr.push(i);
                 }
                 CssImportOrderKind::Layers(_) => {}
             }
@@ -486,9 +486,9 @@ pub fn find_imported_files_in_css_order<'a>(
             // Both nominal types must be reconciled in Phase B; until then we compare
             // via `LayerName::eql` on the shadow type and cast at the boundary.
             layers: *const [LayerName],
-            indices: BabyList<u32>,
+            indices: Vec<u32>,
         }
-        let mut layer_duplicates: BabyList<DuplicateEntry> = BabyList::default();
+        let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
 
         'next_forward: for entry in order.slice_mut() {
             debug_css_order(
@@ -517,8 +517,8 @@ pub fn find_imported_files_in_css_order<'a>(
                         //   }
                         //
                         if conditions.has_anonymous_layer() {
-                            entry.conditions.len = i as u32;
-                            layers.replace(BabyList::default());
+                            unsafe { entry.conditions.set_len((i as u32) as usize) };
+                            layers.replace(Vec::new());
                             break;
                         }
                     }
@@ -549,20 +549,20 @@ pub fn find_imported_files_in_css_order<'a>(
                     //     @layer foo;
                     //   }
                     //
-                    if layers.inner().len == 0 {
-                        let mut i: u32 = entry.conditions.len;
+                    if layers.inner().len() == 0 {
+                        let mut i: u32 = entry.conditions.len() as u32;
                         while i != 0 {
                             i -= 1;
                             let condition = entry.conditions.at(i as usize);
                             if condition.layer.is_some() {
                                 break;
                             }
-                            entry.conditions.len = i;
+                            unsafe { entry.conditions.set_len((i) as usize) };
                         }
                     }
 
                     // Remove unnecessary entries entirely
-                    if entry.conditions.len == 0 && layers.inner().len == 0 {
+                    if entry.conditions.len() == 0 && layers.inner().len() == 0 {
                         continue;
                     }
                 }
@@ -585,7 +585,7 @@ pub fn find_imported_files_in_css_order<'a>(
             };
             let layers_key: &[LayerName] = unsafe { &*layers_key };
             let mut index: usize = 0;
-            while index < layer_duplicates.len as usize {
+            while index < layer_duplicates.len() as usize {
                 let dup_layers: &[LayerName] =
                     unsafe { &*layer_duplicates.at(index).layers };
                 let both_equal = 'both_equal: {
@@ -607,13 +607,13 @@ pub fn find_imported_files_in_css_order<'a>(
                 }
                 index += 1;
             }
-            if index == layer_duplicates.len as usize {
+            if index == layer_duplicates.len() as usize {
                 // This is the first time we've seen this combination of layer names.
                 // Allocate a new set of duplicate indices to track this combination.
-                handle_oom(layer_duplicates.append(DuplicateEntry {
+                layer_duplicates.push(DuplicateEntry {
                     layers: layers_key,
-                    indices: BabyList::default(),
-                }));
+                    indices: Vec::new(),
+                });
             }
             let mut duplicates: &[u32] = layer_duplicates.at(index).indices.slice();
             let mut j = duplicates.len();
@@ -646,7 +646,7 @@ pub fn find_imported_files_in_css_order<'a>(
                         //
                         // This can be improved by dropping the empty layer. But we can
                         // only do this if there's nothing in between these two rules.
-                        if j == duplicates.len() - 1 && duplicate_index == wip_order.len - 1 {
+                        if j == duplicates.len() - 1 && duplicate_index as usize == wip_order.len() - 1 {
                             let other = wip_order.at(duplicate_index as usize);
                             if matches!(other.kind, CssImportOrderKind::Layers(_))
                                 && import_conditions_are_equal(
@@ -656,14 +656,14 @@ pub fn find_imported_files_in_css_order<'a>(
                             {
                                 // Remove the previous entry and then overwrite it below
                                 duplicates = &duplicates[0..j];
-                                wip_order.len = duplicate_index;
+                                unsafe { wip_order.set_len((duplicate_index) as usize) };
                                 break;
                             }
                         }
 
                         // Non-layer entries still need to be present because they have
                         // other side effects beside inserting things in the layer order
-                        handle_oom(wip_order.append(unsafe { bitwise_copy(entry) }));
+                        wip_order.push(unsafe { bitwise_copy(entry) });
                     }
 
                     // Don't add this to the duplicate list below because it's redundant
@@ -671,8 +671,8 @@ pub fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            handle_oom(layer_duplicates.mut_(index).indices.append(wip_order.len));
-            handle_oom(wip_order.append(unsafe { bitwise_copy(entry) }));
+            layer_duplicates.mut_(index).indices.push(wip_order.len() as u32);
+            wip_order.push(unsafe { bitwise_copy(entry) });
         }
 
         debug_css_order(
@@ -689,8 +689,8 @@ pub fn find_imported_files_in_css_order<'a>(
     {
         let mut did_clone: i32 = -1;
         for entry in order.slice() {
-            if matches!(entry.kind, CssImportOrderKind::Layers(_)) && wip_order.len > 0 {
-                let prev_index = wip_order.len - 1;
+            if matches!(entry.kind, CssImportOrderKind::Layers(_)) && wip_order.len() > 0 {
+                let prev_index = wip_order.len() - 1;
                 let prev = wip_order.at(prev_index as usize);
                 if matches!(prev.kind, CssImportOrderKind::Layers(_))
                     && import_conditions_are_equal(
@@ -729,9 +729,9 @@ pub fn find_imported_files_in_css_order<'a>(
     _this: &'a mut LinkerContext,
     _temp_allocator: &'a Arena,
     _entry_points: &[Index],
-) -> BabyList<CssImportOrder> {
+) -> Vec<CssImportOrder> {
     // Without the CSS parser there are no CSS source files to order.
-    BabyList::default()
+    Vec::new()
 }
 
 /// Zig: `wrapping_conditions.deepCloneInfallible(visitor.allocator)`.
@@ -745,11 +745,11 @@ pub fn find_imported_files_in_css_order<'a>(
 #[cfg(feature = "css")]
 #[inline]
 fn deep_clone_conditions(
-    list: &BabyList<ImportConditions>,
+    list: &Vec<ImportConditions>,
     allocator: &Arena,
-) -> BabyList<ImportConditions> {
+) -> Vec<ImportConditions> {
     let mut out =
-        BabyList::<ImportConditions>::init_capacity_in(allocator, list.len as usize + 1);
+        Vec::<ImportConditions>::init_capacity_in(allocator, list.len() as usize + 1);
     for c in list.slice_const() {
         out.append_assume_capacity(c.deep_clone(allocator));
     }
@@ -759,8 +759,8 @@ fn deep_clone_conditions(
 /// Zig: `bun.handleOom(wrapping_import_records.clone(allocator))` — shallow
 /// memcpy of `ImportRecord` values into a fresh allocation.
 #[inline]
-fn shallow_clone_records(list: &BabyList<ImportRecord>) -> BabyList<ImportRecord> {
-    let mut out = handle_oom(BabyList::<ImportRecord>::init_capacity(list.len as usize));
+fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
+    let mut out = handle_oom(Vec::<ImportRecord>::init_capacity(list.len() as usize));
     for r in list.slice_const() {
         // PORT NOTE: `ImportRecord` is plain-old-data in Zig (no destructor);
         // `Path<'static>` slices borrow resolver storage. Bitwise copy matches
@@ -819,14 +819,14 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 /// that is handled separately. All of this is only for handling unlayered styles.
 #[cfg(feature = "css")]
 pub fn is_conditional_import_redundant(
-    earlier: &BabyList<ImportConditions>,
-    later: &BabyList<ImportConditions>,
+    earlier: &Vec<ImportConditions>,
+    later: &Vec<ImportConditions>,
 ) -> bool {
-    if later.len > earlier.len {
+    if later.len() > earlier.len() {
         return false;
     }
 
-    for i in 0..later.len as usize {
+    for i in 0..later.len() as usize {
         let a = earlier.at(i);
         let b = later.at(i);
 
@@ -879,8 +879,8 @@ pub fn is_conditional_import_redundant(
 
 #[cfg(not(feature = "css"))]
 pub fn is_conditional_import_redundant(
-    _earlier: &BabyList<ImportConditions>,
-    _later: &BabyList<ImportConditions>,
+    _earlier: &Vec<ImportConditions>,
+    _later: &Vec<ImportConditions>,
 ) -> bool {
     false
 }
@@ -911,7 +911,7 @@ impl CssOrderDebugStep {
 
 fn debug_css_order(
     this: &LinkerContext,
-    order: &BabyList<CssImportOrder>,
+    order: &Vec<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
     // PERF(port): `step` was a comptime enum param; debug-only so demoted to runtime.
@@ -937,7 +937,7 @@ fn debug_css_order(
 
 fn debug_css_order_impl(
     this: &LinkerContext,
-    order: &BabyList<CssImportOrder>,
+    order: &Vec<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
     #[cfg(all(debug_assertions, feature = "css"))]
@@ -967,7 +967,7 @@ fn debug_css_order_impl(
         let symbols = bun_logger::symbol::Map::init_list(Default::default());
 
         for (i, entry) in order.slice().iter().enumerate() {
-            let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len > 0 {
+            let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len() > 0 {
                 let mut writer: Vec<u8> = Vec::new();
                 writer.extend_from_slice(b"[");
                 for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
@@ -986,7 +986,7 @@ fn debug_css_order_impl(
                     );
                     let _ = condition.to_css(&mut printer);
                     drop(printer);
-                    if j != entry.conditions.len as usize - 1 {
+                    if j != entry.conditions.len() as usize - 1 {
                         writer.extend_from_slice(b", ");
                     }
                 }

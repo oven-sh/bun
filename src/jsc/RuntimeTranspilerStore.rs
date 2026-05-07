@@ -1,5 +1,6 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_return)]
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;

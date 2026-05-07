@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe)]
+use bun_collections::VecExt;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 use bun_logger as logger;
@@ -787,10 +788,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // (Zig set `entries.len = 0` after `appendList`).
             part.tag = crate::PartTag::DeadDueToInlining;
             part.dependencies.clear_retaining_capacity();
-            part.dependencies.append(crate::Dependency {
-                part_index: u32::try_from(last_idx).unwrap(),
-                source_index: js_ast::Index { value: p.source.index.0 },
-            })?;
+            part.dependencies.push(crate::Dependency { part_index: u32::try_from(last_idx).unwrap(), source_index: js_ast::Index { value: p.source.index.0 } });
         }
 
         self.last_part

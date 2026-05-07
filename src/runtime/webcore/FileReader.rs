@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::UnsafeCell;
 use core::mem;
 
@@ -755,14 +756,14 @@ impl FileReader {
         let _keep = EnsureStillAlive(array);
         let mut drained = self.drain();
 
-        if drained.len > 0 {
-            bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len);
+        if drained.len() > 0 {
+            bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len());
 
             self.pending_value.clear_without_deallocation();
             self.pending_view = &mut [];
 
-            if buffer.len() >= drained.len as usize {
-                let drained_len = drained.len;
+            if buffer.len() >= drained.len() as usize {
+                let drained_len = drained.len();
                 buffer[0..drained_len as usize].copy_from_slice(drained.slice());
                 // drain() moved ownership of the allocation into `drained` and
                 // left `self.buffered` / the reader buffer empty, so free
@@ -892,7 +893,7 @@ impl FileReader {
         if !self.buffered.is_empty() {
             let out = ByteList::move_from_list(mem::take(&mut self.buffered));
             if cfg!(debug_assertions) {
-                debug_assert!(self.reader().buffer().as_ptr() != out.ptr.as_ptr());
+                debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             }
             return out;
         }

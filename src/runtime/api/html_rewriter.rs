@@ -2,6 +2,7 @@
 //!
 //! Ported from src/runtime/api/html_rewriter.zig.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -563,28 +564,28 @@ impl HTMLRewriterLoader {
     pub fn write(&mut self, data: StreamResult) -> streams::Writable {
         match data {
             StreamResult::Owned(bytes) => {
-                let len = bytes.len as webcore::BlobSizeType;
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
                     return Writable::Err(err);
                 }
                 Writable::Owned(len)
             }
             StreamResult::OwnedAndDone(bytes) => {
-                let len = bytes.len as webcore::BlobSizeType;
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
                     return Writable::Err(err);
                 }
                 Writable::OwnedAndDone(len)
             }
             StreamResult::TemporaryAndDone(bytes) => {
-                let len = bytes.len as webcore::BlobSizeType;
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
-                let len = bytes.len as webcore::BlobSizeType;
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }

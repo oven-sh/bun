@@ -17,7 +17,7 @@ use crate::ungate_support::EntryPointListExt as _;
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
 use bun_alloc::AllocError;
-use bun_collections::{BabyList, HashMap, MultiArrayList};
+use bun_collections::{VecExt, HashMap, MultiArrayList};
 use bun_core::FeatureFlags;
 use bun_logger as logger;
 use bun_logger::Source;
@@ -114,7 +114,7 @@ pub fn scan_imports_and_exports(
 
     // ── cache SoA column base pointers ────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (only column
-    // *element* contents grow, e.g. `BabyList<Part>::append`). So these raw
+    // *element* contents grow, e.g. `Vec<Part>::append`). So these raw
     // column pointers are valid for the whole body.
     let ast = this.graph.ast.slice();
     let meta = this.graph.meta.slice();
@@ -736,24 +736,24 @@ pub fn scan_imports_and_exports(
                             let re_exports: &[Dependency] = unsafe { &*re_exports_ptr };
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
-                                + part.dependencies.len as usize;
+                                + part.dependencies.len() as usize;
                             // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
                             part.dependencies.ensure_total_capacity(total_len)?;
 
                             // Depend on the file containing the imported symbol
                             for resolved_part_index in parts_declaring_symbol {
                                 // PERF(port): was appendAssumeCapacity
-                                part.dependencies.append(Dependency {
+                                part.dependencies.push(Dependency {
                                     source_index: js_ast::Index::source(import_source_index as usize),
                                     part_index: resolved_part_index,
-                                })?;
+                                });
                             }
 
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
                             // PERF(port): was appendSliceAssumeCapacity
                             for dep in re_exports {
-                                part.dependencies.append(*dep)?;
+                                part.dependencies.push(*dep);
                             }
                         }
                     }
@@ -830,7 +830,7 @@ pub fn scan_imports_and_exports(
                 let entry_point_part_index = this.graph.add_part_to_file(
                     source_index,
                     Part {
-                        dependencies: BabyList::<Dependency>::move_from_list(dependencies),
+                        dependencies: Vec::<Dependency>::move_from_list(dependencies),
                         can_be_removed_if_unused: false,
                         ..Default::default()
                     },
@@ -854,12 +854,12 @@ pub fn scan_imports_and_exports(
             bun_core::scoped_log!(
                 LinkerCtx,
                 "Binding {} imports for file {} (#{})",
-                col_ref!(import_records_list)[id].len,
+                col_ref!(import_records_list)[id].len(),
                 bstr::BStr::new(&source.path.text),
                 id
             );
 
-            let parts_len = col_ref!(parts_list)[id].len as usize;
+            let parts_len = col_ref!(parts_list)[id].len() as usize;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
@@ -869,7 +869,7 @@ pub fn scan_imports_and_exports(
                 // PORT NOTE: iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
                 let import_record_indices_len =
-                    col_ref!(parts_list)[id].slice()[part_index].import_record_indices.len as usize;
+                    col_ref!(parts_list)[id].slice()[part_index].import_record_indices.len() as usize;
                 for iri in 0..import_record_indices_len {
                     let import_record_index = col_ref!(parts_list)[id].slice()[part_index]
                         .import_record_indices
@@ -1354,15 +1354,14 @@ impl ExportStarContext {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr
                         .potentially_ambiguous_export_star_refs
-                        .append(ImportData {
+                        .push(ImportData {
                             data: ImportTracker {
                                 source_index: Index::source(other_source_index),
                                 import_ref: name.ref_,
                                 name_loc: name.alias_loc,
                             },
                             ..Default::default()
-                        })
-                        .expect("oom");
+                        });
                     // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
                 }
             }

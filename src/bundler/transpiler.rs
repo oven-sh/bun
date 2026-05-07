@@ -5,6 +5,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
+use bun_collections::VecExt;
 use bun_collections::HashMap;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;

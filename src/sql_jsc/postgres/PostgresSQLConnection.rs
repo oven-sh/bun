@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -869,7 +870,7 @@ impl PostgresSQLConnection {
 
                         self.read_buffer.get_mut().head = 0;
                         self.last_message_start.set(0);
-                        self.read_buffer.get_mut().byte_list.len = 0;
+                        self.read_buffer.get_mut().byte_list.clear();
                         self.read_buffer.get_mut().write(&data[offset..]).expect("failed to write to read buffer");
                     } else {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
@@ -903,7 +904,7 @@ impl PostgresSQLConnection {
                             let rb = self.read_buffer.get_mut();
                             debug!(
                                 "read_buffer: not empty and received short read: last_message_start: {}, head: {}, len: {}",
-                                lms, rb.head, rb.byte_list.len
+                                lms, rb.head, rb.byte_list.len()
                             );
                         }
                     }
@@ -1577,12 +1578,12 @@ impl Reader {
 
     pub fn skip(&mut self, count: usize) {
         let buf = self.read_buffer();
-        buf.head = (buf.head + (count as u32)).min(buf.byte_list.len);
+        buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
     }
 
     pub fn ensure_capacity(&self, count: usize) -> bool {
         let buf = self.read_buffer();
-        (buf.head as usize) + count <= (buf.byte_list.len as usize)
+        (buf.head as usize) + count <= (buf.byte_list.len() as usize)
     }
 
     pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {

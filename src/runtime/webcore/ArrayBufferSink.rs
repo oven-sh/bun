@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::sink::{self, Sink, SinkHandler};
 use crate::webcore::streams::{self, Signal};
 use bun_collections::ByteList;
@@ -90,7 +91,7 @@ impl ArrayBufferSink {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())
                     .unwrap_or(JSValue::ZERO)
             };
-            self.bytes.len = 0;
+            self.bytes.clear();
             if wait {}
             return Ok(value);
         }
@@ -203,7 +204,7 @@ impl ArrayBufferSink {
             } else {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())?
             };
-            self.bytes.len = 0;
+            self.bytes.clear();
             return Ok(value);
         }
 
@@ -257,7 +258,7 @@ impl ArrayBufferSink {
     pub fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink)
         // which includes @sizeOf(ArrayBufferSink).
-        self.bytes.cap as usize
+        self.bytes.capacity() as usize
     }
 }
 

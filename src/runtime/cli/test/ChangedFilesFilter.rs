@@ -10,6 +10,7 @@
 //!
 //! Only those test entry points are returned.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_char, c_int};
 
 use bstr::BStr;

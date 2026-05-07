@@ -3,6 +3,7 @@
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&mut Interpreter`.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_char;
 use std::sync::Arc;
 

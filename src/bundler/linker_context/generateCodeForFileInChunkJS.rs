@@ -6,7 +6,7 @@ use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
 use crate::linker_graph::FileListExt as _;
 use crate::ungate_support::EntryPointListExt as _;
-use bun_collections::{BabyList, BoundedArray};
+use bun_collections::{VecExt, BoundedArray};
 use bun_logger as logger;
 
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
@@ -398,16 +398,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len as usize;
                 let mut new_properties =
-                    BabyList::<G::Property>::init_capacity(src_len).expect("unreachable");
+                    Vec::<G::Property>::init_capacity(src_len).expect("unreachable");
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         e_object.properties.ptr.as_ptr(),
-                        new_properties.ptr.as_ptr(),
+                        new_properties.as_mut_ptr(),
                         src_len,
                     );
-                    new_properties.len = src_len as u32;
+                    unsafe { new_properties.set_len((src_len as u32) as usize) };
                 }
 
                 let resolved_exports =
@@ -456,7 +456,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 default_expr = Expr::allocate(
                     temp_allocator,
                     E::Object {
-                        properties: new_properties,
+                        properties: bun_collections::BabyList::move_from_list(new_properties),
                         ..Default::default()
                     },
                     default_expr.loc,
@@ -559,7 +559,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 let args_static: &'static [G::Arg] = unsafe {
                     core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(args.into_bump_slice())
                 };
-                let cjs_args = bun_core::handle_oom(BabyList::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
                         args: args_static,
                         body: G::FnBody {
@@ -580,7 +580,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             },
                             logger::Loc::EMPTY,
                         ),
-                        args: cjs_args,
+                        args: bun_collections::BabyList::move_from_list(cjs_args),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -783,7 +783,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = bun_core::handle_oom(BabyList::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                         E::Arrow {
                             args: &[],
                             is_async,
@@ -800,7 +800,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, logger::Loc::EMPTY),
-                            args: esm_args,
+                            args: bun_collections::BabyList::move_from_list(esm_args),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -1064,7 +1064,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        let mut clone = BabyList::<G::Decl>::init_capacity(
+                        let mut clone = Vec::<G::Decl>::init_capacity(
                             (before.decls.len + after.decls.len) as usize,
                         )
                         .expect("unreachable");
@@ -1077,7 +1077,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _allocator,
                             S::Local {
-                                decls: clone,
+                                decls: bun_collections::BabyList::move_from_list(clone),
                                 is_export: before.is_export,
                                 was_commonjs_export: before.was_commonjs_export,
                                 was_ts_import_equals: before.was_ts_import_equals,

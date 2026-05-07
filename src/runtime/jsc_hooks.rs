@@ -20,6 +20,7 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;

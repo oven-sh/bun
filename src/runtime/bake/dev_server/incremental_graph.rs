@@ -8,6 +8,7 @@
 //! `File` payload is folded into a single struct carrying both field sets and
 //! per-side behaviour is dispatched on the `SIDE` const parameter.
 
+use bun_collections::VecExt;
 use core::mem::offset_of;
 use std::io::Write as _;
 

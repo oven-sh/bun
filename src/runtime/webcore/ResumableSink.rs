@@ -4,6 +4,7 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::cell::Cell;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
@@ -226,7 +227,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let bytes = byte_stream.drain();
                     // PORT NOTE: `defer bytes.deinit(bun.default_allocator)` deleted — `bytes`
                     // owns its buffer and Drop frees it.
-                    scoped_log!(ResumableSink, "onWrite {}", bytes.len);
+                    scoped_log!(ResumableSink, "onWrite {}", bytes.len());
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                     Self::on_end(this_ref.context, err);
                     // SAFETY: see the locked/disturbed branch above.
@@ -237,8 +238,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 let bytes = byte_stream.drain();
                 // PORT NOTE: `defer bytes.deinit(...)` deleted — Drop frees it.
                 // lets write and see if we can still pipe or if we have backpressure
-                if bytes.len > 0 {
-                    scoped_log!(ResumableSink, "onWrite {}", bytes.len);
+                if bytes.len() > 0 {
+                    scoped_log!(ResumableSink, "onWrite {}", bytes.len());
                     // we ignore the return value here because we dont want to pause the stream
                     // if we pause will just buffer in the pipe and we can do the buffer in one place
                     let _ = Self::on_write(this_ref.context, bytes.slice());

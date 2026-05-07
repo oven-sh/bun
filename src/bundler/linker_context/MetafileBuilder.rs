@@ -32,6 +32,7 @@
 use std::io::Write;
 
 use bstr::BStr;
+use bun_collections::VecExt;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_string::string_joiner::StringJoiner;

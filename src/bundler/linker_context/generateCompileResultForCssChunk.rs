@@ -13,7 +13,7 @@ use crate::ungate_support::EntryPointListExt as _;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "css")]
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 #[cfg(feature = "css")]
 use bun_options_types::ImportRecord;
 use bun_threading::thread_pool as ThreadPoolLib;
@@ -204,7 +204,7 @@ fn generate_compile_result_for_css_chunk_impl(
             // `to_css_with_writer` call below; the borrowed BabyList is dropped (no-op)
             // before `css_import` goes out of scope, so no double-free / dangling.
             let import_records = unsafe {
-                BabyList::<ImportRecord>::from_borrowed_slice_dangerous(
+                Vec::<ImportRecord>::from_borrowed_slice_dangerous(
                     css_import.condition_import_records.slice_const(),
                 )
             };

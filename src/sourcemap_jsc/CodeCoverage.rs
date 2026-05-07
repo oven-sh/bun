@@ -3,7 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_collections::bit_set::DynamicBitSet;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, VM};
 use bun_logger::Loc;
 use bun_sourcemap::{
@@ -12,7 +12,7 @@ use bun_sourcemap::{
 };
 use bun_str::{self, strings, ZigStringSlice};
 
-type LinesHits = BabyList<u32>;
+type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
 
 /// Our code coverage currently only deals with lines of code, not statements or branches.
@@ -521,10 +521,8 @@ impl ByteRangeMapping {
             line_count = line_starts.len() as u32;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
-            line_hits = LinesHits::init_capacity(line_count as usize)?;
-            line_hits.len = line_count;
-            let line_hits_slice = line_hits.slice_mut();
-            line_hits_slice.fill(0);
+            line_hits = vec![0u32; line_count as usize];
+            let line_hits_slice = line_hits.as_mut_slice();
 
             for (i, block) in blocks.iter().enumerate() {
                 if block.end_offset < 0 || block.start_offset < 0 {
@@ -620,10 +618,8 @@ impl ByteRangeMapping {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
-            line_hits = LinesHits::init_capacity(line_count as usize)?;
-            line_hits.len = line_count;
-            let line_hits_slice = line_hits.slice_mut();
-            line_hits_slice.fill(0);
+            line_hits = vec![0u32; line_count as usize];
+            let line_hits_slice = line_hits.as_mut_slice();
 
             let mut cur_: Option<internal_source_map::Cursor> = parsed_mapping.internal_cursor();
 

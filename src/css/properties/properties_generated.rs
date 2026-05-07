@@ -41,7 +41,7 @@ use super::transform;
 use super::transition;
 use super::ui;
 
-type BabyList<T> = bun_collections::BabyList<T>;
+use bun_collections::VecExt;
 
 /// Discriminant-only tag for [`Property`] / [`PropertyId`] (Zig: `enum(u16)`).
 #[repr(u16)]
@@ -3170,7 +3170,7 @@ pub enum Property {
     FontWeight(font::FontWeight),
     FontSize(font::FontSize),
     FontStretch(font::FontStretch),
-    FontFamily(BabyList<font::FontFamily>),
+    FontFamily(Vec<font::FontFamily>),
     FontStyle(font::FontStyle),
     FontVariantCaps(font::FontVariantCaps),
     LineHeight(font::LineHeight),
@@ -5361,7 +5361,7 @@ impl Property {
                 }
             }
             PropertyId::FontFamily => {
-                if let Some(c) = css::generic::parse_with_options::<BabyList<font::FontFamily>>(input, options).ok() {
+                if let Some(c) = css::generic::parse_with_options::<Vec<font::FontFamily>>(input, options).ok() {
                     if input.expect_exhausted().is_ok() {
                         return Ok(Property::FontFamily(c));
                     }

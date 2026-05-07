@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_string::{self as bun_str, strings, String as BunString};
 
 // PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
@@ -4195,10 +4195,10 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// A list that can store its items inlined, and promote itself to a heap allocated BabyList<T>
+/// A list that can store its items inlined, and promote itself to a heap allocated Vec<T>
 pub enum SmolList<T, const INLINED_MAX: usize> {
     Inlined(SmolListInlined<T, INLINED_MAX>),
-    Heap(BabyList<T>),
+    Heap(Vec<T>),
 }
 
 pub struct SmolListInlined<T, const INLINED_MAX: usize> {
@@ -4235,8 +4235,8 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         &self.items
     }
 
-    pub fn promote(&mut self, n: usize, new: T) -> BabyList<T> {
-        let mut list = bun_core::handle_oom(BabyList::<T>::init_capacity(n));
+    pub fn promote(&mut self, n: usize, new: T) -> Vec<T> {
+        let mut list = bun_core::handle_oom(Vec::<T>::init_capacity(n));
         // SAFETY: moving INLINED_MAX initialized elements out
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
@@ -4244,7 +4244,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
             list.append_assume_capacity(v);
         }
         self.len = 0;
-        bun_core::handle_oom(list.append(new));
+        list.push(new);
         list
     }
 
@@ -4357,7 +4357,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             }
             return this;
         }
-        let mut heap = bun_core::handle_oom(BabyList::<T>::init_capacity(vals.len()));
+        let mut heap = bun_core::handle_oom(Vec::<T>::init_capacity(vals.len()));
         for v in vals {
             heap.append_assume_capacity(v.clone());
         }
@@ -4370,7 +4370,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn len(&self) -> usize {
         match self {
             SmolList::Inlined(i) => i.len as usize,
-            SmolList::Heap(h) => h.len as usize,
+            SmolList::Heap(h) => h.len(),
         }
     }
 
@@ -4427,16 +4427,16 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
-                let new_len = heap.len as usize - starting_idx;
-                // SAFETY: overlapping copy within heap buffer; first `heap.len` elements are init.
+                let new_len = heap.len() - starting_idx;
+                // SAFETY: overlapping copy within heap buffer; first `heap.len()` elements are init.
                 unsafe {
                     core::ptr::copy(
-                        heap.ptr.as_ptr().add(starting_idx),
-                        heap.ptr.as_ptr(),
+                        heap.as_mut_ptr().add(starting_idx),
+                        heap.as_mut_ptr(),
                         new_len,
                     );
+                    heap.set_len(new_len);
                 }
-                heap.len = u32::try_from(new_len).unwrap();
             }
         }
     }
@@ -4451,7 +4451,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 i.slice_mut()
             }
             SmolList::Heap(h) => {
-                if h.len == 0 {
+                if h.is_empty() {
                     return &mut [];
                 }
                 h.slice_mut()
@@ -4469,7 +4469,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 i.slice()
             }
             SmolList::Heap(h) => {
-                if h.len == 0 {
+                if h.is_empty() {
                     return &[];
                 }
                 h.slice()
@@ -4517,7 +4517,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 inlined.len += 1;
             }
             SmolList::Heap(heap) => {
-                bun_core::handle_oom(heap.append(new));
+                heap.push(new);
             }
         }
     }

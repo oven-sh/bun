@@ -1,5 +1,6 @@
 //! Port of src/cli/create/SourceFileProjectGenerator.zig
 
+use bun_collections::{VecExt, ByteVecExt};
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::Graph::InputFileListExt as _;

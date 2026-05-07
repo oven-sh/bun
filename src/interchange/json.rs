@@ -16,7 +16,7 @@ use bun_logger::js_ast::{E, G, Stmt, ExprNodeList};
 // TYPE_ONLY(b0): bun_js_parser::js_printer → bun_logger::js_printer (T2)
 use bun_logger::js_printer;
 use bun_logger::js_printer::options::Indentation;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 
 pub use bun_logger::js_ast::Expr;
 
@@ -809,7 +809,7 @@ impl ToAst for bun_core::Error {
 // expands to:
 //   impl ToAst for Foo {
 //     fn to_ast(&self, bump: &Bump) -> Result<Expr, _> {
-//       let mut properties = BabyList::<G::Property>::with_capacity(bump, N);
+//       let mut properties = Vec::<G::Property>::with_capacity(bump, N);
 //       properties.push_assume_capacity(G::Property {
 //         key: Some(Expr::init(E::String { data: b"field_name" }, Loc::EMPTY)),
 //         value: Some(self.field_name.to_ast(bump)?),

@@ -2,7 +2,7 @@ use core::mem::offset_of;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, BabyList};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::fmt as bun_fmt;
 use bun_paths::{resolve_path, PathBuffer};
 use bun_sourcemap::SourceMapPieces;
@@ -87,9 +87,9 @@ pub fn compute_chunks(
 
     let code_splitting = this.graph.code_splitting;
     let could_be_browser_target_from_server_build = this.options.target.is_server_side()
-        && parse_graph.html_imports.html_source_indices.len > 0;
+        && parse_graph.html_imports.html_source_indices.len() > 0;
     let has_server_html_imports =
-        parse_graph.html_imports.server_source_indices.len > 0;
+        parse_graph.html_imports.server_source_indices.len() > 0;
 
     // Create chunks for entry points
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
@@ -165,7 +165,7 @@ pub fn compute_chunks(
                 )
             } else {
                 let mut hasher = Wyhash::init(5);
-                bun_core::write_any_to_hasher(&mut hasher, order.len);
+                bun_core::write_any_to_hasher(&mut hasher, order.len());
                 for x in order.slice() {
                     x.hash(&mut hasher);
                 }
@@ -174,7 +174,7 @@ pub fn compute_chunks(
             let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
-                let order_len = order.len as usize;
+                let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
                     entry_bits: entry_point_chunk_bits,
@@ -225,7 +225,7 @@ pub fn compute_chunks(
             // algorithm to determine the final CSS file order for the chunk.
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
-            if css_source_indices.len > 0 {
+            if css_source_indices.len() > 0 {
                 // SAFETY: see `this_ptr` PORT NOTE above.
                 let order = find_imported_files_in_css_order(
                     unsafe { &mut *this_ptr },
@@ -239,7 +239,7 @@ pub fn compute_chunks(
                 // than producing duplicates that collide on hash-based naming.
                 let hash_to_use = {
                     let mut hasher = Wyhash::init(5);
-                    bun_core::write_any_to_hasher(&mut hasher, order.len);
+                    bun_core::write_any_to_hasher(&mut hasher, order.len());
                     for x in order.slice() {
                         x.hash(&mut hasher);
                     }
@@ -255,7 +255,7 @@ pub fn compute_chunks(
                 js_chunks_with_css += 1;
 
                 if !css_chunk_entry.found_existing {
-                    let order_len = order.len as usize;
+                    let order_len = order.len() as usize;
                     let mut css_files_with_parts_in_chunk: ArrayHashMap<IndexInt, usize> =
                         ArrayHashMap::new();
                     for entry in order.slice() {
@@ -394,12 +394,12 @@ pub fn compute_chunks(
 
     // Sort the chunks for determinism. This matters because we use chunk indices
     // as sorting keys in a few places.
-    let mut sorted_chunks: BabyList<Chunk> = 'sort_chunks: {
-        let mut sorted_chunks = BabyList::<Chunk>::init_capacity(
+    let mut sorted_chunks: Vec<Chunk> = 'sort_chunks: {
+        let mut sorted_chunks = Vec::<Chunk>::init_capacity(
             js_chunks.count() + css_chunks.count() + html_chunks.count(),
         )?;
 
-        let mut sorted_keys = BabyList::<&[u8]>::init_capacity(js_chunks.count())?;
+        let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count())?;
 
         // PERF(port): was assume_capacity
         sorted_keys.append_slice_assume_capacity(js_chunks.keys());
@@ -431,16 +431,16 @@ pub fn compute_chunks(
         }
 
         let ctx = ChunkSortContext { chunks: &js_chunks };
-        sorted_keys.sort(|a, b| ctx.less_than(a, b));
+        sorted_keys.sort_by(|a, b| if ctx.less_than(a, b) { core::cmp::Ordering::Less } else if ctx.less_than(b, a) { core::cmp::Ordering::Greater } else { core::cmp::Ordering::Equal });
         let mut js_chunk_indices_with_css =
-            BabyList::<u32>::init_capacity(js_chunks_with_css)?;
+            Vec::<u32>::init_capacity(js_chunks_with_css)?;
         for &key in sorted_keys.slice() {
             let chunk = js_chunks.get(&key).expect("unreachable");
 
             if let chunk::Content::Javascript(js) = &chunk.content {
                 if js.css_chunks.len() > 0 {
                     // PERF(port): was assume_capacity
-                    js_chunk_indices_with_css.append_assume_capacity(sorted_chunks.len);
+                    js_chunk_indices_with_css.append_assume_capacity(sorted_chunks.len() as u32);
                 }
             }
 
@@ -473,7 +473,7 @@ pub fn compute_chunks(
             // may be interleaved with JS chunks, so js_chunks.count() would be
             // incorrect when HTML entry points are present.
             for (sorted_index, &key) in
-                (sorted_chunks.len as usize..).zip(sorted_css_keys.iter())
+                (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
             {
                 let index = css_chunks.get_index(&key).expect("unreachable");
                 // PERF(port): was assume_capacity
@@ -496,7 +496,7 @@ pub fn compute_chunks(
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
         for v in html_chunks.values_mut() {
-            sorted_chunks.append(core::mem::take(v))?;
+            sorted_chunks.push(core::mem::take(v));
         }
 
         break 'sort_chunks sorted_chunks;

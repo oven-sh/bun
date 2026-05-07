@@ -1,5 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::borrow::Cow;

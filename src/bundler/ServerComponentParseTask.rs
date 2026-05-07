@@ -6,7 +6,7 @@ use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::fmt as bun_fmt;
 
 use bun_logger::{Loc, Log, Source};
@@ -332,7 +332,7 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: BabyList::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
+            args: bun_collections::BabyList::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });

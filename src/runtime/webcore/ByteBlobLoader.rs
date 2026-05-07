@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
@@ -66,7 +66,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
     fn on_cancel(&mut self) { Self::on_cancel(self) }
     fn deinit_fn(&mut self) { Self::deinit(self) }
-    fn drain_internal_buffer(&mut self) -> BabyList<u8> { Self::drain(self) }
+    fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
     fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
     fn to_buffered_value(
         &mut self,
@@ -237,9 +237,9 @@ impl ByteBlobLoader {
         }
     }
 
-    pub fn drain(&mut self) -> BabyList<u8> {
+    pub fn drain(&mut self) -> Vec<u8> {
         let Some(store) = self.store.clone() else {
-            return BabyList::default();
+            return Vec::new();
         };
         let temporary = store.shared_view();
         let temporary = &temporary[self.offset as usize..];
@@ -248,9 +248,9 @@ impl ByteBlobLoader {
 
         // Zig: `ByteList.fromBorrowedSliceDangerous(temporary).clone(allocator)` — collapse to a
         // single owning copy (avoids the `ManuallyDrop` borrow dance).
-        let cloned = bun_core::handle_oom(BabyList::<u8>::from_slice(temporary));
-        self.offset = self.offset.saturating_add(blob::SizeType::from(cloned.len));
-        self.remain = self.remain.saturating_sub(blob::SizeType::from(cloned.len));
+        let cloned = bun_core::handle_oom(Vec::<u8>::from_slice(temporary));
+        self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
+        self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
 
         cloned
     }

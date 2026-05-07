@@ -4,6 +4,7 @@
 
 use std::io::Write as _;
 
+use bun_collections::VecExt;
 use bun_collections::HashMap;
 use bun_logger::Log;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};

@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;

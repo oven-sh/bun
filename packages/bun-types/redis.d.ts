@@ -3383,7 +3383,7 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * await redis.set("mykey", "\xff\xf0\x00");
+     * await redis.set("mykey", Buffer.from([0xff, 0xf0, 0x00]));
      * await redis.bitpos("mykey", 0); // 12
      * await redis.bitpos("mykey", 1, 2); // -1
      * ```
@@ -3406,7 +3406,8 @@ declare module "bun" {
 
     /**
      * Return the approximated cardinality of the set(s) observed by the HyperLogLog at key(s)
-     * @param keys The HyperLogLog keys
+     * @param key The first HyperLogLog key
+     * @param moreKeys Additional HyperLogLog keys (union cardinality)
      * @returns Promise that resolves with the approximated number of unique elements
      *
      * @example
@@ -3588,7 +3589,7 @@ declare module "bun" {
      * await redis.function("DELETE", "mylib");
      * ```
      */
-    function(...args: string[]): Promise<any>;
+    function(...args: (string | Buffer | ArrayBufferView)[]): Promise<any>;
 
     /**
      * Return the number of keys in the currently-selected database
@@ -3822,7 +3823,8 @@ declare module "bun" {
     /**
      * Delete one or more entries from a stream
      * @param key The stream key
-     * @param ids The IDs of the entries to delete
+     * @param id The first entry ID to delete
+     * @param moreIds Additional entry IDs to delete
      * @returns Promise that resolves with the number of entries actually deleted
      */
     xdel(key: RedisClient.KeyLike, id: string, ...moreIds: string[]): Promise<number>;
@@ -3852,7 +3854,8 @@ declare module "bun" {
      * Acknowledge one or more messages as processed for a consumer group
      * @param key The stream key
      * @param group The consumer group name
-     * @param ids The IDs of the messages to acknowledge
+     * @param id The first message ID to acknowledge
+     * @param moreIds Additional message IDs to acknowledge
      * @returns Promise that resolves with the number of messages successfully acknowledged
      */
     xack(key: RedisClient.KeyLike, group: string, id: string, ...moreIds: string[]): Promise<number>;

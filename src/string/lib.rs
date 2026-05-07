@@ -1261,6 +1261,44 @@ impl ZigString {
         unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
     }
 
+    /// `ZigString.utf16ByteLength` — number of bytes the UTF-16LE encoding of
+    /// this string would occupy (ZigString.zig:199).
+    pub fn utf16_byte_length(self) -> usize {
+        if self.is_utf8() {
+            let s = self.slice();
+            // SAFETY: s describes a valid byte slice.
+            return unsafe {
+                bun_simdutf_sys::simdutf::simdutf__utf16_length_from_utf8(s.as_ptr(), s.len())
+            } * 2;
+        }
+        if self.is_16bit() {
+            return self.len * 2;
+        }
+        // Latin-1 → one UTF-16 code unit per byte.
+        self.len * 2
+    }
+
+    /// `ZigString.latin1ByteLength` (ZigString.zig:211).
+    pub fn latin1_byte_length(self) -> usize {
+        if self.is_utf8() {
+            // PORT NOTE: Zig: `@panic("TODO")` — never implemented for UTF-8
+            // sources. Match Zig behaviour.
+            unreachable!("ZigString.latin1ByteLength from UTF-8 — unimplemented in Zig");
+        }
+        self.len
+    }
+
+    /// `ZigString.encodeWithAllocator` — encode `self` into a freshly
+    /// allocated buffer using a Node.js Buffer encoding. Dispatches to
+    /// `jsc.WebCore.encoding.constructFrom{U8,U16}` via [`webcore_encoding`].
+    pub fn encode_with_allocator(self, enc: encoding::Encoding) -> Vec<u8> {
+        if self.is_16bit() {
+            webcore_encoding::construct_from_u16(self.utf16_slice(), enc)
+        } else {
+            webcore_encoding::construct_from_u8(self.slice(), enc)
+        }
+    }
+
     /// Port of `ZigString.githubAction` (ZigString.zig). Returns a `Display`
     /// formatter that escapes the string for GitHub Actions annotation output
     /// (`%0A` for newlines, ANSI stripped). Encoding-aware via `to_slice`.
@@ -1503,6 +1541,16 @@ impl ZigStringSlice {
     /// `ZigString.Slice.initDupe` — allocate an owned copy of `input`.
     pub fn init_dupe(input: &[u8]) -> Result<Self, bun_core::AllocError> {
         Ok(Self::Owned(input.to_vec()))
+    }
+    /// `ZigString.Slice.cloneIfBorrowed` — if this slice borrows external
+    /// storage (`Static`/`WTF`), allocate an owned copy; otherwise return
+    /// `self` unchanged. The result is always safe to outlive the original
+    /// backing.
+    pub fn clone_if_borrowed(self) -> Self {
+        match &self {
+            Self::Owned(_) => self,
+            _ => Self::Owned(self.slice().to_vec()),
+        }
     }
     pub fn slice(&self) -> &[u8] {
         match self {

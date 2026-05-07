@@ -530,6 +530,14 @@ impl ZigString {
         }
     }
 
+    /// `ZigString.static` — borrow a `&'static` string literal. Mirrors
+    /// `bun_string::ZigString::static_str` so callers can stay agnostic to
+    /// which `ZigString` they imported.
+    #[inline]
+    pub fn static_str<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> ZigString {
+        ZigString::init(s.as_ref())
+    }
+
     pub fn sort_desc(slice_: &mut [ZigString]) {
         // PORT NOTE: std.sort.block is stable; slice::sort_by is also stable.
         slice_.sort_by(|a, b| b.slice().cmp(a.slice()));

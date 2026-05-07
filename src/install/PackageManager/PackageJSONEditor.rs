@@ -924,7 +924,8 @@ pub fn edit(
             let n = if options.add_trusted_dependencies { 2 } else { 1 };
             let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
             root_properties.push(G::Property {
-                key: Some(Expr::init(
+                key: Some(Expr::allocate(
+                    arena,
                     E::EString::init(leak_dup(dependency_list)),
                     logger::Loc::EMPTY,
                 )),
@@ -934,7 +935,8 @@ pub fn edit(
 
             if options.add_trusted_dependencies {
                 root_properties.push(G::Property {
-                    key: Some(Expr::init(
+                    key: Some(Expr::allocate(
+                        arena,
                         E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                         logger::Loc::EMPTY,
                     )),
@@ -943,7 +945,8 @@ pub fn edit(
                 });
             }
 
-            *current_package_json = Expr::init(
+            *current_package_json = Expr::allocate(
+                arena,
                 E::Object {
                     properties: G::PropertyList::move_from_list(root_properties),
                     ..Default::default()
@@ -960,7 +963,8 @@ pub fn edit(
                     root_properties.push(copy_property(p));
                 }
                 root_properties.push(G::Property {
-                    key: Some(Expr::init(
+                    key: Some(Expr::allocate(
+                        arena,
                         E::EString::init(leak_dup(dependency_list)),
                         logger::Loc::EMPTY,
                     )),
@@ -968,14 +972,16 @@ pub fn edit(
                     ..Default::default()
                 });
                 root_properties.push(G::Property {
-                    key: Some(Expr::init(
+                    key: Some(Expr::allocate(
+                        arena,
                         E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                         logger::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
                     ..Default::default()
                 });
-                *current_package_json = Expr::init(
+                *current_package_json = Expr::allocate(
+                    arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()
@@ -991,7 +997,8 @@ pub fn edit(
                     root_properties.push(copy_property(p));
                 }
                 root_properties.push(G::Property {
-                    key: Some(Expr::init(
+                    key: Some(Expr::allocate(
+                        arena,
                         E::EString::init(if needs_new_dependency_list {
                             leak_dup(dependency_list)
                         } else {
@@ -1006,7 +1013,8 @@ pub fn edit(
                     }),
                     ..Default::default()
                 });
-                *current_package_json = Expr::init(
+                *current_package_json = Expr::allocate(
+                    arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()

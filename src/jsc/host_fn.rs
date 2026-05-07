@@ -15,8 +15,9 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
+use bun_string::ZigString;
 
-use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString};
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ───────────────────────────── type aliases ──────────────────────────────
 
@@ -77,6 +78,7 @@ pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>)
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
+    // Zig: `if (Environment.allow_assert and Environment.is_canary)`
     if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
         let value = match result {
             Ok(v) => v,
@@ -105,16 +107,19 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
                 "Assertion failed",
                 "Native function returned a non-zero JSValue while an exception is pending\n\
                  \n\
-                 \x20   fn: {}\n\
+                 \x20   fn: {s}\n\
                  \x20value: {}\n",
-                (func, value.to_fmt(&mut formatter)),
+                (
+                    func,
+                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+                ),
             );
             Output::flush();
             // `formatter` drops here (Zig: `defer formatter.deinit()`).
         }
     }
     let _ = func;
-    debug_assert_eq!(value.is_empty(), global_this.has_exception());
+    bun_core::debug_assert!(value.is_empty() == global_this.has_exception());
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -213,6 +218,8 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     let mut scope = jsc::ExceptionValidationScope::init(global);
     let r = to_js_host_setter_value(global, f().into_host_setter_return());
     scope.assert_exception_presence_matches(!r);
+    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
+    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
     r
 }
 
@@ -233,6 +240,8 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
         Err(_) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
+    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
+    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
     ptr
 }
 
@@ -241,13 +250,14 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 /// Zig signature took `comptime function: anytype` + an args tuple and `@call`'d it; in Rust the
 /// caller (the proc-macro expansion) passes a closure that performs the call, so this only handles
 /// the result mapping + exception-scope assertion.
+///
+/// `#[track_caller]` propagates the caller's `Location` through to
+/// `ExceptionValidationScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JsResult<JSValue>,
 ) -> JSValue {
-    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
-    // caller's `Location` into `ExceptionValidationScope::init` automatically.
     let mut scope = jsc::ExceptionValidationScope::init(global_this);
 
     let returned: JsResult<JSValue> = f();
@@ -258,8 +268,9 @@ pub fn to_js_host_call(
         Err(JsError::Terminated) => JSValue::ZERO,
     };
     scope.assert_exception_presence_matches(normal.is_empty());
+    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
+    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
     normal
-    // `scope` drops here (Zig: `defer scope.deinit()`).
 }
 
 /// Convert the return value of a function returning a maybe-empty `JSValue` into an error union.
@@ -267,32 +278,42 @@ pub fn to_js_host_call(
 /// If your function does not follow this pattern (if it can return empty without an exception, or
 /// throw an exception and return non-empty), either fix the function or write a custom wrapper with
 /// `TopExceptionScope`.
+///
+/// `#[track_caller]` propagates the caller's `Location` through to
+/// `ExceptionValidationScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
 pub fn from_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JSValue,
 ) -> Result<JSValue, JsError> {
-    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
-    // caller's `Location` into `ExceptionValidationScope::init` automatically.
     let mut scope = jsc::ExceptionValidationScope::init(global_this);
 
     let value = f();
     // Zig: `if (@TypeOf(value) != JSValue) @compileError(...)` — enforced by the
     // closure return type here.
     scope.assert_exception_presence_matches(value.is_empty());
+    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
+    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
     if value.is_empty() { Err(JsError::Thrown) } else { Ok(value) }
 }
 
 /// Generic variant for wrapped FFI calls whose return value tells you nothing about
 /// whether an exception was thrown.
+///
+/// `#[track_caller]` propagates the caller's `Location` through to
+/// `TopExceptionScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
 pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> Result<R, JsError> {
-    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
-    // caller's `Location` into `TopExceptionScope::init` automatically.
     let mut scope = jsc::TopExceptionScope::init(global_this);
+    // Ensure the C++ scope object is destructed on every return path
+    // (Zig: `defer scope.deinit()`).
+    let mut scope = scopeguard::guard(&mut scope, |s| {
+        // SAFETY: `s` was initialized via `init` above and is destroyed exactly once.
+        unsafe { jsc::TopExceptionScope::destroy(s) };
+    });
 
     let result = f();
     // supporting JSValue would make it too easy to mix up this function with from_js_host_call
@@ -418,6 +439,7 @@ mod private {
     }
 }
 
+#[track_caller]
 pub fn new_runtime_function(
     global_object: &JSGlobalObject,
     symbol_name: Option<&ZigString>,
@@ -442,6 +464,7 @@ pub fn new_runtime_function(
     }
 }
 
+#[track_caller]
 pub fn get_function_data(function: JSValue) -> Option<*mut c_void> {
     jsc::mark_binding();
     // SAFETY: thin FFI wrapper.
@@ -449,6 +472,7 @@ pub fn get_function_data(function: JSValue) -> Option<*mut c_void> {
     if p.is_null() { None } else { Some(p) }
 }
 
+#[track_caller]
 pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
     jsc::mark_binding();
     // SAFETY: thin FFI wrapper.
@@ -457,6 +481,7 @@ pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
     }
 }
 
+#[track_caller]
 pub fn new_function_with_data(
     global_object: &JSGlobalObject,
     symbol_name: Option<&ZigString>,
@@ -669,6 +694,6 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 // PORT STATUS
 //   source:     src/jsc/host_fn.zig (807 lines)
 //   confidence: medium
-//   todos:      16
+//   todos:      14
 //   notes:      ~70% of source is @typeInfo fn-signature reflection -> #[bun_jsc::host_fn]/host_call/dom_call proc-macros; runtime helpers + FFI + DomEffect ported directly.
 // ──────────────────────────────────────────────────────────────────────────

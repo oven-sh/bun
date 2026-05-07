@@ -1,11 +1,11 @@
 use core::ptr;
+use core::ptr::NonNull;
 
-use bun_str::String as BunString;
-use bun_str::Utf8Slice;
+use bun_string::String as BunString;
+use bun_string::ZigStringSlice;
 use crate::schema_api as api;
 use bun_url::URL as ZigURL;
 
-use crate::RefPtr;
 use crate::SourceProvider;
 use crate::ZigStackFrame;
 
@@ -23,7 +23,10 @@ pub struct ZigStackTrace {
 
     /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
     /// If so, then .deref must be called on it to release the memory.
-    pub referenced_source_provider: Option<RefPtr<SourceProvider>>,
+    ///
+    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, matching
+    /// the Zig `?*SourceProvider` ABI exactly.
+    pub referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
 impl ZigStackTrace {
@@ -35,8 +38,8 @@ impl ZigStackTrace {
             source_lines_to_collect: 0,
 
             frames_ptr: frames_slice.as_mut_ptr(),
-            frames_len: u8::try_from(frames_slice.len().min(usize::from(u8::MAX))).unwrap(),
-            frames_cap: u8::try_from(frames_slice.len().min(usize::from(u8::MAX))).unwrap(),
+            frames_len: frames_slice.len().min(usize::from(u8::MAX)) as u8,
+            frames_cap: frames_slice.len().min(usize::from(u8::MAX)) as u8,
 
             referenced_source_provider: None,
         }
@@ -45,10 +48,10 @@ impl ZigStackTrace {
     pub fn to_api(
         &self,
         root_path: &[u8],
-        origin: Option<&ZigURL>,
-    ) -> Result<api::StackTrace, bun_core::Error> {
-        // TODO(port): narrow error set
-        // Zig: `comptime std.mem.zeroes(api.StackTrace)` — assuming Default == all-zero for the api type.
+        origin: Option<&ZigURL<'_>>,
+    ) -> Result<api::StackTrace, bun_alloc::AllocError> {
+        // Zig: `comptime std.mem.zeroes(api.StackTrace)` — `Default` is the semantic
+        // equivalent (`Vec` fields are NonNull and not zero-safe).
         let mut stack_trace = api::StackTrace::default();
         {
             let mut source_lines_iter = self.source_line_iterator();
@@ -58,29 +61,20 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).unwrap();
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // TODO(port): in Zig, each api::SourceLine.text is a slice into this single
-                // contiguous buffer (caller-allocator-owned). Phase B must decide whether
-                // api::SourceLine owns its bytes (Box<[u8]>) or borrows from a sibling buffer.
-                let mut source_line_buf: Vec<u8> = vec![0u8; source_line_len];
+                // PORT NOTE: Zig packed all line texts into a single contiguous
+                // `source_line_buf` and stored sub-slices in each `SourceLine`.
+                // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
+                // so each line gets its own allocation instead.
+                // PERF(port): one alloc per line vs one shared buffer — profile in Phase B.
                 source_lines_iter = self.source_line_iterator();
-                let mut remain_buf: &mut [u8] = &mut source_line_buf[..];
-                let mut i: usize = 0;
                 while let Some(source) = source_lines_iter.next() {
-                    let text = source.text.as_bytes();
-                    // `defer source.text.deinit()` → handled by Drop on Utf8Slice at end of scope.
-                    remain_buf[..text.len()].copy_from_slice(text);
-                    // PORT NOTE: reshaped for borrowck — split remain_buf instead of two overlapping slices.
-                    let (copied_line, rest) = remain_buf.split_at_mut(text.len());
-                    remain_buf = rest;
+                    let text = source.text.slice();
                     source_lines.push(api::SourceLine {
-                        // TODO(port): `copied_line` borrows `source_line_buf`; see ownership note above.
-                        text: copied_line,
+                        text: Box::<[u8]>::from(text),
                         line: source.line,
                     });
-                    i += 1;
-                    let _ = i;
+                    // `defer source.text.deinit()` → handled by Drop on ZigStringSlice at end of scope.
                 }
-                let _ = source_line_buf; // TODO(port): ownership of backing buffer must transfer into stack_trace
                 stack_trace.source_lines = source_lines;
             }
         }
@@ -89,7 +83,7 @@ impl ZigStackTrace {
             if !frames.is_empty() {
                 let mut stack_frames: Vec<api::StackFrame> = Vec::with_capacity(frames.len());
 
-                for frame in frames.iter() {
+                for frame in frames {
                     stack_frames.push(frame.to_api(root_path, origin)?);
                 }
                 stack_trace.frames = stack_frames;
@@ -131,9 +125,9 @@ pub struct SourceLineIterator<'a> {
     pub i: i32,
 }
 
-pub struct SourceLine<'a> {
+pub struct SourceLine {
     pub line: i32,
-    pub text: Utf8Slice<'a>,
+    pub text: ZigStringSlice,
 }
 
 impl<'a> SourceLineIterator<'a> {
@@ -150,14 +144,15 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub fn until_last(&mut self) -> Option<SourceLine<'a>> {
+    pub fn until_last(&mut self) -> Option<SourceLine> {
         if self.i < 1 {
             return None;
         }
         self.next()
     }
 
-    pub fn next(&mut self) -> Option<SourceLine<'a>> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<SourceLine> {
         if self.i < 0 {
             return None;
         }
@@ -183,7 +178,7 @@ impl<'a> SourceLineIterator<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/ZigStackTrace.zig (150 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      to_api() shared source_line_buf → per-line slice ownership needs Phase B decision; RefPtr<SourceProvider> assumed in crate::
+//   confidence: high
+//   todos:      0
+//   notes:      to_api() per-line Box<[u8]> instead of shared buffer (api type owns its bytes).
 // ──────────────────────────────────────────────────────────────────────────

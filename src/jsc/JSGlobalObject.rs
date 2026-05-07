@@ -668,7 +668,8 @@ impl JSGlobalObject {
         // `@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)` is the literal string.
         err.put(
             self,
-            b"code",            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
+            b"code",
+            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
         );
         err
     }
@@ -685,7 +686,8 @@ impl JSGlobalObject {
         }
         err.put(
             self,
-            b"code",            ZigString::init(opts.code.as_bytes()).to_js(self),
+            b"code",
+            ZigString::init(opts.code.as_bytes()).to_js(self),
         );
         if let Some(name) = opts.name {
             err.put(self, b"name", ZigString::init(name).to_js(self));

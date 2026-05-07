@@ -90,7 +90,8 @@ impl ZigException {
         }
 
         if let Some(source) = self.stack.referenced_source_provider {
-            source.deref();
+            // SAFETY: pointer was set by JSC (C++) and is valid until this deref releases it.
+            unsafe { (*source.as_ptr()).deref() };
         }
     }
 

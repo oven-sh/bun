@@ -47,7 +47,8 @@ unsafe extern "C" {
 // ── bun.String methods ──────────────────────────────────────────────────────
 #[track_caller]
 pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-    // SAFETY: FFI call into JSC; `this` is a live &mut String, global_this borrowed for call duration.
+    let this = this as *mut String;
+    // SAFETY: FFI call into JSC; `this` is a live *mut String, global_this borrowed for call duration.
     crate::from_js_host_call(global_this, || unsafe {
         BunString__transferToJS(this, global_this.as_ptr())
     })
@@ -85,7 +86,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // We do need to always call hasException() to satisfy the need for an exception check.
     let has_exception = scope.has_exception_or_false_when_assertions_are_disabled();
     if ok {
-        debug_assert!(out.tag() != Tag::Dead);
+        debug_assert!(out.tag != Tag::Dead);
     } else {
         debug_assert!(has_exception);
     }
@@ -117,7 +118,8 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 
 #[track_caller]
 pub fn to_js_by_parse_json(self_: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-    // SAFETY: FFI call into JSC; `self_` is a live &mut String, global_object borrowed for call duration.
+    let self_ = self_ as *mut String;
+    // SAFETY: FFI call into JSC; `self_` is a live *mut String, global_object borrowed for call duration.
     crate::from_js_host_call(global_object, || unsafe {
         BunString__toJSON(global_object.as_ptr(), self_)
     })
@@ -142,16 +144,18 @@ pub fn create_format_for_js(
     // PORT NOTE: Zig took `comptime fmt: [:0]const u8, args: anytype`; callers now
     // pass `format_args!("...", ...)` directly.
     let mut builder: Vec<u8> = Vec::new();
-    builder.write_fmt(args).expect("unreachable"); // Vec<u8> write cannot fail
+    builder.write_fmt(args).expect("Vec<u8> write cannot fail");
+    let (ptr, len) = (builder.as_ptr(), builder.len());
     // SAFETY: FFI call into JSC; ptr/len from a live Vec<u8>, global_object borrowed for call duration.
     crate::from_js_host_call(global_object, || unsafe {
-        BunString__createUTF8ForJS(global_object.as_ptr(), builder.as_ptr(), builder.len())
+        BunString__createUTF8ForJS(global_object.as_ptr(), ptr, len)
     })
 }
 
 #[track_caller]
 pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
-    // SAFETY: FFI call into JSC; `this` is a live &mut String, global_object borrowed for call duration.
+    let this = this as *mut String;
+    // SAFETY: FFI call into JSC; `this` is a live *mut String, global_object borrowed for call duration.
     crate::from_js_host_call_generic(global_object, || unsafe {
         Bun__parseDate(global_object.as_ptr(), this)
     })
@@ -171,9 +175,9 @@ pub fn js_get_string_width(
     }
 
     let js_str = argument.to_js_string(global_object)?;
-    // SAFETY: `to_js_string` returns a non-null `JSString*` on success (a thrown
-    // exception would have been propagated by `?`); valid for the call duration.
-    let view = unsafe { &*js_str }.view(global_object);
+    // SAFETY: `to_js_string` returned a non-null `*mut JSString`; valid for the
+    // remainder of this host call (rooted on the JS stack via `argument`).
+    let view = unsafe { (*js_str).view(global_object) };
 
     if view.is_empty() {
         return Ok(JSValue::js_number_from_int32(0));
@@ -186,10 +190,10 @@ pub fn js_get_string_width(
     let mut ambiguous_is_narrow: bool = true;
 
     if opts_val.is_object() {
-        if let Some(v) = opts_val.get_truthy(global_object, b"countAnsiEscapeCodes")? {
+        if let Some(v) = opts_val.get_truthy(global_object, "countAnsiEscapeCodes")? {
             count_ansi = v.to_boolean();
         }
-        if let Some(v) = opts_val.get_truthy(global_object, b"ambiguousIsNarrow")? {
+        if let Some(v) = opts_val.get_truthy(global_object, "ambiguousIsNarrow")? {
             ambiguous_is_narrow = v.to_boolean();
         }
     }
@@ -223,47 +227,42 @@ fn slice_with_underlying_string_to_js_with_options(
     global_object: &JSGlobalObject,
     transfer: bool,
 ) -> JsResult<JSValue> {
-    if (this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty)
+    if (this.underlying.tag == Tag::Dead || this.underlying.tag == Tag::Empty)
         && this.utf8.length() > 0
     {
-        // We should never enter this state.
-        debug_assert!(!this.utf8.is_wtf_allocated());
-
-        // PORT NOTE: Zig checked `utf8.allocator.get()` to see if the slice
-        // owns a heap allocation. The Rust `ZigStringSlice` encodes that in
-        // its variant; an `Owned` slice's bytes can be handed straight to JSC
-        // as an external string (mimalloc-backed, JSC frees on finalize).
+        #[cfg(debug_assertions)]
         if this.utf8.is_allocated() {
-            match strings::to_utf16_alloc(this.utf8.slice(), false, false) {
-                Ok(Some(utf16)) => {
-                    // Drop the UTF-8 backing (Zig: `this.utf8.deinit(); = .{}`).
-                    this.utf8 = ZigStringSlice::default();
-                    // Ownership of `utf16` transfers to JSC's external-string
-                    // finalizer; do not Drop it here.
-                    let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    return Ok(zig_string::to_external_u16(
-                        utf16.as_ptr(),
-                        utf16.len(),
-                        global_object,
-                    ));
-                }
-                Ok(None) | Err(_) => {
-                    // All-ASCII (or alloc failure — Zig's `catch null`): hand
-                    // the existing 8-bit buffer to JSC. Only the `Owned`
-                    // variant has a transferable mimalloc block; `WTF` is
-                    // ruled out by the assert above and `Static` cannot reach
-                    // this arm (`is_allocated()` is false).
-                    if let Some((ptr, len)) = this.utf8.take_owned_raw() {
-                        let zs = ZigString::init(
-                            // SAFETY: `take_owned_raw` yields a live mimalloc
-                            // block of `len` bytes; valid until JSC frees it.
-                            unsafe { core::slice::from_raw_parts(ptr, len) },
-                        );
-                        return Ok(zs.to_external_value(global_object));
-                    }
-                    // Non-owned allocator (no mimalloc block to hand off):
-                    // fall through to the copying path below.
-                }
+            // We should never enter this state.
+            debug_assert!(!this.utf8.is_wtf_allocated());
+        }
+
+        // PORT NOTE: Zig checked `utf8.allocator.get()` for "owns an
+        // allocator". The Rust `ZigStringSlice` enum encodes ownership in the
+        // variant: `Owned`/`WTF` ⇒ allocated, `Static` ⇒ borrowed.
+        if this.utf8.is_allocated() {
+            if let Some(utf16) =
+                strings::to_utf16_alloc(this.utf8.slice(), false, false).unwrap_or(None)
+            {
+                // Drop the now-unused utf8 allocation (Zig: `this.utf8.deinit()`).
+                this.utf8 = ZigStringSlice::default();
+                // PORT NOTE: ownership of `utf16` is transferred to JSC as an
+                // external string; do not drop it here.
+                let mut utf16 = core::mem::ManuallyDrop::new(utf16);
+                utf16.shrink_to_fit();
+                return Ok(zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object));
+            } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
+                // PORT NOTE: ownership of utf8 bytes transferred to JSC via
+                // `to_external_value`; `take_owned_raw` already cleared `utf8`
+                // and leaked the buffer (mimalloc-freed by JSC).
+                let zig = ZigString::from_bytes(
+                    // SAFETY: `take_owned_raw` returned a leaked, contiguous
+                    // mimalloc-owned buffer of `len` bytes.
+                    unsafe { core::slice::from_raw_parts(ptr, len) },
+                );
+                return Ok(zig.to_external_value(global_object));
+            } else {
+                // WTF-backed (asserted impossible above) or already cleared:
+                // fall through to the copying path.
             }
         }
 
@@ -288,20 +287,23 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
     let input_value = call_frame.argument(0);
 
     if !input_value.is_string() {
-        return Err(global.throw("expected string argument", format_args!("")));
+        return Err(global.throw("expected string argument", format_args!("expected string argument")));
     }
 
     let input = input_value.to_slice(global)?;
 
     let mut buf: Vec<u8> = Vec::new();
 
-    // PORT NOTE: Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8>
-    // writes cannot fail short of abort-on-OOM, so the error arm is dead.
-    strings::escape_reg_exp(input.slice(), &mut buf).expect("Vec<u8> write cannot fail");
+    // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
+    // only fail on OOM.
+    if bun_string::escape_reg_exp::escape_reg_exp(input.slice(), &mut buf).is_err() {
+        return Err(JsError::OutOfMemory);
+    }
 
     let output = String::clone_utf8(&buf);
-
-    to_js(&output, global)
+    let js = to_js(&output, global);
+    output.deref();
+    js
 }
 
 #[bun_jsc::host_fn]
@@ -312,21 +314,25 @@ pub fn js_escape_reg_exp_for_package_name_matching(
     let input_value = call_frame.argument(0);
 
     if !input_value.is_string() {
-        return Err(global.throw("expected string argument", format_args!("")));
+        return Err(global.throw("expected string argument", format_args!("expected string argument")));
     }
 
     let input = input_value.to_slice(global)?;
 
     let mut buf: Vec<u8> = Vec::new();
 
-    // PORT NOTE: Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8>
-    // writes cannot fail short of abort-on-OOM, so the error arm is dead.
-    strings::escape_reg_exp_for_package_name_matching(input.slice(), &mut buf)
-        .expect("Vec<u8> write cannot fail");
+    // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
+    // only fail on OOM.
+    if bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching(input.slice(), &mut buf)
+        .is_err()
+    {
+        return Err(JsError::OutOfMemory);
+    }
 
     let output = String::clone_utf8(&buf);
-
-    to_js(&output, global)
+    let js = to_js(&output, global);
+    output.deref();
+    js
 }
 
 // ── unicode TestingAPIs ─────────────────────────────────────────────────────
@@ -344,34 +350,46 @@ pub mod unicode_testing_apis {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(
-                global_this.throw("toUTF16AllocSentinel: expected 1 argument", format_args!("")),
-            );
+            return Err(global_this.throw(
+                "toUTF16AllocSentinel: expected 1 argument",
+                format_args!("toUTF16AllocSentinel: expected 1 argument"),
+            ));
         }
         let Some(array_buffer) = arguments[0].as_array_buffer(global_this) else {
-            return Err(
-                global_this.throw("toUTF16AllocSentinel: expected a Uint8Array", format_args!("")),
-            );
+            return Err(global_this.throw(
+                "toUTF16AllocSentinel: expected a Uint8Array",
+                format_args!("toUTF16AllocSentinel: expected a Uint8Array"),
+            ));
         };
         let bytes = array_buffer.byte_slice();
 
         let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
             Ok(r) => r,
             Err(err) => {
-                return Err(global_this.throw_error(err.into(), "toUTF16AllocForReal failed"));
+                return Err(global_this.throw(
+                    "toUTF16AllocForReal failed",
+                    format_args!("{err:?} toUTF16AllocForReal failed"),
+                ));
             }
         };
 
-        // PORT NOTE: the Rust port of `to_utf16_alloc_for_real(.., sentinel=true)`
-        // stores the trailing NUL **inside** the `Vec` (Zig's `[:0]u16` excludes
-        // it from `.len`). Slice it off before cloning so the JS string doesn't
-        // gain a stray U+0000.
-        debug_assert!(matches!(result.last(), Some(&0)));
-        let payload = &result[..result.len().saturating_sub(1)];
+        // PORT NOTE: Rust's `to_utf16_alloc_for_real(.., sentinel=true)` includes
+        // the trailing NUL **in** `result.len()` (Zig kept it past-the-end).
+        debug_assert!(result.last().copied() == Some(0));
 
-        let out = String::clone_utf16(payload);
+        let out = String::clone_utf16(&result[..result.len().saturating_sub(1)]);
         let js = to_js(&out, global_this);
         out.deref();
         js
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// PORT STATUS
+//   source:     src/jsc/bun_string_jsc.zig (265 lines)
+//   confidence: high
+//   notes:      ZigString.Slice allocator-vtable replaced by enum variants
+//               (`is_allocated`/`is_wtf_allocated`/`take_owned_raw`);
+//               markBinding(@src()) dropped; utf8 ownership transferred to JSC
+//               via `take_owned_raw` + `to_external_value`.
+// ──────────────────────────────────────────────────────────────────────────

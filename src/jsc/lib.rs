@@ -209,7 +209,9 @@ pub use self::js_value::{
 // hook is re-exported from the crate root.
 pub use self::task::Taskable;
 pub use self::js_promise::JSPromise;
-pub use self::array_buffer::{ArrayBuffer, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType};
+pub use self::array_buffer::{ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType};
+pub use self::js_array_iterator::JSArrayIterator;
+pub use self::system_error::SystemError;
 pub use self::rare_data as RareData;
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;

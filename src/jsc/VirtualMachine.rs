@@ -317,11 +317,6 @@ unsafe extern "C" {
     fn Process__dispatchOnExit(global: *mut JSGlobalObject, code: u8);
     fn Bun__closeAllSQLiteDatabasesForTermination();
     fn Bun__WebView__closeAllForTermination();
-    /// `bun.api.node.process.exit` — exported from the Zig side as
-    /// `Bun__Process__exit` (see `runtime/node/node_process.zig` `@export`).
-    /// Main-thread is `noreturn`; in a worker it returns and the caller
-    /// `panic!`s, mirroring the Zig spec.
-    fn Bun__Process__exit(global: *mut JSGlobalObject, code: u8);
     fn Zig__GlobalObject__destructOnExit(global: *mut JSGlobalObject);
 }
 

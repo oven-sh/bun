@@ -211,13 +211,61 @@ pub mod options {
         #[inline] pub const fn is_esm(self) -> bool { matches!(self, Format::Esm) }
         #[inline] pub const fn is_cjs(self) -> bool { matches!(self, Format::Cjs) }
     }
-    #[derive(Clone, Default)]
-    pub struct AllowUnresolved;
+    /// Port of `bundler/options.zig` `AllowUnresolved`.
+    ///
+    /// CYCLEBREAK MOVE_DOWN: canonical home is here (the parser is the consumer
+    /// — `P::should_allow_unresolved_dynamic_specifier`). `bun_bundler::options`
+    /// re-exports this so `BundleOptions.allow_unresolved` and
+    /// `Parser.Options.allow_unresolved` are the SAME nominal type and
+    /// `ParseTask::run_with_source_code` can hand `&transpiler.options.allow_unresolved`
+    /// straight through.
+    #[derive(Debug, Clone)]
+    pub enum AllowUnresolved {
+        /// Default. Skip all checks — current behavior.
+        All,
+        /// Always error on dynamic specifiers.
+        None,
+        /// Glob patterns; at least one must match the extracted shape.
+        Patterns(Box<[Box<[u8]>]>),
+    }
+    impl Default for AllowUnresolved {
+        fn default() -> Self { AllowUnresolved::All }
+    }
     impl AllowUnresolved {
         // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
         // from `Options::init` (`&options::AllowUnresolved::DEFAULT`); rvalue
         // static promotion gives the borrow `'static` lifetime.
-        pub const DEFAULT: AllowUnresolved = AllowUnresolved;
+        pub const DEFAULT: AllowUnresolved = AllowUnresolved::All;
+
+        /// Normalize from raw CLI/JS input.
+        /// [] → .none, contains "*" → .all, else → .patterns
+        pub fn from_strings(strs: Box<[Box<[u8]>]>) -> AllowUnresolved {
+            if strs.is_empty() {
+                return AllowUnresolved::None;
+            }
+            for s in strs.iter() {
+                if &**s == b"*" {
+                    return AllowUnresolved::All;
+                }
+            }
+            AllowUnresolved::Patterns(strs)
+        }
+
+        /// shape is the extracted template representation (may be "").
+        pub fn allows(&self, shape: &[u8]) -> bool {
+            match self {
+                AllowUnresolved::All => true,
+                AllowUnresolved::None => false,
+                AllowUnresolved::Patterns(pats) => {
+                    for p in pats.iter() {
+                        if bun_glob::r#match(p, shape).matches() {
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }
+        }
     }
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a

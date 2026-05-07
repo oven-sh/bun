@@ -26,20 +26,16 @@ pub struct ZigStackFrame {
     pub jsc_stack_frame_index: i32,
 }
 
-impl Drop for ZigStackFrame {
-    fn drop(&mut self) {
-        // `bun_string::String` is `Copy` and has no `Drop` of its own (string/lib.rs:1013), so
-        // explicit `.deref()` here is required and cannot double-deref. This is a `#[repr(C)]`
-        // FFI type; C++-owned buffers call `deinit()` directly instead of relying on `Drop`.
-        self.function_name.deref();
-        self.source_url.deref();
-    }
-}
-
 impl ZigStackFrame {
-    /// Explicit deref of owned strings — kept distinct from `Drop` because
-    /// frames are also held in C++-owned buffers (`ZigStackTrace.frames_ptr`)
-    /// where Rust never runs `Drop`; `ZigException::deinit` calls this directly.
+    /// Explicit deref of owned strings.
+    ///
+    /// Intentionally NOT `Drop`: this `#[repr(C)]` extern struct lives both in
+    /// C++-populated buffers (`ZigStackTrace.frames_ptr`) and in the Rust-owned
+    /// `Holder.frames: [ZigStackFrame; 32]` array. `Holder::deinit()` calls
+    /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
+    /// the array elements are then later dropped by Rust when `Holder` itself
+    /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
+    /// time (UAF). Match the Zig spec: explicit `deinit` only.
     pub fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();

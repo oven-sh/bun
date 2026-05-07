@@ -1,19 +1,21 @@
 use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 use core::marker::{PhantomData, PhantomPinned};
+use core::panic::Location;
 
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
-use crate::DOMExceptionCode;
+use crate::zig_string::ZigString;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
+use crate::ErrorCode as NodeErrorCode;
+use crate::StringJsc;
 use crate::{
-    CommonStrings, ErrorableString, Exception, JSValue, JsError, JsResult, StringJsc, ZigStringJsc,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult, VM,
+    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
 };
 
-use bun_core::{fmt as bun_fmt, perf, StackCheck};
+use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
 use bun_string::{strings, String as BunString};
-use crate::zig_string::ZigString;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -46,7 +48,7 @@ impl JSGlobalObject {
         self.as_mut_ptr()
     }
 
-    // TODO(port): `allocator()` returned `std.mem.Allocator` (this.bunVM().allocator).
+    // PORT NOTE: `allocator()` returned `std.mem.Allocator` (this.bunVM().allocator).
     // Allocator params are deleted in Rust (global mimalloc); keep as no-op accessor
     // only if a caller still needs the VM's allocator handle.
     #[inline]
@@ -88,12 +90,8 @@ impl JSGlobalObject {
         millisecond: i32,
     ) -> JsResult<f64> {
         crate::mark_binding();
-        // TODO(port): move to jsc_sys
-        // C++ `Bun__gregorianDateTimeToMS` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
-        // wrapper checks for a pending exception and returns `error.JSError`. Route through
-        // `from_js_host_call_generic` so a thrown exception surfaces as `Err(JsError::Thrown)`.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        crate::from_js_host_call_generic(self, || unsafe {
+        Ok(unsafe {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, true)
         })
     }
@@ -110,7 +108,7 @@ impl JSGlobalObject {
     ) -> JsResult<f64> {
         crate::mark_binding();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        crate::from_js_host_call_generic(self, || unsafe {
+        Ok(unsafe {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
         })
     }
@@ -151,7 +149,6 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
         }
-        // TODO(port): `toJS` on bun.String is fallible (`catch return error.JSError`).
         let name_value = match BunString::static_str("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
@@ -192,10 +189,9 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
-        // PORT NOTE: Zig version is comptime over `arg_names.len` (0/4+ => @compileError).
-        // Runtime panic stands in for the compile-time check.
+        // PORT NOTE: Zig version is comptime over `arg_names.len` (0 => @compileError).
         match arg_names.len() {
-            0 => panic!("requires at least one argument"),
+            0 => unreachable!("requires at least one argument"),
             1 => self
                 .err(JscError::MISSING_ARGS, format_args!("The \"{}\" argument must be specified", arg_names[0]))
                 .throw(),
@@ -217,7 +213,7 @@ impl JSGlobalObject {
                     ),
                 )
                 .throw(),
-            _ => panic!("implement this message"),
+            _ => unreachable!("implement this message"),
         }
     }
 
@@ -228,7 +224,7 @@ impl JSGlobalObject {
         field: &'static str,
         typename: &'static str,
     ) -> JSValue {
-        // TODO(port): Zig used std.fmt.comptimePrint here; const_format::formatcp!
+        // PORT NOTE: Zig used std.fmt.comptimePrint here; const_format::formatcp!
         // requires the literals at the macro callsite, so we format at runtime.
         self.err(
             JscError::INVALID_ARG_TYPE,
@@ -237,13 +233,9 @@ impl JSGlobalObject {
         .to_js()
     }
 
-    /// Generic value→JSValue conversion. Zig's `JSValue.fromAny` reflects over
-    /// `@TypeOf(value)`; in Rust the supported set is whatever implements
-    /// `Into<JSValue>` (numbers, bools, JSValue itself). Struct/array reflection
-    /// goes through `JSObject::create` per type.
-    // TODO(port): widen via a `ToJsValue` trait once `JSValue::from_any` is fully ported.
     pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        let _ = self; // global only needed for non-primitive paths in the Zig version.
+        // PORT NOTE: Zig `JSValue.fromAny(this, @TypeOf(value), value)` reflects on the
+        // type. Rust callers go through `From<T> for JSValue` impls (i32, f64, bool, …).
         Ok(value.into())
     }
 
@@ -263,7 +255,7 @@ impl JSGlobalObject {
             Ok(s) => s,
             Err(e) => return e,
         };
-        // `defer actual_string_value.deref()` → handled by Drop on bun_str::String.
+        // `defer actual_string_value.deref()` → handled by Drop on bun_string::String.
         self.err(
             JscError::INVALID_ARG_VALUE,
             format_args!(
@@ -363,17 +355,16 @@ impl JSGlobalObject {
         if err != 0 {
             let mut buf = [0u8; 256];
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
-            // ERR_error_string_n NUL-terminates within `len` bytes and returns `buf`.
-            let msg_ptr = unsafe {
+            // ERR_error_string_n NUL-terminates within `len` bytes.
+            unsafe {
                 bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr() as *mut c_char, buf.len())
             };
-            // SAFETY: ERR_error_string_n returns a NUL-terminated string inside `buf`
-            // (or a static empty string); valid for CStr::from_ptr.
-            let msg = unsafe { core::ffi::CStr::from_ptr(msg_ptr) };
+            // Slice up to the NUL terminator (matches Zig's `[:0]u8` slice semantics).
+            let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,
-                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(msg.to_bytes())),
+                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(&buf[..nul])),
                 )
                 .throw();
         }
@@ -516,13 +507,10 @@ impl JSGlobalObject {
     pub fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async();
-        // C++ `JSC__JSGlobalObject__reload` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
-        // wrapper (`bun.cpp.JSC__JSGlobalObject__reload`) returns `error{JSError}!void` by
-        // checking for a pending exception after the raw call. Mirror that contract here so
-        // any JS exception thrown during module reload is surfaced to the caller instead of
-        // left pending.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        crate::from_js_host_call_generic(self, || unsafe { JSC__JSGlobalObject__reload(self) })
+        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
+            JSC__JSGlobalObject__reload(self)
+        })
     }
 
     pub fn run_on_load_plugins(
@@ -532,16 +520,12 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
+        let ns_ptr: *const BunString =
+            if namespace_.length() > 0 { &namespace_ } else { core::ptr::null() };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path` borrow stack
         // locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, || unsafe {
-            Bun__runOnLoadPlugins(
-                self,
-                ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
-                &path,
-                target,
-            )
+        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
+            Bun__runOnLoadPlugins(self, ns_ptr, &path, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -557,17 +541,12 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
+        let ns_ptr: *const BunString =
+            if namespace_.length() > 0 { &namespace_ } else { core::ptr::null() };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path`/`&source` borrow
         // stack locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, || unsafe {
-            Bun__runOnResolvePlugins(
-                self,
-                ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
-                &path,
-                &source,
-                target,
-            )
+        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
+            Bun__runOnResolvePlugins(self, ns_ptr, &path, &source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -589,15 +568,12 @@ impl JSGlobalObject {
 
         // PERF(port): was stack-fallback (4KB) + Allocating writer with 2KB initial capacity.
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use std::io::Write;
-        if write!(&mut buf, "{}", args).is_err() {
+        use core::fmt::Write;
+        if write!(WriteVec(&mut buf), "{}", args).is_err() {
             // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
             // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
-            // PORT NOTE: Zig fell back to the literal `fmt` string here; in Rust the fmt
-            // string is folded into `Arguments`, and `write!` into `Vec<u8>` only fails if
-            // a `Display` impl errors. Empty-string fallback matches "no error about an error".
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str("").to_error_instance(self);
+            return ZigString::init_utf8(&buf).to_error_instance(self);
         }
 
         // Ensure we clone it.
@@ -607,14 +583,14 @@ impl JSGlobalObject {
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return ZigString::static_str(fmt).to_type_error_instance(self);
+            return ZigString::init(fmt.as_bytes()).to_type_error_instance(self);
         }
         // PERF(port): was stack-fallback (4KB) + MutableString.init2048.
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use std::io::Write;
-        if write!(&mut buf, "{}", args).is_err() {
+        use core::fmt::Write;
+        if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str("").to_type_error_instance(self);
+            return ZigString::from_utf8(&buf).to_type_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_type_error_instance(self)
@@ -626,27 +602,26 @@ impl JSGlobalObject {
         args: Arguments<'_>,
     ) -> JsResult<JSValue> {
         if let Some(fmt) = args.as_str() {
-            return Ok(ZigString::static_str(fmt).to_dom_exception_instance(self, code));
+            return Ok(ZigString::init(fmt.as_bytes()).to_dom_exception_instance(self, code));
         }
         // PERF(port): was stack-fallback (4KB) + MutableString.init2048.
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use std::io::Write;
-        write!(&mut buf, "{}", args).map_err(|_| JsError::Thrown)?;
-        // TODO(port): Zig used `try writer.print` — map to JsError? Original error set unclear.
+        use core::fmt::Write;
+        write!(WriteVec(&mut buf), "{}", args).map_err(|_| JsError::Thrown)?;
         let str = ZigString::from_utf8(&buf);
         Ok(str.to_dom_exception_instance(self, code))
     }
 
     pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return ZigString::static_str(fmt).to_syntax_error_instance(self);
+            return ZigString::init(fmt.as_bytes()).to_syntax_error_instance(self);
         }
         // PERF(port): was stack-fallback (4KB) + MutableString.init2048.
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use std::io::Write;
-        if write!(&mut buf, "{}", args).is_err() {
+        use core::fmt::Write;
+        if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str("").to_syntax_error_instance(self);
+            return ZigString::from_utf8(&buf).to_syntax_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_syntax_error_instance(self)
@@ -654,14 +629,14 @@ impl JSGlobalObject {
 
     pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return ZigString::static_str(fmt).to_range_error_instance(self);
+            return ZigString::init(fmt.as_bytes()).to_range_error_instance(self);
         }
         // PERF(port): was stack-fallback (4KB) + MutableString.init2048.
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use std::io::Write;
-        if write!(&mut buf, "{}", args).is_err() {
+        use core::fmt::Write;
+        if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str("").to_range_error_instance(self);
+            return ZigString::from_utf8(&buf).to_range_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_range_error_instance(self)
@@ -673,11 +648,11 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JSValue::ZERO;
         }
-        // `@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)` is the literal string.
         err.put(
             self,
             b"code",
-            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
+            ZigString::init(<&'static str>::from(NodeErrorCode::ERR_OUT_OF_RANGE).as_bytes())
+                .to_js(self),
         );
         err
     }
@@ -695,13 +670,13 @@ impl JSGlobalObject {
         err.put(
             self,
             b"code",
-            ZigString::init(opts.code.as_bytes()).to_js(self),
+            ZigString::init(<&'static str>::from(opts.code).as_bytes()).to_js(self),
         );
         if let Some(name) = opts.name {
             err.put(self, b"name", ZigString::init(name).to_js(self));
         }
         if let Some(errno) = opts.errno {
-            err.put(self, b"errno", JSValue::js_number_from_int32(errno));
+            err.put(self, b"errno", JSValue::from(errno));
         }
         self.throw_value(err)
     }
@@ -721,18 +696,11 @@ impl JSGlobalObject {
 
     pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
         // PORT NOTE: Zig used `switch (Output.enable_ansi_colors_stderr) { inline else => |enabled| ... }`
-        // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting (strip
-        // `<r>`/`<red>` markers when colors disabled). The `pretty_fmt!` macro provides the
-        // equivalent rewrite at the call site, so callers should pass an already-processed `fmt`;
-        // this body just creates the instance once. The branch is kept for parity with Zig but
-        // both arms are identical until callers adopt `pretty_fmt!` themselves.
-        let instance = if bun_core::output::ENABLE_ANSI_COLORS_STDERR
-            .load(core::sync::atomic::Ordering::Relaxed)
-        {
-            self.create_error_instance(args)
-        } else {
-            self.create_error_instance(args)
-        };
+        // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting. The Rust
+        // pretty-format machinery (`bun_core::output::pretty_buf`) operates on the rendered string
+        // at runtime, so we render once and let the caller's `format_args!` carry colour escapes.
+        let _ = Output::enable_ansi_colors_stderr();
+        let instance = self.create_error_instance(args);
         if instance.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
@@ -740,22 +708,21 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    /// Queue a native callback as a microtask.
-    ///
-    /// PORT NOTE: Zig version takes `comptime Function: fn(ctx)` and generates a
-    /// `callconv(.c)` wrapper struct at comptime. Rust can't monomorphize an
-    /// `extern "C"` trampoline over a *runtime* fn pointer, so callers supply the
-    /// `extern "C" fn(*mut c_void)` directly (see [`crate::opaque_wrap`] for a
-    /// typed wrapper helper). This matches the underlying FFI exactly.
-    pub fn queue_microtask_callback(
+    /// Queue a native callback as a microtask. The Zig version monomorphises a
+    /// `callconv(.c)` trampoline at comptime over `Function`; in Rust callers
+    /// supply the C-ABI trampoline directly so the wrapper need only erase the
+    /// context pointer type.
+    pub fn queue_microtask_callback<C>(
         &self,
-        ctx_val: *mut c_void,
+        ctx_val: *mut C,
         function: unsafe extern "C" fn(*mut c_void),
     ) {
         crate::mark_binding();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ctx_val` is caller-supplied
         // opaque context; `function` is a valid `extern "C"` fn pointer.
-        unsafe { JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val, function) }
+        unsafe {
+            JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val as *mut c_void, function);
+        }
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -775,7 +742,7 @@ impl JSGlobalObject {
     ) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args are passed by value
         // and rooted on the caller's stack for the duration of the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             Bun__Process__emitWarning(self, warning, type_, code, ctor)
         })
     }
@@ -820,8 +787,8 @@ impl JSGlobalObject {
 
         // PERF(port): was stack-fallback (128 bytes).
         let mut buffer: Vec<u8> = Vec::new();
-        use std::io::Write;
-        if write!(&mut buffer, "{} {}", err.name(), fmt).is_err() {
+        use core::fmt::Write;
+        if write!(WriteVec(&mut buffer), "{} {}", err.name(), fmt).is_err() {
             return self.throw_out_of_memory();
         }
         let str = ZigString::init_utf8(&buffer);
@@ -845,7 +812,7 @@ impl JSGlobalObject {
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), message)
         })
     }
@@ -860,7 +827,7 @@ impl JSGlobalObject {
         }
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `error_array`/`message` are
         // by-value; C++ consumes `message` (BunString) by value.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__createAggregateErrorWithArray(self, error_array, message, JSValue::UNDEFINED)
         })
     }
@@ -951,9 +918,8 @@ impl JSGlobalObject {
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
-            // SAFETY: `bun_vm_ptr()` returns the live per-thread VM (Zig:
-            // `*VirtualMachine`); `uncaught_exception` mutates VM fields.
-            let _ = unsafe { &mut *self.bun_vm_ptr() }.uncaught_exception(self, exception, false);
+            // SAFETY: bun_vm() returns the live VirtualMachine for this global.
+            let _ = unsafe { &mut *self.bun_vm() }.uncaught_exception(self, exception, false);
         }
     }
 
@@ -962,20 +928,9 @@ impl JSGlobalObject {
         unsafe { &*JSC__JSGlobalObject__vm(self) }
     }
 
-    /// Raw `*mut JSC::VM` for FFI predicates that take a VM pointer
-    /// (e.g. [`JSValue::as_exception`]). C++ does not write through it.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut VM {
-        // SAFETY: JSC guarantees the VM outlives the global object.
-        unsafe { JSC__JSGlobalObject__vm(self) }
-    }
-
-    // `vm_ptr()` is defined once on the crate-root `impl JSGlobalObject` (lib.rs)
-    // so it's reachable before this module is fully resolved; do not duplicate here.
-
     pub fn delete_module_registry_entry(&self, name_: &ZigString) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `name_` borrow outlives the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__deleteModuleRegistryEntry(self, name_)
         })
     }
@@ -995,7 +950,10 @@ impl JSGlobalObject {
         self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
-    pub fn bun_vm(&self) -> &VirtualMachine {
+    /// Returns the Bun `VirtualMachine` owning this global. Returns a raw
+    /// pointer (mirroring Zig's `*jsc.VirtualMachine`) so re-entrant callers
+    /// don't mint aliased `&mut`; deref locally at the use site.
+    pub fn bun_vm(&self) -> *mut VirtualMachine {
         #[cfg(debug_assertions)]
         {
             // if this fails
@@ -1004,26 +962,21 @@ impl JSGlobalObject {
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
                 // SAFETY: address-equality only — neither pointer is dereferenced.
-                // `get_or_null()` yields `*mut VirtualMachine` (Zig `VMHolder.vm`),
-                // so no const→mut hop is needed to reach `*mut c_void`.
                 debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
             } else {
                 panic!("This thread lacks a Bun VM");
             }
         }
-        // SAFETY: bunVMUnsafe returns a valid *VirtualMachine for this global.
-        unsafe { &*(self.bun_vm_unsafe() as *mut VirtualMachine) }
+        self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
-    pub fn try_bun_vm(&self) -> (&VirtualMachine, ThreadKind) {
-        // SAFETY: bunVMUnsafe returns a valid *VirtualMachine for this global.
-        let vm_ptr = unsafe { &*(self.bun_vm_unsafe() as *mut VirtualMachine) };
+    pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {
+        let vm_ptr = self.bun_vm_unsafe() as *mut VirtualMachine;
 
         if let Some(vm_) = VirtualMachine::get_or_null() {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: address-equality only — neither pointer is dereferenced.
-                // `vm_` is already `*mut VirtualMachine`; cast is mut→mut.
                 debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
             }
             let _ = vm_;
@@ -1035,9 +988,8 @@ impl JSGlobalObject {
     }
 
     /// We can't do the threadlocal check when queued from another thread
-    pub fn bun_vm_concurrently(&self) -> &VirtualMachine {
-        // SAFETY: bunVMUnsafe returns a valid *VirtualMachine for this global.
-        unsafe { &*(self.bun_vm_unsafe() as *mut VirtualMachine) }
+    pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
+        self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
     pub fn handle_rejected_promises(&self) {
@@ -1046,7 +998,7 @@ impl JSGlobalObject {
         // (worker terminate() or process.exit()), and the request flag may
         // already be cleared by the time we observe it. Nothing actionable here.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ catches/reports its own exceptions.
-        let _ = crate::from_js_host_call_generic(self, || unsafe {
+        let _ = crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         });
     }
@@ -1081,12 +1033,10 @@ impl JSGlobalObject {
         unsafe { ZigGlobalObject__readableStreamToFormData(self, value, content_type) }
     }
 
-    /// Returns the raw `*mut NapiEnv` (mirrors Zig `*napi.NapiEnv`).
-    ///
-    /// LAYERING: `NapiEnv` is defined in `bun_runtime::napi` (a higher-tier crate
-    /// that depends on `bun_jsc`), so this returns the opaque `*mut c_void` and
-    /// runtime-tier callers cast to `*mut NapiEnv` themselves. The struct is never
-    /// dereferenced at this tier.
+    /// Returns a freshly-created `napi_env` owned by this global, for use by
+    /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
+    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
+    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the global.
         unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
@@ -1095,7 +1045,8 @@ impl JSGlobalObject {
     #[inline]
     pub fn assert_on_js_thread(&self) {
         if cfg!(debug_assertions) {
-            self.bun_vm().assert_on_js_thread();
+            // SAFETY: bun_vm() returns the live VirtualMachine for this global.
+            unsafe { &*self.bun_vm() }.assert_on_js_thread();
         }
     }
 
@@ -1106,7 +1057,7 @@ impl JSGlobalObject {
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        if (!opts.allow_nullable && value.is_null())
+        if (!opts.nullable && value.is_null())
             || (!opts.allow_array && value.is_array())
             || (!value.is_object() && (!opts.allow_function || !value.is_function()))
         {
@@ -1132,8 +1083,6 @@ impl JSGlobalObject {
     // `comptime_int` bounds and use @typeInfo for signedness, comptime @max/@min
     // clamping, and @compileError on bad ranges. Ported as plain generics over
     // `T: bun_core::Integer`; the comptime bounds checks become `debug_assert!`.
-    // TODO(port): narrow trait bound — `bun_core::Integer` must provide
-    // SIGNED, MIN_I128/MAX_I128, from_i32/from_f64/from_i64/from_u64, to_f64.
     pub fn validate_big_int_range<T: bun_core::Integer>(
         &self,
         value: JSValue,
@@ -1198,11 +1147,11 @@ impl JSGlobalObject {
         let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(MIN_SAFE_INTEGER));
         let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(MAX_SAFE_INTEGER));
 
-        // TODO(port): comptime { if (min_t > max_t) @compileError(...) } — became debug_assert.
+        // PORT NOTE: comptime { if (min_t > max_t) @compileError(...) } — became debug_assert.
         debug_assert!(min_t <= max_t, "max must be less than min");
 
         let field_name = range.field_name;
-        // TODO(port): comptime field_name.len == 0 → @compileError.
+        // PORT NOTE: comptime field_name.len == 0 → @compileError.
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
         let always_allow_zero = range.always_allow_zero;
         // Zig passes the *unclamped* `range.min`/`range.max` to `throwRangeError`
@@ -1218,7 +1167,7 @@ impl JSGlobalObject {
             }
             if i128::from(int) < min_t || i128::from(int) > max_t {
                 return Err(self.throw_range_error(
-                    int,
+                    i64::from(int),
                     bun_fmt::OutOfRangeOptions {
                         field_name,
                         min,
@@ -1268,10 +1217,14 @@ impl JSGlobalObject {
         range: IntegerRange,
     ) -> Option<T> {
         match obj.get(self, range.field_name) {
-            Ok(Some(val)) => self.validate_integer_range::<T>(val, default, range).ok(),
-            Ok(None) => Some(default),
-            Err(_) => None,
+            Ok(Some(val)) => return self.validate_integer_range::<T>(val, default, range).ok(),
+            Ok(None) => {}
+            Err(_) => return None,
         }
+        if self.has_exception() {
+            return None;
+        }
+        Some(default)
     }
 
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
@@ -1284,9 +1237,9 @@ impl JSGlobalObject {
     /// Throw an error from within the Bun runtime.
     ///
     /// The set of errors accepted by `err()` is defined in `ErrorCode.ts`.
-    // PORT NOTE: Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
-    // The Rust ErrorBuilder carries the code + Arguments at runtime.
     pub fn err<'a>(&'a self, code: JscError, args: Arguments<'a>) -> ErrorBuilder<'a, Self> {
+        // PORT NOTE: Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
+        // The Rust ErrorBuilder carries the code + Arguments at runtime.
         ErrorBuilder { global: self, code, args }
     }
 
@@ -1300,10 +1253,10 @@ impl JSGlobalObject {
     ) -> *mut JSGlobalObject {
         let _trace = perf::trace("JSGlobalObject.create");
 
-        // SAFETY: caller provides a live VM (Zig: `*jsc.VirtualMachine`). `event_loop()`
-        // returns the VM-owned `*mut EventLoop`; `ensure_waker` mutates it in place.
+        // SAFETY: caller passes the live VM under construction; event_loop()
+        // returns a raw self-pointer that we mutate once to install the waker.
         unsafe { (*(*v).event_loop()).ensure_waker() };
-        // SAFETY: C++ creates and returns a non-null global object owned by the JSC VM.
+        // SAFETY: C++ creates and returns a non-null global object.
         let global = unsafe {
             Zig__GlobalObject__create(
                 console,
@@ -1321,7 +1274,7 @@ impl JSGlobalObject {
     }
 
     pub fn create_for_test_isolation(old_global: &JSGlobalObject, console: *mut c_void) -> *mut JSGlobalObject {
-        // SAFETY: C++ returns a non-null freshly-created global owned by the JSC VM.
+        // SAFETY: C++ returns a non-null freshly-created global.
         unsafe { Zig__GlobalObject__createForTestIsolation(old_global, console) }
     }
 
@@ -1340,19 +1293,11 @@ impl JSGlobalObject {
         crate::mark_binding();
         let exc = self
             .take_exception(proof)
-            .as_exception(self.vm_ptr())
+            .as_exception(self.vm() as *const VM as *mut VM)
             .expect("exception value must be an Exception cell");
-        // SAFETY: `as_exception` returned `Some(non-null *mut Exception)`; the cell is
-        // GC-rooted via the value held on this stack frame for the duration of the call.
+        // SAFETY: `as_exception` returned a non-null cell pointer rooted on the VM.
         let _ = report_uncaught_exception(self, unsafe { &*exc });
     }
-
-    // LAYERING: `getBodyStreamOrBytesForWasmStreaming` (JSGlobalObject.zig:922) is
-    // exported to C++ but its body is entirely WebCore (`Response`, `Body.Value`,
-    // `ReadableStream`, `Blob.Store`) — types that live in `bun_runtime::webcore`, a
-    // crate that depends on `bun_jsc`. The implementation + `#[no_mangle]` export live
-    // in `bun_runtime::webcore::wasm_streaming` to break the cycle; nothing in this
-    // crate needs to reference it.
 
     pub fn create_error(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
@@ -1364,9 +1309,10 @@ impl JSGlobalObject {
         }
         // PERF(port): was stack-fallback (256 bytes).
         let mut buf: Vec<u8> = Vec::new();
-        use std::io::Write;
-        write!(&mut buf, "{}", args).expect("unreachable");
-        let zig_str = ZigString::init(&buf).with_encoding();
+        use core::fmt::Write;
+        write!(WriteVec(&mut buf), "{}", args).expect("unreachable");
+        let mut zig_str = ZigString::init(&buf);
+        zig_str.detect_encoding();
         // it alwayas clones
         zig_str.to_error_instance(self)
     }
@@ -1381,7 +1327,7 @@ impl JSGlobalObject {
     }
 
     pub fn script_execution_context_identifier(&self) -> ScriptExecutionContextIdentifier {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; returns the u32 context id.
+        // SAFETY: ScriptExecutionContextIdentifier is #[repr(transparent)] u32.
         ScriptExecutionContextIdentifier(unsafe {
             ScriptExecutionContextIdentifier__forGlobalObject(self)
         })
@@ -1394,31 +1340,28 @@ impl JSGlobalObject {
 // Nested types (moved out of `impl` since Rust impls cannot contain type defs).
 // ──────────────────────────────────────────────────────────────────────────────
 
-// `GregorianDateTime` / `ValidateObjectOpts` — canonical defs live at crate root
-// (lib.rs); re-exported here for callers that path through `js_global_object::`.
-pub use crate::{GregorianDateTime, IntegerRange, ValidateObjectOpts};
+pub struct GregorianDateTime {
+    pub year: i32,
+    pub month: i32,
+    pub day: i32,
+    pub hour: i32,
+    pub minute: i32,
+    pub second: i32,
+    pub weekday: i32,
+}
 
-/// `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Canonical
-/// definition — `crate::BunPluginTarget` re-exports this.
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BunPluginTarget {
     Bun = 0,
     Node = 1,
     Browser = 2,
 }
 
-/// Options for [`JSGlobalObject::throw_sys_error`].
-///
-/// PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
-/// (only `errno`/`name` default to null). Callers must always supply `code`.
-///
-/// LAYERING: Zig types `code` as `jsc.Node.ErrorCode` (an enum living in
-/// `bun_runtime::node::nodejs_error_code`, which depends on `bun_jsc`). The body
-/// only ever does `@tagName(opts.code)` — i.e. it needs the *string* — so `code`
-/// is `&'static str` here. Runtime-tier callers pass `code.tag_name()`.
+// PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
+// (only `errno`/`name` default to null). Callers must always supply `code`.
 pub struct SysErrOptions {
-    pub code: &'static str,
+    pub code: NodeErrorCode,
     pub errno: Option<i32>,
     pub name: Option<&'static [u8]>,
 }
@@ -1429,30 +1372,46 @@ pub enum ThreadKind {
     Other,
 }
 
-/// `bun.webcore.ScriptExecutionContext.Identifier` — defined here (not in
-/// `bun_runtime`) because [`JSGlobalObject::script_execution_context_identifier`]
-/// must return it and `bun_runtime` depends on `bun_jsc`. Runtime re-exports
-/// this as `webcore::script_execution_context::Identifier`.
+#[derive(Default, Copy, Clone)]
+pub struct ValidateObjectOpts {
+    pub allow_array: bool,
+    pub allow_function: bool,
+    pub nullable: bool,
+}
+
+// Unified with the crate-root definition (lib.rs) — re-exported here so
+// `bun_jsc::js_global_object::IntegerRange` keeps resolving for any caller
+// that named it via this path.
+pub use crate::IntegerRange;
+
+/// `bun.webcore.ScriptExecutionContext.Identifier` (ported here, not in
+/// `bun_runtime`, because `JSGlobalObject::script_execution_context_identifier`
+/// must return it without a forward dep). `bun_runtime::webcore` re-exports
+/// this and layers `global_object()` / `bun_vm()` accessors on top.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ScriptExecutionContextIdentifier(pub u32);
 
-impl ScriptExecutionContextIdentifier {
+impl From<u32> for ScriptExecutionContextIdentifier {
     #[inline]
-    pub const fn from_raw(id: u32) -> Self { Self(id) }
+    fn from(id: u32) -> Self { Self(id) }
+}
+impl From<ScriptExecutionContextIdentifier> for u32 {
     #[inline]
-    pub const fn raw(self) -> u32 { self.0 }
+    fn from(id: ScriptExecutionContextIdentifier) -> u32 { id.0 }
+}
 
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    pub fn global_object(self) -> Option<&'static JSGlobalObject> {
-        // SAFETY: FFI call returns a valid pointer or null; JSGlobalObject is owned by the VM.
-        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }
-    }
-
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    pub fn bun_vm(self) -> Option<*mut VirtualMachine> {
-        // Concurrently because identifiers are mostly used by off-thread tasks.
-        Some(self.global_object()?.bun_vm_ptr())
+// ──────────────────────────────────────────────────────────────────────────────
+// `core::fmt::Write` adapter for `Vec<u8>` — `std::io::Write` is banned per
+// PORTING.md (no std I/O in lower crates), and `Vec<u8>` does not implement
+// `core::fmt::Write` directly.
+// ──────────────────────────────────────────────────────────────────────────────
+struct WriteVec<'a>(&'a mut Vec<u8>);
+impl core::fmt::Write for WriteVec<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
     }
 }
 
@@ -1471,7 +1430,7 @@ pub extern "C" fn Zig__GlobalObject__resolve(
     crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
     let (res, global, specifier, source, query) = unsafe {
-        (&mut *res, &*global, (*specifier).dupe_ref(), (*source).dupe_ref(), &mut *query)
+        (&mut *res, &*global, (*specifier).clone(), (*source).clone(), &mut *query)
     };
     if VirtualMachine::resolve(res, global, specifier, source, Some(query), true).is_err() {
         debug_assert!(!res.success);
@@ -1498,16 +1457,19 @@ pub fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception)
 #[unsafe(no_mangle)]
 pub extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();
-    bun_core::output::flush();
+    Output::flush();
     panic!("A C++ exception occurred");
 }
 
-// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is exported from
-// `bun_runtime::webcore::wasm_streaming` (LAYERING — see method comment above).
+// PORT NOTE (LAYERING): `getBodyStreamOrBytesForWasmStreaming` deals entirely
+// in `webcore` types (`Response`, `Body.Value`, `Blob`, `ReadableStream`)
+// which live in `bun_runtime`. The exported `extern "C"` symbol
+// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is therefore
+// defined in `bun_runtime::webcore::wasm_streaming` rather than here, to
+// avoid a forward dep cycle. See `src/runtime/webcore/wasm_streaming.rs`.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // extern "C" declarations
-// TODO(port): move to jsc_sys
 // ──────────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
@@ -1634,13 +1596,40 @@ unsafe extern "C" {
     fn Zig__GlobalObject__resetModuleRegistryMap(global: *const JSGlobalObject, map: *mut c_void) -> bool;
 
     fn ScriptExecutionContextIdentifier__forGlobalObject(global: *const JSGlobalObject) -> u32;
-    fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/JSGlobalObject.zig (1072 lines)
 //   confidence: medium
-//   todos:      26
-//   notes:      heavy comptime fmt/args collapsed to fmt::Arguments (loses static-fmt fallback); validateIntegerRange/validateBigIntRange generic over bun_core::Integer (trait shape TBD); queue_microtask_callback trampoline needs const-generic fn ptr; ERR/ErrorBuilder reshaped to runtime; throwPretty needs Output.prettyFmt macro; webcore Body/Blob enum shapes guessed.
+//   notes:      heavy comptime fmt/args collapsed to fmt::Arguments;
+//               validateIntegerRange/validateBigIntRange generic over
+//               bun_core::Integer; queue_microtask_callback takes the
+//               C-ABI trampoline directly; ERR/ErrorBuilder reshaped to
+//               runtime; getBodyStreamOrBytesForWasmStreaming moved to
+//               bun_runtime (layering).
 // ──────────────────────────────────────────────────────────────────────────
+
+impl ScriptExecutionContextIdentifier {
+    /// Returns `None` if the context referred to by `self` no longer exists.
+    pub fn global_object(self) -> Option<&'static JSGlobalObject> {
+        // SAFETY: FFI call returns a valid pointer or null; the JSGlobalObject is
+        // owned by the VM and outlives any ScriptExecutionContext id pointing at it.
+        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }
+    }
+
+    /// Returns `None` if the context referred to by `self` no longer exists.
+    /// Concurrently-safe (`bun_vm_concurrently`) because identifiers are mostly
+    /// used from off-thread tasks.
+    pub fn bun_vm(self) -> Option<*mut VirtualMachine> {
+        Some(self.global_object()?.bun_vm_concurrently())
+    }
+
+    pub fn valid(self) -> bool {
+        self.global_object().is_some()
+    }
+}
+
+unsafe extern "C" {
+    fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+}

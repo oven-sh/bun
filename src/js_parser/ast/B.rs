@@ -1,4 +1,4 @@
-use crate::ast::base::Ref;
+use crate::ast::base::{Ref, RefExt as _};
 use crate::ast::binding::Binding;
 use crate::ast::expr::Expr;
 use crate::{flags, ExprNodeIndex};

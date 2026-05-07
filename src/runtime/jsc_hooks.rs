@@ -1243,8 +1243,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some(timer) = crate::timer::TimeoutObject::from_js(value) {
-        // SAFETY: `from_js` returned non-null; cell is live while `value` is on stack.
+    if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
+        // SAFETY: `as_` returned non-null; cell is live while `value` is on stack.
         let internals = unsafe { &(*timer).internals };
         let id = internals.id;
         formatter.add_for_new_line(
@@ -1271,9 +1271,9 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         return Ok(true);
     }
-    if let Some(immediate) = crate::timer::ImmediateObject::from_js(value) {
-        // SAFETY: `from_js` returned non-null; cell is live while `value` is on stack.
-        let id = unsafe { (*immediate).internals.assume_init_ref() }.id;
+    if let Some(immediate) = value.as_::<crate::timer::ImmediateObject>() {
+        // SAFETY: `as_` returned non-null; cell is live while `value` is on stack.
+        let id = unsafe { &(*immediate).internals }.id;
         formatter.add_for_new_line(
             "Immediate(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
         );
@@ -1286,25 +1286,29 @@ fn console_print_runtime_object_inner<const C: bool>(
         );
         return Ok(true);
     }
-    if let Some(build_log) = bun_jsc::BuildMessage::from_js(value) {
+    if let Some(build_log) = value.as_::<bun_jsc::BuildMessage>() {
         let mut w = IoAsFmt(writer_);
-        // SAFETY: `from_js` returned a live cell.
+        // SAFETY: `as_` returned a live cell.
         let _ = unsafe { &(*build_log).msg }.write_format::<C>(&mut w);
         return Ok(true);
     }
-    if let Some(resolve_log) = bun_jsc::ResolveMessage::from_js(value) {
+    if let Some(resolve_log) = value.as_::<bun_jsc::ResolveMessage>() {
         let mut w = IoAsFmt(writer_);
-        // SAFETY: `from_js` returned a live cell.
+        // SAFETY: `as_` returned a live cell.
         let _ = unsafe { &(*resolve_log).msg }.write_format::<C>(&mut w);
         return Ok(true);
     }
     {
         use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-        let mut wrapped = WrappedWriter::new(writer_);
-        if JestPrettyFormat::print_asymmetric_matcher::<_, { bun_jsc::FormatTag::Object }, C>(
+        // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
+        // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
+        // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
+        let mut sink: &mut dyn bun_io::Write = &mut *writer_;
+        let mut wrapped = WrappedWriter::new(&mut sink);
+        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(
             formatter,
             &mut wrapped,
-            *name_buf,
+            name_buf,
             value,
         )? {
             return Ok(true);

@@ -1942,6 +1942,17 @@ pub struct Log {
     pub level: Level,
 
     pub clone_line_text: bool,
+
+    /// Owned backing storage for `Location.{file,line_text}` (and similar)
+    /// that came from transient buffers (e.g. native-plugin C strings). Zig
+    /// `log.msgs.allocator.dupe(u8, …)` allocates from the Log's allocator and
+    /// stores a raw slice in `Location` (logger.zig `Location.deinit` is a
+    /// no-op, so the bytes live as long as the Log). Rust models that as a
+    /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
+    /// lifetime-erased borrow into the just-pushed box. The borrow is valid
+    /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
+    /// growth. See PORTING.md §Allocators (arena pattern).
+    pub owned_strings: Vec<Box<[u8]>>,
 }
 
 impl Default for Log {
@@ -1952,7 +1963,30 @@ impl Default for Log {
             msgs: Vec::new(),
             level: if cfg!(debug_assertions) { Level::Info } else { Level::Warn },
             clone_line_text: false,
+            owned_strings: Vec::new(),
         }
+    }
+}
+
+impl Log {
+    /// Port of Zig's `log.msgs.allocator.dupe(u8, s)` pattern: copy `s` into
+    /// storage owned by this `Log` and return a `&'static [u8]` view. The
+    /// returned slice is valid for as long as `self` lives (the box is never
+    /// moved out of `owned_strings`); `'static` is a Phase-A erasure matching
+    /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
+    /// when the `Log` drops.
+    pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
+        if s.is_empty() {
+            return b"";
+        }
+        let boxed: Box<[u8]> = Box::from(s);
+        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
+        // and never removed; its heap allocation is stable across the `Vec`'s
+        // growth, so the returned slice is valid for the life of `self`.
+        let view: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&boxed[..]) };
+        self.owned_strings.push(boxed);
+        view
     }
 }
 

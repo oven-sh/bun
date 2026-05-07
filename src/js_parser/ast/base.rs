@@ -166,43 +166,10 @@ impl IndexExt for Index {
 /// The maps can be merged quickly by creating a single outer array containing
 /// all inner arrays from all parsed files.
 //
-// Zig: `packed struct(u64) { inner_index: u31, tag: enum(u2), source_index: u31 }`.
-// Zig packed structs are LSB-first, so:
-//   bits  0..31  inner_index
-//   bits 31..33  tag
-//   bits 33..64  source_index
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Ref(u64);
-
-/// Zig: `pub const Int = u31;` — Rust has no `u31`; use `u32` and mask at the
-/// pack/unpack boundary.
-pub type RefInt = u32;
-
-const REF_INT_MASK: u64 = (1u64 << 31) - 1; // 0x7FFF_FFFF
-const REF_TAG_SHIFT: u32 = 31;
-const REF_TAG_MASK: u64 = 0b11;
-const REF_SOURCE_INDEX_SHIFT: u32 = 33;
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum RefTag {
-    Invalid = 0,
-    AllocatedName = 1,
-    SourceContentsSlice = 2,
-    Symbol = 3,
-}
-
-impl RefTag {
-    #[inline]
-    const fn from_raw(n: u8) -> RefTag {
-        debug_assert!(n <= 3);
-        // SAFETY: `n` is masked to 2 bits at every call site; all 4 values are
-        // valid discriminants of this `#[repr(u8)]` enum.
-        unsafe { core::mem::transmute::<u8, RefTag>(n) }
-    }
-}
+// Canonical definition lives in `bun_logger` (lower tier so `bun_css` can name
+// it without depending on the parser). Re-export it here so the parser/bundler
+// see the same nominal type — no transmute bridges.
+pub use bun_logger::{Ref, RefInt, RefTag};
 
 /// Field-init form for callers (e.g. `bun_css`) that constructed the Zig packed
 /// struct via `.{ .inner_index, .source_index, .tag }`. The packed `Ref(u64)`
@@ -221,189 +188,8 @@ impl From<RefFields> for Ref {
     }
 }
 
-impl Ref {
-    /// Represents a null state without using an extra bit
-    pub const NONE: Ref = Ref(0);
-
-    /// General constructor exposing all three packed fields. Prefer `init` for
-    /// the common source-contents/allocated-name case; this exists for callers
-    /// that need to set `tag` explicitly (e.g. `RefTag::Symbol`).
-    #[inline]
-    pub const fn new(inner_index: RefInt, source_index: RefInt, tag: RefTag) -> Ref {
-        Self::pack(inner_index, tag, source_index)
-    }
-
-    // Zig: `pub const ArrayHashCtx = RefHashCtx; pub const HashCtx = RefCtx;`
-    // Rust can't nest type aliases in inherent impls — callers use the
-    // top-level `RefHashCtx` / `RefCtx` directly.
-
-    #[inline]
-    const fn pack(inner_index: RefInt, tag: RefTag, source_index: RefInt) -> Ref {
-        debug_assert!((inner_index as u64) <= REF_INT_MASK);
-        debug_assert!((source_index as u64) <= REF_INT_MASK);
-        Ref((inner_index as u64 & REF_INT_MASK)
-            | ((tag as u64) << REF_TAG_SHIFT)
-            | ((source_index as u64 & REF_INT_MASK) << REF_SOURCE_INDEX_SHIFT))
-    }
-
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.as_u64() == 0
-    }
-
-    // Zig: `isSourceIndexNull(this: anytype)` — callers pass a bare integer,
-    // not a `Ref`.
-    #[inline]
-    pub fn is_source_index_null(this: RefInt) -> bool {
-        this as u64 == REF_INT_MASK // std.math.maxInt(u31)
-    }
-
-    #[inline]
-    pub fn is_symbol(self) -> bool {
-        self.tag() == RefTag::Symbol
-    }
-
-    #[inline]
-    pub fn tag(self) -> RefTag {
-        RefTag::from_raw(((self.0 >> REF_TAG_SHIFT) & REF_TAG_MASK) as u8)
-    }
-
-    #[inline]
-    pub fn is_valid(self) -> bool {
-        self.tag() != RefTag::Invalid
-    }
-
-    #[inline]
-    pub const fn source_index(self) -> RefInt {
-        (self.0 >> REF_SOURCE_INDEX_SHIFT) as RefInt
-    }
-
-    #[inline]
-    pub const fn inner_index(self) -> RefInt {
-        (self.0 & REF_INT_MASK) as RefInt
-    }
-
-    #[inline]
-    pub fn is_source_contents_slice(self) -> bool {
-        self.tag() == RefTag::SourceContentsSlice
-    }
-
-    pub fn init(inner_index: RefInt, source_index: u32, is_source_contents_slice: bool) -> Ref {
-        // Zig: `source_index = @intCast(source_index)` (u32 → u31)
-        debug_assert!((source_index as u64) <= REF_INT_MASK);
-        Self::pack(
-            inner_index,
-            if is_source_contents_slice {
-                RefTag::SourceContentsSlice
-            } else {
-                RefTag::AllocatedName
-            },
-            source_index,
-        )
-    }
-
-    pub fn init_source_end(old: Ref) -> Ref {
-        debug_assert!(old.tag() != RefTag::Invalid);
-        Self::init(
-            old.inner_index(),
-            old.source_index(),
-            old.tag() == RefTag::SourceContentsSlice,
-        )
-    }
-
-    #[inline]
-    pub fn hash(self) -> u32 {
-        self.hash64() as u32 // @truncate
-    }
-
-    #[inline]
-    pub const fn as_u64(self) -> u64 {
-        // Zig: `@bitCast(key)` — `#[repr(transparent)]` over u64, so the inner
-        // value IS the bitcast.
-        self.0
-    }
-
-    #[inline]
-    pub fn hash64(self) -> u64 {
-        bun_wyhash::hash(&self.as_u64().to_ne_bytes())
-    }
-
-    #[inline]
-    pub fn eql(self, other: Ref) -> bool {
-        self.as_u64() == other.as_u64()
-    }
-
-    #[deprecated = "use is_empty"]
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
-    }
-
-    // Zig: `jsonStringify(self, writer: anytype) !void` — std.json protocol,
-    // writes `[source_index, inner_index]`.
-    // TODO(port): wire to whatever JSON writer Phase B picks (serde or
-    // bun_interchange). Kept as a free-standing method for now.
-    pub fn json_stringify<W: JsonWriter>(&self, writer: &mut W) -> Result<(), W::Error> {
-        writer.write(&[self.source_index(), self.inner_index()])
-    }
-
-    pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut ast::symbol::Symbol {
-        symbol_table.get_symbol(self)
-    }
-}
-
 // Zig: `comptime { bun.assert(None.isEmpty()); }`
 const _: () = assert!(Ref::NONE.is_empty());
-
-// Zig: `pub fn format(ref, writer) !void` — std.fmt protocol → `Display`.
-impl fmt::Display for Ref {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Ref[inner={}, src={}, .{}]",
-            self.inner_index(),
-            self.source_index(),
-            <&'static str>::from(self.tag()),
-        )
-    }
-}
-
-impl fmt::Debug for Ref {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-// Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
-mod ref_dump {
-    use super::*;
-    pub struct RefDump<'a> {
-        pub(super) ref_: Ref,
-        pub(super) symbol: &'a ast::symbol::Symbol,
-    }
-    impl fmt::Display for RefDump<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // SAFETY: original_name is an arena-owned slice valid for the lifetime of
-            // the symbol table this RefDump was borrowed from (parser/AST arena outlives it).
-            let name = unsafe { &*self.symbol.original_name };
-            write!(
-                f,
-                "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
-                self.ref_.inner_index(),
-                self.ref_.source_index(),
-                <&'static str>::from(self.ref_.tag()),
-                bstr::BStr::new(name),
-                self.symbol.use_count_estimate,
-            )
-        }
-    }
-    impl Ref {
-        pub fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
-            RefDump { ref_: self, symbol: symbol_table.get_symbol(self) }
-        }
-    }
-}
-pub use ref_dump::RefDump;
 
 // ─────────────── getSymbol `anytype` dispatch → trait ───────────────
 //
@@ -436,6 +222,53 @@ impl SymbolTable for Vec<ast::symbol::Symbol> {
 // TODO(port): `impl SymbolTable for ast::Symbol::Map` lives next to `Symbol::Map`
 // (it calls `.get(ref).unwrap()`); add it when that type is ported.
 
+/// `Ref` methods that need parser-crate types (`Symbol`, JSON writer). The
+/// canonical `Ref` lives in `bun_logger`, so these can't be inherent.
+pub trait RefExt: Copy {
+    fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut ast::symbol::Symbol;
+    fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_>;
+    // Zig: `jsonStringify(self, writer: anytype) !void` — std.json protocol,
+    // writes `[source_index, inner_index]`.
+    // TODO(port): wire to whatever JSON writer Phase B picks (serde or
+    // bun_interchange). Kept as a free-standing method for now.
+    fn json_stringify<W: JsonWriter>(self, writer: &mut W) -> Result<(), W::Error>;
+}
+
+impl RefExt for Ref {
+    #[inline]
+    fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut ast::symbol::Symbol {
+        symbol_table.get_symbol(self)
+    }
+    fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
+        RefDump { ref_: self, symbol: symbol_table.get_symbol(self) }
+    }
+    fn json_stringify<W: JsonWriter>(self, writer: &mut W) -> Result<(), W::Error> {
+        writer.write(&[self.source_index(), self.inner_index()])
+    }
+}
+
+// Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
+pub struct RefDump<'a> {
+    ref_: Ref,
+    symbol: &'a ast::symbol::Symbol,
+}
+impl fmt::Display for RefDump<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // SAFETY: original_name is an arena-owned slice valid for the lifetime of
+        // the symbol table this RefDump was borrowed from (parser/AST arena outlives it).
+        let name = unsafe { &*self.symbol.original_name };
+        write!(
+            f,
+            "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
+            self.ref_.inner_index(),
+            self.ref_.source_index(),
+            <&'static str>::from(self.ref_.tag()),
+            bstr::BStr::new(name),
+            self.symbol.use_count_estimate,
+        )
+    }
+}
+
 // TODO(port): placeholder for `writer.write([2]u32{...})` in json_stringify.
 pub trait JsonWriter {
     type Error;
@@ -447,5 +280,5 @@ pub trait JsonWriter {
 //   source:     src/js_parser/ast/base.zig (235 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Ref/Index packed-struct bit layout hand-coded (LSB-first); getSymbol anytype → SymbolTable trait; json_stringify writer protocol stubbed.
+//   notes:      Ref re-exported from bun_logger (unified type); getSymbol anytype → SymbolTable trait + RefExt; json_stringify writer protocol stubbed.
 // ──────────────────────────────────────────────────────────────────────────

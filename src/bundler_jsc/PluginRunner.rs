@@ -20,164 +20,23 @@ pub struct PluginRunner<'a> {
 }
 
 impl<'a> PluginRunner<'a> {
+    /// Spec PluginRunner.zig:14 — canonical body lives in
+    /// `bun_bundler::transpiler::PluginRunner` (lower tier, pure byte parsing).
+    #[inline]
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = strings::index_of_char(specifier, b':') else {
-            return b"";
-        };
-        let colon = colon as usize;
-        use bun_paths::resolve_path::is_sep_any;
-        if cfg!(windows)
-            && colon == 1
-            && specifier.len() > 3
-            && is_sep_any(specifier[2])
-            && ((specifier[0] > b'a' && specifier[0] < b'z')
-                || (specifier[0] > b'A' && specifier[0] < b'Z'))
-        {
-            return b"";
-        }
-        &specifier[0..colon]
+        bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
     }
 
+    /// Spec PluginRunner.zig:22 — canonical body lives in
+    /// `bun_bundler::transpiler::PluginRunner` (lower tier, pure byte parsing).
+    #[inline]
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dor) = strings::last_index_of_char(specifier, b'.') {
-            let ext = &specifier[last_dor + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && ((ext[0] >= b'a' && ext[0] <= b'z')
-                    || (ext[0] >= b'A' && ext[0] <= b'Z')
-                    || ext[0] > 127)
-            {
-                return true;
-            }
-        }
-        !bun_paths::is_absolute(specifier) && strings::index_of_char(specifier, b':').is_some()
+        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
     }
 
-    pub fn on_resolve(
-        &mut self,
-        specifier: &[u8],
-        importer: &[u8],
-        log: &mut Log,
-        loc: Loc,
-        target: BunPluginTarget,
-    ) -> JsResult<Option<FsPath<'static>>> {
-        let global = self.global_object;
-            let namespace_slice = Self::extract_namespace(specifier);
-            let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
-                BunString::init(namespace_slice)
-            } else {
-                BunString::empty()
-            };
-            let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-                namespace,
-                BunString::init(specifier).substring(if namespace.length() > 0 {
-                    namespace.length() + 1
-                } else {
-                    0
-                }),
-                BunString::init(importer),
-                target,
-            )?
-            else {
-                return Ok(None);
-            };
-            let Some(path_value) = on_resolve_plugin.get(global, "path")? else {
-                return Ok(None);
-            };
-            if path_value.is_empty_or_undefined_or_null() {
-                return Ok(None);
-            }
-            if !path_value.is_string() {
-                log.add_error(None, loc, b"Expected \"path\" to be a string")
-                    .expect("unreachable");
-                return Ok(None);
-            }
-
-            let file_path = path_value.to_bun_string(global)?;
-
-            if file_path.length() == 0 {
-                log.add_error(
-                    None,
-                    loc,
-                    b"Expected \"path\" to be a non-empty string in onResolve plugin",
-                )
-                .expect("unreachable");
-                return Ok(None);
-            } else if
-            // TODO: validate this better
-            file_path.eql_comptime(b".")
-                || file_path.eql_comptime(b"..")
-                || file_path.eql_comptime(b"...")
-                || file_path.eql_comptime(b" ")
-            {
-                log.add_error(None, loc, b"Invalid file path from onResolve plugin")
-                    .expect("unreachable");
-                return Ok(None);
-            }
-            let mut static_namespace = true;
-            let user_namespace: BunString = 'brk: {
-                if let Some(namespace_value) = on_resolve_plugin.get(global, "namespace")? {
-                    if !namespace_value.is_string() {
-                        log.add_error(None, loc, b"Expected \"namespace\" to be a string")
-                            .expect("unreachable");
-                        return Ok(None);
-                    }
-
-                    let namespace_str = namespace_value.to_bun_string(global)?;
-                    if namespace_str.length() == 0 {
-                        break 'brk BunString::init(b"file");
-                    }
-
-                    if namespace_str.eql_comptime(b"file") {
-                        break 'brk BunString::init(b"file");
-                    }
-
-                    if namespace_str.eql_comptime(b"bun") {
-                        break 'brk BunString::init(b"bun");
-                    }
-
-                    if namespace_str.eql_comptime(b"node") {
-                        break 'brk BunString::init(b"node");
-                    }
-
-                    static_namespace = false;
-
-                    break 'brk namespace_str;
-                }
-
-                break 'brk BunString::init(b"file");
-            };
-
-            // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
-            // returned the allocator-owned slice by value inside `Fs.Path`.
-            // `FsPath<'static>` borrows, so we leak the formatted buffer to
-            // model the same caller-owns-forever contract (matches the pattern
-            // used throughout `src/bundler/` — e.g. LinkerContext.rs).
-            let mut path_buf: Vec<u8> = Vec::new();
-            write!(&mut path_buf, "{}", file_path).expect("unreachable");
-            let path_static: &'static [u8] = path_buf.leak();
-
-            if static_namespace {
-                // `byte_slice()` borrows `&self`; re-match to recover the
-                // `'static` literal that was wrapped above so the result
-                // typechecks as `FsPath<'static>` without an extra alloc.
-                let ns: &'static [u8] = if user_namespace.eql_comptime(b"bun") {
-                    b"bun"
-                } else if user_namespace.eql_comptime(b"node") {
-                    b"node"
-                } else {
-                    b"file"
-                };
-                return Ok(Some(FsPath::init_with_namespace(path_static, ns)));
-            } else {
-                let mut ns_buf: Vec<u8> = Vec::new();
-                write!(&mut ns_buf, "{}", user_namespace).expect("unreachable");
-                let ns_static: &'static [u8] = ns_buf.leak();
-                return Ok(Some(FsPath::init_with_namespace(path_static, ns_static)));
-            }
-    }
+    // `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) is wired
+    // as the `bun_bundler::transpiler::PluginRunner.on_resolve` dispatch slot
+    // by `bun_jsc::Bun__onDidAppendPlugin`; no inherent method here.
 
     pub fn on_resolve_jsc(
         &self,

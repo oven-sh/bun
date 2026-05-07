@@ -14,28 +14,6 @@ use std::collections::HashMap;
 
 pub use bun_mimalloc_sys::mimalloc;
 
-// ──────────────────────────────────────────────────────────────────────────
-// LAYERING: `Output.scoped` (the real `declare_scope!` / `scoped_log!`) lives
-// in `bun_core`, which depends on `bun_alloc` — so this crate cannot import it.
-// The Zig `Output.scoped(.mimalloc, .hidden)` calls in `mimalloc.zig` are pure
-// debug tracing (compiled out in release); provide local no-op shims with the
-// same call surface so `basic.rs` matches the Zig source 1:1 without a cycle.
-// ──────────────────────────────────────────────────────────────────────────
-#[macro_export]
-#[doc(hidden)]
-macro_rules! declare_scope {
-    ($name:ident, $vis:ident) => {};
-}
-#[macro_export]
-#[doc(hidden)]
-macro_rules! scoped_log {
-    ($scope:ident, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        // No-op in this leaf crate; `bun_core` owns the real logger. Args are
-        // referenced under a dead branch so unused-variable lints don't fire.
-        if false { let _ = ::core::format_args!($fmt $(, $arg)*); }
-    };
-}
-
 // ── Allocator vtable (mirrors std.mem.Allocator) ──────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]

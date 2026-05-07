@@ -6044,7 +6044,14 @@ impl<'a> BundleV2<'a> {
 
                 // Barrel optimization: eagerly record import requests and
                 // un-defer barrel records that are now needed.
-                // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
+                if this.is_barrel_optimization_enabled() {
+                    diff += barrel_imports::schedule_barrel_deferred_imports(
+                        this,
+                        result_source_index as IndexInt,
+                        result_ast_target,
+                    )
+                    .expect("oom");
+                }
 
                 if let Some(named_exports) = named_exports_for_scb {
                     if result.use_directive == crate::UseDirective::Server {

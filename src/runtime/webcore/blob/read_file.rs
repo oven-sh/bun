@@ -995,8 +995,8 @@ impl<'a> ReadFileUV<'a> {
         // bun.destroy / event_loop.unref). Preserve that — cb may inspect store.
         cb(cb_ctx, result);
 
-        // Zig defer block — Arc<Store> drops with the Box; req.deinit() runs in Drop below.
-        // TODO(port): ensure libuv::fs_t has Drop calling uv_fs_req_cleanup.
+        // Zig defer block — store.deref runs via StoreRef's Drop when the Box drops.
+        this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done
         event_loop.unref_concurrently();

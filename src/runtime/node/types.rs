@@ -1651,9 +1651,6 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// Gated: bodies call JSC FFI / `bun_jsc::from_js_host_call`.
-// TODO(b2-blocked): un-gate once bun_jsc + libuv UV_DIRENT_* land.
-
 impl Dirent {
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call.
@@ -1665,16 +1662,10 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        // libuv UV_DIRENT_* — `bun_libuv_sys` is not a dep of this crate, so the
-        // ABI constants (uv.h `uv_dirent_type_t`) are inlined verbatim.
-        const UV_DIRENT_UNKNOWN: i32 = 0;
-        const UV_DIRENT_FILE: i32 = 1;
-        const UV_DIRENT_DIR: i32 = 2;
-        const UV_DIRENT_LINK: i32 = 3;
-        const UV_DIRENT_FIFO: i32 = 4;
-        const UV_DIRENT_SOCKET: i32 = 5;
-        const UV_DIRENT_CHAR: i32 = 6;
-        const UV_DIRENT_BLOCK: i32 = 7;
+        use bun_libuv_sys::{
+            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
+            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
+        };
         let kind_int: i32 = match self.kind {
             DirentKind::File => UV_DIRENT_FILE,
             DirentKind::BlockDevice => UV_DIRENT_BLOCK,

@@ -24,7 +24,7 @@
 // `bun_collections::IntegerBitSet`.
 
 #[path = "shell_body.rs"]
-mod shell_body;
+pub mod shell_body;
 // Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`
 // (Zig path `src/runtime/shell/shell.zig`).
 pub use shell_body as shell;

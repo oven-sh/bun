@@ -5,6 +5,12 @@ use bun_collections::VecExt;
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+// `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
+// so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
+use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
 // CYCLEBREAK: FilePoll/EventLoopHandle are opaque vtable-backed handles in io
@@ -1138,7 +1144,7 @@ pub trait BaseWindowsPipeWriter {
             false
         };
         match source {
-            Source::SyncFile(file) | Source::File(file) => {
+            Source::SyncFile(mut file) | Source::File(mut file) => {
                 // Use state machine to handle close after operation completes
                 if self.owns_fd() {
                     file.detach();
@@ -1149,10 +1155,13 @@ pub trait BaseWindowsPipeWriter {
                 }
             }
             Source::Pipe(pipe) => {
-                // SAFETY: pipe is heap-allocated by Source::open; freed in on_pipe_close.
-                unsafe { (*pipe).data = pipe as *mut c_void };
-                // SAFETY: pipe is a live uv handle; libuv calls on_pipe_close after close completes.
-                unsafe { (*pipe).close(on_pipe_close) };
+                // Hand the Box off to libuv; on_pipe_close reclaims it.
+                let raw = Box::into_raw(pipe);
+                // SAFETY: raw is heap-allocated by Source::open; freed in on_pipe_close.
+                unsafe {
+                    (*raw).data = raw.cast::<c_void>();
+                    (*raw).close(on_pipe_close);
+                }
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
@@ -1173,7 +1182,7 @@ pub trait BaseWindowsPipeWriter {
     }
 
     fn update_ref(&mut self, _event_loop: EventLoopHandle, value: bool) {
-        if let Some(pipe) = self.source() {
+        if let Some(pipe) = self.source_mut().as_mut() {
             if value {
                 pipe.ref_();
             } else {
@@ -1185,8 +1194,10 @@ pub trait BaseWindowsPipeWriter {
     fn set_parent(&mut self, parent: *mut Self::Parent) {
         self.set_parent_ptr(parent);
         if !self.is_done() {
-            if let Some(pipe) = self.source() {
-                pipe.set_data(self as *mut Self as *mut c_void);
+            // raw self-ptr first to dodge the immutable-then-mutable conflict
+            let self_ptr = self as *mut Self as *mut c_void;
+            if let Some(pipe) = self.source_mut().as_mut() {
+                pipe.set_data(self_ptr);
             }
         }
     }
@@ -1195,9 +1206,12 @@ pub trait BaseWindowsPipeWriter {
         // no-op
     }
 
-    fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
+    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
+    /// transfers to `self.source` (later freed via `close_and_destroy`).
+    unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
-        *self.source_mut() = Some(Source::Pipe(pipe));
+        // SAFETY: caller contract — Box-allocated, ownership transfers.
+        *self.source_mut() = Some(Source::Pipe(unsafe { Box::from_raw(pipe) }));
         let p = self.parent_ptr();
         self.set_parent(p);
         self.start_with_current_pipe()
@@ -1205,7 +1219,7 @@ pub trait BaseWindowsPipeWriter {
 
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
-        let source = Source::SyncFile(Source::open_file(fd));
+        let mut source = Source::SyncFile(Source::open_file(fd));
         source.set_data(self as *mut Self as *mut c_void);
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
@@ -1215,7 +1229,7 @@ pub trait BaseWindowsPipeWriter {
 
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
-        let source = Source::File(Source::open_file(fd));
+        let mut source = Source::File(Source::open_file(fd));
         source.set_data(self as *mut Self as *mut c_void);
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
@@ -1232,7 +1246,7 @@ pub trait BaseWindowsPipeWriter {
         // This is critical for spawnSync to use its isolated loop
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
-        let source = match Source::open(loop_, fd) {
+        let mut source = match Source::open(loop_, fd) {
             sys::Result::Ok(source) => source,
             sys::Result::Err(err) => return sys::Result::Err(err),
         };
@@ -1249,14 +1263,16 @@ pub trait BaseWindowsPipeWriter {
         self.start_with_current_pipe()
     }
 
-    fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
-        *self.source_mut() = Some(Source::Pipe(pipe));
+    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
+    unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
+        // SAFETY: caller contract — Box-allocated, ownership transfers.
+        *self.source_mut() = Some(Source::Pipe(unsafe { Box::from_raw(pipe) }));
         let p = self.parent_ptr();
         self.set_parent(p);
     }
 
-    fn get_stream(&self) -> Option<*mut uv::uv_stream_t> {
-        let source = self.source().as_ref()?;
+    fn get_stream(&mut self) -> Option<*mut uv::uv_stream_t> {
+        let source = self.source_mut().as_mut()?;
         if matches!(source, Source::File(_)) {
             return None;
         }
@@ -1405,7 +1421,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         let written = self.pending_payload_size;
         self.pending_payload_size = 0;
-        if let Some(err) = status.to_error(uv::SyscallTag::Write) {
+        if let Some(err) = status.to_error(sys::Tag::write) {
             self.close();
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_error(self.parent(), err) };
@@ -1435,15 +1451,20 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
-        let file = crate::source::File::from_fs(fs);
+        // SAFETY: `fs` is the `uv_fs_t` field at offset 0 of a boxed
+        // `source::File`; `from_fs` reverses the `offset_of` to recover the
+        // owning pointer.
+        let file = unsafe { crate::source::File::from_fs(fs) };
         // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let result = unsafe { (*fs).result };
-        let was_canceled = result.int() == uv::UV_ECANCELED;
+        let was_canceled = result.int() == uv::UV_ECANCELED as i64;
         // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let parent_ptr = unsafe { (*fs).data };
 
         // ALWAYS complete first
-        file.complete(was_canceled);
+        // SAFETY: `file` was derived from `fs` via `offset_of`; the boxed
+        // `source::File` outlives this callback (detach()/close() gates free).
+        unsafe { (*file).complete(was_canceled) };
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
         if parent_ptr.is_null() {
@@ -1461,7 +1482,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
-        if let Some(err) = result.to_error(uv::SyscallTag::Write) {
+        if let Some(err) = result.to_error(sys::Tag::write) {
             this.close();
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_error(this.parent(), err) };
@@ -1486,51 +1507,65 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // reallocated below (only handed to libuv via uv_buf_t / write_req).
         let buffer = unsafe { core::slice::from_raw_parts(buffer_ptr, buffer_len) };
 
-        let Some(pipe) = &self.source else { return };
-        match pipe {
-            Source::SyncFile(_) => {
-                panic!("This code path shouldn't be reached - sync_file in PipeWriter.zig");
-            }
-            Source::File(file) => {
-                // BufferedWriter ensures pending_payload_size blocks concurrent writes
-                debug_assert!(file.can_start());
+        // BORROW_PARAM (raw-ptr break): the match arms mutate `self` while
+        // borrowing into `self.source`. The boxed `File`/`Pipe` live in their
+        // own heap allocations, so a `*mut` snapshot is provenance-disjoint
+        // from `&mut self` (mirrors the Zig `*Source` pointer the original
+        // kept across `self.*` writes).
+        let (file_raw, stream_raw): (*mut crate::source::File, *mut uv::uv_stream_t) =
+            match self.source.as_mut() {
+                None => return,
+                Some(Source::SyncFile(_)) => {
+                    panic!("This code path shouldn't be reached - sync_file in PipeWriter.zig");
+                }
+                Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
+                Some(s) => (core::ptr::null_mut(), s.to_stream()),
+            };
 
-                self.pending_payload_size = buffer_len;
-                file.fs.set_data(self as *mut Self as *mut c_void);
-                file.prepare();
-                self.write_buffer = uv::uv_buf_t::init(buffer);
+        if !file_raw.is_null() {
+            // SAFETY: see raw-ptr break note above.
+            let file = unsafe { &mut *file_raw };
+            // BufferedWriter ensures pending_payload_size blocks concurrent writes
+            debug_assert!(file.can_start());
 
-                if let Some(err) = uv::uv_fs_write(
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::loop_(self.parent()) },
+            self.pending_payload_size = buffer_len;
+            file.fs.data = self as *mut Self as *mut c_void;
+            file.prepare();
+            self.write_buffer = uv::uv_buf_t::init(buffer);
+
+            // SAFETY: file is fully initialized; libuv stores the cb and fires
+            // it on the event loop. parent BACKREF valid.
+            if let Some(err) = unsafe {
+                uv::uv_fs_write(
+                    Parent::loop_(self.parent()),
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    &self.write_buffer,
                     1,
                     -1,
-                    Self::on_fs_write_complete,
+                    Some(Self::on_fs_write_complete),
                 )
-                .to_error(uv::SyscallTag::Write)
-                {
-                    file.complete(false);
-                    self.close();
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error(self.parent(), err) };
-                }
             }
-            _ => {
-                // the buffered version should always have a stable ptr
-                self.pending_payload_size = buffer_len;
-                self.write_buffer = uv::uv_buf_t::init(buffer);
-                if let Some(write_err) = self
-                    .write_req
-                    .write(pipe.to_stream(), &self.write_buffer, self, Self::on_write_complete)
-                    .as_err()
-                {
-                    self.close();
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error(self.parent(), write_err) };
-                }
+            .to_error(sys::Tag::write)
+            {
+                file.complete(false);
+                self.close();
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(self.parent(), err) };
+            }
+        } else {
+            // the buffered version should always have a stable ptr
+            self.pending_payload_size = buffer_len;
+            self.write_buffer = uv::uv_buf_t::init(buffer);
+            let self_ptr = self as *mut Self;
+            if let Some(write_err) = self
+                .write_req
+                .write(stream_raw, &self.write_buffer, self_ptr, Self::on_write_complete)
+                .to_error(sys::Tag::write)
+            {
+                self.close();
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(self.parent(), write_err) };
             }
         }
     }
@@ -1825,10 +1860,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
         let _g = scopeguard::guard(self.parent, |p| unsafe { Parent::deref(p) });
 
-        if let Some(err) = status.to_error(uv::SyscallTag::Write) {
-            self.last_write_result = WriteResult::Err(err);
-            log!("onWrite() = {}", err.name());
-
+        if let Some(err) = status.to_error(sys::Tag::write) {
+            log!("onWrite() = {s}", String::from_utf8_lossy(err.name()));
+            self.last_write_result = WriteResult::Err(err.clone());
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_error(self.parent(), err) };
             self.close_without_reporting();
@@ -1876,15 +1910,20 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     extern "C" fn on_fs_write_complete(fs: *mut uv::fs_t) {
-        let file = crate::source::File::from_fs(fs);
+        // SAFETY: `fs` is the `uv_fs_t` field at offset 0 of a boxed
+        // `source::File`; `from_fs` reverses the `offset_of` to recover the
+        // owning pointer.
+        let file = unsafe { crate::source::File::from_fs(fs) };
         // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let result = unsafe { (*fs).result };
-        let was_canceled = result.int() == uv::UV_ECANCELED;
+        let was_canceled = result.int() == uv::UV_ECANCELED as i64;
         // SAFETY: fs is a live uv_fs_t passed by libuv to this callback.
         let parent_ptr = unsafe { (*fs).data };
 
         // ALWAYS complete first
-        file.complete(was_canceled);
+        // SAFETY: `file` was derived from `fs` via `offset_of`; the boxed
+        // `source::File` outlives this callback (detach()/close() gates free).
+        unsafe { (*file).complete(was_canceled) };
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance processSend's ref was already done in close().
@@ -1905,7 +1944,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return;
         }
 
-        if let Some(err) = result.to_error(uv::SyscallTag::Write) {
+        if let Some(err) = result.to_error(sys::Tag::write) {
             // deref to balance process_send ref
             // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
             let _g = scopeguard::guard(this.parent, |p| unsafe { Parent::deref(p) });
@@ -1935,70 +1974,80 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return;
         }
 
-        let Some(pipe) = &self.source else {
-            let err = sys::Error::from_code(sys::E::PIPE, sys::SyscallTag::Pipe);
-            self.last_write_result = WriteResult::Err(err);
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(self.parent(), err) };
-            self.close_without_reporting();
-            return;
-        };
+        // BORROW_PARAM (raw-ptr break): match arms mutate `self` while
+        // borrowing into `self.source`. The boxed `File`/`Pipe` are separate
+        // heap allocations, so a `*mut` snapshot is provenance-disjoint.
+        let (file_raw, stream_raw): (*mut crate::source::File, *mut uv::uv_stream_t) =
+            match self.source.as_mut() {
+                None => {
+                    let err = sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe);
+                    self.last_write_result = WriteResult::Err(err.clone());
+                    // SAFETY: parent BACKREF valid.
+                    unsafe { Parent::on_error(self.parent(), err) };
+                    self.close_without_reporting();
+                    return;
+                }
+                Some(Source::SyncFile(_)) => {
+                    panic!("sync_file pipe write should not be reachable");
+                }
+                Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
+                Some(s) => (core::ptr::null_mut(), s.to_stream()),
+            };
 
         // current payload is empty we can just swap with outgoing
         mem::swap(&mut self.current_payload, &mut self.outgoing);
         // PORT NOTE: reshaped for borrowck — re-read bytes from current_payload (post-swap).
-        // TODO(port): raw-ptr borrowck escape — restructure in Phase B.
         let bytes_ptr = self.current_payload.slice().as_ptr();
         // SAFETY: current_payload storage is not reallocated until on_write_complete resets it;
         // libuv reads via uv_buf_t which holds this same ptr/len.
         let bytes = unsafe { core::slice::from_raw_parts(bytes_ptr, bytes_len) };
 
-        match pipe {
-            Source::SyncFile(_) => {
-                panic!("sync_file pipe write should not be reachable");
-            }
-            Source::File(file) => {
-                // StreamingWriter ensures current_payload blocks concurrent writes
-                debug_assert!(file.can_start());
+        if !file_raw.is_null() {
+            // SAFETY: see raw-ptr break note above.
+            let file = unsafe { &mut *file_raw };
+            // StreamingWriter ensures current_payload blocks concurrent writes
+            debug_assert!(file.can_start());
 
-                file.fs.set_data(self as *mut Self as *mut c_void);
-                file.prepare();
-                self.write_buffer = uv::uv_buf_t::init(bytes);
+            file.fs.data = self as *mut Self as *mut c_void;
+            file.prepare();
+            self.write_buffer = uv::uv_buf_t::init(bytes);
 
-                if let Some(err) = uv::uv_fs_write(
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::loop_(self.parent()) },
+            // SAFETY: file is fully initialized; libuv stores the cb and fires
+            // it on the event loop. parent BACKREF valid.
+            if let Some(err) = unsafe {
+                uv::uv_fs_write(
+                    Parent::loop_(self.parent()),
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    &self.write_buffer,
                     1,
                     -1,
-                    Self::on_fs_write_complete,
+                    Some(Self::on_fs_write_complete),
                 )
-                .to_error(uv::SyscallTag::Write)
-                {
-                    file.complete(false);
-                    self.last_write_result = WriteResult::Err(err);
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error(self.parent(), err) };
-                    self.close_without_reporting();
-                    return;
-                }
             }
-            _ => {
-                // enqueue the write
-                self.write_buffer = uv::uv_buf_t::init(bytes);
-                if let Some(err) = self
-                    .write_req
-                    .write(pipe.to_stream(), &self.write_buffer, self, Self::on_write_complete)
-                    .as_err()
-                {
-                    self.last_write_result = WriteResult::Err(err);
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error(self.parent(), err) };
-                    self.close_without_reporting();
-                    return;
-                }
+            .to_error(sys::Tag::write)
+            {
+                file.complete(false);
+                self.last_write_result = WriteResult::Err(err.clone());
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(self.parent(), err) };
+                self.close_without_reporting();
+                return;
+            }
+        } else {
+            // enqueue the write
+            self.write_buffer = uv::uv_buf_t::init(bytes);
+            let self_ptr = self as *mut Self;
+            if let Some(err) = self
+                .write_req
+                .write(stream_raw, &self.write_buffer, self_ptr, Self::on_write_complete)
+                .to_error(sys::Tag::write)
+            {
+                self.last_write_result = WriteResult::Err(err.clone());
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(self.parent(), err) };
+                self.close_without_reporting();
+                return;
             }
         }
         // Ref the parent to prevent it from being freed while the async
@@ -2038,7 +2087,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 });
 
                 while remain.len() > 0 {
-                    match fd.write(remain) {
+                    match sys::write(fd, remain) {
                         sys::Result::Err(err) => return WriteResult::Err(err),
                         sys::Result::Ok(wrote) => {
                             remain = &remain[wrote..];
@@ -2072,7 +2121,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Pending(0);
         }
         self.process_send();
-        self.last_write_result
+        self.last_write_result.clone()
     }
 
     fn write_internal_u16(&mut self, buffer: &[u16]) -> WriteResult {
@@ -2094,7 +2143,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 });
 
                 while remain.len() > 0 {
-                    match fd.write(remain) {
+                    match sys::write(fd, remain) {
                         sys::Result::Err(err) => return WriteResult::Err(err),
                         sys::Result::Ok(wrote) => {
                             remain = &remain[wrote..];
@@ -2123,7 +2172,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Pending(0);
         }
         self.process_send();
-        self.last_write_result
+        self.last_write_result.clone()
     }
 
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {
@@ -2147,7 +2196,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         }
 
         self.process_send();
-        self.last_write_result
+        self.last_write_result.clone()
     }
 
     pub fn end(&mut self) {

@@ -41,7 +41,7 @@ type SockaddrStorage = libc::sockaddr_storage;
 #[cfg(windows)]
 type SockaddrStorage = bun_libuv_sys::sockaddr_storage;
 #[cfg(not(windows))]
-type AddrInfo = AddrInfo;
+type AddrInfo = libc::addrinfo;
 #[cfg(windows)]
 type AddrInfo = bun_libuv_sys::addrinfo;
 

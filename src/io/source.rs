@@ -6,6 +6,8 @@ use bun_sys::windows::libuv as uv;
 // `is_closed`/`is_active`/`fd` are default trait methods on `UvHandle`;
 // the trait must be in scope for method resolution on `Box<Pipe>`/`Tty`.
 use bun_sys::windows::libuv::UvHandle as _;
+// `to_error` on `ReturnCode`/`ReturnCodeI64` lives in `bun_sys` (layering).
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::Fd;
 
 bun_core::declare_scope!(PipeSource, hidden);
@@ -237,8 +239,11 @@ impl Source {
 
     pub fn get_fd(&self) -> Fd {
         match self {
-            Source::Pipe(pipe) => pipe.fd(),
-            Source::Tty(tty) => Self::tty_ref(tty).fd(),
+            // `UvHandle::fd()` returns the raw `uv_os_fd_t` (a HANDLE on
+            // Windows); tag kind=system so callers can round-trip through
+            // `Fd::native()`.
+            Source::Pipe(pipe) => Fd::from_system(pipe.fd()),
+            Source::Tty(tty) => Fd::from_system(Self::tty_ref(tty).fd()),
             Source::SyncFile(file) | Source::File(file) => Fd::from_uv(file.file),
         }
     }
@@ -259,18 +264,18 @@ impl Source {
         }
     }
 
-    pub fn ref_(&self) {
+    pub fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
-            Source::Tty(tty) => Self::tty_ref(tty).ref_(),
+            Source::Tty(tty) => Self::tty_mut(tty).ref_(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
 
-    pub fn unref(&self) {
+    pub fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
-            Source::Tty(tty) => Self::tty_ref(tty).unref(),
+            Source::Tty(tty) => Self::tty_mut(tty).unref(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -288,24 +293,18 @@ impl Source {
         // SAFETY: uv::Pipe is a #[repr(C)] libuv struct; all-zero is a valid pre-init state.
         let mut pipe: Box<Pipe> = Box::new(unsafe { core::mem::zeroed::<Pipe>() });
         // we should never init using IPC here see ipc.zig
-        match pipe.init(loop_, false) {
-            bun_sys::Result::Err(err) => {
-                drop(pipe);
-                return bun_sys::Result::Err(err);
-            }
-            _ => {}
+        if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
+            drop(pipe);
+            return bun_sys::Result::Err(err);
         }
 
-        match pipe.open(fd) {
-            bun_sys::Result::Err(err) => {
-                // TODO(port): close_and_destroy() schedules a libuv close whose callback frees
-                // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
-                let raw = Box::into_raw(pipe);
-                // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
-                unsafe { (*raw).close_and_destroy() };
-                return bun_sys::Result::Err(err);
-            }
-            bun_sys::Result::Ok(()) => {}
+        if let Some(err) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
+            // close_and_destroy() schedules a libuv close whose callback frees
+            // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
+            let raw = Box::into_raw(pipe);
+            // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
+            unsafe { (*raw).close_and_destroy() };
+            return bun_sys::Result::Err(err);
         }
 
         bun_sys::Result::Ok(pipe)
@@ -322,12 +321,9 @@ impl Source {
 
         // SAFETY: uv_tty_t is a #[repr(C)] libuv struct; Box::new_zeroed yields a valid pre-init state.
         let mut tty: Box<Tty> = unsafe { Box::new_zeroed().assume_init() };
-        match tty.init(loop_, uv_fd) {
-            bun_sys::Result::Err(err) => {
-                drop(tty);
-                return bun_sys::Result::Err(err);
-            }
-            bun_sys::Result::Ok(()) => {}
+        if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
+            drop(tty);
+            return bun_sys::Result::Err(err);
         }
 
         // SAFETY: Box::into_raw never returns null.
@@ -343,8 +339,9 @@ impl Source {
     }
 
     pub fn open(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
-        let rc = uv::uv_guess_handle(fd.uv());
-        bun_output::scoped_log!(
+        // SAFETY: pure FFI lookup; `fd.uv()` is a CRT fd or 0/1/2.
+        let rc = unsafe { uv::uv_guess_handle(fd.uv()) };
+        bun_core::scoped_log!(
             PipeSource,
             "open(fd: {}, type: {})",
             fd,
@@ -373,10 +370,19 @@ impl Source {
         }
     }
 
-    pub fn set_raw_mode(&self, value: bool) -> bun_sys::Result<()> {
+    /// Direct accessor for the `File`/`SyncFile` arm (Zig: `source.file`).
+    /// Panics on Pipe/Tty — callers gate on `matches!(.., File | SyncFile)`.
+    pub fn file(&self) -> &File {
+        match self {
+            Source::SyncFile(file) | Source::File(file) => file,
+            _ => unreachable!("Source::file() on non-file source"),
+        }
+    }
+
+    pub fn set_raw_mode(&mut self, value: bool) -> bun_sys::Result<()> {
         match self {
             Source::Tty(tty) => {
-                if let Some(err) = Self::tty_ref(tty)
+                if let Some(err) = Self::tty_mut(tty)
                     .set_mode(if value { uv::TtyMode::Raw } else { uv::TtyMode::Normal })
                     .to_error(bun_sys::Tag::uv_tty_set_mode)
                 {
@@ -449,7 +455,7 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     // Node.js readline implementation handles differences between these modes.
     // SAFETY: tty points to the static stdin tty (fd 0 → get_stdin_tty path);
     // live for process lifetime. NonNull means no drop concern.
-    if let Some(err) = unsafe { tty.as_ref() }
+    if let Some(err) = unsafe { &mut *tty.as_ptr() }
         .set_mode(if raw { uv::TtyMode::Vt } else { uv::TtyMode::Normal })
         .to_error(bun_sys::Tag::uv_tty_set_mode)
     {

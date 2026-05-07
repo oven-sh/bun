@@ -3971,7 +3971,58 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 pub const MS_VC_EXCEPTION: u32 = 0x406d1388;
+
+// `STATUS_*` values surfaced as `ExceptionCode` (winnt.h).
+pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
+pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
+pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
+pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+
+/// `EXCEPTION_RECORD` (winnt.h).
+#[repr(C)]
+pub struct EXCEPTION_RECORD {
+    pub ExceptionCode: u32,
+    pub ExceptionFlags: u32,
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    pub ExceptionAddress: *mut core::ffi::c_void,
+    pub NumberParameters: u32,
+    pub ExceptionInformation: [usize; 15],
+}
+/// `EXCEPTION_POINTERS` (winnt.h) — passed to vectored handlers.
+#[repr(C)]
+pub struct EXCEPTION_POINTERS {
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    /// `PCONTEXT` — opaque here (arch-specific 1232-byte blob on x64).
+    pub ContextRecord: *mut core::ffi::c_void,
+}
+
+/// Zig `windows_c.zig::detectRuntimeVersion` — best-effort `major.build`
+/// string from `RtlGetVersion`. Returned as an owned `String` (the Zig
+/// version writes into a static buffer; that's awkward across Rust callers).
+pub fn detect_runtime_version() -> std::string::String {
+    #[repr(C)]
+    struct OSVERSIONINFOW {
+        dwOSVersionInfoSize: u32,
+        dwMajorVersion: u32,
+        dwMinorVersion: u32,
+        dwBuildNumber: u32,
+        dwPlatformId: u32,
+        szCSDVersion: [u16; 128],
+    }
+    unsafe extern "system" {
+        fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
+    }
+    // SAFETY: out-param fully written by RtlGetVersion when it returns 0.
+    let mut info: OSVERSIONINFOW = unsafe { core::mem::zeroed() };
+    info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
+    // SAFETY: `info` is a valid out-pointer.
+    if unsafe { RtlGetVersion(&mut info) } != 0 {
+        return std::string::String::from("unknown");
+    }
+    std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
+}
 
 #[repr(C)]
 pub struct STARTUPINFOEXW {

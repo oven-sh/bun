@@ -473,9 +473,16 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         // `uv_get_osfhandle` for kind=uv fds and yields a *file* HANDLE, which
         // is not interchangeable with a winsock SOCKET. The caller must supply
         // a system-kind (raw SOCKET) fd here.
-        #[cfg(windows)] let fd_raw = {
-            debug_assert_eq!(handle.kind(), bun_core::FdKind::System);
-            handle.native() as crate::LIBUS_SOCKET_DESCRIPTOR
+        #[cfg(windows)] let fd_raw = match handle.decode_windows() {
+            // System-kind: raw SOCKET stored verbatim — reinterpret as
+            // LIBUS_SOCKET_DESCRIPTOR (= SOCKET = usize) without going through
+            // `.native()`, which would otherwise call `uv_get_osfhandle` for
+            // the Uv arm and yield a *file* HANDLE (wrong kernel table).
+            bun_core::DecodeWindows::Windows(h) => h as crate::LIBUS_SOCKET_DESCRIPTOR,
+            bun_core::DecodeWindows::Uv(_) => {
+                debug_assert!(false, "Socket::from_fd requires a system-kind (raw SOCKET) Fd on Windows");
+                return None;
+            }
         };
         #[cfg(not(windows))] let fd_raw = handle.native();
         let raw = g.from_fd(

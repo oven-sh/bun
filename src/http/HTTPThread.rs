@@ -1000,9 +1000,10 @@ mod _event_loop_draft {
         #[cfg(windows)]
         {
             if bun_sys::windows::getenv_w(bun_string::w!("SystemRoot")).is_none() {
-                Output::err_generic(format_args!(
-                    "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work."
-                ));
+                Output::err_generic(
+                    "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
+                    (),
+                );
                 Global::crash();
             }
         }

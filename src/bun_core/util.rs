@@ -858,10 +858,10 @@ impl Fd {
 
 /// Zig `Kind` — tag in bit 63 on Windows, `enum(u0)` (zero-width) on POSIX.
 #[cfg(not(windows))]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind { System = 0 }
 #[cfg(windows)]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind { System = 0, Uv = 1 }
 
 #[cfg(windows)]

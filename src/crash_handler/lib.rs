@@ -153,14 +153,15 @@ pub fn stderr_writer() -> StderrWriter { StderrWriter }
 impl core::fmt::Write for StderrWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-        unsafe { libc::write(2, s.as_ptr().cast(), s.len()); }
+        // (`count` is `c_uint` on the Windows CRT, `usize` on POSIX.)
+        unsafe { libc::write(2, s.as_ptr().cast(), s.len() as _); }
         Ok(())
     }
 }
 impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
         // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-        unsafe { libc::write(2, bytes.as_ptr().cast(), bytes.len()); }
+        unsafe { libc::write(2, bytes.as_ptr().cast(), bytes.len() as _); }
         Ok(())
     }
 }
@@ -693,12 +694,17 @@ pub fn crash_handler(
                             };
                             // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
                             if bun_sys::windows::HRESULT_CODE(result) == bun_sys::windows::S_OK && unsafe { *name } != 0 {
-                                // SAFETY: name is a valid NUL-terminated wide string
-                                let span = unsafe { bun_str::WStr::from_ptr(name) };
+                                // SAFETY: `name` is a valid NUL-terminated wide string
+                                // (PWSTR out-param from GetThreadDescription).
+                                let span = unsafe {
+                                    let mut len = 0usize;
+                                    while *name.add(len) != 0 { len += 1; }
+                                    core::slice::from_raw_parts(name, len)
+                                };
                                 if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { abort(); }
                             } else {
                                 // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
-                                if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { abort(); }
+                                if write!(writer, "(thread {})", unsafe { bun_sys::windows::kernel32::GetCurrentThreadId() }).is_err() { abort(); }
                             }
                             }
                         }
@@ -1214,7 +1220,15 @@ pub fn init() {
     {
         // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
         unsafe {
-            WINDOWS_SEGFAULT_HANDLE = Some(bun_sys::windows::kernel32::AddVectoredExceptionHandler(0, handle_segfault_windows));
+            // SAFETY: ABI-identical — `*mut EXCEPTION_POINTERS` vs the
+            // type-erased `*mut c_void` in the kernel32 binding.
+            WINDOWS_SEGFAULT_HANDLE = Some(bun_sys::windows::kernel32::AddVectoredExceptionHandler(
+                0,
+                core::mem::transmute::<
+                    extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
+                    unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
+                >(handle_segfault_windows),
+            ));
         }
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
@@ -1283,7 +1297,12 @@ pub extern "system" fn handle_segfault_windows(info: *mut bun_sys::windows::EXCE
             CrashReason::SegmentationFault(unsafe { (*info.ExceptionRecord).ExceptionInformation[1] })
         }
         bun_sys::windows::EXCEPTION_ILLEGAL_INSTRUCTION => {
-            CrashReason::IllegalInstruction(unsafe { (*info.ContextRecord).get_regs().ip })
+            // `ExceptionAddress` is the faulting RIP for `STATUS_ILLEGAL_
+            // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
+            // `CONTEXT` layout (Zig reached `ContextRecord.Rip` directly).
+            CrashReason::IllegalInstruction(
+                unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize,
+            )
         }
         bun_sys::windows::EXCEPTION_STACK_OVERFLOW => CrashReason::StackOverflow,
 
@@ -1598,7 +1617,7 @@ impl StackLine {
                 // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
                 address: i32::try_from(addr - base_address).expect("int cast"),
 
-                object: if name != image_path {
+                object: if name != image_path.as_slice() {
                     let basename_start = name.iter().rposition(|&c| c == b'\\' as u16 || c == b'/' as u16)
                         // skip the last slash
                         .map(|i| i + 1)
@@ -1992,17 +2011,26 @@ fn report(url: &[u8]) {
             // .hStdOutput = bun.FD.stdout().native(),
             // .hStdError = bun.FD.stderr().native(),
         };
-        let mut cmd_line = BoundedArray::<u16, 4096>::new();
-        cmd_line.append_slice_assume_capacity(bun_str::w!("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
+        let mut cmd_line = BoundedArray::<u16, 4096>::default();
+        cmd_line.append_slice_assume_capacity(bun_string::w!("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
         // PERF(port): was assume_capacity
         {
-            let encoded = strings::convert_utf8_to_utf16_in_buffer(cmd_line.unused_capacity_slice_mut(), url);
-            cmd_line.len += u32::try_from(encoded.len()).expect("int cast");
+            // SAFETY: `unused_capacity_slice` hands back `[MaybeUninit<u16>]`;
+            // `convert_utf8_to_utf16_in_buffer` only ever *writes* into it.
+            let spare = unsafe {
+                core::slice::from_raw_parts_mut(
+                    cmd_line.unused_capacity_slice().as_mut_ptr().cast::<u16>(),
+                    4096 - cmd_line.len(),
+                )
+            };
+            let encoded_len = strings::convert_utf8_to_utf16_in_buffer(spare, url).len();
+            let _ = cmd_line.resize(cmd_line.len() + encoded_len);
         }
-        if cmd_line.append_slice(bun_str::w!("/ack'|out-null}catch{}\"")).is_err() { return; }
+        if cmd_line.append_slice(bun_string::w!("/ack'|out-null}catch{}\"")).is_err() { return; }
         if cmd_line.append(0).is_err() { return; }
         // SAFETY: we just wrote a NUL terminator at len-1
-        let cmd_line_slice = &mut cmd_line.buffer_mut()[0..(cmd_line.len as usize - 1)];
+        let end = cmd_line.len() - 1;
+        let cmd_line_slice = &mut cmd_line.slice()[0..end];
         // TODO(port): need [:0] sentinel slice — pass raw pointer
         // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
         let spawn_result = unsafe {
@@ -2312,8 +2340,9 @@ fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), 
     argv.push({
         #[cfg(windows)]
         {
-            // TODO(port): bun_sys::windows::exe_path_w + strings::to_utf8_alloc
-            let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w())?;
+            // `to_utf8_alloc` is infallible (Vec<u8>); the Zig version returned
+            // `![]u8` only for OOM, which Rust handles via abort.
+            let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
             let mut s = image_path[0..image_path.len() - 3].to_vec();
             s.extend_from_slice(b"pdb");
             s

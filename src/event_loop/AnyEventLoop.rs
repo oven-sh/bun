@@ -688,8 +688,9 @@ impl EventLoopHandle {
 // (`PipeReader.zig` / `PipeWriter.zig`) reached `bun.aio.FilePoll` directly.
 // ════════════════════════════════════════════════════════════════════════════
 
+use bun_aio::FilePoll as AioFilePoll;
 use bun_aio::posix_event_loop::{
-    FilePoll as AioFilePoll, Flags as AioFlags, FlagsSet as AioFlagsSet, OneShotFlag, Owner,
+    Flags as AioFlags, FlagsSet as AioFlagsSet, OneShotFlag, Owner,
 };
 use bun_io::{FilePollFlag, FilePollKind, FilePollPtr};
 use bun_sys::Fd;
@@ -765,6 +766,7 @@ pub unsafe fn __bun_io_file_poll_register(
     // .{read,writ}able, .dispatch, fd)`.
     // SAFETY: `p` is a live hive slot; `loop_` is the `*mut UwsLoop` returned
     // by `__bun_io_event_loop_to_loop` (same ev handle).
+    #[cfg(not(windows))]
     unsafe {
         (*p.cast::<AioFilePoll>()).register_with_fd(
             &mut *loop_.cast::<UwsLoop>(),
@@ -772,6 +774,13 @@ pub unsafe fn __bun_io_file_poll_register(
             OneShotFlag::Dispatch,
             fd,
         )
+    }
+    // Windows: `bun_io` never holds a `PollOrFd::Poll` (the Windows reader/
+    // writer use `Source` + libuv handles), so this hook is unreachable.
+    #[cfg(windows)]
+    {
+        let _ = (p, loop_, flag, fd);
+        unreachable!("FilePoll fd registration is POSIX-only");
     }
 }
 
@@ -782,8 +791,15 @@ pub unsafe fn __bun_io_file_poll_unregister(
     force_unregister: bool,
 ) -> bun_sys::Result<()> {
     // SAFETY: see `__bun_io_file_poll_register`.
+    #[cfg(not(windows))]
     unsafe {
         (*p.cast::<AioFilePoll>()).unregister(&mut *loop_.cast::<UwsLoop>(), force_unregister)
+    }
+    #[cfg(windows)]
+    unsafe {
+        let _ = force_unregister;
+        (*p.cast::<AioFilePoll>()).unregister(&mut *loop_.cast::<UwsLoop>());
+        Ok(())
     }
 }
 
@@ -802,7 +818,12 @@ pub unsafe fn __bun_io_file_poll_set_flag(p: FilePollPtr, f: FilePollFlag) {
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_io_file_poll_file_type(p: FilePollPtr) -> bun_io::FileType {
     // SAFETY: `p` is a live hive slot.
+    #[cfg(not(windows))]
     unsafe { (*p.cast::<AioFilePoll>()).file_type() }
+    // Windows `FilePoll` carries no `file_type` (the libuv `Source` knows its
+    // own kind); the POSIX caller path is `PollOrFd::Poll`, never taken here.
+    #[cfg(windows)]
+    { let _ = p; bun_io::FileType::File }
 }
 
 #[unsafe(no_mangle)]
@@ -826,7 +847,14 @@ pub unsafe fn __bun_io_file_poll_is_active(p: FilePollPtr) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_io_file_poll_can_enable_keeping_process_alive(p: FilePollPtr) -> bool {
     // SAFETY: `p` is a live hive slot.
+    #[cfg(not(windows))]
     unsafe { (*p.cast::<AioFilePoll>()).can_enable_keeping_process_alive() }
+    // Windows variant: equivalent to `!closed && can_ref()` (Zig parity).
+    #[cfg(windows)]
+    unsafe {
+        let poll = &*p.cast::<AioFilePoll>();
+        !poll.flags.contains(AioFlags::Closed) && poll.can_ref()
+    }
 }
 
 #[unsafe(no_mangle)]

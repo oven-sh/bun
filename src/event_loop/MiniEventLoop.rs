@@ -703,8 +703,11 @@ impl<'a> MiniVM<'a> {
     pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
         #[cfg(windows)]
         {
-            // TODO(b2-blocked): bun_uws::Loop::uv_loop
-            return self.mini.loop_.uv_loop();
+            // `WindowsLoop.uv_loop` is a public field (not a method); deref the
+            // process-global `*mut WindowsLoop`.
+            // SAFETY: `mini.loop_` was set from `WindowsLoop::get()`; live for
+            // the process lifetime.
+            return unsafe { (*self.mini.loop_).uv_loop };
         }
         #[cfg(not(windows))]
         {

@@ -15,10 +15,20 @@ pub mod stub_event_loop;
 #[cfg(windows)]
 pub mod windows_event_loop;
 
+// ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
+// Windows handles orphan death via Job Objects in `spawn`.
+#[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
+#[cfg(not(windows))]
 pub use parent_death_watchdog as ParentDeathWatchdog;
 
+// `posix_event_loop` also defines the *shared* event-loop scaffolding
+// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
+// `OpaqueCallback`); `windows_event_loop` re-uses those types and only
+// overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
+// specific bits inside (kqueue/epoll wakers, fd polling) are individually
+// `#[cfg(unix)]`-gated so the module still compiles on Windows.
 pub mod posix_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
@@ -29,18 +39,22 @@ pub use posix_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
 pub use windows_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
 
 pub use posix_event_loop::{
-    AllocatorType, EventLoopCtx, EventLoopCtxVTable, OpaqueCallback, Owner, PollTag, Store,
+    AllocatorType, EventLoopCtx, EventLoopCtxVTable, OpaqueCallback, Owner, PollTag,
 };
+#[cfg(not(windows))]
+pub use posix_event_loop::Store;
+#[cfg(windows)]
+pub use windows_event_loop::Store;
 
 /// Mirrors posix_event_loop::Flags.
 pub use posix_event_loop::Flags as PollFlag;
-/// Mirrors posix_event_loop poll kind enum used by process.rs.
+/// Mirrors poll kind enum used by process.rs.
 pub use posix_event_loop::Flags as PollKind;
 
-/// `file_poll` module — real one lives in posix_event_loop.rs.
+/// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
 pub mod file_poll {
-    pub use super::posix_event_loop::FilePoll;
-    pub use super::posix_event_loop::Store;
+    pub use super::FilePoll;
+    pub use super::Store;
     pub use super::posix_event_loop::{Flags, Flags as Flag, FlagsSet};
     /// Kqueue/epoll watch kind passed to `FilePoll::register`.
     pub type Pollable = Flags;

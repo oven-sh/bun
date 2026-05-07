@@ -124,6 +124,18 @@ impl Error {
         })
     }
 
+    /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
+    #[cfg(windows)]
+    #[inline]
+    pub fn from_uv_rc64(rc: crate::windows::libuv::ReturnCodeI64, syscall_tag: Tag) -> Option<Error> {
+        rc.errno().map(|e| Error {
+            errno: e,
+            syscall: syscall_tag,
+            from_libuv: true,
+            ..Default::default()
+        })
+    }
+
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
         Error {
             errno: errno as Int,
@@ -521,5 +533,29 @@ impl bun_core::output::ErrName for &Error {
     fn name(&self) -> &[u8] { Error::name(self) }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `ReturnCodeExt` — Zig's `ReturnCode::toError(.tag) ?Error` lives here (not
+// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(windows)]
+pub trait ReturnCodeExt: Sized {
+    /// `Some(err)` (with `from_libuv = true`) when negative; `None` on success.
+    fn to_error(self, syscall_tag: Tag) -> Option<Error>;
+}
+#[cfg(windows)]
+impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
+    #[inline]
+    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
+        Error::from_uv_rc(self, syscall_tag)
+    }
+}
+#[cfg(windows)]
+impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
+    #[inline]
+    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
+        Error::from_uv_rc64(self, syscall_tag)
     }
 }

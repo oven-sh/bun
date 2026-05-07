@@ -31,18 +31,20 @@ pub mod os {
     /// `orig_environ = std.os.environ; std.os.environ = new`).
     /// SAFETY: single-threaded startup only.
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        unsafe { core::mem::replace(&mut ENVIRON, (core::ptr::null_mut(), 0)) }
+        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
+        // under rust_2024_compatibility, and we never need a borrow here.
+        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
-        unsafe { ENVIRON = (ptr, len); }
+        unsafe { core::ptr::write(&raw mut ENVIRON, (ptr, len)); }
     }
     /// Borrowed view of the current envp slice (read side of `std.os.environ`).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
         unsafe {
-            let (p, n) = ENVIRON;
+            let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() { &[] } else { core::slice::from_raw_parts(p, n) }
         }
     }

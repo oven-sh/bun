@@ -294,6 +294,7 @@ impl<const SSL: bool> Response<SSL> {
             // SAFETY: uws_res_get_native_handle returns the OS SOCKET handle as a pointer.
             return Fd::from_system(unsafe {
                 c::uws_res_get_native_handle(Self::ssl_flag(), self.downcast())
+                    as *mut core::ffi::c_void
             });
         }
         #[cfg(not(windows))]

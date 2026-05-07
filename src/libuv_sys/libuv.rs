@@ -254,6 +254,13 @@ impl uv_buf_t {
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
         unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
+    /// Mutable view of the buffer (Zig `uv_buf_t::slice` returned `[]u8`).
+    /// SAFETY: caller asserts exclusive write access for the buffer's lifetime
+    /// and that `(base, len)` came from a writeable allocation.
+    #[inline]
+    pub unsafe fn slice_mut(&self) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -855,11 +862,44 @@ pub struct uv_write_t {
     pub wait_handle: HANDLE,
 }
 impl uv_write_t {
-    /// Thin wrapper over `uv_write` for a single buffer (Zig `uv_write_t::write`).
+    /// Thin wrapper over `uv_write` for a single buffer.
     #[inline]
-    pub fn write(&mut self, stream: *mut uv_stream_t, input: &uv_buf_t, cb: uv_write_cb) -> ReturnCode {
+    pub fn write_raw(&mut self, stream: *mut uv_stream_t, input: &uv_buf_t, cb: uv_write_cb) -> ReturnCode {
         // SAFETY: caller initialized `self`; `stream` is a live stream handle.
         unsafe { uv_write(self, stream, input, 1, cb) }
+    }
+    /// Context-aware `uv_write` (Zig libuv.zig:1327 `uv_write_t::write` with
+    /// `context: anytype, comptime onWrite`). Stores `context` in `req.data`;
+    /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
+    /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`
+    /// — same codegen shape as Zig's comptime fn pointer.
+    #[inline]
+    pub fn write<T>(
+        &mut self,
+        stream: *mut uv_stream_t,
+        input: &uv_buf_t,
+        context: *mut T,
+        on_write: fn(&mut T, ReturnCode),
+    ) -> ReturnCode {
+        // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
+        // 6-slot `reserved` array on `uv_req_t`). We can't capture `on_write`
+        // in the `extern "C"` thunk without static dispatch, and a per-`T`
+        // static would forbid distinct callbacks for the same `T`.
+        self.data = context.cast();
+        self.reserved[0] = on_write as *mut c_void;
+        unsafe extern "C" fn thunk<T>(req: *mut uv_write_t, status: ReturnCode) {
+            // SAFETY: `data`/`reserved[0]` were set immediately before
+            // `uv_write` below; libuv invokes this exactly once with the
+            // same `req` pointer.
+            unsafe {
+                let cb: fn(&mut T, ReturnCode) =
+                    mem::transmute::<*mut c_void, fn(&mut T, ReturnCode)>((*req).reserved[0]);
+                cb(&mut *(*req).data.cast::<T>(), status);
+            }
+        }
+        // SAFETY: caller guarantees `self` lives until the cb fires and
+        // `stream` is a live stream handle.
+        unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) }
     }
 }
 
@@ -1117,6 +1157,30 @@ impl Pipe {
     #[inline]
     pub fn as_stream_ptr(&mut self) -> *mut uv_stream_t {
         self.as_stream()
+    }
+    /// `Pipe::closeAndDestroy` (libuv.zig:1471) — close the pipe handle (if
+    /// needed) and then `Box::from_raw`-drop it. Handles all states:
+    /// never-initialized (`loop_ == null`), already closing, or active. After
+    /// `uv_pipe_init` the handle is in the event loop's `handle_queue`;
+    /// freeing without `uv_close` corrupts that list.
+    ///
+    /// SAFETY: `self` must be a `Box<Pipe>`-allocated pointer (the close
+    /// callback reclaims it via `Box::from_raw`). Caller relinquishes
+    /// ownership.
+    pub unsafe fn close_and_destroy(&mut self) {
+        unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
+            // SAFETY: handle was Box-allocated; callback fires exactly once.
+            drop(unsafe { Box::from_raw(handle) });
+        }
+        if self.loop_.is_null() {
+            // Never initialized — safe to free directly.
+            // SAFETY: caller contract — Box-allocated.
+            drop(unsafe { Box::from_raw(self as *mut Pipe) });
+        } else if !self.is_closing() {
+            // Initialized and not yet closing — must uv_close first.
+            self.close(on_close_destroy);
+        }
+        // else: already closing — the pending close callback owns the lifetime.
     }
 }
 
@@ -1762,6 +1826,14 @@ impl fs_t {
         self.assert_initialized();
         self.ptr.cast::<T>()
     }
+    /// `req.file.fd` (Zig: `union(.{ pathw, fd })` arm). The union is private
+    /// because the active variant is path-dependent (`uv_fs_open` writes `fd`;
+    /// path-taking ops write `pathw`); callers reading the wrong arm get UB.
+    /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
+    #[inline]
+    pub unsafe fn file_fd(&self) -> uv_file {
+        unsafe { self.file.fd }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1917,6 +1989,10 @@ impl ReturnCode {
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 { Some(self.0.unsigned_abs() as u16) } else { None }
     }
+    /// Zig `errEnum()` — alias for [`errno`]; the `bun_sys::E` mapping lives in
+    /// `bun_sys::windows::translate_uv_error_to_e` (layering).
+    #[inline]
+    pub const fn err_enum(self) -> Option<u16> { self.errno() }
 }
 impl fmt::Debug for ReturnCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1950,6 +2026,11 @@ impl ReturnCodeI64 {
     pub fn to_fd(self) -> uv_file {
         debug_assert!(self.0 >= 0);
         self.0 as uv_file
+    }
+}
+impl fmt::Display for ReturnCodeI64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

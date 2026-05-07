@@ -32,6 +32,8 @@ pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContex
 // #[path = "File.rs"] pub mod file;
 #[path = "Error.rs"] mod error;
 pub use error::Error;
+#[cfg(windows)]
+pub use error::ReturnCodeExt;
 // `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`
 // is the lightweight NonZeroU16 code. They are distinct types (matching Zig:
 // `bun.sys.Error` vs `anyerror`). Downstream that just wants "an error" gets the

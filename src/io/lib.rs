@@ -84,6 +84,15 @@ macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(io_loop, $($args)*) };
 }
 
+#[cfg(windows)]
+mod windows_ffi {
+    // Bun C++ shim over `QueryPerformanceCounter` (src/bun.js/bindings/
+    // c-bindings.cpp). Zig io.zig:314 declares it inline in `Loop`.
+    unsafe extern "C" {
+        pub(super) fn clock_gettime_monotonic(sec: *mut i64, nsec: *mut i64) -> core::ffi::c_int;
+    }
+}
+
 // ─── platform type aliases ────────────────────────────────────────────────────
 
 /// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
@@ -560,10 +569,9 @@ impl Loop {
         Self::update_timespec(&mut self.cached_now);
     }
 
-    // TODO(port): move to io_sys — extern block can't live inside impl; hoist to module scope in B-2.
-    // unsafe extern "C" {
-    //     fn clock_gettime_monotonic(sec: *mut i64, nsec: *mut i64) -> c_int;
-    // }
+    // PORT NOTE: Zig nests the `extern "c" fn clock_gettime_monotonic` decl
+    // inside the `Loop` namespace (io.zig:314); Rust forbids `extern` blocks
+    // inside `impl`, so it's hoisted to `windows_ffi` at module scope.
 
     pub fn update_timespec(timespec: &mut libc::timespec) {
         #[cfg(target_os = "linux")]
@@ -574,10 +582,13 @@ impl Loop {
         }
         #[cfg(windows)]
         {
+            // `clock_gettime_monotonic` is a Bun C++ shim (src/bun.js/bindings/
+            // c-bindings.cpp) over `QueryPerformanceCounter`; declared at module
+            // scope in `windows_ffi` since `extern` blocks can't live in `impl`.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
             // SAFETY: valid out-pointers.
-            let rc = unsafe { clock_gettime_monotonic(&mut sec, &mut nsec) };
+            let rc = unsafe { windows_ffi::clock_gettime_monotonic(&mut sec, &mut nsec) };
             debug_assert!(rc == 0);
             timespec.tv_sec = sec.try_into().expect("infallible: size matches");
             timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
@@ -1629,7 +1640,8 @@ pub mod closer {
                 debug_assert!(closer == (*req).data.cast::<Closer>());
                 bun_sys::syslog!(
                     "uv_fs_close({}) = {}",
-                    Fd::from_uv((*req).file.fd),
+                    // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
+                    Fd::from_uv((*req).file_fd()),
                     (*req).result
                 );
 

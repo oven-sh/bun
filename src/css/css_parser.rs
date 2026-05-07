@@ -190,7 +190,7 @@ pub use crate::SourceLocation;
 impl SourceLocation {
     pub fn to_logger_location(&self, file: &'static [u8]) -> logger::Location {
         logger::Location {
-            file,
+            file: std::borrow::Cow::Borrowed(file),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             ..Default::default()

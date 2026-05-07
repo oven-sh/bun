@@ -1186,10 +1186,17 @@ pub struct Location {
     // - 8-byte fields next: usize
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
-    pub file: Str,
+    //
+    // PORT NOTE: `file` / `line_text` are `Cow` (not `Str`) because
+    // `Location::clone()` must deep-dupe them (Zig: `allocator.dupe(u8, ..)`,
+    // logger.zig:113) so a `BuildMessage`/`ResolveMessage` that outlives the
+    // `Source.contents` it borrowed from doesn't read poisoned memory. The
+    // borrowed arm covers the common case where the slice points into
+    // arena-owned source text.
+    pub file: Cow<'static, [u8]>,
     pub namespace: Str,
     /// Text on the line, avoiding the need to refetch the source code
-    pub line_text: Option<Str>,
+    pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
     pub length: usize,
@@ -1209,7 +1216,7 @@ pub struct Location {
 impl Default for Location {
     fn default() -> Self {
         Location {
-            file: b"",
+            file: Cow::Borrowed(b""),
             namespace: b"file",
             line_text: None,
             length: 0,
@@ -1225,42 +1232,48 @@ impl Location {
         let mut cost: usize = 0;
         cost += self.file.len();
         cost += self.namespace.len();
-        if let Some(text) = self.line_text {
+        if let Some(text) = &self.line_text {
             cost += text.len();
         }
         cost
     }
 
     pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(self.file);
+        builder.count(self.file.as_ref().into_str());
         builder.count(self.namespace);
-        if let Some(text) = self.line_text {
-            builder.count(text);
+        if let Some(text) = &self.line_text {
+            builder.count(text.as_ref().into_str());
         }
     }
 
     pub fn clone(&self) -> Result<Location, AllocError> {
-        // TODO(port): lifetime — Zig dupes `file` and `line_text` here; with
-        // `Str = &'static [u8]` the dupe is a no-op. Revisit when ownership lands.
+        // Zig (logger.zig:113): `allocator.dupe(u8, this.file)` /
+        // `allocator.dupe(u8, this.line_text.?)` — the duped bytes outlive the
+        // original `Source.contents`. Model that with `Cow::Owned` so a
+        // `BuildMessage` that escapes the parse pass doesn't read poisoned
+        // memory when later inspected.
         Ok(Location {
-            file: self.file,
+            file: Cow::Owned(self.file.to_vec()),
             namespace: self.namespace,
             line: self.line,
             column: self.column,
             length: self.length,
-            line_text: self.line_text,
+            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
         })
     }
 
     pub fn clone_with_builder(&self, string_builder: &mut StringBuilder) -> Location {
         Location {
-            file: string_builder.append(self.file),
+            file: Cow::Borrowed(string_builder.append(self.file.as_ref().into_str())),
             namespace: self.namespace,
             line: self.line,
             column: self.column,
             length: self.length,
-            line_text: self.line_text.map(|t| string_builder.append(t)),
+            line_text: self
+                .line_text
+                .as_deref()
+                .map(|t| Cow::Borrowed(string_builder.append(t.into_str()))),
             offset: self.offset,
         }
     }
@@ -1271,7 +1284,7 @@ impl Location {
             namespace: self.namespace.to_vec(),
             line: self.line,
             column: self.column,
-            line_text: self.line_text.unwrap_or(b"").to_vec(),
+            line_text: self.line_text.as_deref().unwrap_or(b"").to_vec(),
             offset: self.offset as u32, // @truncate
         }
     }
@@ -1289,12 +1302,12 @@ impl Location {
         line_text: Option<Str>,
     ) -> Location {
         Location {
-            file,
+            file: Cow::Borrowed(file),
             namespace,
             line,
             column,
             length: length as usize,
-            line_text,
+            line_text: line_text.map(Cow::Borrowed),
             offset: length as usize,
         }
     }
@@ -1303,12 +1316,12 @@ impl Location {
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
-                    file: source.path.text,
+                    file: Cow::Borrowed(source.path.text),
                     namespace: source.path.namespace,
                     line: -1,
                     column: -1,
                     length: 0,
-                    line_text: Some(b""),
+                    line_text: Some(Cow::Borrowed(b"")),
                     offset: 0,
                 });
             }
@@ -1320,7 +1333,7 @@ impl Location {
             }
 
             return Some(Location {
-                file: source.path.text,
+                file: Cow::Borrowed(source.path.text),
                 namespace: source.path.namespace,
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
@@ -1329,8 +1342,17 @@ impl Location {
                 } else {
                     1
                 },
-                // TODO(port): lifetime — `line_text` here borrows from `source.contents`
-                line_text: Some(bun_string::strings::trim_left(full_line, b"\n\r").into_str()),
+                // PORT NOTE: Zig borrows `source.contents` here and relies on the
+                // arena outliving the `Log` (transpiler.zig:853 — `entry.contents`
+                // is arena-allocated and never explicitly freed on `return null`).
+                // Rust's `source_backing` in `Transpiler::parse_*` is RAII and
+                // drops on the parse-error path *before* `process_fetch_log`
+                // clones the `Msg` into a `BuildMessage`, so own the bytes here
+                // instead. `full_line` is bounded (≤ ~120 bytes) and only
+                // materialized on diagnostic paths.
+                line_text: Some(Cow::Owned(
+                    bun_string::strings::trim_left(full_line, b"\n\r").to_vec(),
+                )),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
@@ -1375,10 +1397,11 @@ impl Data {
             return self.clone();
         }
 
-        // TODO(port): lifetime — Zig dupes `line_text` here.
-        let new_line_text = self.location.as_ref().unwrap().line_text.unwrap();
+        // Zig (logger.zig:217): `allocator.dupe(u8, this.location.?.line_text.?)`.
+        let new_line_text =
+            self.location.as_ref().unwrap().line_text.as_deref().unwrap().to_vec();
         let mut new_location = self.location.clone().unwrap();
-        new_location.line_text = Some(new_line_text);
+        new_location.line_text = Some(Cow::Owned(new_line_text));
         Ok(Data {
             text: self.text.clone(),
             location: Some(new_location),
@@ -1473,7 +1496,7 @@ impl Data {
         };
 
         if let Some(location) = &self.location {
-            if let Some(line_text_) = location.line_text {
+            if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed =
                     bun_string::strings::trim_right(line_text_, b" \r\n\t");
                 let line_text =
@@ -1549,7 +1572,7 @@ impl Data {
                     (kind.string().len() + ": ".len()) - "at ".len(),
                 )?;
 
-                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(location.file))?;
+                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(&location.file))?;
 
                 if location.line > 0 && location.column > -1 {
                     pretty_write!(
@@ -1790,8 +1813,8 @@ impl Msg {
                 "{}: {}\n{}\n{}:{}:{} ({})",
                 bstr::BStr::new(self.kind.string()),
                 bstr::BStr::new(&*self.data.text),
-                bstr::BStr::new(location.line_text.unwrap_or(b"")),
-                bstr::BStr::new(location.file),
+                bstr::BStr::new(location.line_text.as_deref().unwrap_or(b"")),
+                bstr::BStr::new(&location.file),
                 location.line,
                 location.column,
                 location.offset,
@@ -1812,8 +1835,8 @@ impl Msg {
             "\n\n{}: {}\n{}\n{}:{}:{} ({})",
             bstr::BStr::new(self.kind.string()),
             bstr::BStr::new(&*self.data.text),
-            bstr::BStr::new(location.line_text.unwrap()),
-            bstr::BStr::new(location.file),
+            bstr::BStr::new(location.line_text.as_deref().unwrap()),
+            bstr::BStr::new(&location.file),
             location.line,
             location.column,
             location.offset,
@@ -2323,9 +2346,9 @@ impl Log {
             'brk: {
                 let mut _data = range_data(source, r, text);
                 if let Some(loc) = &mut _data.location {
-                    if let Some(_line) = loc.line_text {
-                        // TODO(port): lifetime — Zig dupes `line` here.
-                        loc.line_text = Some(_line);
+                    if let Some(_line) = loc.line_text.as_deref() {
+                        // Zig: `try log.msgs.allocator.dupe(u8, line)`.
+                        loc.line_text = Some(Cow::Owned(_line.to_vec()));
                     }
                 }
                 break 'brk _data;
@@ -2574,9 +2597,9 @@ impl Log {
         let data = Data {
             text: alloc_print(args)?,
             location: Some(Location {
-                // TODO(port): lifetime — Phase A keeps `Location.file` as `&'static [u8]`
-                // matching `Str`; Phase B threads real ownership (see module doc).
-                file: filepath,
+                // TODO(port): lifetime — Phase A keeps `Location.file` borrowing
+                // `Str`; Phase B threads real ownership (see module doc).
+                file: Cow::Borrowed(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
                 ..Default::default()

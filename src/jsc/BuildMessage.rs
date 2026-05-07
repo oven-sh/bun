@@ -142,9 +142,9 @@ impl BuildMessage {
         object.put(
             global,
             b"lineText",
-            ZigString::init(location.line_text.unwrap_or(b"")).to_js(global),
+            ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
         );
-        object.put(global, b"file", ZigString::init(location.file).to_js(global));
+        object.put(global, b"file", ZigString::init(&location.file).to_js(global));
         object.put(global, b"namespace", ZigString::init(location.namespace).to_js(global));
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));

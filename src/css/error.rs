@@ -200,11 +200,11 @@ impl ErrorLocation {
         let line_text = bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
             .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
         Ok(logger::Location {
-            file: source.path.text,
+            file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: source.path.namespace,
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            line_text,
+            line_text: line_text.map(std::borrow::Cow::Borrowed),
             ..Default::default()
         })
     }

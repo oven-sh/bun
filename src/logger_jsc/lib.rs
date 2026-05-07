@@ -28,7 +28,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: &'static [u8], err: JSV
     Ok(Msg {
         data: Data {
             text: Cow::Owned(zig_exception_holder.zig_exception().message.to_owned_slice()),
-            location: Some(Location { file, line: 0, column: 0, ..Default::default() }),
+            location: Some(Location { file: Cow::Borrowed(file), line: 0, column: 0, ..Default::default() }),
         },
         ..Default::default()
     })

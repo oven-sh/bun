@@ -1768,7 +1768,7 @@ pub mod js_bundler {
                                 .to_vec(),
                         ),
                         location: Some(logger::Location {
-                            file,
+                            file: std::borrow::Cow::Borrowed(file),
                             line: -1,
                             column: -1,
                             ..Default::default()

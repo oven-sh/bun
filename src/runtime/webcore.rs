@@ -72,8 +72,11 @@ pub mod jsc {
                 pub use $mod_name as $alias;
             )*};
         }
+        // `JSBlob`/`JSResponse`/`JSRequest` are NOT stubbed here — real bindings
+        // exist in `bun_jsc::generated` (`js_class_module!`). Listing them
+        // would shadow the working C++ shims with no-op stubs (Response.rs
+        // shipped with that bug once).
         js_class_mod!(
-            js_blob/JSBlob, js_response/JSResponse, js_request/JSRequest,
             js_file_sink/JSFileSink, js_file_reader/JSFileReader,
         );
     }

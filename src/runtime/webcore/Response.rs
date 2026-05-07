@@ -866,12 +866,14 @@ impl Response {
 
             self.body.clone(global_this)?
         };
-        // errdefer body.deinit() — Body: Drop handles cleanup on `?` below
+        // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
+        // `?` below releases the cloned body payload (Response.zig:433).
+        let body = scopeguard::guard(body, |mut b| b.reset());
         let init = self.init.clone(global_this)?;
         // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
         Ok(Response {
-            body,
+            body: scopeguard::ScopeGuard::into_inner(body),
             init,
             url: OwnedString::new(self.url.clone()),
             redirected: self.redirected,
@@ -886,25 +888,35 @@ impl Response {
     fn destroy(this: *mut Response) {
         // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
         unsafe {
-            // Drop owned fields in place. `Init`'s drop glue releases `headers`
-            // (HeadersRef::Drop → C++ deref) and `status_text` (OwnedString::Drop
-            // → WTF deref); `url` is `OwnedString` (WTF deref); `JsRef` drop glue
-            // releases the `Strong` variant. Mirrors Zig `destroy` (Response.zig
-            // :457-460): `init.deinit()` / `body.deinit()` / `url.deref()` /
-            // `js_ref.deinit()`.
-            core::ptr::drop_in_place(&mut (*this).init);
-            core::ptr::drop_in_place(&mut (*this).body);
-            core::ptr::drop_in_place(&mut (*this).url);
-            core::ptr::drop_in_place(&mut (*this).js_ref);
+            // Mirrors Zig `destroy` (Response.zig:457-460): `init.deinit()` /
+            // `body.deinit()` / `url.deref()` / `js_ref.deinit()`.
+            //
+            // We assign safe-empty values rather than `drop_in_place` so the
+            // struct stays in a valid (all-empty) state if `on_finalize()`
+            // returns false and the allocation outlives this call until the
+            // last WeakRef releases it.
+            //
+            // - `Init` field drop glue releases `headers` (HeadersRef::Drop →
+            //   C++ deref) and `status_text` (OwnedString::Drop → WTF deref).
+            // - `Body` has NO `Drop`; `reset()` is the explicit cleanup API
+            //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
+            //   would leak refcounted payloads (WTFStringImpl, Blob store).
+            // - `url: OwnedString` — assignment drops the old value (WTF deref).
+            // - `JsRef` — assignment drops the `Strong` arm (HandleSlot freed).
+            (*this).init = Init::default();
+            (*this).body.reset();
+            (*this).url = OwnedString::new(BunString::empty());
+            (*this).js_ref = JsRef::empty();
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
             // null from here on.
             if (*this).weak_ptr_data.on_finalize() {
-                // Do NOT use Box::from_raw here — that would run auto-generated drop
-                // glue and re-drop init/body/url/js_ref (double-deref of BunStrings,
-                // double Rc drop of headers, double-free of body payload). Zig's
-                // bun.destroy() only frees the allocation. Match that: dealloc raw.
+                // Do NOT use Box::from_raw — that would re-run field drop glue
+                // on init/url/js_ref. They are now safe-empty so the second drop
+                // would be a no-op, but it is still wasted work and fragile under
+                // future field additions. Zig's `bun.destroy()` only frees the
+                // allocation; match that with a raw dealloc.
                 let layout = std::alloc::Layout::new::<Response>();
                 std::alloc::dealloc(this as *mut u8, layout);
             }

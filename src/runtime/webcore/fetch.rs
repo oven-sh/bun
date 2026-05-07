@@ -239,7 +239,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let response = Box::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
-            status_text: BunString::create_atom(b"OK"),
+            status_text: BunString::create_atom(b"OK").into(),
             ..Default::default()
         },
         Body {
@@ -2070,7 +2070,7 @@ impl<'a> S3StreamWrapper<'a> {
                     response::Init {
                         method: Method::PUT,
                         status_code: 500,
-                        status_text: BunString::create_atom_if_possible(err.code),
+                        status_text: BunString::create_atom_if_possible(err.code).into(),
                         ..Default::default()
                     },
                     Body {

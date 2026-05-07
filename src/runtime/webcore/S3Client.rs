@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bstr::BStr;
 
 use bun_core::output;
@@ -353,7 +351,9 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let blob = Box::into_raw(Box::new(
+        // Zig: `Blob.new(try ...)` — heap-promote and mark `ref_count = 1` so
+        // the JSS3File wrapper's `finalize` knows to `bun.destroy(blob)`.
+        let blob = crate::webcore::blob::Blob::new(
             S3File::construct_s3_file_with_s3_credentials_and_options(
                 global,
                 path,
@@ -364,12 +364,12 @@ impl S3Client {
                 ptr.storage_class,
                 ptr.request_payer,
             )?,
-        ));
+        );
         // Zig: `blob.toJS(globalThis)` — runs `calculateEstimatedByteSize()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
         // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
         // that owns the heap pointer), same as `S3File::construct_internal_js`.
-        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Box::into_raw`;
+        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
         // `to_js` hands ownership of that pointer to the C++ wrapper.
         Ok(unsafe { &mut *blob }.to_js(global))
     }
@@ -597,21 +597,8 @@ impl S3Client {
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-        // `S3::list_objects` takes `&mut self` plus the parent `Store` as
-        // `NonNull` (raw) — passing it as `&Store` would invalidate the
-        // `&mut S3` receiver under Stacked Borrows since both alias the same
-        // allocation.
-        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: `store_ptr` is live for the duration of `blob` and never null
-        // (`StoreRef` wraps `NonNull`); single-threaded JS event-loop discipline.
-        unsafe {
-            (*store_ptr).data.as_s3_mut().list_objects(
-                NonNull::new_unchecked(store_ptr),
-                global,
-                object_keys,
-                options,
-            )
-        }
+        let store = blob.store.as_ref().unwrap();
+        store.data.as_s3().list_objects(store, global, object_keys, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -644,16 +631,8 @@ impl S3Client {
             ptr.request_payer,
         )?;
         // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
-        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: see `list_objects` — `store_ptr` live for `blob` and never
-        // null; parent `Store` passed as `NonNull` to avoid an SB-invalidating
-        // shared reborrow alongside the `&mut S3` receiver.
-        unsafe {
-            (*store_ptr)
-                .data
-                .as_s3_mut()
-                .unlink(NonNull::new_unchecked(store_ptr), global, options)
-        }
+        let store = blob.store.as_ref().unwrap();
+        store.data.as_s3().unlink(store, global, options)
     }
 
     /// Called by the generated JSCell wrapper's `finalize()`. Runs on the
@@ -730,18 +709,8 @@ impl S3Client {
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`
-        // and never null; parent `Store` passed as `NonNull` to avoid an
-        // SB-invalidating shared reborrow alongside the `&mut S3` receiver.
-        unsafe {
-            (*store_ptr).data.as_s3_mut().list_objects(
-                NonNull::new_unchecked(store_ptr),
-                global,
-                object_keys,
-                options,
-            )
-        }
+        let store = blob.store.as_ref().unwrap();
+        store.data.as_s3().list_objects(store, global, object_keys, options)
     }
 }
 
@@ -754,5 +723,5 @@ use bun_jsc::{FormatTag, JSType};
 //   source:     src/runtime/webcore/S3Client.zig (332 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      ConsoleFormatter trait wired; env-loader S3Credentials reached via raw VM ptr (matches S3File.rs/fetch.rs); `defer blob.detach()` → field Drop; Store s3 mut access via `as_ptr()` + NonNull parent (no SB-invalidating &Store reborrow).
+//   notes:      ConsoleFormatter trait wired; env-loader S3Credentials reached via raw VM ptr (matches S3File.rs/fetch.rs); `defer blob.detach()` → field Drop; S3Ext::{unlink,list_objects} take `&self` + `&Store` (no mutation, no SB hazard).
 // ──────────────────────────────────────────────────────────────────────────

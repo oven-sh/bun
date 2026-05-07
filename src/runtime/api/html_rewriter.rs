@@ -1269,8 +1269,15 @@ where
     // duration of the rewriter.
     let this = unsafe { &mut *this };
     let global = this.global();
+    // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives
+    // `this.global.bunVM()` at each use site rather than caching a `&mut`.
+    // `cb.call(...)` and `wait_for_promise(...)` re-enter JS / the event loop,
+    // which mutate the same VirtualMachine through `global.bun_vm()` (and a
+    // nested handler_callback would form its own `&mut VirtualMachine`).
+    // Holding a long-lived `&mut` across those calls is two-live-&mut UB under
+    // Stacked Borrows, so re-acquire a short-lived borrow at each touch.
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
-    let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+    let vm = || -> &mut VirtualMachine { unsafe { &mut *global.bun_vm() } };
 
     // PORT NOTE: Zig used a stack-pinned `TopExceptionScope` (in-place init).
     // The Rust `TopExceptionScope::init` is `&mut self`-based with a Pin
@@ -1296,7 +1303,7 @@ where
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
                 // by BufferOutputSink)
-                if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
+                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
                     unsafe { *err_ptr = exc_value };
                     exc_value.protect();
@@ -1311,7 +1318,7 @@ where
     // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc_value) = capture_pending_exception(global) {
         // Store the exception in the VM's unhandled rejection capture mechanism
-        if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
+        if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
             unsafe { *err_ptr = exc_value };
             exc_value.protect();
@@ -1329,10 +1336,10 @@ where
         }
 
         if let Some(promise) = result.as_any_promise() {
-            vm.wait_for_promise(promise);
+            vm().wait_for_promise(promise);
             let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
-                vm.unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
+                vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
             }
             return fail;
         }

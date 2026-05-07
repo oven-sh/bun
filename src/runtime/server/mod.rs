@@ -2105,6 +2105,22 @@ impl AnyServer {
         AnyServer { tag, ptr: server as *mut () }
     }
 
+    /// Re-pack into the Zig `bun.ptr.TaggedPointerUnion` wire format
+    /// (`u49` ptr | `u15` tag) for the C++ FFI boundary. Inverse of
+    /// [`NodeHTTPResponse::any_server_from_packed`]. Tag values mirror Zig's
+    /// `1024 - typeBaseName-index` assignment (declaration order in
+    /// `AnyServer.Ptr = TaggedPointerUnion(.{HTTP, HTTPS, DebugHTTP, DebugHTTPS})`).
+    pub fn to_packed(self) -> u64 {
+        let tag: bun_ptr::TagType = match self.tag {
+            AnyServerTag::HTTPServer => 1024,
+            AnyServerTag::HTTPSServer => 1023,
+            AnyServerTag::DebugHTTPServer => 1022,
+            AnyServerTag::DebugHTTPSServer => 1021,
+        };
+        // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
+        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+    }
+
     pub fn vm(&self) -> *const jsc::VirtualMachine {
         any_server_dispatch!(self, |s| s.vm)
     }

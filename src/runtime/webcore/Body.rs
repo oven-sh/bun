@@ -1106,12 +1106,27 @@ impl Value {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
                                 let mime_type = MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                                blob.content_type = mime_type.value.as_ref() as *const [u8];
-                                blob.content_type_allocated = allocated;
                                 blob.content_type_was_set = true;
-                                if let Some(store) = blob.store.as_ref() {
-                                    // SAFETY: store is a live StoreRef; single-threaded JS — no concurrent &Store.
-                                    unsafe { (*store.as_ptr()).mime_type = mime_type };
+                                // PORT NOTE: ownership reshape vs Zig. Zig's MimeType has no destructor so
+                                // `blob.content_type` (freed via `content_type_allocated`) is the sole owner
+                                // and `store.mime_type` aliases it. Rust `MimeType.value` is `Cow` (RAII), so
+                                // we give the Store the owning Cow and let `blob.content_type` alias it
+                                // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
+                                // no store, transfer the buffer into `blob.content_type` directly.
+                                if let Some(store_ptr) = blob.store.as_ref().map(|s| s.as_ptr()) {
+                                    // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
+                                    unsafe {
+                                        (*store_ptr).mime_type = mime_type;
+                                        blob.content_type =
+                                            (*store_ptr).mime_type.value.as_ref() as *const [u8];
+                                    }
+                                    blob.content_type_allocated = false;
+                                } else {
+                                    blob.content_type = match mime_type.value {
+                                        Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
+                                        Cow::Borrowed(s) => s as *const [u8],
+                                    };
+                                    blob.content_type_allocated = allocated;
                                 }
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
@@ -1969,12 +1984,24 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    blob.content_type = mime_type.value.as_ref() as *const [u8];
-                    blob.content_type_allocated = allocated;
                     blob.content_type_was_set = true;
-                    if let Some(store) = blob.store.as_ref() {
-                        // SAFETY: store is a live StoreRef; single-threaded JS — no concurrent &Store.
-                        unsafe { (*store.as_ptr()).mime_type = mime_type };
+                    // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
+                    // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
+                    // takes the buffer directly via `content_type_allocated`.
+                    if let Some(store_ptr) = blob.store.as_ref().map(|s| s.as_ptr()) {
+                        // SAFETY: store_ptr is a live Store; single-threaded JS — no concurrent &Store.
+                        unsafe {
+                            (*store_ptr).mime_type = mime_type;
+                            blob.content_type =
+                                (*store_ptr).mime_type.value.as_ref() as *const [u8];
+                        }
+                        blob.content_type_allocated = false;
+                    } else {
+                        blob.content_type = match mime_type.value {
+                            Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
+                            Cow::Borrowed(s) => s as *const [u8],
+                        };
+                        blob.content_type_allocated = allocated;
                     }
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }

@@ -1687,27 +1687,42 @@ impl Request {
         let headers = self.clone_headers(global_this)?;
         // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
         let url = if preserve_url {
-            // Bitwise copy — `*req = Request { .. }` below overwrites the old
-            // value; `BunString` has no `Drop`, so the stale `req.url` slot is
-            // discarded and this copy becomes the sole live handle.
+            // Bitwise copy — the `ptr::write` below overwrites the old slot;
+            // `BunString` has no `Drop`, so the stale `req.url` bits are discarded
+            // and this copy becomes the sole live handle.
             req.url
         } else {
             self.url.dupe_ref()
         };
 
-        *req = Request {
-            url,
-            headers,
-            signal: None,
-            body,
-            js_ref: JsRef::empty(),
-            method: self.method,
-            flags: self.flags,
-            request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::EMPTY,
-            reported_estimated_size: 0,
-            internal_event_callback: InternalJSEventCallback::default(),
-        };
+        // Zig `req.* = Request{...}` is a raw bit-overwrite — no destructors run on
+        // the old `*req`. Match that with `ptr::write` so future Drop impls on
+        // `JsRef` / `strong::Optional` don't fire on the caller's sentinel. The one
+        // owned allocation in the incoming sentinel is `body: Box<BodyValue>`
+        // (callers seed it with `Box::new(Null)`); read it out and drop it so it
+        // isn't leaked. `url` was bitwise-copied above (preserve_url) or is the
+        // empty sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // SAFETY: `req` is a valid &mut, fully initialized by the caller; nothing
+        // between the read and the write can panic.
+        unsafe {
+            drop(core::ptr::read(&req.body));
+            core::ptr::write(
+                req,
+                Request {
+                    url,
+                    headers,
+                    signal: None,
+                    body,
+                    js_ref: JsRef::empty(),
+                    method: self.method,
+                    flags: self.flags,
+                    request_context: AnyRequestContext::NULL,
+                    weak_ptr_data: WeakPtrData::EMPTY,
+                    reported_estimated_size: 0,
+                    internal_event_callback: InternalJSEventCallback::default(),
+                },
+            );
+        }
 
         if let Some(signal) = &self.signal {
             // `AbortSignalRef::clone` → C++ `ref()` (matches Zig `signal.ref()`).
@@ -1718,11 +1733,10 @@ impl Request {
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
-        // Zig does `Request.new(undefined)` then clone_into overwrites the whole struct.
-        // In Rust, `*req = Request { ... }` inside clone_into runs drop glue on the old
-        // value, which would be UB on uninitialized memory (garbage Arc/BunString/Box
-        // derefs). Seed the box with a cheap fully-initialized sentinel instead so the
-        // overwrite drops a valid (empty) value.
+        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the whole
+        // struct. clone_into uses `ptr::write` (no drop glue) but does `ptr::read`
+        // `req.body` first to release the seed allocation, so seed with a valid
+        // sentinel rather than `MaybeUninit`.
         let mut req = Box::new(Request {
             url: BunString::empty(),
             headers: None,

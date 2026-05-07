@@ -1203,7 +1203,7 @@ impl FetchTasklet {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
-                status_text,
+                status_text: status_text.into(),
                 ..Default::default()
             },
             Body {

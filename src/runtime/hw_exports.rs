@@ -41,6 +41,16 @@ pub fn is_main_thread_vm() -> bool {
 }
 
 /// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
+///
+/// SEMANTICS NOTE: the .zig spec is a bare `callconv(jsc.conv)` body (no
+/// `toJSHostCall` wrap); routing through `host_fn_static` here adds an
+/// `ExceptionValidationScope` + `catch_unwind` barrier. This is an intentional
+/// hardening over the prior `#[bun_jsc::host_call]` bare-ABI rewrite —
+/// `VirtualMachine::drain_microtasks()` swallows its result internally
+/// (`let _ = …`, mirroring `drainMicrotasks() catch {}`), so no exception is
+/// expected to be pending when we return `UNDEFINED` and the scope assert
+/// holds. If that invariant ever changes, the assert fires in debug-validate
+/// builds rather than silently leaking the exception.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
 pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
     global.bun_vm().as_mut().drain_microtasks();

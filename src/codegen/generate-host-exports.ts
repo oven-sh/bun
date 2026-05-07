@@ -177,7 +177,9 @@ function parseParams(list: string, where: string): Param[] {
         .slice(0, colon)
         .trim()
         .replace(/^mut\s+/, "");
-      if (name === "_" || name.startsWith("_")) name = `_a${i}`;
+      // Only the bare `_` pattern is not a usable identifier; `_foo` is valid
+      // and intentionally documentary — keep it.
+      if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
       const { cTy, deref } = ptrify(ty);
       return { raw, name, ty, cTy, callExpr: deref(name) };
@@ -269,7 +271,11 @@ for (const { dir, crate } of scanRoots) {
         abi ??= "jsc";
       } else if (params.length === 1 && /JSGlobalObject$/.test(params[0].ty) && isJsRet) {
         shape = "lazy";
-        abi ??= "jsc";
+        // Lazy property creators are direct C++ calls (e.g. ZigGlobalObject.cpp
+        // declares `extern "C" JSC::EncodedJSValue BunObject__createBunStd*`),
+        // NOT JSC trampoline dispatch — default to `c`. A SYSV_ABI lazy getter
+        // (e.g. `BunObject_lazyPropCb_*`) must opt in with `, jsc` explicitly.
+        abi ??= "c";
       } else {
         shape = "generic";
         abi ??= "c";
@@ -331,36 +337,67 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 
 // ─────────────────────────────── emit ───────────────────────────────────────
 
+/// Emit a `#[unsafe(no_mangle)]` thunk with the requested ABI. For `jsc` we
+/// duplicate the item under a `cfg` split (`"sysv64"` on win-x64, `"C"`
+/// elsewhere) — same expansion as `#[bun_jsc::host_call]` /
+/// `bun_jsc::jsc_host_abi!`. Rust forbids macros in ABI position, so we emit
+/// both arms verbatim; the inactive one is compiled out.
+function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
+  const item = (abiStr: string, cfg: string) =>
+    `${cfg}#[unsafe(no_mangle)]
+pub unsafe extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+${body}
+}`;
+  if (abi === "jsc") {
+    return (
+      item("sysv64", `#[cfg(all(windows, target_arch = "x86_64"))]\n`) +
+      "\n" +
+      item("C", `#[cfg(not(all(windows, target_arch = "x86_64")))]\n`)
+    );
+  }
+  // `c` (and anything else that reaches here) → plain `extern "C"`.
+  return item("C", "");
+}
+
 function emitThunk(e: Export): string {
   const impl = `${e.modPath}::${e.fnName}`;
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
   switch (e.shape) {
     case "host":
       // JSC host fn: `(g, cf) -> JSValue` via host_fn_static (panic barrier +
-      // exception-scope assert + JsResult mapping).
+      // exception-scope assert + JsResult mapping). Always JSC ABI — these are
+      // dispatched through `JSC::JSFunction` (`BUN_DECLARE_HOST_FUNCTION`).
       return `
 // ${loc}
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${e.symbol}(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue {
-    unsafe { host_fn::host_fn_static(g, cf, ${impl}) }
-}`;
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", `    unsafe { host_fn::host_fn_static(g, cf, ${impl}) }`)}`;
     case "lazy":
-      // Lazy property getter: `(g) -> JSValue`.
+      // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
+      // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
+      // `SYSV_ABI` lazyPropCb-style getters).
       return `
 // ${loc}
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${e.symbol}(g: *mut JSGlobalObject) -> JSValue {
-    unsafe { host_fn::host_fn_lazy(g, ${impl}) }
-}`;
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject", "JSValue", `    unsafe { host_fn::host_fn_lazy(g, ${impl}) }`)}`;
     case "rust": {
       // `extern "Rust"` link-time hook: forward the safe signature verbatim
       // (no pointer rewriting; `extern "Rust"` ABI == native Rust ABI).
+      // Reference params/returns are rejected — `extern "Rust" fn` items need
+      // explicit lifetimes for borrowed types and the generator does not
+      // synthesise them. Use raw pointers in the impl signature instead.
+      for (const p of e.params)
+        if (p.ty.startsWith("&"))
+          throw new Error(
+            `${loc}: HOST_EXPORT(${e.symbol}, rust) param \`${p.raw}\` is a reference; use a raw pointer`,
+          );
+      if (e.ret.startsWith("&"))
+        throw new Error(
+          `${loc}: HOST_EXPORT(${e.symbol}, rust) return type \`${e.ret}\` is a reference; use a raw pointer`,
+        );
       const sig = e.params.map(p => `${p.name}: ${p.ty}`).join(", ");
       const call = e.params.map(p => p.name).join(", ");
       return `
 // ${loc}
 #[unsafe(no_mangle)]
-pub ${/^&/.test(e.params[0]?.ty ?? "") || e.ret.startsWith("&") ? "" : ""}extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
+pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
     ${impl}(${call})
 }`;
     }
@@ -385,10 +422,7 @@ pub ${/^&/.test(e.params[0]?.ty ?? "") || e.ret.startsWith("&") ? "" : ""}extern
           : `${impl}(${call})`;
       return `
 // ${loc}
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${e.symbol}(${sig}) -> ${cRet} {
-${binds}    ${body}
-}`;
+${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;
     }
   }
 }

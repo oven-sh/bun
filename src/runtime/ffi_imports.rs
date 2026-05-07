@@ -30,10 +30,6 @@ use bun_string::String as BunString;
 
 // ─── ZigGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
 // (populated incrementally — see audit comment in generated_host_exports.rs)
-unsafe extern "C" {
-    // sentinel: keeps the block non-empty so `use crate::ffi_imports::*` is
-    // legal before the first migration lands. Remove once any real symbol is
-    // moved in.
-    #[link_name = "Bun__ffi_imports_anchor"]
-    fn __ffi_imports_anchor();
-}
+// Empty until the first migration lands; an empty `unsafe extern "C" {}` block
+// and `use crate::ffi_imports::*` over zero items are both legal Rust.
+unsafe extern "C" {}

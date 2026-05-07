@@ -439,11 +439,12 @@ pub struct ShellCpTask {
     pub src_absolute: Option<Vec<u8>>,
     pub tgt_absolute: Option<Vec<u8>>,
     pub cwd_path: Vec<u8>,
-    /// Guards `verbose_output` — `cp_on_copy` is called from work-pool
-    /// threads (concurrently per copied file) while the directory walk is
-    /// still fanning out. Spec: cp.zig `verbose_output_lock`.
-    pub verbose_output_lock: parking_lot::Mutex<()>,
-    pub verbose_output: Vec<u8>,
+    /// Spec: cp.zig `verbose_output_lock` + `verbose_output`. `cp_on_copy` is
+    /// invoked from work-pool threads (concurrently per copied file) while the
+    /// directory walk is still fanning out, so the buffer must live inside the
+    /// mutex — Zig's split lock-then-mutate pattern would alias `&mut self` in
+    /// Rust.
+    pub verbose_output: parking_lot::Mutex<Vec<u8>>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
 }

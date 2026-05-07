@@ -169,9 +169,9 @@ impl Cat {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
                         return Builtin::of_mut(interp, cmd)
                             .stdout
-                            .enqueue(child, buf, safeguard);
+                            .enqueue(child, &buf, safeguard);
                     }
-                    let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+                    let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
                 // TODO(b2-blocked): IOReader::add_reader + start — register

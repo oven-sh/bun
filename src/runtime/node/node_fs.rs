@@ -1264,8 +1264,10 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
 impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     pub fn on_copy(&self, src: impl AsRef<[OSPathChar]>, dest: impl AsRef<[OSPathChar]>) {
         if !IS_SHELL { return; }
-        // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task
-        unsafe { &mut *self.shelltask }.cp_on_copy(src.as_ref(), dest.as_ref());
+        // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task.
+        // Shared borrow only — concurrent subtasks may call this in parallel;
+        // `cp_on_copy` serialises via the task's internal mutex.
+        unsafe { &*self.shelltask }.cp_on_copy(src.as_ref(), dest.as_ref());
     }
 
     pub fn on_finish(&mut self, result: Maybe<ret::Cp>) {

@@ -474,28 +474,31 @@ impl Rm {
     /// the pending-main-callback count taken in `DirTask::post_run`.
     fn write_verbose(interp: &mut Interpreter, cmd: NodeId, verbose: *mut DirTask) -> Yield {
         // SAFETY: `verbose` is a live DirTask posted via queue_for_write; main
-        // thread, exclusive.
-        let (tm, has_parent) = unsafe { ((*verbose).task_manager, !(*verbose).parent_task.is_null()) };
-        scopeguard::defer! {
-            if has_parent {
+        // thread, exclusive. Take the buffer up-front so the cleanup guard can
+        // own the raw pointers without overlapping a borrow.
+        let (tm, has_parent, buf) = unsafe {
+            (
+                (*verbose).task_manager,
+                !(*verbose).parent_task.is_null(),
+                core::mem::take(&mut (*verbose).deleted_entries),
+            )
+        };
+        let _guard = scopeguard::guard((tm, verbose, has_parent), |(tm, v, hp)| {
+            if hp {
                 // SAFETY: non-root DirTask is its own Box; reclaim.
-                unsafe { DirTask::deinit(verbose) };
+                unsafe { DirTask::deinit(v) };
             }
             // SAFETY: pending count was bumped in post_run before queue_for_write.
             unsafe { ShellRmTask::decr_pending_and_maybe_deinit(tm) };
-        }
+        });
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            // SAFETY: see above.
-            let buf = unsafe { core::mem::take(&mut (*verbose).deleted_entries) };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
                 .enqueue(child, &buf, safeguard);
         }
-        // SAFETY: see above.
-        let buf = unsafe { &(*verbose).deleted_entries };
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         let done = match &mut Self::state_mut(interp, cmd).state {
             RmState::Exec(exec) => {
                 exec.output_done.fetch_add(1, Ordering::SeqCst);

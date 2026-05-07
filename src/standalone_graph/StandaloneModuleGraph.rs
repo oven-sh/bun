@@ -222,6 +222,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
     }
+
+    fn compile_exec_argv(&self) -> &[u8] {
+        self.compile_exec_argv
+    }
 }
 
 #[repr(C)]

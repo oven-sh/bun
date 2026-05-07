@@ -13,24 +13,6 @@ use crate::node::util::validators;
 // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
 use bun_zlib::NodeMode;
 
-// Local extension: `JSValue::withAsyncContextIfNeeded` is not yet on the
-// upstream `bun_jsc::JSValue`; shim it via the C++ FFI symbol like cron.rs does.
-trait JSValueZstdExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueZstdExt for JSValue {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        // SAFETY: FFI into JSC; `global` is live for the call.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
-    }
-}
-
 // `jsc.Codegen.JSNativeZstd` cached-property accessors — wraps the
 // `NativeZstdPrototype__${prop}{Get,Set}CachedValue` C++ symbols emitted by
 // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
@@ -67,20 +49,16 @@ pub struct NativeZstd {
     pub task: WorkPoolTask,
 }
 
-// `pub const ref/deref = RefCount.ref/deref;`
-// Provided by bun_ptr::IntrusiveRc<NativeZstd>; the embedded `ref_count` field above is the count.
-// TODO(port): wire `bun_ptr::IntrusiveRc` impl (ref/deref) — deref-to-zero invokes Drop then frees Box.
-
-// `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;`
-// Provided by `#[bun_jsc::JsClass]` derive — codegen wires to_js / from_js / from_js_direct.
-
-// `const impl = CompressionStream(@This());` and the `pub const write = impl.write; ...` re-exports.
-// In Rust these are generic methods of CompressionStream<NativeZstd>:
-//   write, run_from_js_thread, write_sync, reset, close, set_on_error, get_on_error, finalize
-// TODO(port): expose via `impl CompressionStream for NativeZstd` (trait with default methods) so
-// the .classes.ts codegen can resolve them as inherent-looking methods.
-// PORT NOTE: Phase-A draft had `pub use CompressionStream::<NativeZstd>::emit_error as _marker;`
-// here as a reviewer breadcrumb — that's not valid Rust path syntax, so it's dropped to a comment.
+// `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
+// below; deref-to-zero reconstitutes the Box (running Drop) and frees, mirroring `bun.destroy`.
+//
+// `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
+// `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
+//
+// `const impl = CompressionStream(@This());` and the `pub const write = impl.write; ...` re-exports
+// resolve through the `CompressionStreamImpl` trait below — `CompressionStream::<NativeZstd>` then
+// supplies write / run_from_js_thread / write_sync / reset / close / set_on_error / get_on_error /
+// finalize as the generic mixin, just like the Zig comptime fn.
 
 impl NativeZstd {
     // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
@@ -534,7 +512,6 @@ impl CompressionStreamImpl for NativeZstd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/zlib/NativeZstd.zig (281 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      CompressionStream<Self> method re-exports + IntrusiveRc wiring deferred; global.err()/throw_* helper names need Phase-B alignment with bun_jsc API
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

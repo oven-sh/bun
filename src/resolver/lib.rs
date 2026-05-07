@@ -3132,6 +3132,11 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Baked-in `'static` constant; surfaced here so low-tier callers
     /// (worker entry-point resolution) don't need the concrete graph type.
     fn base_public_path_with_default_suffix(&self) -> &'static [u8];
+    /// `StandaloneModuleGraph.compile_exec_argv` — the `--compile-exec-argv`
+    /// string baked into a `bun build --compile` binary. Exposed via the trait
+    /// so `process.execArgv` (lower-tier `bun_jsc` callers holding only the
+    /// trait object) can read it without downcasting to the concrete graph.
+    fn compile_exec_argv(&self) -> &[u8];
 }
 
 /// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /

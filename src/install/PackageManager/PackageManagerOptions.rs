@@ -193,6 +193,16 @@ impl Access {
             _ => None,
         }
     }
+
+    /// Port of Zig `@tagName(access)` — lower-case tag name as written into the
+    /// publish JSON body and summary output.
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Access::Public => "public",
+            Access::Restricted => "restricted",
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

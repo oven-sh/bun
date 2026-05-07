@@ -700,7 +700,7 @@ impl Request {
             writer,
             "{} ({}) {{\n",
             class_label,
-            bun_fmt::size(self.body_value().size() as usize, Default::default())
+            bun_fmt::size(self.body_value_mut().size() as usize, Default::default())
         )?;
         {
             // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;` — RAII guard
@@ -777,7 +777,7 @@ impl Request {
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    let size = self.body_value().size();
+                    let size = self.body_value_mut().size();
                     if size == 0 {
                         // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
                         // Phase B should pass a real global or make initEmpty not need one.
@@ -1705,7 +1705,16 @@ impl Request {
         // computation below it so no guard is needed at all — `BunString` is
         // `Copy` with no `Drop`, so an early return here leaves `req.url`
         // untouched and still owned by the caller's `finalize_without_deinit`.
-        let headers = self.clone_headers(global_this)?;
+        let headers = match self.clone_headers(global_this) {
+            Ok(h) => h,
+            Err(e) => {
+                // Zig: `errdefer body.unref()` — `NonNull` is `Copy`, so no
+                // RAII covers this; release the +1 we just allocated.
+                // SAFETY: `body` is a fresh +1 hive slot from `hive_alloc`.
+                unsafe { (*body.as_ptr()).unref() };
+                return Err(e);
+            }
+        };
         // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
         let url = if preserve_url {
             // Bitwise copy — the `ptr::write` below overwrites the old slot;
@@ -1716,14 +1725,16 @@ impl Request {
             self.url.dupe_ref()
         };
 
-        // Zig `req.* = Request{...}` is a raw bit-overwrite — no destructors run on
-        // the old `*req`. Match that with `ptr::write` so future Drop impls on
-        // `JsRef` / `strong::Optional` don't fire on the caller's sentinel. The
-        // sentinel `body` is `NonNull::dangling()` (sole caller is `clone()`),
-        // `url` was bitwise-copied above (preserve_url) or is the empty sentinel;
-        // remaining incoming fields are None/weak/Copy by contract.
-        // SAFETY: `req` is a valid &mut, fully initialized by the caller; nothing
-        // between here and the write can panic.
+        // Zig `req.* = Request{...}` is a raw bit-overwrite — no destructors run
+        // on the old `*req`. Match that with `ptr::write` so future Drop impls
+        // on `JsRef` / `strong::Optional` don't fire on the caller's sentinel.
+        // The old `req.body` hive ref is NOT unref'd here (Zig doesn't either):
+        // `clone()` seeds it with `NonNull::dangling()`, and `construct_into`
+        // releases its seed via the `req.body != body` arm of its `cleanup`.
+        // `url` was bitwise-copied above (preserve_url) or is the empty
+        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // SAFETY: `req` is a valid &mut, fully initialized by the caller;
+        // nothing between here and the write can panic.
         unsafe {
             core::ptr::write(
                 req,

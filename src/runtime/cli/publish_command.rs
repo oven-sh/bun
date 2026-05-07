@@ -411,10 +411,15 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
+    // PORT NOTE: Zig declares this on the comptime-generic `Context(directory_publish)`
+    // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
+    // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
+    // `false` branch. Rust type-checks all monomorphisations, so pin the return
+    // type to the only valid shape.
     pub fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-    ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromWorkspaceError> {
+    ) -> Result<Context<'a, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         // SAFETY: `manager.log` is set once at `PackageManager::init`.
@@ -486,7 +491,7 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
             Ok(v) => v,
             Err(err) => {
                 if !cli.silent {
@@ -814,7 +819,7 @@ impl PublishCommand {
                 b"latest"
             }),
             if let Some(access) = ctx.manager.options.publish_config.access {
-                <&'static str>::from(access)
+                access.as_str()
             } else {
                 "default"
             },
@@ -1634,7 +1639,7 @@ impl PublishCommand {
         let mut headers = http::HeaderBuilder::default();
         let npm_auth_type: &[u8] = if maybe_otp.is_none() {
             if let Some(auth) = auth_type {
-                <&'static str>::from(auth).as_bytes()
+                auth.as_str().as_bytes()
             } else {
                 b"web"
             }
@@ -1790,7 +1795,7 @@ impl PublishCommand {
         }
 
         if let Some(access) = ctx.manager.options.publish_config.access {
-            write!(&mut buf, ",\"access\":\"{}\"", <&'static str>::from(access)).ok();
+            write!(&mut buf, ",\"access\":\"{}\"", access.as_str()).ok();
         } else {
             buf.extend_from_slice(b",\"access\":null");
         }

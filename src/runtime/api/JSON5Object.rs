@@ -8,113 +8,7 @@ use bun_js_parser::{self as ast, lexer};
 use bun_logger as logger;
 use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
 use bun_str::{String as BunString, ZigString};
-use crate::node::types::SliceWithUnderlyingString;
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local FFI / extension shims for upstream methods that live in still-gated
-// `bun_jsc` modules (`JSGlobalObject.rs`, `JSValue.unwrapBoxedPrimitive`,
-// `JSValue.putMayBeIndex`) or in `bun_str::lib_draft_b1.rs` (`String::char_at`,
-// `String::substring_with_len`). Kept here so this file compiles without
-// touching upstream crates.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
-    fn JSC__JSValue__unwrapBoxedPrimitive(global: *const JSGlobalObject, this: JSValue) -> JSValue;
-    fn JSC__JSValue__putMayBeIndex(
-        target: JSValue,
-        global: *const JSGlobalObject,
-        key: *const BunString,
-        value: JSValue,
-    );
-}
-
-trait JSGlobalObjectStackOverflowExt {
-    fn throw_stack_overflow(&self) -> JsError;
-}
-impl JSGlobalObjectStackOverflowExt for JSGlobalObject {
-    #[inline]
-    fn throw_stack_overflow(&self) -> JsError {
-        // SAFETY: FFI — `self` is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwStackOverflow(self) };
-        JsError::Thrown
-    }
-}
-
-trait JSValueJson5Ext {
-    fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn put_may_be_index(
-        self,
-        global: &JSGlobalObject,
-        key: &BunString,
-        value: JSValue,
-    ) -> JsResult<()>;
-}
-impl JSValueJson5Ext for JSValue {
-    #[inline]
-    fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Mirrors JSValue.zig:1343 — fast-path skips the FFI when not an object.
-        if !self.is_object() {
-            return Ok(self);
-        }
-        // SAFETY: `global` is live; `self` is a valid encoded JSValue.
-        let result = unsafe { JSC__JSValue__unwrapBoxedPrimitive(global, self) };
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(result)
-    }
-    #[inline]
-    fn put_may_be_index(
-        self,
-        global: &JSGlobalObject,
-        key: &BunString,
-        value: JSValue,
-    ) -> JsResult<()> {
-        // SAFETY: `global` is live; `key` borrowed for the call; FFI may set an exception.
-        unsafe { JSC__JSValue__putMayBeIndex(self, global, key, value) };
-        if global.has_exception() {
-            Err(JsError::Thrown)
-        } else {
-            Ok(())
-        }
-    }
-}
-
-trait BunStringJson5Ext {
-    fn char_at(&self, i: usize) -> u16;
-    fn substring_with_len(&self, start: usize, end: usize) -> BunString;
-}
-impl BunStringJson5Ext for BunString {
-    #[inline]
-    fn char_at(&self, i: usize) -> u16 {
-        // PORT NOTE: shim for `bun_str::String::char_at` (still in `lib_draft_b1.rs`).
-        // Reads a single code unit at `i` from the underlying WTF/Zig string.
-        if self.is_utf16() {
-            self.utf16().get(i).copied().unwrap_or(0)
-        } else {
-            u16::from(self.latin1().get(i).copied().unwrap_or(0))
-        }
-    }
-    #[inline]
-    fn substring_with_len(&self, start: usize, end: usize) -> BunString {
-        // PORT NOTE: shim for `bun_str::String::substring_with_len` — produces a
-        // borrowed `ZigString`-backed view into `self`'s storage since the real
-        // WTF substring helper isn't wired yet. Only the `space.str` newline path
-        // hits this (clamped to ≤10 code units) and `self` outlives the result.
-        if self.is_utf16() {
-            let s = self.utf16();
-            let end = end.min(s.len());
-            BunString::borrow_utf16(&s[start.min(end)..end])
-        } else {
-            let s = self.latin1();
-            let end = end.min(s.len());
-            BunString::ascii(&s[start.min(end)..end])
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 2);
@@ -148,7 +42,9 @@ pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw("JSON5.stringify does not support the replacer argument"));
+        return Err(global.throw(format_args!(
+            "JSON5.stringify does not support the replacer argument"
+        )));
     }
 
     let mut stringifier = Stringifier::init(global, space_value)?;
@@ -179,7 +75,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let input_value = frame.argument(0);
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global.throw_invalid_arguments("Expected a string to parse"));
+        return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
     let input: BlobOrStringOrBuffer = match BlobOrStringOrBuffer::from_js(global, input_value)? {

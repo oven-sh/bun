@@ -1740,6 +1740,14 @@ impl JSValue {
         let p = unsafe { JSC__JSValue__toObject(self, global) };
         if p.is_null() { Err(JsError::Thrown) } else { Ok(p) }
     }
+    /// `JSValue.unwrapBoxedPrimitive` (JSValue.zig:1343) — unwraps Number,
+    /// Boolean, String, and BigInt objects to their primitive forms.
+    pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; FFI may throw (toNumber on a NumberObject can).
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__unwrapBoxedPrimitive(global, self)
+        })
+    }
     /// `JSValue.getPrototype`.
     pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
         // SAFETY: `global` is live.
@@ -2090,6 +2098,7 @@ unsafe extern "C" {
     fn JSC__JSValue__isSameValue(this: JSValue, other: JSValue, global: *const JSGlobalObject) -> bool;
     fn Bun__JSValue__toNumber(this: JSValue, global: *const JSGlobalObject) -> f64;
     fn JSC__JSValue__toObject(this: JSValue, global: *const JSGlobalObject) -> *mut JSObject;
+    fn JSC__JSValue__unwrapBoxedPrimitive(global: *const JSGlobalObject, this: JSValue) -> JSValue;
     fn JSC__JSValue__getPrototype(this: JSValue, global: *const JSGlobalObject) -> JSValue;
     fn JSC__JSValue__getName(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::String);
     fn JSC__JSValue__getClassName(this: JSValue, global: *const JSGlobalObject, out: *mut bun_string::ZigString);

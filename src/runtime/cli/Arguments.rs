@@ -1250,10 +1250,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             unsafe { Bun__Node__ProcessThrowDeprecation = true };
         }
         if let Some(title) = args.option(b"--title") {
-            // SAFETY: single-threaded startup; argv slices returned by
-            // `clap::Args::option` borrow process-lifetime `argv` storage.
-            // Zig: `CLI.Bun__Node__ProcessTitle = title;`
-            unsafe { cli::Bun__Node__ProcessTitle = Some(title) };
+            // SAFETY: single-threaded startup. Static is `Option<Box<[u8]>>` so
+            // `process.title = "..."` can drop the previous value; box the
+            // argv-borrowed slice up front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
+            unsafe { cli::Bun__Node__ProcessTitle = Some(title.into()) };
         }
         if args.flag(b"--zero-fill-buffers") {
             // SAFETY: single-threaded startup

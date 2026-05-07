@@ -3353,7 +3353,9 @@ macro_rules! impl_server_jsclass {
             unsafe extern "C" {
                 fn $from_js(value: JSValue) -> Option<NonNull<$ty>>;
                 fn $from_js_direct(value: JSValue) -> Option<NonNull<$ty>>;
-                fn $create(ptr: *mut $ty, global: *const JSGlobalObject) -> JSValue;
+                // C++ ABI is `${T}__create(Zig::GlobalObject*, void* ptr)` —
+                // global FIRST, ptr SECOND (see ZigGeneratedClasses.cpp).
+                fn $create(global: *const JSGlobalObject, ptr: *mut $ty) -> JSValue;
                 fn $get_ctor(global: *const JSGlobalObject) -> JSValue;
             }
             impl bun_jsc::JsClass for $ty {
@@ -3367,7 +3369,7 @@ macro_rules! impl_server_jsclass {
                 }
                 fn to_js(self, global: &JSGlobalObject) -> JSValue {
                     // SAFETY: `${T}__create` takes ownership of the heap ptr.
-                    unsafe { $create(Box::into_raw(Box::new(self)), global) }
+                    unsafe { $create(global, Box::into_raw(Box::new(self))) }
                 }
                 fn get_constructor(global: &JSGlobalObject) -> JSValue {
                     // SAFETY: thin FFI forward.

@@ -987,7 +987,8 @@ impl EventLoop {
     ) -> JsResult<JSValue> {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
-        let jsc_vm = global_object.bun_vm().jsc_vm;
+        // SAFETY: bun_vm() returns the live owning VM for this global; field read only.
+        let jsc_vm = unsafe { (*global_object.bun_vm()).jsc_vm };
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }

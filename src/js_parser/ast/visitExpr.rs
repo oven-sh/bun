@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
         // this error is not necessary and it is causing breakages
         // if (!p.fn_only_data_visit.is_new_target_allowed) {
-        //     p.log().addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
+        //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
         // }
         expr
     }

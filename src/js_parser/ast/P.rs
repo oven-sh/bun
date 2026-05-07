@@ -3222,7 +3222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(scope_index)
     }
 
-    // Note: do not write to "p.log()" in this function. Any errors due to conversion
+    // Note: do not write to "p.log" in this function. Any errors due to conversion
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.

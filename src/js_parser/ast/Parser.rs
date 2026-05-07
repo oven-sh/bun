@@ -322,20 +322,12 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
+        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
+        // field docs), so handing the same raw pointer to both is defined —
+        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
         let mut p = Pi::<TS, JX>::init(
             self.bump,
-            // FIXME(UB): `self.log` is the SharedRW provenance parent of
-            // `lexer.log` (see `Parser::init`), but materializing a second
-            // `&mut` here pops `lexer.log`'s Unique tag under Stacked Borrows.
-            // `P` then stores BOTH as `&'a mut Log` (P.rs `log` + `lexer.log`)
-            // — two live `&mut` to one allocation is UB. Zig held two raw
-            // `*Log` where aliasing is defined. The fix is changing `P.log` to
-            // `NonNull<Log>` and dropping this parameter (derive it from
-            // `lexer.log` inside `P::init`); blocked on ~150 `p.log.*` call
-            // sites across parse_*/visit_* (tracked in P.rs). This call site
-            // cannot avoid the second `&mut` while `P::init` requires it.
-            #[allow(invalid_reference_casting)]
-            unsafe { &mut *self.log.as_ptr() },
+            self.log,
             self.source,
             self.define,
             lexer,
@@ -461,20 +453,12 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
+        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
+        // field docs), so handing the same raw pointer to both is defined —
+        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
         let mut p = JavaScriptParser::init(
             self.bump,
-            // FIXME(UB): `self.log` is the SharedRW provenance parent of
-            // `lexer.log` (see `Parser::init`), but materializing a second
-            // `&mut` here pops `lexer.log`'s Unique tag under Stacked Borrows.
-            // `P` then stores BOTH as `&'a mut Log` (P.rs `log` + `lexer.log`)
-            // — two live `&mut` to one allocation is UB. Zig held two raw
-            // `*Log` where aliasing is defined. The fix is changing `P.log` to
-            // `NonNull<Log>` and dropping this parameter (derive it from
-            // `lexer.log` inside `P::init`); blocked on ~150 `p.log.*` call
-            // sites across parse_*/visit_* (tracked in P.rs). This call site
-            // cannot avoid the second `&mut` while `P::init` requires it.
-            #[allow(invalid_reference_casting)]
-            unsafe { &mut *self.log.as_ptr() },
+            self.log,
             self.source,
             self.define,
             lexer,
@@ -566,20 +550,12 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
+        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
+        // field docs), so handing the same raw pointer to both is defined —
+        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
         let mut p = TSXParser::init(
             self.bump,
-            // FIXME(UB): `self.log` is the SharedRW provenance parent of
-            // `lexer.log` (see `Parser::init`), but materializing a second
-            // `&mut` here pops `lexer.log`'s Unique tag under Stacked Borrows.
-            // `P` then stores BOTH as `&'a mut Log` (P.rs `log` + `lexer.log`)
-            // — two live `&mut` to one allocation is UB. Zig held two raw
-            // `*Log` where aliasing is defined. The fix is changing `P.log` to
-            // `NonNull<Log>` and dropping this parameter (derive it from
-            // `lexer.log` inside `P::init`); blocked on ~150 `p.log.*` call
-            // sites across parse_*/visit_* (tracked in P.rs). This call site
-            // cannot avoid the second `&mut` while `P::init` requires it.
-            #[allow(invalid_reference_casting)]
-            unsafe { &mut *self.log.as_ptr() },
+            self.log,
             self.source,
             self.define,
             lexer,

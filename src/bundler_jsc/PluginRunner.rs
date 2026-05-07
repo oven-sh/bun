@@ -10,42 +10,43 @@ use bun_jsc::{BunPluginTarget, StringJsc};
 
 pub use bun_resolver::fs::Path as FsPath;
 
-pub type MacroJsCtx = JSValue;
-pub const DEFAULT_MACRO_JS_VALUE: JSValue = JSValue::ZERO;
+/// Spec `PluginRunner.zig:MacroJSCtx` — re-export of the canonical newtype
+/// (defined at the lowest tier that stores it, `bun_js_parser::Macro`).
+pub use bun_bundler::transpiler::MacroJSCtx as MacroJsCtx;
+pub const DEFAULT_MACRO_JS_VALUE: MacroJsCtx = MacroJsCtx::ZERO;
 
-pub struct PluginRunner<'a> {
-    pub global_object: &'a JSGlobalObject,
-    // PORT NOTE: Zig had `allocator: std.mem.Allocator` — dropped; global mimalloc is used.
+/// Spec `PluginRunner.zig:PluginRunner` — re-export of the canonical struct.
+/// `extract_namespace` / `could_be_plugin` live there (pure byte parsing); the
+/// `on_resolve` body is wired as a dispatch slot by
+/// `bun_jsc::Bun__onDidAppendPlugin`; `on_resolve_jsc` (below) is a free fn
+/// because it only reads the global, not the runner record.
+pub use bun_bundler::transpiler::PluginRunner;
+
+/// Spec PluginRunner.zig:14 — re-export for callers that named this module.
+#[inline]
+pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
+    PluginRunner::extract_namespace(specifier)
 }
 
-impl<'a> PluginRunner<'a> {
-    /// Spec PluginRunner.zig:14 — canonical body lives in
-    /// `bun_bundler::transpiler::PluginRunner` (lower tier, pure byte parsing).
-    #[inline]
-    pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
-    }
+/// Spec PluginRunner.zig:22 — re-export for callers that named this module.
+#[inline]
+pub fn could_be_plugin(specifier: &[u8]) -> bool {
+    PluginRunner::could_be_plugin(specifier)
+}
 
-    /// Spec PluginRunner.zig:22 — canonical body lives in
-    /// `bun_bundler::transpiler::PluginRunner` (lower tier, pure byte parsing).
-    #[inline]
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
-    }
+// `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) is wired as
+// the `bun_bundler::transpiler::PluginRunner.on_resolve` dispatch slot by
+// `bun_jsc::Bun__onDidAppendPlugin`; no body here.
 
-    // `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) is wired
-    // as the `bun_bundler::transpiler::PluginRunner.on_resolve` dispatch slot
-    // by `bun_jsc::Bun__onDidAppendPlugin`; no inherent method here.
-
-    pub fn on_resolve_jsc(
-        &self,
-        namespace: BunString,
-        specifier: BunString,
-        importer: BunString,
-        target: BunPluginTarget,
-    ) -> JsResult<Option<ErrorableString>> {
-        let global = self.global_object;
-        let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
+/// Spec PluginRunner.zig:121 `onResolveJSC`.
+pub fn on_resolve_jsc(
+    global: &JSGlobalObject,
+    namespace: BunString,
+    specifier: BunString,
+    importer: BunString,
+    target: BunPluginTarget,
+) -> JsResult<Option<ErrorableString>> {
+    let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
                 if namespace.length() > 0 && !namespace.eql_comptime(b"file") {
                     namespace
                 } else {
@@ -71,7 +72,7 @@ impl<'a> PluginRunner<'a> {
             return Ok(Some(ErrorableString::err(
                 bun_core::err!(JSErrorObject),
                 BunString::static_(b"Expected \"path\" to be a string in onResolve plugin")
-                    .to_error_instance(self.global_object),
+                    .to_error_instance(global),
             )));
         }
 
@@ -83,7 +84,7 @@ impl<'a> PluginRunner<'a> {
                 BunString::static_(
                     b"Expected \"path\" to be a non-empty string in onResolve plugin",
                 )
-                .to_error_instance(self.global_object),
+                .to_error_instance(global),
             )));
         } else if
         // TODO: validate this better
@@ -95,7 +96,7 @@ impl<'a> PluginRunner<'a> {
             return Ok(Some(ErrorableString::err(
                 bun_core::err!(JSErrorObject),
                 BunString::static_(b"\"path\" is invalid in onResolve plugin")
-                    .to_error_instance(self.global_object),
+                    .to_error_instance(global),
             )));
         }
         let mut static_namespace = true;
@@ -105,7 +106,7 @@ impl<'a> PluginRunner<'a> {
                     return Ok(Some(ErrorableString::err(
                         bun_core::err!(JSErrorObject),
                         BunString::static_(b"Expected \"namespace\" to be a string")
-                            .to_error_instance(self.global_object),
+                            .to_error_instance(global),
                     )));
                 }
 
@@ -138,31 +139,26 @@ impl<'a> PluginRunner<'a> {
         // Our super slow way of cloning the string into memory owned by jsc
         let mut combined_string: Vec<u8> = Vec::new();
         write!(&mut combined_string, "{}:{}", user_namespace, file_path).expect("unreachable");
-        let out_ = BunString::borrow_utf8(&combined_string);
-        let jsval = match out_.to_js(self.global_object) {
-            Ok(v) => v,
-            Err(_err) => {
-                return Ok(Some(ErrorableString::err(
-                    bun_core::err!(JSError),
-                    self.global_object
-                        .try_take_exception()
-                        .unwrap_or(JSValue::UNDEFINED),
-                )));
-            }
-        };
-        let out = match jsval.to_bun_string(self.global_object) {
-            Ok(v) => v,
-            Err(_err) => {
-                return Ok(Some(ErrorableString::err(
-                    bun_core::err!(JSError),
-                    self.global_object
-                        .try_take_exception()
-                        .unwrap_or(JSValue::UNDEFINED),
-                )));
-            }
-        };
-        Ok(Some(ErrorableString::ok(out)))
-    }
+    let out_ = BunString::borrow_utf8(&combined_string);
+    let jsval = match out_.to_js(global) {
+        Ok(v) => v,
+        Err(_err) => {
+            return Ok(Some(ErrorableString::err(
+                bun_core::err!(JSError),
+                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
+            )));
+        }
+    };
+    let out = match jsval.to_bun_string(global) {
+        Ok(v) => v,
+        Err(_err) => {
+            return Ok(Some(ErrorableString::err(
+                bun_core::err!(JSError),
+                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
+            )));
+        }
+    };
+    Ok(Some(ErrorableString::ok(out)))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

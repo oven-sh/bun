@@ -1750,16 +1750,13 @@ impl<'a> LinkerContext<'a> {
             bundling: true,
             // TODO: IIFE
             indent: Default::default(),
-            // PERF(port): Zig copied the StringArrayHashMap by value; the Rust
-            // port's map isn't `Clone`, so move a fresh shallow handle in.
-            // TODO(b3): switch `Options.commonjs_named_exports` to a borrow.
-            commonjs_named_exports: Default::default(),
+            commonjs_named_exports: Some(&ast.commonjs_named_exports),
             commonjs_named_exports_ref: ast.exports_ref,
             commonjs_module_ref: if ast.flags.contains(AstFlags::USES_MODULE_REF) { ast.module_ref } else { Ref::NONE },
             commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
             commonjs_module_exports_assigned_deoptimized: ast.flags.contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: core::mem::take(&mut self.graph.ts_enums),
+            ts_enums: Some(&self.graph.ts_enums),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -1776,9 +1773,9 @@ impl<'a> LinkerContext<'a> {
             },
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
-            line_offset_tables: Some(core::mem::take(
-                &mut self.graph.files.items_line_offset_table_mut()[source_index.get() as usize],
-            )),
+            line_offset_tables: Some(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            ),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {

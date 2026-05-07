@@ -815,6 +815,129 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `bun.String.encodeInto` / `bun.String.encode` / `ZigString.encodeWithAllocator`
+//
+// Hosted here (not on `bun_string::String`) because the encoder bodies above
+// (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
+// putting the methods on the `String` type would require a `bun_string →
+// bun_runtime` upward dep. Per PORTING.md §Dep-cycle, the methods move UP into
+// the crate that owns the impls. Provided as extension traits so call sites
+// keep the `s.encode(enc)` shape.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Runtime-dispatch wrapper over [`construct_from_u8`].
+fn construct_from_u8_dyn(input: &[u8], encoding: Encoding) -> Vec<u8> {
+    // PERF(port): was `inline else` over Encoding — profile in Phase B.
+    let (p, n) = (input.as_ptr(), input.len());
+    match encoding {
+        Encoding::Utf8 => construct_from_u8::<{ enc::UTF8 }>(p, n),
+        Encoding::Ucs2 => construct_from_u8::<{ enc::UCS2 }>(p, n),
+        Encoding::Utf16le => construct_from_u8::<{ enc::UTF16LE }>(p, n),
+        Encoding::Latin1 => construct_from_u8::<{ enc::LATIN1 }>(p, n),
+        Encoding::Ascii => construct_from_u8::<{ enc::ASCII }>(p, n),
+        Encoding::Base64 => construct_from_u8::<{ enc::BASE64 }>(p, n),
+        Encoding::Base64url => construct_from_u8::<{ enc::BASE64URL }>(p, n),
+        Encoding::Hex => construct_from_u8::<{ enc::HEX }>(p, n),
+        Encoding::Buffer => construct_from_u8::<{ enc::BUFFER }>(p, n),
+    }
+}
+
+/// Runtime-dispatch wrapper over [`construct_from_u16`].
+fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
+    let (p, n) = (input.as_ptr(), input.len());
+    match encoding {
+        Encoding::Utf8 => construct_from_u16::<{ enc::UTF8 }>(p, n),
+        Encoding::Ucs2 => construct_from_u16::<{ enc::UCS2 }>(p, n),
+        Encoding::Utf16le => construct_from_u16::<{ enc::UTF16LE }>(p, n),
+        Encoding::Latin1 => construct_from_u16::<{ enc::LATIN1 }>(p, n),
+        Encoding::Ascii => construct_from_u16::<{ enc::ASCII }>(p, n),
+        Encoding::Base64 => construct_from_u16::<{ enc::BASE64 }>(p, n),
+        Encoding::Base64url => construct_from_u16::<{ enc::BASE64URL }>(p, n),
+        Encoding::Hex => construct_from_u16::<{ enc::HEX }>(p, n),
+        Encoding::Buffer => construct_from_u16::<{ enc::BUFFER }>(p, n),
+    }
+}
+
+/// Runtime-dispatch wrapper over [`encode_into_from16`] (Zig passed
+/// `comptime allow_partial_write = true` from `String.encodeInto`).
+fn encode_into_from16_dyn(input: &[u16], to: &mut [u8], encoding: Encoding) -> Result<usize, bun_core::Error> {
+    match encoding {
+        Encoding::Utf8 => encode_into_from16::<{ enc::UTF8 }, true>(input, to),
+        Encoding::Ucs2 => encode_into_from16::<{ enc::UCS2 }, true>(input, to),
+        Encoding::Utf16le => encode_into_from16::<{ enc::UTF16LE }, true>(input, to),
+        Encoding::Latin1 => encode_into_from16::<{ enc::LATIN1 }, true>(input, to),
+        Encoding::Ascii => encode_into_from16::<{ enc::ASCII }, true>(input, to),
+        Encoding::Base64 => encode_into_from16::<{ enc::BASE64 }, true>(input, to),
+        Encoding::Base64url => encode_into_from16::<{ enc::BASE64URL }, true>(input, to),
+        Encoding::Hex => encode_into_from16::<{ enc::HEX }, true>(input, to),
+        Encoding::Buffer => encode_into_from16::<{ enc::BUFFER }, true>(input, to),
+    }
+}
+
+/// Runtime-dispatch wrapper over [`encode_into_from8`].
+fn encode_into_from8_dyn(input: &[u8], to: &mut [u8], encoding: Encoding) -> Result<usize, bun_core::Error> {
+    match encoding {
+        Encoding::Utf8 => encode_into_from8::<{ enc::UTF8 }>(input, to),
+        Encoding::Ucs2 => encode_into_from8::<{ enc::UCS2 }>(input, to),
+        Encoding::Utf16le => encode_into_from8::<{ enc::UTF16LE }>(input, to),
+        Encoding::Latin1 => encode_into_from8::<{ enc::LATIN1 }>(input, to),
+        Encoding::Ascii => encode_into_from8::<{ enc::ASCII }>(input, to),
+        Encoding::Base64 => encode_into_from8::<{ enc::BASE64 }>(input, to),
+        Encoding::Base64url => encode_into_from8::<{ enc::BASE64URL }>(input, to),
+        Encoding::Hex => encode_into_from8::<{ enc::HEX }>(input, to),
+        Encoding::Buffer => encode_into_from8::<{ enc::BUFFER }>(input, to),
+    }
+}
+
+/// `bun.String.{encodeInto,encode}` (string.zig:630-644). Extension trait —
+/// see module note above for why this lives in `bun_runtime`.
+pub trait BunStringEncode {
+    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error>;
+    fn encode(&self, enc: Encoding) -> Vec<u8>;
+}
+
+impl BunStringEncode for bun_str::String {
+    /// `bun.String.encodeInto` — encode `self` into `out`. Returns bytes written.
+    fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error> {
+        if self.is_utf16() {
+            return encode_into_from16_dyn(self.utf16(), out, enc);
+        }
+        if self.is_utf8() {
+            // Zig: `@panic("TODO")` — UTF-8 source path was never implemented
+            // (string.zig:636). Match Zig behaviour.
+            unreachable!("String.encodeInto from UTF-8 source — unimplemented in Zig");
+        }
+        encode_into_from8_dyn(self.latin1(), out, enc)
+    }
+
+    /// `bun.String.encode` (string.zig:642) —
+    /// `self.toZigString().encodeWithAllocator(allocator, enc)`.
+    fn encode(&self, enc: Encoding) -> Vec<u8> {
+        self.to_zig_string().encode_with_allocator(enc)
+    }
+}
+
+/// `ZigString.encodeWithAllocator` (ZigString.zig). Extension trait — encoder
+/// bodies live in this crate.
+pub trait ZigStringEncode {
+    fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
+    #[inline]
+    fn encode(&self, enc: Encoding) -> Vec<u8> {
+        self.encode_with_allocator(enc)
+    }
+}
+
+impl ZigStringEncode for bun_str::ZigString {
+    fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
+        if self.is_16bit() {
+            construct_from_u16_dyn(self.utf16_slice(), enc)
+        } else {
+            construct_from_u8_dyn(self.slice(), enc)
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/encoding.zig (554 lines)
 //   confidence: medium

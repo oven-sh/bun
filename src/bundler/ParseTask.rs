@@ -2159,9 +2159,11 @@ fn run_with_source_code(
     // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
     let mut transpiler: *mut Transpiler<'static> =
         unsafe { (*worker_raw).transpiler_for_target(task.known_target) } as *mut _;
-    // TODO(port): errdefer transpiler.resetStore() + errdefer entry.deinit().
-    // Reshaped: cleanup runs on the err return paths explicitly (scopeguard
-    // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows below).
+    // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
+    // `if (.fd) entry.deinit(allocator)` .zig:1148) are reshaped into the
+    // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
+    // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
+    // follow. There are no other fallible `?` between here and that match.
     // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
     // `&transpiler.resolver`). Keep raw — never materialize `&mut Transpiler`
     // while a `&mut` derived from `resolver` is live. Per Zig, `resolver` is
@@ -2188,13 +2190,6 @@ fn run_with_source_code(
     // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
     #[cfg(debug_assertions)]
     let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
-    #[cfg(debug_assertions)]
-    let _ = debug_original_variant_check;
-
-    // PORT NOTE: reshaped for borrowck — Zig had two errdefers (transpiler.resetStore
-    // unconditional; entry.deinit only when contents_or_fd == .fd, with a debug
-    // tag-change panic). The debug check used live `task.contents_or_fd` which
-    // overlaps borrows in Rust; left as TODO above.
 
     // SAFETY: `ctx` backref valid. Read the pointer field via `worker_raw`
     // (not `this`) so no parent-`&mut` access pops the `transpiler`/`resolver`
@@ -2479,34 +2474,52 @@ fn run_with_source_code(
     // `topts` (a `&BundleOptions`) is dead past this point; the callees take
     // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
     let _ = topts;
-    let mut ast: JSAst = if !is_empty || loader.handles_empty_file() {
-        get_ast(
-            log,
-            transpiler,
-            opts,
-            bump,
-            resolver,
-            &source,
-            loader,
-            task_ctx.unique_key,
-            &mut unique_key_for_additional_file,
-            &task_ctx.linker.has_any_css_locals,
-        )?
-    } else if module_type == options::ModuleType::Esm {
-        if loader.is_css() {
-            get_empty_css_ast(log, transpiler, opts, bump, &source)?
+    let ast_result: core::result::Result<JSAst, AnyError> =
+        if !is_empty || loader.handles_empty_file() {
+            get_ast(
+                log,
+                transpiler,
+                opts,
+                bump,
+                resolver,
+                &source,
+                loader,
+                task_ctx.unique_key,
+                &mut unique_key_for_additional_file,
+                &task_ctx.linker.has_any_css_locals,
+            )
+        } else if loader.is_css() {
+            get_empty_css_ast(log, transpiler, opts, bump, &source)
+        } else if module_type == options::ModuleType::Esm {
+            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)
         } else {
-            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)?
-        }
-    } else {
-        if loader.is_css() {
-            get_empty_css_ast(log, transpiler, opts, bump, &source)?
-        } else {
-            get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)?
-        }
-    };
+            get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)
+        };
     // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
     // to monomorphize. Expanded to if/else.
+    let mut ast = match ast_result {
+        Ok(a) => a,
+        Err(e) => {
+            // Zig errdefers (.zig:1123, .zig:1148): reset the AST store
+            // unconditionally, and free the owned `entry.contents` only when
+            // it was sourced from `.fd` (the `.contents` variant is borrowed —
+            // freeing it would double-free in `BundleV2.deinit`).
+            #[cfg(debug_assertions)]
+            if task.contents_or_fd.tag() != debug_original_variant_check {
+                panic!(
+                    "BUG: `task.contents_or_fd` changed in a way that will cause a double free or memory to leak!\n\n    Original = {}\n    New = {}\n",
+                    <&'static str>::from(debug_original_variant_check),
+                    <&'static str>::from(task.contents_or_fd.tag()),
+                );
+            }
+            // SAFETY: `transpiler` is live; no other borrow of it is held here.
+            unsafe { (*transpiler).reset_store() };
+            if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
+                entry.deinit();
+            }
+            return Err(e);
+        }
+    };
 
     ast.target = target;
     if ast.parts.len <= 1
@@ -2646,9 +2659,8 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
 
     let result = Box::new(Result {
         ctx: this.ctx,
-        // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
-        // `ConcurrentTask` is POD with no NonNull/NonZero fields.
-        task: unsafe { core::mem::zeroed() },
+        // Zig `.task = .{}` (.zig:1407) — default-init, NOT `undefined`.
+        task: EventLoop::Task::default(),
         value,
         // PORT NOTE: `ExternalFreeFunction` is POD in Zig (copied); Rust port
         // doesn't derive `Copy`, so move it out (task is consumed here).

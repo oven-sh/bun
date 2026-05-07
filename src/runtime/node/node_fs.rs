@@ -2233,8 +2233,8 @@ impl ResultListEntryValue {
 } // mod _async_tasks
 pub use _async_tasks::{
     async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest,
+    FsReturn, IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue,
+    ShellAsyncCpTask, UVFSRequest,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

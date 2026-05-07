@@ -925,22 +925,20 @@ impl CommandLineReporter {
 
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
-                if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>(" <d>(attempt {})<r>"));
-                    // TODO(port): comptime prettyFmt with arg
-                } else {
-                    let _ = write!(writer, " (attempt {})", attempts);
-                }
+                let _ = write!(
+                    writer,
+                    "{}",
+                    Output::pretty_fmt_args(" <d>(attempt {d})<r>", Output::enable_ansi_colors_stderr(), (attempts,)),
+                );
             }
 
             // Print repeat count if test failed on a repeat (repeats > 1)
             if repeats > 1 {
-                if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>(" <d>(run {})<r>"));
-                    // TODO(port): comptime prettyFmt with arg
-                } else {
-                    let _ = write!(writer, " (run {})", repeats);
-                }
+                let _ = write!(
+                    writer,
+                    "{}",
+                    Output::pretty_fmt_args(" <d>(run {d})<r>", Output::enable_ansi_colors_stderr(), (repeats,)),
+                );
             }
 
             if elapsed_ns > (bun::time::NS_PER_US * 10) {

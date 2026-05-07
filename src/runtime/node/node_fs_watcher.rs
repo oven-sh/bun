@@ -105,6 +105,12 @@ pub type FSWatchTask = FSWatchTaskWindows;
 #[cfg(not(windows))]
 pub type FSWatchTask = FSWatchTaskPosix;
 
+// Zig only references `FSWatchTaskPosix` from posix paths, so its lazy
+// compilation never type-checks the body on Windows. Rust type-checks
+// unconditionally, and `Event::Rename`/`Change` carry `StringOrBytesToDecode`
+// on Windows which does not coerce to the `&[u8]` `emit()` expects — gate the
+// whole posix task to keep the Windows build sound.
+#[cfg(not(windows))]
 pub struct FSWatchTaskPosix {
     ctx: *mut FSWatcher,
     count: u8,
@@ -113,15 +119,18 @@ pub struct FSWatchTaskPosix {
     concurrent_task: ConcurrentTask,
 }
 
+#[cfg(not(windows))]
 impl Taskable for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
 }
 
+#[cfg(not(windows))]
 pub struct Entry {
     event: Event,
     needs_free: bool,
 }
 
+#[cfg(not(windows))]
 impl FSWatchTaskPosix {
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)

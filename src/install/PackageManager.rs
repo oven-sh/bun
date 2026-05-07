@@ -2104,14 +2104,37 @@ pub fn init_with_runtime_once(
     // initialized it (Zig PackageManager.zig:1013 `const manager = get()`
     // yields a raw `*PackageManager` with no validity invariant).
     let manager_ptr: *mut PackageManager = unsafe { holder::RAW_PTR };
-    // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, ...)` — the
-    // resolver-tier dir-entry cache. Not exposed through `bun_sys::fs::FsVTable`
-    // yet (only `top_level_dir`/`dirname_store` are).
-    // TODO(port): blocked_on bun_sys::fs::FsVTable::read_directory
-    let root_dir: &'static mut fs::DirEntry = todo!(
-        "blocked_on: bun_sys::fs::FsVTable::read_directory (resolver T4 hook) — \
-         needed for `init_with_runtime` root_dir; tracked alongside `init()` above"
-    );
+    // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, null, 0, true)`
+    // (PackageManager.zig:1014). Routes through the FsVTable to the resolver's
+    // BSSMap-owned `*DirEntry` slot. On error Zig calls `Output.err` then
+    // `@panic` (lines 1019-1022) — match that: this is the runtime auto-install
+    // path where the resolver already opened `top_level_dir`, so failure is a
+    // programmer-error / fs-disappeared edge.
+    let fs_instance = FileSystem::instance();
+    let root_dir: &'static mut fs::DirEntry =
+        match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true) {
+            // SAFETY: vtable returns an erased `*mut bun_resolver::fs::DirEntry`
+            // (mut-derived provenance, see resolver/fs.rs SYS_FS_VTABLE); the
+            // BSSMap singleton owns it for the process lifetime, and runtime init
+            // runs once on the main thread before any other access.
+            Ok(fs::EntriesOption::Entries(p)) => unsafe { &mut *(p as *mut fs::DirEntry) },
+            Ok(fs::EntriesOption::Err(e)) => {
+                Output::err(
+                    e.canonical_error,
+                    "failed to read root directory: '{}'",
+                    format_args!("{}", bun_str::fmt::bstr(fs_instance.top_level_dir())),
+                );
+                panic!("Failed to initialize package manager");
+            }
+            Err(err) => {
+                Output::err(
+                    err,
+                    "failed to read root directory: '{}'",
+                    format_args!("{}", bun_str::fmt::bstr(fs_instance.top_level_dir())),
+                );
+                panic!("Failed to initialize package manager");
+            }
+        };
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)

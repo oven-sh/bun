@@ -192,8 +192,9 @@ enum FreeCssMode { UnrefCss, IgnoreCss }
 
 pub enum InsertFailureKey<'a> {
     AbsPath(&'a [u8]),
-    /// Side-erased `FileIndex` (callers re-tag with the correct `SIDE`).
-    Index(BodyFileIndex),
+    /// Raw file index into `bundled_files` (side is implied by the graph the
+    /// caller is invoking `insert_failure` on).
+    Index(u32),
 }
 
 pub struct ReceiveChunkSourceMap {

@@ -2434,6 +2434,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 }
 
 // ─── route-list codegen externs ──────────────────────────────────────────────
+// `*mut Request` is opaque on the C++ side (stored as `void* m_ctx`, never
+// dereferenced); see the matching note on the JsClass extern block in
+// `webcore/Request.rs`. The ctypes lint flags it because `Request` transitively
+// contains non-repr(C) fields (HiveArrayFallback) — irrelevant for an opaque
+// pointer round-trip.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     /// Generated C++ dispatcher (RouteList.cpp): wraps the JS Request object,
     /// resolves URL params for `:id`-style segments, and invokes the route
@@ -2624,6 +2630,11 @@ impl_server_pools!((false, false), (true, false), (false, true), (true, true));
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {
     use super::*;
+    // `*mut *mut NodeHTTPResponse` is an out-param: C++ writes back the
+    // Rust-allocated pointer (via `NodeHTTPResponse__createForJS`) without ever
+    // dereferencing the struct itself. The ctypes lint fires because the struct
+    // has Rust-layout fields (Vec, Cell, …); irrelevant for an opaque handle.
+    #[allow(improper_ctypes)]
     unsafe extern "C" {
         pub fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
         pub fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);

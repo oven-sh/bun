@@ -42,7 +42,7 @@ pub extern "C" fn NodeModuleModule__findPath(
     // SAFETY: C++ caller guarantees non-null global; paths_maybe is a nullable JSArray*.
     let global = unsafe { &*global };
     let paths_maybe: Option<&JSArray> = unsafe { paths_maybe.as_ref() };
-    jsc::host_fn::to_js_host_call(global, find_path(global, request_bun_str, paths_maybe))
+    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
 }
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666

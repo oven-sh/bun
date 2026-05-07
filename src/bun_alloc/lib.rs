@@ -1780,21 +1780,31 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         is_slice_in_buffer(value, &self.backing_buf)
     }
 
+    /// Zig `editableSlice(slice: []const u8) []u8 { return @constCast(slice); }`.
+    ///
+    /// Rust cannot soundly express `&[u8] -> &mut [u8]` (instant UB under stacked borrows),
+    /// so this takes raw parts instead. Callers that held a `&[u8]` must drop that borrow
+    /// before calling and pass `(ptr, len)` derived from a `&mut`-provenance pointer.
+    ///
     /// # Safety
-    /// `slice` must have been returned from `append*` on this instance and point into our
-    /// owned backing storage with no other live `&` borrow. Matches Zig `@constCast`.
-    pub unsafe fn editable_slice(slice: &[u8]) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(slice.as_ptr() as *mut u8, slice.len()) }
+    /// `(ptr, len)` must describe a region returned from `append*` on this instance, point
+    /// into our owned mutable backing storage, and have no other live borrow.
+    pub unsafe fn editable_slice<'a>(ptr: *mut u8, len: usize) -> &'a mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
     }
 
     pub fn append_mutable<A: BSSAppendable>(
         &mut self,
         value: A,
     ) -> core::result::Result<&mut [u8], AllocError> {
-        let appended = self.append(value)?;
-        // SAFETY: `appended` was just returned from `append` and borrows storage owned by
-        // `*self`; we hold `&mut self` so no other borrow of that region exists.
-        Ok(unsafe { Self::editable_slice(appended) })
+        let (ptr, len) = {
+            let appended = self.append(value)?;
+            (appended.as_ptr() as *mut u8, appended.len())
+        };
+        // SAFETY: `appended` pointed into storage owned by `*self` (backing_buf or a
+        // process-lifetime mimalloc region); we hold `&mut self` so no other borrow of that
+        // region exists, and the shared borrow was dropped above.
+        Ok(unsafe { Self::editable_slice(ptr, len) })
     }
 
     pub fn get_mutable(&mut self, len: usize) -> core::result::Result<&mut [u8], AllocError> {

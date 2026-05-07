@@ -1,9 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 un-gated header — real `Transpiler` struct definition.
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep.
-// Method bodies remain in the gated `__phase_a_draft` module below until the
-// remaining lower-tier surfaces (linker, bun_fs alias, PendingResolution::List,
-// js_parser Macro FFI) solidify.
+// `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
+// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
+// the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
@@ -2786,8 +2784,7 @@ pub struct ServeResult {
 // PORT STATUS
 //   source:     src/bundler/transpiler.zig (1461 lines)
 //   confidence: medium
-//   notes:      __phase_a_draft removed (superseded by un-gated bodies above);
-//               `transform` / `enqueueEntryPoints` / `processResolveQueue` /
+//   notes:      `transform` / `enqueueEntryPoints` / `processResolveQueue` /
 //               `buildWithResolveResultEager` ported for the legacy
 //               single-file CLI path (`bun build --no-bundle`). CSS branch
 //               of buildWithResolveResultEager falls back to file-copy until

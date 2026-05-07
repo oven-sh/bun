@@ -3,7 +3,8 @@ use core::ffi::c_int;
 use bun_event_loop::{task_tag, ConcurrentTask::ConcurrentTask, TaskTag, Taskable};
 
 use crate::event_loop::{EventLoop, JsTerminated};
-use crate::{ExceptionValidationScope, VirtualMachine};
+use crate::virtual_machine::VirtualMachine;
+use crate::ExceptionValidationScope;
 
 /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
 #[repr(C)]

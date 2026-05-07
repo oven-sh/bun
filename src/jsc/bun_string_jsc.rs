@@ -3,7 +3,6 @@
 //! original methods are aliased to the free fns here.
 
 use core::fmt;
-use core::panic::Location;
 use std::io::Write as _;
 
 use bun_string::{strings, SliceWithUnderlyingString, String, Tag, ZigStringSlice};
@@ -49,7 +48,7 @@ unsafe extern "C" {
 #[track_caller]
 pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `this` is a live &mut String, global_this borrowed for call duration.
-    crate::from_js_host_call(global_this, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_this, || unsafe {
         BunString__transferToJS(this, global_this.as_ptr())
     })
 }
@@ -96,7 +95,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
 #[track_caller]
 pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `this` is a live &String, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_object, || unsafe {
         BunString__toJS(global_object.as_ptr(), this)
     })
 }
@@ -110,7 +109,7 @@ pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JSValue
 #[track_caller]
 pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `array` ptr/len from a live slice, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_object, || unsafe {
         BunString__createArray(global_object.as_ptr(), array.as_ptr(), array.len())
     })
 }
@@ -118,7 +117,7 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 #[track_caller]
 pub fn to_js_by_parse_json(self_: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `self_` is a live &mut String, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_object, || unsafe {
         BunString__toJSON(global_object.as_ptr(), self_)
     })
 }
@@ -129,7 +128,7 @@ pub fn create_utf8_for_js(
     utf8_slice: &[u8],
 ) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; ptr/len from a live &[u8], global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_object, || unsafe {
         BunString__createUTF8ForJS(global_object.as_ptr(), utf8_slice.as_ptr(), utf8_slice.len())
     })
 }
@@ -144,7 +143,7 @@ pub fn create_format_for_js(
     let mut builder: Vec<u8> = Vec::new();
     builder.write_fmt(args).expect("unreachable"); // Vec<u8> write cannot fail
     // SAFETY: FFI call into JSC; ptr/len from a live Vec<u8>, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call(global_object, || unsafe {
         BunString__createUTF8ForJS(global_object.as_ptr(), builder.as_ptr(), builder.len())
     })
 }
@@ -152,7 +151,7 @@ pub fn create_format_for_js(
 #[track_caller]
 pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
     // SAFETY: FFI call into JSC; `this` is a live &mut String, global_object borrowed for call duration.
-    crate::from_js_host_call_generic(global_object, Location::caller(), || unsafe {
+    crate::from_js_host_call_generic(global_object, || unsafe {
         Bun__parseDate(global_object.as_ptr(), this)
     })
 }

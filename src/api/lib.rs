@@ -21,14 +21,13 @@
 //! `bun_options_types::schema::api` wholesale — keep additions append-only and
 //! field-order-faithful so the diff stays reviewable.
 
-use bun_collections::StringArrayHashMap;
-use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
-
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports — canonical definitions live in `bun_options_types::schema::api`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry, NpmRegistryMap};
+pub use bun_options_types::schema::api::{
+    BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryMap, PnpmMatcher,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // npm_registry  — module path for the nested `NpmRegistry::Parser`

@@ -1246,46 +1246,45 @@ impl JSGlobalObject {
         default: T,
         range: IntegerRange,
     ) -> Option<T> {
-        if let Some(val) = obj.get(self, range.field_name) {
-            return self.validate_integer_range::<T>(val, default, range).ok();
+        match obj.get(self, range.field_name) {
+            Ok(Some(val)) => self.validate_integer_range::<T>(val, default, range).ok(),
+            Ok(None) => Some(default),
+            Err(_) => None,
         }
-        if self.has_exception() {
-            return None;
-        }
-        Some(default)
     }
 
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
     #[inline]
     pub fn common_strings(&self) -> CommonStrings<'_> {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         CommonStrings { global_object: self }
     }
 
     /// Throw an error from within the Bun runtime.
     ///
     /// The set of errors accepted by `err()` is defined in `ErrorCode.ts`.
+    // PORT NOTE: Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
+    // The Rust ErrorBuilder carries the code + Arguments at runtime.
     pub fn err<'a>(&'a self, code: JscError, args: Arguments<'a>) -> ErrorBuilder<'a, Self> {
-        // TODO(port): Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
-        // The Rust ErrorBuilder carries the code + Arguments at runtime.
         ErrorBuilder { global: self, code, args }
     }
 
     pub fn create(
-        v: &mut VirtualMachine,
+        v: *mut VirtualMachine,
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
         worker_ptr: Option<*mut c_void>,
-    ) -> &'static mut JSGlobalObject {
-        // TODO(port): lifetime — Zig returns *JSGlobalObject owned by the JSC VM.
+    ) -> *mut JSGlobalObject {
         let _trace = perf::trace("JSGlobalObject.create");
 
-        v.event_loop().ensure_waker();
-        // SAFETY: C++ creates and returns a non-null global object.
+        // SAFETY: caller provides a live VM (Zig: `*jsc.VirtualMachine`). `event_loop()`
+        // returns the VM-owned `*mut EventLoop`; `ensure_waker` mutates it in place.
+        unsafe { (*(*v).event_loop()).ensure_waker() };
+        // SAFETY: C++ creates and returns a non-null global object owned by the JSC VM.
         let global = unsafe {
-            &mut *Zig__GlobalObject__create(
+            Zig__GlobalObject__create(
                 console,
                 context_id,
                 mini_mode,
@@ -1300,9 +1299,9 @@ impl JSGlobalObject {
         global
     }
 
-    pub fn create_for_test_isolation(old_global: &JSGlobalObject, console: *mut c_void) -> &'static mut JSGlobalObject {
-        // SAFETY: C++ returns a non-null freshly-created global.
-        unsafe { &mut *Zig__GlobalObject__createForTestIsolation(old_global, console) }
+    pub fn create_for_test_isolation(old_global: &JSGlobalObject, console: *mut c_void) -> *mut JSGlobalObject {
+        // SAFETY: C++ returns a non-null freshly-created global owned by the JSC VM.
+        unsafe { Zig__GlobalObject__createForTestIsolation(old_global, console) }
     }
 
     pub fn get_module_registry_map(global: &JSGlobalObject) -> *mut c_void {

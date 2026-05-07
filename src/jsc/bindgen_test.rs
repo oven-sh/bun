@@ -3,7 +3,7 @@
 use crate::js_object::PojoFields;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 
-use crate::gen::bindgen_test as gen;
+use crate::r#gen::bindgen_test as generated;
 
 pub fn get_bindgen_test_functions(global: &JSGlobalObject) -> JsResult<JSValue> {
     // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust has no
@@ -25,8 +25,8 @@ pub fn get_bindgen_test_functions(global: &JSGlobalObject) -> JsResult<JSValue> 
         }
     }
     let pojo = Fns {
-        add: gen::create_add_callback(global),
-        required_and_optional_arg: gen::create_required_and_optional_arg_callback(global),
+        add: generated::create_add_callback(global),
+        required_and_optional_arg: generated::create_required_and_optional_arg_callback(global),
     };
     Ok(JSObject::create(&pojo, global)?.to_js())
 }
@@ -39,7 +39,10 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
             // Binding functions can return `error.OutOfMemory` and `error.JSError`.
             // Others like `error.Overflow` from `std.math.add` must be converted.
             // Remember to be descriptive.
-            Err(global.throw_pretty("Integer overflow while adding", format_args!("")))
+            Err(global.throw_pretty(
+                "Integer overflow while adding",
+                format_args!("Integer overflow while adding"),
+            ))
         }
     }
 }

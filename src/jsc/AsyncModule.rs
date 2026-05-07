@@ -1288,35 +1288,39 @@ impl AsyncModule {
             .get()
             .expect("source_code_printer not initialized");
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let source_code_printer = unsafe { &mut *printer_ptr.as_ptr() };
         let mut printer = core::mem::replace(
-            source_code_printer,
+            unsafe { &mut *printer_ptr.as_ptr() },
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
         printer.ctx.reset();
+        // Zig: `defer source_code_printer.?.* = printer;` — fires at fn exit,
+        // *after* the `printer.ctx.get_written()` reads below. Declare the
+        // guard immediately after `printer` so it drops last (locals drop in
+        // reverse declaration order) and the buffer is still populated when
+        // read.
+        let _writeback = scopeguard::guard(
+            (
+                printer_ptr.as_ptr(),
+                &mut printer as *mut bun_js_printer::BufferPrinter,
+            ),
+            |(dst, src)| {
+                // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
+                // stack `printer`; both outlive this guard (it drops before
+                // `printer`). Move the buffer back into the thread-local slot.
+                unsafe {
+                    *dst = core::mem::replace(
+                        &mut *src,
+                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+                    )
+                };
+            },
+        );
 
         {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
             let mut mapper = unsafe { (*jsc_vm).source_map_handler(&mut printer) };
-            let _writeback = scopeguard::guard(
-                (
-                    source_code_printer as *mut bun_js_printer::BufferPrinter,
-                    &mut printer as *mut bun_js_printer::BufferPrinter,
-                ),
-                |(dst, src)| {
-                    // SAFETY: both pointees outlive this scope; no aliases at
-                    // drop. Move the buffer back into the thread-local slot
-                    // (Zig: `defer source_code_printer.?.* = printer`).
-                    unsafe {
-                        *dst = core::mem::replace(
-                            &mut *src,
-                            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-                        )
-                    };
-                },
-            );
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(

@@ -16,10 +16,7 @@ use core::ffi::c_void;
 use bun_core::Environment;
 use bun_core::Output;
 
-use crate::{
-    self as jsc, CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult,
-    TopExceptionScope, ZigString,
-};
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString};
 
 // ───────────────────────────── type aliases ──────────────────────────────
 

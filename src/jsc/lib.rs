@@ -2067,8 +2067,9 @@ pub mod generated;
 
 /// `bun.gen` — bindgen dispatch shims (`src/jsc/bindings/GeneratedBindings.zig`).
 /// Hand-ported per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
+/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
 #[path = "bindings/GeneratedBindings.rs"]
-pub mod gen;
+pub mod r#gen;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

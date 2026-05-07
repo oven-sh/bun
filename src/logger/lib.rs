@@ -1263,17 +1263,21 @@ impl Location {
         })
     }
 
-    pub fn clone_with_builder(&self, string_builder: &mut StringBuilder) -> Location {
+    pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
+        // PORT NOTE: Zig's `string_builder.append` copies into a buffer owned
+        // by the destination `Log`'s allocator (StringBuilder.zig). The local
+        // `StringBuilder` stub above is a no-op that returns its input, so a
+        // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
+        // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
+        // here instead — same end-state as the real builder, just without the
+        // single-buffer packing.
         Location {
-            file: Cow::Borrowed(string_builder.append(self.file.as_ref().into_str())),
+            file: Cow::Owned(self.file.to_vec()),
             namespace: self.namespace,
             line: self.line,
             column: self.column,
             length: self.length,
-            line_text: self
-                .line_text
-                .as_deref()
-                .map(|t| Cow::Borrowed(string_builder.append(t.into_str()))),
+            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
         }
     }

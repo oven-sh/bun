@@ -783,9 +783,12 @@ impl<'a> WriteFileWindows<'a> {
     }
 
     pub fn on_finish(&mut self) -> WriteFileWindowsError {
-        let event_loop = self.event_loop;
-        event_loop.enter();
-        let _exit = scopeguard::guard((), |_| event_loop.exit());
+        // SAFETY: VM-owned EventLoop lives for process lifetime; the guard
+        // forms short-lived `&mut` only at the enter/exit call sites (see
+        // EventLoopEnterGuard docs) so it does not alias `self`.
+        let _exit = unsafe {
+            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+        };
 
         // We don't need to enqueue task since this is already in a task.
         self.run_from_js_thread()
@@ -1040,12 +1043,13 @@ impl<'a> WriteFileWaitFromLockedValueTask<'a> {
                 };
 
                 // PORT NOTE: Zig `defer bun.destroy(this); defer this.promise.deinit(); defer file_blob.detach();`
-                // — defers run in reverse order at scope exit. Use scopeguard to mirror.
-                let _g1 = scopeguard::guard((), |_| unsafe { drop(Box::from_raw(this)) });
-                let _g2 = scopeguard::guard(&mut this_ref.promise, |p| p.deinit());
+                // — defers run in reverse order at scope exit. Reclaim the Box now so it
+                // drops last; field/local guards declared after it drop first.
+                // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
+                // past this point — all further field access goes through `this_box`.
+                let mut this_box = unsafe { Box::from_raw(this) };
+                let _g2 = scopeguard::guard(&mut this_box.promise, |p| p.deinit());
                 let _g3 = scopeguard::guard(&mut file_blob, |fb| fb.detach());
-                // TODO(port): scopeguard captures overlap with `this_ref`/`this` — Phase B may need
-                // to inline cleanup at each return point instead.
 
                 if let Some(p) = new_promise.as_any_promise() {
                     match p.unwrap(global_this.vm(), jsc::UnwrapMode::MarkHandled) {

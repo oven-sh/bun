@@ -2795,6 +2795,10 @@ use ::bun_install_types::resolver_hooks::{
     AutoInstaller, EnqueueResult, Features as InstallFeatures, PreinstallState, Resolution,
     TaskCallbackContext, WakeHandler,
 };
+// Re-exported so downstream (bun_bundler) can name the trait in
+// `Transpiler::get_package_manager`'s return type without a direct
+// `bun_install_types` dep (LAYERING: pass-through, no new edge).
+pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use crate::cache::Set as CacheSet;
 

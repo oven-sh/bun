@@ -786,7 +786,7 @@ impl StreamResult {
         let event_loop = vm.event_loop();
         // SAFETY: promise is GC-rooted via protect(); sole `&` for this read-only call.
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _unprotect = jsc::Protected::adopt(unsafe { &*promise }.to_js());
+        let _unprotect = jsc::js_value::Protected::adopt(unsafe { &*promise }.to_js());
 
         // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
         unsafe { &mut *event_loop }.enter();

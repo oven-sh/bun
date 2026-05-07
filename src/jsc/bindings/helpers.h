@@ -373,9 +373,12 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     auto* untagged = untag(str.ptr);
-    ASSERT(untagged[str.len] == 0);
-    ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
-    return WTF::String(ascii);
+    // Static-tagged ZigStrings may originate from Rust `&'static str` /
+    // `&'static [u8]` literals, which are NOT NUL-terminated. Reading
+    // `untagged[str.len]` or calling `ASCIILiteral::fromLiteralUnsafe`
+    // (which `strlen`s) would over-read past the buffer. Use the
+    // length-bounded span path instead.
+    return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)

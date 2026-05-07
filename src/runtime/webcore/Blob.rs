@@ -105,7 +105,7 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 const SERIALIZATION_VERSION: u8 = 3;
 
-pub use jsc::codegen::JSBlob as js;
+pub use bun_jsc::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -3229,8 +3229,11 @@ impl BlobExt for Blob {
             return crate::webcore::s3_file::to_js_unchecked(global_object, std::ptr::from_mut::<Blob>(self));
         }
 
-        // codegen stub takes an erased `*mut ()`; cast through the heap pointer.
-        js::to_js_unchecked(global_object, std::ptr::from_mut::<Blob>(self).cast::<()>())
+        // `bun_jsc::generated::JSBlob::to_js_unchecked` takes the typed
+        // `*mut Blob` payload directly (do NOT route through the
+        // `jsc::codegen::JSBlob` stub — that one is a no-op returning
+        // `JSValue::default()`).
+        js::to_js_unchecked(global_object, std::ptr::from_mut::<Blob>(self))
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and

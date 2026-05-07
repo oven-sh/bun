@@ -91,11 +91,16 @@ impl Timer {
     // PORT NOTE: Zig name is `as`, which is a Rust keyword.
     pub fn as_<T>(&mut self) -> T {
         unsafe {
-            // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot
-            // (`*?*anyopaque`) as `*?T`, deref, unwrap. Caller guarantees the slot
-            // holds a valid Option<T> bit-pattern (T is expected to be a pointer-like).
-            let slot: *mut Option<T> = us_timer_ext(self).cast();
-            slot.read().expect("unreachable")
+            // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext
+            // slot as `*T` and read it. The slot was allocated with
+            // `size_of::<T>()` and written via `set::<T>()` as a bare `T`.
+            //
+            // Do NOT wrap in `Option<T>` here: Zig's `?*T` is one word (null
+            // niche), but Rust `Option<*mut T>` is two words (raw pointers
+            // have no null niche), so reading `*mut Option<T>` would over-read
+            // `size_of::<T>()` bytes past the allocated slot.
+            let slot: *mut T = us_timer_ext(self).cast();
+            slot.read()
         }
     }
 }

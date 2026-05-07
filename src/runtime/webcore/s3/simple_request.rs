@@ -530,10 +530,7 @@ pub fn execute_simple_s3_request(
     };
 
     let headers = 'brk: {
-        // TODO(port): uninit picohttp::Header array — need Default/zeroed for Header
-        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
-            // SAFETY: picohttp::Header is POD; zero-initialized is valid (Zig used `= undefined`).
-            unsafe { core::mem::zeroed() };
+        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
         if let Some(range_) = &options.range {
             let _headers = result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
             break 'brk Headers::from_pico_http_headers(_headers);

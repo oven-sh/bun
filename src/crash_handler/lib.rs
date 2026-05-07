@@ -2024,10 +2024,8 @@ fn report(url: &[u8]) {
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
     {
-        // SAFETY: all-zero is a valid PathBuffer (#[repr(C)] [u8; N], no NonNull/NonZero fields)
-        let mut buf: bun_core::PathBuffer = unsafe { core::mem::zeroed() };
-        // SAFETY: as above
-        let mut buf2: bun_core::PathBuffer = unsafe { core::mem::zeroed() };
+        let mut buf = bun_core::PathBuffer::default();
+        let mut buf2 = bun_core::PathBuffer::default();
         let Some(path_env) = env_var::PATH::get() else { return; };
         let Ok(cwd) = bun_core::getcwd(&mut buf2) else { return; };
         // PORT NOTE: reshaped for borrowck — capture cwd bytes by value (it

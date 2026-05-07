@@ -94,8 +94,7 @@ impl Default for InternalState {
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
             content_encoding_i: u8::MAX,
-            // SAFETY: phr_chunked_decoder is #[repr(C)] POD; all-zero is a valid initial state.
-            chunked_decoder: unsafe { core::mem::zeroed() },
+            chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
             body_out_str: None,

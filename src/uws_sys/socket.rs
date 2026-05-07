@@ -77,13 +77,9 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             #[cfg(windows)]
             InternalSocket::Pipe(pipe) => pipe.ssl_error(),
             #[cfg(not(windows))]
-            InternalSocket::Pipe => {
-                // SAFETY: all-zero is a valid us_bun_verify_error_t
-                unsafe { core::mem::zeroed() }
-            }
+            InternalSocket::Pipe => us_bun_verify_error_t::default(),
             InternalSocket::Connecting(_) | InternalSocket::Detached => {
-                // SAFETY: all-zero is a valid us_bun_verify_error_t
-                unsafe { core::mem::zeroed() }
+                us_bun_verify_error_t::default()
             }
         }
     }

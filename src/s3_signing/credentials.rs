@@ -61,13 +61,8 @@ impl core::fmt::Display for HexLower<'_> {
     }
 }
 
-// TODO(b2-blocked): bun_picohttp::Header::EMPTY — using zeroed() until ctor lands.
 #[inline]
-fn pico_header_empty() -> PicoHeader {
-    // SAFETY: bun_picohttp::Header is #[repr(C)] {*const u8, usize, *const u8, usize};
-    // all-zero bit pattern (null ptrs, 0 len) is a valid value.
-    unsafe { core::mem::zeroed() }
-}
+fn pico_header_empty() -> PicoHeader { PicoHeader::ZERO }
 
 // TODO(b2-blocked): bun_picohttp::Header::new — fields are private; constructing via
 // repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.

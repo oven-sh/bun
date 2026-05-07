@@ -499,7 +499,7 @@ impl FrameHeader {
 
 // packed struct(u48): type: u16, value: u32
 #[repr(C, packed)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct SettingsPayloadUnit {
     type_: u16,
     value: u32,
@@ -727,8 +727,7 @@ pub fn js_get_unpacked_settings(global_object: &JSGlobalObject, callframe: &Call
 
         let mut i: usize = 0;
         while i < payload.len() {
-            // SAFETY: zeroed is a valid SettingsPayloadUnit (POD)
-            let mut unit: SettingsPayloadUnit = unsafe { core::mem::zeroed() };
+            let mut unit = SettingsPayloadUnit::default();
             SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
             settings.update_with(unit);
             i += setting_byte_size;
@@ -3502,8 +3501,7 @@ impl H2FrameParser {
             // not freed/grown before `payload` is consumed; reset() below only clears len.
             let payload = unsafe { content.data() };
             while i < payload.len() {
-                // SAFETY: all-zero is a valid SettingsPayloadUnit (#[repr(C)] POD, no NonNull/NonZero/enum fields)
-                let mut unit: SettingsPayloadUnit = unsafe { core::mem::zeroed() };
+                let mut unit = SettingsPayloadUnit::default();
                 SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
                 remote_settings.update_with(unit);
                 let (_ut, _uv) = (unit.type_, unit.value);

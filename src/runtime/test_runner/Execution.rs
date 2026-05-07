@@ -179,7 +179,7 @@ pub struct ExecutionSequence {
     pub maybe_skip: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct FlakyAttempt {
     pub result: Result,
     pub elapsed_ns: u64,
@@ -202,8 +202,7 @@ impl ExecutionSequence {
             remaining_retry_count: retry_count,
             // defaults:
             flaky_attempt_count: 0,
-            // SAFETY: all-zero is a valid [FlakyAttempt; N] (Result is repr(u8) with 0 = pending, u64 is POD)
-            flaky_attempts_buf: unsafe { core::mem::zeroed() },
+            flaky_attempts_buf: [FlakyAttempt::default(); Self::MAX_FLAKY_ATTEMPTS],
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -226,9 +225,10 @@ impl ExecutionSequence {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 #[repr(u8)]
 pub enum Result {
+    #[default]
     Pending,
     Pass,
     Skip,

@@ -36,6 +36,11 @@ pub struct CharFreq {
     pub freqs: Buffer,
 }
 
+impl Default for CharFreq {
+    #[inline]
+    fn default() -> Self { Self { freqs: [0i32; CHAR_FREQ_COUNT] } }
+}
+
 const SCAN_BIG_CHUNK_SIZE: usize = 32;
 
 impl CharFreq {

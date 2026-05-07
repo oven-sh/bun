@@ -118,8 +118,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    // SAFETY: all-zero is a valid Ihdr (POD, no NonNull/NonZero/enum fields).
-    let mut ihdr: Ihdr = unsafe { core::mem::zeroed() };
+    let mut ihdr = Ihdr::default();
     // SAFETY: ctx is valid; ihdr is a valid out-ptr.
     if unsafe { spng_get_ihdr(ctx, &mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);

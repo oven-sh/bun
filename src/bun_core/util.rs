@@ -547,10 +547,7 @@ impl PathBuffer {
     /// `MaybeUninit` ceremony at every call site; the bytes are immediately
     /// overwritten by the syscall that fills it).
     #[inline]
-    pub fn uninit() -> Self {
-        // SAFETY: all-zero is a valid `[u8; N]`.
-        unsafe { core::mem::zeroed() }
-    }
+    pub fn uninit() -> Self { Self::ZEROED }
     #[inline] pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0 }
     #[inline] pub fn as_slice(&self) -> &[u8] { &self.0 }
 }
@@ -571,10 +568,7 @@ pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
     #[inline]
-    pub fn uninit() -> Self {
-        // SAFETY: all-zero is a valid `[u16; N]`.
-        unsafe { core::mem::zeroed() }
-    }
+    pub fn uninit() -> Self { Self::ZEROED }
 }
 impl Default for WPathBuffer {
     #[inline] fn default() -> Self { Self::ZEROED }

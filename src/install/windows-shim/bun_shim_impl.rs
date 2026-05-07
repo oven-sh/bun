@@ -1066,6 +1066,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     //
     // Documentation for the function I am using:
     // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
+    // SAFETY: POD, zero-valid — PROCESS_INFORMATION is a #[repr(C)] out-param.
     let mut process: w::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
     let mut startup_info = w::STARTUPINFOW {
         cb: size_of::<w::STARTUPINFOW>() as u32,

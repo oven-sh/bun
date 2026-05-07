@@ -1226,8 +1226,8 @@ pub fn install_isolated_packages(
                 stack.push(StackFrame {
                     id: store::entry::Id::from(u32::try_from(_root_id).unwrap()),
                     dep_idx: 0,
-                    // SAFETY: hasher is initialized below before first use when state == Unvisited
-                    hasher: unsafe { core::mem::zeroed() },
+                    // Placeholder; reinitialized below before first use when state == Unvisited.
+                    hasher: Wyhash::init(0),
                 });
 
                 while !stack.is_empty() {
@@ -1391,8 +1391,8 @@ pub fn install_isolated_packages(
                                 stack.push(StackFrame {
                                     id: dep.entry_id,
                                     dep_idx: 0,
-                                    // SAFETY: initialized on next iteration before use
-                                    hasher: unsafe { core::mem::zeroed() },
+                                    // Placeholder; reinitialized on next iteration before use.
+                                    hasher: Wyhash::init(0),
                                 });
                                 advanced = true;
                                 // re-fetch `top` after potential realloc

@@ -2146,8 +2146,8 @@ pub mod internal {
     const DEFAULT_HINTS_ADDRCONFIG: bool = false;
 
     fn default_hints() -> libc::addrinfo {
+        // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
         let mut h: libc::addrinfo = unsafe { core::mem::zeroed() };
-        // SAFETY: all-zero is a valid addrinfo (matches Zig field-defaults below)
         h.ai_family = libc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
@@ -2279,6 +2279,7 @@ pub mod internal {
                         *addr_in = *((*info_).ai_addr as *const libc::sockaddr_in6);
                     }
                 } else {
+                    // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
                     (*entry).addr = core::mem::zeroed();
                 }
                 i += 1;
@@ -2377,6 +2378,7 @@ pub mod internal {
         #[cfg(windows)]
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
+            // SAFETY: POD, zero-valid — Win32 addrinfo with null ptrs / 0 ints.
             let mut wsa_hints: wsa::addrinfo = core::mem::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
@@ -3092,6 +3094,7 @@ impl UvDnsPoll {
         Box::into_raw(Box::new(Self {
             parent,
             socket,
+            // SAFETY: POD, zero-valid — uv_poll_t is C POD; uv_poll_init writes it before use.
             poll: unsafe { core::mem::zeroed() },
         }))
     }

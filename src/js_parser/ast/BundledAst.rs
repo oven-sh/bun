@@ -230,8 +230,8 @@ impl<'arena> BundledAst<'arena> {
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,
             module_scope: ast.module_scope,
-            // SAFETY: only read when flags.HAS_CHAR_FREQ is set; Zig used `orelse undefined`.
-            char_freq: ast.char_freq.unwrap_or_else(|| unsafe { core::mem::zeroed() }),
+            // Only read when flags.HAS_CHAR_FREQ is set; Zig used `orelse undefined`.
+            char_freq: ast.char_freq.unwrap_or_default(),
             exports_ref: ast.exports_ref,
             module_ref: ast.module_ref,
             wrapper_ref: ast.wrapper_ref,

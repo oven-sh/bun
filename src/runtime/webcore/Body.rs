@@ -688,25 +688,6 @@ impl Value {
 }
 
 impl Value {
-    /// `JSValue.as(jsc.WebCore.Body.Value)` (JSValue.zig:449) — Zig
-    /// special-cases this type in the generic `as`: a `Body.Value` is never
-    /// itself a JS class, so instead of a downcast it returns the body slot of
-    /// the wrapping `Request`/`Response` (if `value` is one). Expressed here as
-    /// an associated fn rather than a `JsClass` impl because `to_js`/
-    /// `from_js_direct` are meaningless for this enum and `JsClass` lives in
-    /// `bun_jsc` (which can't see `Request`/`Response`).
-    pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
-        if let Some(req) = value.as_::<crate::webcore::Request>() {
-            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-            return Some(unsafe { &mut *req }.get_body_value());
-        }
-        if let Some(res) = value.as_::<crate::webcore::Response>() {
-            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-            return Some(unsafe { &mut *res }.get_body_value());
-        }
-        None
-    }
-
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.

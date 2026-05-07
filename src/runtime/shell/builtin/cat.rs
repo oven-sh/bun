@@ -34,9 +34,9 @@ pub enum CatState {
         args_start: usize,
         /// Current index into the filepath args.
         idx: usize,
-        // TODO(b2-blocked): `reader: Option<Arc<IOReader>>` once IOReader has
-        // a real body — Zig stores the per-file reader here so it can deref
-        // it when advancing to the next file.
+        /// Per-file reader (Spec: `reader: ?*IOReader`). Dropping the `Arc`
+        /// IS the Zig `r.deref()`.
+        reader: Option<Arc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
         out_done: bool,
@@ -81,6 +81,7 @@ impl Cat {
             CatState::ExecFilepathArgs {
                 args_start: filepath_start.unwrap(),
                 idx: 0,
+                reader: None,
                 chunks_queued: 0,
                 chunks_done: 0,
                 out_done: false,

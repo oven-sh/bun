@@ -922,7 +922,9 @@ impl ServerWebSocket {
         ))
     }
 
-    #[bun_jsc::host_fn(method)]
+    // `passThis: true` in server.classes.ts — wrapper is emitted by
+    // generated_classes.rs (ServerWebSocketPrototype__cork) and passes
+    // `js_this_value` as a 4th arg, which `#[host_fn(method)]` does not model.
     pub fn cork(
         &mut self,
         global_this: &JSGlobalObject,

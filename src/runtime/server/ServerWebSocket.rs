@@ -5,6 +5,8 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
+use bun_jsc::event_loop::EventLoop;
+
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
     JSString, JSType, JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
@@ -226,10 +228,8 @@ impl ServerWebSocket {
         let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         let args = [this_value];
 
-        let loop_ = vm.event_loop();
         // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
         let mut corker = Corker {
             args: &args,
@@ -278,10 +278,8 @@ impl ServerWebSocket {
             return;
         }
 
-        let loop_ = vm.event_loop();
         // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
         let arguments = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -355,10 +353,8 @@ impl ServerWebSocket {
                 callback: handler.on_drain,
                 result: JSValue::ZERO,
             };
-            let loop_ = vm.event_loop();
             // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
             self.websocket().cork(&mut corker, Corker::run);
             let result = corker.result;
 
@@ -388,10 +384,8 @@ impl ServerWebSocket {
         let global_this = handler.global_object();
 
         // This is the start of a task.
-        let loop_ = vm.event_loop();
         // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -421,10 +415,8 @@ impl ServerWebSocket {
         }
 
         // This is the start of a task.
-        let loop_ = vm.event_loop();
         // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -443,11 +435,11 @@ impl ServerWebSocket {
         let handler = self.handler();
         let was_closed = self.is_closed();
         self.flags.set_closed(true);
-        let _dec = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if !was_closed {
                 handler.active_connections_saturating_sub(1);
             }
-        });
+        }
         let signal = self.signal.take();
 
         // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal cleanup runs at fn exit

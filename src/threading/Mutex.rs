@@ -60,6 +60,44 @@ impl Mutex {
     pub fn unlock(&self) {
         self.impl_.unlock()
     }
+
+    /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
+    ///
+    /// This is the idiomatic Rust spelling of Zig's `m.lock(); defer m.unlock();`
+    /// — prefer it over a bare [`lock`]/[`unlock`] pair so the critical section
+    /// is released on every return path (including `?`).
+    ///
+    /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
+    /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
+    /// the owning struct alive. This matches the Zig pattern where the mutex is
+    /// a plain field and the rest of `self` remains freely accessible while
+    /// locked. Caller must ensure the `Mutex` outlives the guard (trivially
+    /// true for `'static`/singleton mutexes and for guards that drop before the
+    /// owning `self` does).
+    #[inline]
+    #[must_use = "the mutex unlocks immediately if the guard is dropped"]
+    pub fn lock_guard(&self) -> MutexGuard {
+        self.lock();
+        MutexGuard { mutex: self }
+    }
+}
+
+/// RAII guard returned by [`Mutex::lock_guard`]. Unlocks on `Drop`.
+///
+/// Stores a raw `*const Mutex` so it does not hold a borrow of the mutex's
+/// owner — see [`Mutex::lock_guard`] for the rationale.
+pub struct MutexGuard {
+    mutex: *const Mutex,
+}
+
+impl Drop for MutexGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `lock_guard()` was called on a live `&Mutex`; caller contract
+        // is that the mutex outlives this guard (always true when the guard is a
+        // local that drops before the owning struct).
+        unsafe { (*self.mutex).unlock() }
+    }
 }
 
 // Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.

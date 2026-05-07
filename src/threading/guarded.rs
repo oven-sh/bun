@@ -45,21 +45,11 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
         }
     }
 
-    /// Locks the mutex and returns a pointer to the value. Remember to call `unlock`!
-    // PORT NOTE: Phase B may want an RAII guard (`lock(&self) -> Guard<'_, Value>`) instead of
-    // split lock/unlock; the split shape mirrors the Zig API for now.
-    #[allow(clippy::mut_from_ref)]
-    pub fn lock(&self) -> &mut Value {
+    /// Locks the mutex and returns an RAII guard that dereferences to the protected value and
+    /// releases the lock on drop.
+    pub fn lock(&self) -> GuardedLock<'_, Value, M> {
         self.mutex.lock();
-        // SAFETY: `mutex.lock()` just acquired exclusive access; no other `&mut Value` can exist
-        // until `unlock`. `UnsafeCell` provides the interior-mutability provenance so this
-        // `&self → &mut Value` projection is sound.
-        unsafe { &mut *self.unsynchronized_value.get() }
-    }
-
-    /// Unlocks the mutex. Don't use any pointers returned by `lock` after calling this method!
-    pub fn unlock(&self) {
-        self.mutex.unlock();
+        GuardedLock { guarded: self }
     }
 
     /// Returns the inner unprotected value.
@@ -76,6 +66,39 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 
 // Zig `deinit` only calls `bun.memory.deinit` on both fields and writes `undefined`.
 // Rust drops `Value` and `M` fields automatically — no explicit `Drop` impl needed.
+
+/// RAII guard returned by [`GuardedBy::lock`]. Dereferences to the protected value and releases
+/// the underlying mutex when dropped — the Rust-native replacement for Zig's split
+/// `lock()`/`defer unlock()` pair.
+pub struct GuardedLock<'a, Value, M: RawMutex> {
+    guarded: &'a GuardedBy<Value, M>,
+}
+
+impl<'a, Value, M: RawMutex> core::ops::Deref for GuardedLock<'a, Value, M> {
+    type Target = Value;
+    #[inline]
+    fn deref(&self) -> &Value {
+        // SAFETY: the mutex is held for the lifetime of this guard; no other access to
+        // `unsynchronized_value` can exist until `Drop` releases it. `UnsafeCell` provides the
+        // interior-mutability provenance for this `&self → &Value` projection.
+        unsafe { &*self.guarded.unsynchronized_value.get() }
+    }
+}
+
+impl<'a, Value, M: RawMutex> core::ops::DerefMut for GuardedLock<'a, Value, M> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Value {
+        // SAFETY: see `Deref::deref`.
+        unsafe { &mut *self.guarded.unsynchronized_value.get() }
+    }
+}
+
+impl<'a, Value, M: RawMutex> Drop for GuardedLock<'a, Value, M> {
+    #[inline]
+    fn drop(&mut self) {
+        self.guarded.mutex.unlock();
+    }
+}
 
 /// Trait for the `M` parameter of `GuardedBy`: a raw mutex with `lock`/`unlock`.
 // TODO(port): move to bun_threading if not already there; both `bun_threading::Mutex`

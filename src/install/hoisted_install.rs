@@ -12,14 +12,46 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_bunfig::Arguments as Command;
 
-use crate::{self as install, DependencyID, PackageID, RunTasksCallbacks};
+use crate::{self as install, DependencyID, ExtractData, PackageID};
 use crate::lockfile::tree;
 use crate::bin_real as bin;
 use crate::PackageManager;
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
+use crate::package_manager_real::run_tasks;
+use crate::package_manager_task as Task;
 use crate::package_install;
 use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
+
+/// `RunTasksCallbacks` impl for the hoisted-install loop. Mirrors the Zig
+/// anonymous-struct call shape `{ .onExtract = installEnqueuedPackagesAfterExtraction,
+/// .onResolve = {}, ... }` with `Ctx == *PackageInstaller`.
+pub struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+
+impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
+    type Ctx = PackageInstaller<'a>;
+
+    const HAS_ON_EXTRACT: bool = true;
+    const IS_PACKAGE_INSTALLER: bool = true;
+
+    fn on_extract_package_installer(
+        ctx: &mut Self::Ctx,
+        task_id: Task::Id,
+        dependency_id: DependencyID,
+        data: &mut ExtractData,
+        log_level: package_manager::Options::LogLevel,
+    ) {
+        ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
+    }
+
+    fn as_package_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut PackageInstaller<'x> {
+        // SAFETY: identity cast — narrows the invariant `'a` param to the
+        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
+        // The returned reference cannot outlive `'x`, so all inner `'a` borrows
+        // remain valid.
+        unsafe { core::mem::transmute::<&'x mut PackageInstaller<'a>, &'x mut PackageInstaller<'x>>(ctx) }
+    }
+}
 
 // TODO(port): narrow error set
 pub fn install_hoisted_packages(
@@ -52,17 +84,27 @@ pub fn install_hoisted_packages(
 
     {
         // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two
-        // borrows of `this`). Snapshot the raw log ptr first; pass `mgr_ptr`
-        // (raw) for the manager so `&mut this.lockfile` doesn't overlap a
-        // simultaneous `&mut *this`.
-        let log = this.log.map_or(core::ptr::null_mut(), |p| p.as_ptr());
-        this.lockfile.filter(
-            log,
-            mgr_ptr,
-            install_root_dependencies,
-            workspace_filters,
-            packages_to_install,
-        )?;
+        // borrows of `this`). `lockfile` is `Box<Lockfile>` so the heap object
+        // is disjoint from the `PackageManager` struct; snapshot raw `*mut
+        // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
+        // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
+        // provenance root.
+        let log: *mut bun_logger::Log = this.log;
+        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
+        // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
+        let lockfile_ptr: *mut crate::lockfile::Lockfile =
+            unsafe { &mut *(*mgr_ptr).lockfile };
+        // SAFETY: `log` is the always-live logger backref (Zig: `*Log`, never
+        // null); `mgr_ptr` see shadow-reborrow above.
+        unsafe {
+            (*lockfile_ptr).filter(
+                &mut *log,
+                &mut *mgr_ptr,
+                install_root_dependencies,
+                workspace_filters,
+                packages_to_install,
+            )?;
+        }
     }
 
     let _restore_buffers = scopeguard::guard((), move |()| {
@@ -152,7 +194,7 @@ pub fn install_hoisted_packages(
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
 
-    if this.options.enable.force_install {
+    if this.options.enable.force_install() {
         skip_verify_installed_version_number = true;
         skip_delete = false;
     }
@@ -169,9 +211,9 @@ pub fn install_hoisted_packages(
         // not through a `&this.lockfile.buffers.X` that the installer's `&mut
         // Lockfile` would invalidate.
         let lockfile_ptr: *mut crate::lockfile::Lockfile =
-            // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is an inline
-            // field (Zig: `*Lockfile` heap-owned; stub holds it by value).
-            unsafe { core::ptr::addr_of_mut!((*mgr_ptr).lockfile) };
+            // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
+            // via `Box` (Zig: `*Lockfile`), so deref the Box for the heap addr.
+            unsafe { &mut *(*mgr_ptr).lockfile };
         let buf_trees: *const Vec<tree::Tree> =
             unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.trees) };
         let buf_hoisted: *const Vec<DependencyID> =
@@ -268,7 +310,7 @@ pub fn install_hoisted_packages(
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
             // `manager` begins (struct fields evaluate in source order).
-            let force_install = this.options.enable.force_install;
+            let force_install = this.options.enable.force_install();
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
@@ -381,21 +423,13 @@ pub fn install_hoisted_packages(
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
                 if this.pending_task_count() > 0 {
-                    this.run_tasks(
+                    run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                        this,
                         &mut installer,
-                        RunTasksCallbacks {
-                            on_extract:
-                                PackageInstaller::install_enqueued_packages_after_extraction,
-                            on_resolve: (),
-                            on_package_manifest_error: (),
-                            on_package_download_error: (),
-                            progress_bar: false,
-                            manifests_only: false,
-                        },
                         true,
                         log_level,
                     )?;
-                    if !installer.options.do_.install_packages {
+                    if !installer.options.do_.install_packages() {
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 }
@@ -407,20 +441,13 @@ pub fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            this.run_tasks(
+            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                this,
                 &mut installer,
-                RunTasksCallbacks {
-                    on_extract: PackageInstaller::install_enqueued_packages_after_extraction,
-                    on_resolve: (),
-                    on_package_manifest_error: (),
-                    on_package_download_error: (),
-                    progress_bar: false,
-                    manifests_only: false,
-                },
                 true,
                 log_level,
             )?;
-            if !installer.options.do_.install_packages {
+            if !installer.options.do_.install_packages() {
                 return Err(bun_core::err!("InstallFailed"));
             }
 
@@ -428,7 +455,7 @@ pub fn install_hoisted_packages(
             this.report_slow_lifecycle_scripts();
         }
 
-        while this.pending_task_count() > 0 && installer.options.do_.install_packages {
+        while this.pending_task_count() > 0 && installer.options.do_.install_packages() {
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
                 err: Option<bun_core::Error>,
@@ -444,17 +471,9 @@ pub fn install_hoisted_packages(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *closure.manager };
                     let log_level = manager.options.log_level;
-                    if let Err(err) = manager.run_tasks(
+                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                        manager,
                         closure.installer,
-                        RunTasksCallbacks {
-                            on_extract:
-                                PackageInstaller::install_enqueued_packages_after_extraction,
-                            on_resolve: (),
-                            on_package_manifest_error: (),
-                            on_package_download_error: (),
-                            progress_bar: false,
-                            manifests_only: false,
-                        },
                         true,
                         log_level,
                     ) {
@@ -525,7 +544,7 @@ pub fn install_hoisted_packages(
             scripts_node.activate();
         }
 
-        if !installer.options.do_.install_packages {
+        if !installer.options.do_.install_packages() {
             return Err(bun_core::err!("InstallFailed"));
         }
 

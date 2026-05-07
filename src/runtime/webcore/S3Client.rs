@@ -3,7 +3,6 @@ use bstr::BStr;
 use bun_core::output;
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 use crate::node::PathLike;
-use crate::webcore::Blob;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, StorageClass, S3Credentials};
 
@@ -98,13 +97,14 @@ where
     writer.write_str("\n")?;
 
     {
-        formatter.indent_inc();
         // PORT NOTE: reshaped for borrowck — Zig used `defer formatter.indent -|= 1;`.
         // The `ConsoleFormatter` trait exposes `indent_inc/dec` instead of a public
-        // `indent` field, so we pair the inc with a guard that decs on scope exit.
-        let _indent_guard = scopeguard::guard((), |_| {});
-        // (cannot capture `formatter` mutably in the guard while also using it
-        //  below — dec explicitly at the end of the block instead)
+        // `indent` field; we cannot capture `formatter` mutably in a scopeguard
+        // while also using it below, so pair the inc with an explicit `indent_dec`
+        // at the end of the block. Every intervening `?` is `core::fmt::Result`
+        // (formatter writes), so an early return here means the writer already
+        // failed and indent state is moot.
+        formatter.indent_inc();
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
             &credentials.endpoint
@@ -730,7 +730,7 @@ use bun_jsc::{FormatTag, JSType};
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/S3Client.zig (332 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      ConsoleFormatter trait wired; credentials_jsc parser + Blob store mutable s3 accessor blocked; `write()` defer-detach reshaped for ownership
+//   confidence: high
+//   todos:      0
+//   notes:      ConsoleFormatter trait wired; env-loader S3Credentials reached via raw VM ptr (matches S3File.rs/fetch.rs); `defer blob.detach()` → field Drop; Store s3 mut access via `as_ptr()` (Zig-semantics shared interior).
 // ──────────────────────────────────────────────────────────────────────────

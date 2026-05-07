@@ -500,8 +500,7 @@ impl BunTestRoot {
         default_concurrent: bool,
         first_last: FirstLast,
     ) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         debug_assert!(self.active_file.is_none());
 
@@ -539,8 +538,7 @@ impl BunTestRoot {
     }
 
     pub fn exit_file(&mut self) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         debug_assert!(self.active_file.is_some());
         if let Some(active) = &self.active_file {
@@ -655,8 +653,7 @@ impl<'a> BunTest<'a> {
         default_concurrent: bool,
         first_last: FirstLast,
     ) -> Self {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         // Zig sets up allocation_scope/gpa/arena first then re-assigns *this.
         // In Rust we construct directly.
@@ -725,8 +722,7 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
         bun_ptr::IntrusiveRc::new(RefData {
@@ -741,8 +737,7 @@ impl<'a> BunTest<'a> {
         callframe: &CallFrame,
         is_catch: bool,
     ) -> JsResult<()> {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         // TODO(port): errdefer group.log("ended in error")
 
         let [result, this_ptr] = callframe.arguments_as_array::<2>();
@@ -799,8 +794,7 @@ impl<'a> BunTest<'a> {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         let Some(this) = DoneCallback::from_js(callframe.this()) else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
@@ -862,8 +856,7 @@ impl<'a> BunTest<'a> {
         _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         // Raw `*mut` (via `UnsafeCell`) because `Self::run` below re-enters and
         // calls `.get()` on the same `Rc` — holding a long-lived `&mut` across
         // that would alias. Each `(*this).x` is a fresh short-lived reborrow.
@@ -933,8 +926,7 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn run(this_strong: BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         // Zig: `const this = this_strong.get().?` — a freely-aliasing `*BunTest`.
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on
         // the same `Rc`, so we keep a raw `*mut` (via `UnsafeCell`) and reborrow
@@ -989,8 +981,7 @@ impl<'a> BunTest<'a> {
     }
 
     fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
@@ -1023,17 +1014,16 @@ impl<'a> BunTest<'a> {
     }
 
     fn _advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         // PORT NOTE: capture `self.phase` by raw ptr so the deferred log doesn't
         // hold a `&self` borrow across the `self.phase = …` writes below
         // (Zig `defer` closes over `*BunTest` by pointer, not by borrow).
         let phase_ptr: *const Phase = &self.phase;
-        let _g2 = scopeguard::guard((), move |_| {
-            // SAFETY: `self` outlives `_g2` (guard drops at end of this fn body).
+        scopeguard::defer! {
+            // SAFETY: `self` outlives this guard (drops at end of this fn body).
             bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
-        });
+        }
 
         match self.phase {
             Phase::Collection => {
@@ -1112,8 +1102,7 @@ impl<'a> BunTest<'a> {
         cfg_data: RefDataValue,
         timeout: &Timespec,
     ) -> Option<RefDataValue> {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         // Raw `*mut` (via `UnsafeCell`) — the JS event-loop call below can
         // re-enter `bun_test_then_or_catch` / `bun_test_done_callback` /
         // `on_unhandled_rejection`, each of which `.get()`s the same `BunTest`.
@@ -1259,8 +1248,7 @@ impl<'a> BunTest<'a> {
         is_rejection: bool,
         user_data: RefDataValue,
     ) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         let _ = is_rejection;
 
@@ -1456,8 +1444,7 @@ impl bun_ptr::RefCounted for RefData {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
         // SAFETY: refcount hit zero; we own the allocation (boxed by RefPtr::new)
         unsafe {
             bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);

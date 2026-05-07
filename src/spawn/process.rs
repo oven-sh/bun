@@ -1,17 +1,19 @@
 use core::ffi::{c_char, c_int, c_void};
+#[cfg(windows)]
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 use bun_aio::{FilePoll, KeepAlive};
-use bun_core::{Environment, Global, Output};
+use bun_core::{Global, Output};
 use bun_aio::ParentDeathWatchdog;
 use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(not(windows))]
+#[allow(non_camel_case_types)]
 mod uv {
     //! libuv shim for non-Windows builds. The Zig source guards every `uv.*`
     //! reference behind `if (Environment.isWindows)`; the Rust draft references
@@ -96,6 +98,7 @@ pub struct WinRusage {
 
 #[repr(C)]
 #[derive(Default)]
+#[allow(non_snake_case)] // mirrors Win32 IO_COUNTERS field names exactly
 pub struct IoCounters {
     pub ReadOperationCount: u64,
     pub WriteOperationCount: u64,
@@ -464,6 +467,8 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
+        // Mutated only on the macOS ESRCH retry path below.
+        #[allow(unused_mut)]
         let mut rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
@@ -3688,7 +3693,7 @@ pub mod sync {
         // setsid+double-fork escapees as long as each intermediate's uniqueid
         // was recorded before it died. The `begin()` call below seeds the
         // scan root after spawn.
-        #[allow(unused_mut)]
+        #[allow(unused_mut, unused_variables)]
         let mut no_orphans_kq: Fd = spawn_sys::INVALID_FD;
         #[cfg(target_os = "macos")]
         if no_orphans {

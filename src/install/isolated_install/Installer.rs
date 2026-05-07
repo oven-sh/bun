@@ -990,7 +990,7 @@ impl Task {
                             }
                         }
                     };
-                    let pkg_cache_dir_subpath =
+                    let mut pkg_cache_dir_subpath =
                         bun_core::handle_oom(AutoRelPath::from(pkg_cache_dir_subpath_init));
 
                     // SAFETY: idempotent cache-dir initialization (once-init internally).
@@ -1127,7 +1127,7 @@ impl Task {
 
                                     let mut cloner = FileCloner {
                                         cache_dir,
-                                        cache_dir_subpath: &pkg_cache_dir_subpath,
+                                        cache_dir_subpath: &mut pkg_cache_dir_subpath,
                                         dest_subpath,
                                     };
 

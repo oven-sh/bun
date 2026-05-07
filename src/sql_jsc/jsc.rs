@@ -450,6 +450,13 @@ impl EventLoop {
         // SAFETY: `self` is a live `*EventLoop`.
         unsafe { Bun__EventLoop__exitLoop(self._opaque.get() as *mut EventLoop) }
     }
+    /// RAII scope: `enter()` now, `exit()` on drop. Replaces the Zig
+    /// `loop.enter(); defer loop.exit();` pair.
+    #[must_use]
+    pub fn entered(&self) -> EventLoopGuard<'_> {
+        self.enter();
+        EventLoopGuard(self)
+    }
     /// `EventLoop.runCallback` (event_loop.zig) — `enter()` → call → report
     /// any thrown exception as unhandled → `exit()`. Mirrors the inline body
     /// JSMySQLConnection used before this helper existed.

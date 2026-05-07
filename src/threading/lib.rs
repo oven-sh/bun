@@ -18,7 +18,7 @@ pub mod unbounded_queue;
 
 // ─── re-exports ───────────────────────────────────────────────────────────
 
-pub use mutex::Mutex;
+pub use mutex::{Mutex, MutexGuard};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline` matching the Zig namespace.
 pub use futex as Futex;

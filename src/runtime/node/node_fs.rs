@@ -1058,7 +1058,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
 
     extern "C" fn uv_callback(req: *mut uv::fs_t) {
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        let _cleanup = scopeguard::guard((), |_| unsafe { uv::uv_fs_req_cleanup(req) });
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
         let mut node_fs = NodeFS::default();
@@ -1075,7 +1075,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        let _cleanup = scopeguard::guard((), |_| unsafe { uv::uv_fs_req_cleanup(req) });
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
         let mut node_fs = NodeFS::default();
@@ -1110,9 +1110,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         };
         promise_value.ensure_still_alive();
 
-        let tracker = self.tracker;
-        tracker.will_dispatch(global_object);
-        let _did = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+        let _dispatch = self.tracker.dispatch(global_object);
 
         if success {
             promise.resolve(global_object, result)?;
@@ -1389,9 +1387,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         let global_object = unsafe { &*self.global_object };
 
-        let tracker = self.tracker;
-        tracker.will_dispatch(global_object);
-        let _did = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+        let _dispatch = self.tracker.dispatch(global_object);
 
         let success = matches!(self.result, Maybe::Ok(_));
         let promise_value = self.promise.value();
@@ -1778,9 +1774,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         };
         promise_value.ensure_still_alive();
 
-        let tracker = self.tracker;
-        tracker.will_dispatch(global_object);
-        let _did = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+        let _dispatch = self.tracker.dispatch(global_object);
 
         // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
         unsafe { Self::destroy(self as *mut Self) };
@@ -2490,9 +2484,7 @@ impl AsyncReaddirRecursiveTask {
         };
         promise_value.ensure_still_alive();
 
-        let tracker = self.tracker;
-        tracker.will_dispatch(global_object);
-        let _did = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+        let _dispatch = self.tracker.dispatch(global_object);
 
         // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
         unsafe { Self::destroy(self as *mut Self) };
@@ -5226,10 +5218,9 @@ impl NodeFS {
         // `re_encoding_buffer` transcoding path are real.
 
         let mut dirent_path = BunString::DEAD;
-        let _drop_dirent = scopeguard::guard((), |()| dirent_path.deref());
-        // ^ Zig `defer dirent_path.deref()` — cannot capture `&mut dirent_path` past the
-        //   loop body in Rust; deref is idempotent on DEAD/EMPTY so do it inline below.
-        core::mem::forget(_drop_dirent);
+        // Zig `defer dirent_path.deref()` — cannot express as a scope guard in Rust
+        // (the loop body needs `&mut dirent_path`); deref is idempotent on DEAD/EMPTY
+        // so it is called inline on every exit path below instead.
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {

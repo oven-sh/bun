@@ -8,7 +8,7 @@ use bstr::BStr;
 use bun_collections::BabyList;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
-use bun_str::ZigString;
+use bun_str::{ZigString, ZigStringSlice};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -20,10 +20,9 @@ use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
-/// Intrusive ref-counted; `ref_count` is managed by `bun_ptr::RefPtr<Self>`
+/// Intrusive ref-counted; `ref_count` is managed by `ref_` / `deref` below
 /// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a
-/// `.classes.ts` wrapper). `deinit` (gated below) runs when count hits zero.
-// TODO(b2-blocked): #[bun_jsc::JsClass] + impl bun_ptr::RefCounted.
+/// `.classes.ts` wrapper). `deinit` runs when count hits zero.
 pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
 
@@ -121,7 +120,6 @@ impl UpgradeCTX {
         *self = UpgradeCTX::default();
     }
 
-     // TODO(b2-blocked): bun_uws_sys::Request::header (cycle-5-B).
     pub fn preserve_web_socket_headers_if_needed(&mut self) {
         if !self.request.is_null() {
             // SAFETY: `request` is a live uws Request handed to us by the C callback;
@@ -162,7 +160,6 @@ impl Default for BodyReadState {
     }
 }
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
@@ -1862,8 +1859,7 @@ impl NodeHTTPResponse {
         unsafe { drop(Box::from_raw(self as *mut Self)) };
     }
 
-    // Intrusive refcount helpers.
-    // TODO(port): replace with `bun_ptr::IntrusiveRc` trait impl.
+    // Intrusive refcount helpers (mirrors Zig `bun.ptr.RefCount(@This(), ...)` mixin).
     #[inline]
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
@@ -1909,7 +1905,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
                     "content-length: {}",
                     BStr::new(content_length)
                 );
-                // TODO(port): std.fmt.parseInt — assumes ASCII bytes; Phase B may want a bun_str helper.
+                // std.fmt.parseInt — header values are ASCII, so utf8+parse is equivalent.
                 break 'brk core::str::from_utf8(content_length)
                     .ok()
                     .and_then(|s| s.parse::<usize>().ok())

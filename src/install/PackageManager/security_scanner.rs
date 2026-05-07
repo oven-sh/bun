@@ -29,6 +29,21 @@ use crate::lockfile::package::PackageSliceExt as _;
 use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 
+/// Zig `@tagName(sig)` for `bun.SignalCode` (non-exhaustive `enum(u8)`).
+/// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
+/// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
+fn signal_name(raw: u8) -> &'static str {
+    if raw > 0 && raw <= bun_sys::SignalCode::SIGSYS as u8 {
+        // SAFETY: range-checked 1..=31; SignalCode is `#[repr(u8)]` with exactly
+        // those discriminants (see SignalCode.rs `tag_name`).
+        unsafe { core::mem::transmute::<u8, bun_sys::SignalCode>(raw) }
+            .name()
+            .unwrap_or("UNKNOWN")
+    } else {
+        "UNKNOWN"
+    }
+}
+
 struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
@@ -1400,7 +1415,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         true
     }
 
-    pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
+    pub fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
         self.has_process_exited = true;
         self.exit_status = Some(status);
 
@@ -1438,7 +1453,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         if self.ipc_data.is_empty() {
             match &status {
-                Status::Exited { code, .. } => {
+                Status::Exited(Exited { code, .. }) => {
                     Output::err_generic(
                         "Security scanner exited with code {} without sending data",
                         (*code,),
@@ -1447,7 +1462,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(sig) => {
                     Output::err_generic(
                         "Security scanner terminated by signal {} without sending data",
-                        (format_args!("{:?}", sig),),
+                        (signal_name(*sig),),
                     );
                 }
                 _ => {
@@ -1616,7 +1631,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         if self.manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
             match &status {
-                Status::Exited { code, .. } => {
+                Status::Exited(Exited { code, .. }) => {
                     if *code == 0 {
                         Output::pretty_errorln(format_args!(
                             "<d>[SecurityProvider]<r> Completed with exit code {} [{}ms]",
@@ -1632,7 +1647,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(sig) => {
                     Output::pretty_errorln(format_args!(
                         "<d>[SecurityProvider]<r> Terminated by signal {} [{}ms]",
-                        format_args!("{:?}", sig),
+                        signal_name(*sig),
                         duration
                     ));
                 }
@@ -1683,7 +1698,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         if !status.is_ok() {
             match &status {
-                Status::Exited { code, .. } => {
+                Status::Exited(Exited { code, .. }) => {
                     if *code != 0 {
                         Output::err_generic(
                             "Security scanner failed with exit code: {}",
@@ -1695,7 +1710,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(signal) => {
                     Output::err_generic(
                         "Security scanner was terminated by signal: {}",
-                        (format_args!("{:?}", signal),),
+                        (signal_name(*signal),),
                     );
                     return Err(err!("SecurityScannerTerminated"));
                 }

@@ -277,6 +277,27 @@ pub fn set_run_wtf_timer_hook(f: RunWtfTimerFn) {
     RUN_WTF_TIMER_HOOK.store(f as *mut (), Ordering::Release);
 }
 
+/// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit`].
+///
+/// Holds the raw `*mut EventLoop` (not `&mut`) so re-entrant JS callbacks that
+/// touch the same loop while the guard is live don't alias a long-lived mutable
+/// borrow — the `&mut` is formed only at the enter/exit call sites. Construct
+/// via [`EventLoop::enter_scope`].
+#[must_use = "dropping immediately exits the event loop scope"]
+pub struct EventLoopEnterGuard {
+    loop_: *mut EventLoop,
+}
+
+impl Drop for EventLoopEnterGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `loop_` was live at `enter_scope` and the VM owns it for the
+        // process lifetime; forming a short-lived `&mut` here mirrors the
+        // manual `(*loop_).exit()` callers previously wrote.
+        unsafe { (*self.loop_).exit() };
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -304,6 +325,19 @@ impl EventLoop {
         self.entered_event_loop_count -= 1;
         self.debug.exit();
         // PORT NOTE: reshaped for borrowck — Zig `defer this.debug.exit()` moved to tail; no early returns
+    }
+
+    /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
+    /// guard doesn't hold a long-lived `&mut EventLoop` across re-entrant JS.
+    ///
+    /// # Safety
+    /// `loop_` must be the live `vm.event_loop()` pointer and remain valid for
+    /// the guard's lifetime (the VM owns it for the process lifetime).
+    #[inline]
+    pub unsafe fn enter_scope(loop_: *mut EventLoop) -> EventLoopEnterGuard {
+        // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
+        unsafe { (*loop_).enter() };
+        EventLoopEnterGuard { loop_ }
     }
 
     pub fn exit_maybe_drain_microtasks(&mut self, allow_drain_microtask: bool) -> Result<(), JsTerminated> {

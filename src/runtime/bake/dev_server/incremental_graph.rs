@@ -1403,8 +1403,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
-        let file_index = FileIndex::<{ Side::Server }>::init(idx as u32);
-        let fail_owner = serialized_failure::OwnerPacked::new(SIDE, file_index);
+        let fail_owner = serialized_failure::OwnerPacked::new(SIDE, idx as u32);
 
         // TODO(port): DevServer should get a stdio manager which can process
         // the error list as it changes while also supporting a REPL.
@@ -1416,21 +1415,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
             let owner_display_name =
                 unsafe { (*dev).relative_path(&mut *buf, &*key_ptr) };
-            // SAFETY: `init_from_log` only borrows `dev` for its allocator;
-            // does not touch graphs.
-            super::serialized_failure_body::SerializedFailure::init_from_log(
-                unsafe { &mut *dev },
+            SerializedFailure::init_from_log(
                 match SIDE {
-                    Side::Server => serialized_failure::Owner::Server(file_index),
+                    Side::Server => serialized_failure::Owner::Server(FileIndex(idx as u32)),
                     Side::Client => serialized_failure::Owner::Client(FileIndex(idx as u32)),
                 },
                 owner_display_name,
                 &log.msgs,
             )?
         };
-        // The body draft's `SerializedFailure` and the keystone's share the same
-        // `Box<[u8]>` payload; rewrap into the keystone shape with its owner.
-        let failure = SerializedFailure { owner: fail_owner, data: failure.data };
         // SAFETY: sibling-field access.
         unsafe {
             let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner)?;

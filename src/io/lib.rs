@@ -600,6 +600,26 @@ pub struct Request {
     pub scheduled: bool,
 }
 
+impl Request {
+    /// Atomic-ordered store of `callback` — mirrors Zig
+    /// `@atomicStore(?*const fn, &this.io_request.callback, cb, .seq_cst)`.
+    ///
+    /// The io thread reads `callback` after popping `self` from the MPSC
+    /// queue (which already provides acquire on `next`); this SeqCst fence
+    /// guarantees the callback write is visible to that read even when the
+    /// store happens on a different thread than the one that scheduled the
+    /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
+    /// followed by a full fence (matches the existing pattern in
+    /// `webcore::blob::{read_file,write_file}`).
+    #[inline]
+    pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
+        // SAFETY: `callback` is a plain pointer-sized field on `self`;
+        // volatile write prevents the compiler from reordering or eliding it.
+        unsafe { core::ptr::write_volatile(&mut self.callback, cb) };
+        core::sync::atomic::fence(Ordering::SeqCst);
+    }
+}
+
 impl Default for Request {
     fn default() -> Self {
         // TODO(port): Zig had `next: ?*Request = null, scheduled: bool = false` defaults

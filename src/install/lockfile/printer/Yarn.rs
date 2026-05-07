@@ -10,7 +10,12 @@ use bun_install::Dependency;
 use bun_install::dependency::{self, Behavior};
 use bun_install::Lockfile;
 use bun_install::lockfile::package;
-use crate::lockfile_real::package::{Alphabetizer, PackageSliceExt as _};
+use crate::lockfile_real::package::Alphabetizer;
+// PORT NOTE: `Printer.lockfile` is now the canonical `crate::Lockfile`
+// (column-vec stub) so it matches `PackageManager.lockfile`; the stub
+// `PackageList::slice()` returns `&PackageList` with inherent `items_*`
+// accessors, so the `PackageSliceExt` trait (typed against the
+// `MultiArrayList<Package>` slice) is no longer needed here.
 use crate::lockfile_real::Printer;
 use crate::integrity;
 

@@ -4377,39 +4377,51 @@ impl VirtualMachine {
         };
 
         if let Some(lookup) = maybe_lookup {
+            // PORT NOTE: reshaped for borrowck — `Lookup<'_>` borrows
+            // `self.source_mappings`, but the `code:` block below needs
+            // `&mut self` for `fetch_without_on_load_plugins`. Extract
+            // everything needed from `lookup` up-front, then drop it.
+            // Zig `defer if (source_map) |map| map.deref();` — `ParsedSourceMap`
+            // is borrowed (`&'a`) in the Rust port; the ref-counted handle is
+            // owned by `self.source_mappings`, so no manual deref here.
             let mapping = lookup.mapping;
-            // PORT NOTE: Zig `defer if (source_map) |map| map.deref();` —
-            // `ParsedSourceMap` is borrowed (`&'a`) in the Rust port; the
-            // ref-counted handle is owned by `self.source_mappings` and the
-            // `find_cache`, so no manual deref here.
+            let display_url = if !already_remapped {
+                lookup.display_source_url_if_needed(top_source_url.slice())
+            } else {
+                None
+            };
+            let external_code = if enable_source_code_preview
+                && !already_remapped
+                && lookup.source_map.is_some_and(|m| m.is_external())
+            {
+                lookup.get_source_code(top_source_url.slice())
+            } else {
+                drop(lookup);
+                None
+            };
 
-            if !already_remapped {
-                if let Some(src) = lookup.display_source_url_if_needed(top_source_url.slice()) {
-                    frames[top].source_url.deref();
-                    frames[top].source_url = src;
-                }
+            if let Some(src) = display_url {
+                frames[top].source_url.deref();
+                frames[top].source_url = src;
             }
 
             let code: bun_string::ZigStringSlice = 'code: {
                 if !enable_source_code_preview {
                     break 'code bun_string::ZigStringSlice::EMPTY;
                 }
-                if !already_remapped
-                    && lookup.source_map.is_some_and(|m| m.is_external())
-                {
-                    if let Some(src) = lookup.get_source_code(top_source_url.slice()) {
-                        break 'code src;
-                    }
+                if let Some(src) = external_code {
+                    break 'code src;
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
                     break 'code bun_string::ZigStringSlice::EMPTY;
                 }
                 let mut log = logger::Log::default();
+                let top_url = frames[top].source_url.dupe_ref();
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    frames[top].source_url.dupe_ref(),
+                    top_url,
                     bun_string::String::empty(),
                     &mut log,
                     FetchFlags::PrintSource,

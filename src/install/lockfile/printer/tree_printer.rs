@@ -9,7 +9,11 @@ use bun_install::{
     PackageNameHash, Resolution, INVALID_PACKAGE_ID,
 };
 use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
-use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
+// PORT NOTE: `Printer.lockfile` is now the canonical `crate::Lockfile`
+// (column-vec stub) so it matches `PackageManager.lockfile`; the stub
+// `PackageList::slice()` returns `&PackageList` with inherent `items_*`
+// accessors, so the `PackageSliceExt` trait (typed against the
+// `MultiArrayList<Package>` slice) is no longer needed here.
 use crate::package_manager_real::TrackInstalledBin;
 
 type Bitset = DynamicBitSet;

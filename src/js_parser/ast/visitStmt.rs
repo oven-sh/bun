@@ -246,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // non-local symbols as errors in JavaScript.
                     if !TYPESCRIPT {
                         let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
-                        p.log.add_range_error_fmt(
+                        p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
@@ -274,7 +274,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // non-local symbols as errors in JavaScript.
                     if !TYPESCRIPT {
                         let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
-                        p.log.add_range_error_fmt(
+                        p.log().add_range_error_fmt(
                             Some(p.source),
                             r,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
@@ -1210,7 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !p.fn_or_arrow_data_visit.is_inside_switch
         {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
-            p.log
+            p.log()
                 .add_range_error(Some(p.source), r, b"Cannot use \"break\" here")
                 .expect("unreachable");
         }
@@ -1229,7 +1229,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             label.ref_ = Some(res.r#ref);
             if res.found && !res.is_loop {
                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
-                p.log
+                p.log()
                     .add_range_error_fmt(
                         Some(p.source),
                         r,
@@ -1239,7 +1239,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
-            p.log
+            p.log()
                 .add_range_error(Some(p.source), r, b"Cannot use \"continue\" here")
                 .expect("unreachable");
         }
@@ -1424,7 +1424,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             };
 
             if where_.len > 0 {
-                p.log
+                p.log()
                     .add_range_error(
                         Some(p.source),
                         where_,

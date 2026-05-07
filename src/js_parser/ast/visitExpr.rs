@@ -89,7 +89,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     pub fn visit_expr_in_out(&mut self, expr: Expr, in_: ExprIn) -> Expr {
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(expr) {
-            self.log
+            self.log()
                 .add_error(Some(self.source), expr.loc, b"Invalid assignment target")
                 .expect("unreachable");
         }
@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
         // this error is not necessary and it is causing breakages
         // if (!p.fn_only_data_visit.is_new_target_allowed) {
-        //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
+        //     p.log().addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
         // }
         expr
     }
@@ -730,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // this ordering incase someone wants to use a macro in a node_module conditionally
                         if p.options.features.no_macros {
-                            p.log
+                            p.log()
                                 .add_error(Some(p.source), tag.loc, b"Macros are disabled")
                                 .expect("unreachable");
                             return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -739,7 +739,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
                         
                         if p.source.path.is_node_module() {
-                            p.log
+                            p.log()
                                 .add_error(
                                     Some(p.source),
                                     expr.loc,
@@ -762,7 +762,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let macro_result = match macro_context_call(
                             p.options.macro_context.as_deref_mut(),
                             record_path_text,
-                            p.log,
+                            p.log(),
                             p.source,
                             record_range,
                             expr,
@@ -947,7 +947,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         loc: e_.index.loc,
                         len: i32::try_from(name.len()).unwrap(),
                     };
-                    p.log
+                    p.log()
                         .add_range_error_fmt(
                             Some(p.source),
                             r,
@@ -966,7 +966,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).unwrap(),
                         };
-                        p.log
+                        p.log()
                             .add_range_warning_fmt(
                                 Some(p.source),
                                 r,
@@ -984,7 +984,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).unwrap(),
                         };
-                        p.log
+                        p.log()
                             .add_range_warning_fmt(
                                 Some(p.source),
                                 r,
@@ -1002,7 +1002,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             loc: e_.index.loc,
                             len: i32::try_from(name.len()).unwrap(),
                         };
-                        p.log
+                        p.log()
                             .add_range_warning_fmt(
                                 Some(p.source),
                                 r,
@@ -1144,7 +1144,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
-            p.log
+            p.log()
                 .add_range_error_fmt(
                     Some(p.source),
                     r,
@@ -1610,7 +1610,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
-                        p.log
+                        p.log()
                             .add_range_error(
                                 Some(p.source),
                                 r,
@@ -1957,7 +1957,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             if p.options.warn_about_unbundled_modules {
                 let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
-                p.log
+                p.log()
                     .add_range_debug(
                         Some(p.source),
                         r,
@@ -2039,7 +2039,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 if p.options.features.no_macros {
-                    p.log
+                    p.log()
                         .add_error(Some(p.source), expr.loc, b"Macros are disabled")
                         .expect("unreachable");
                     return p.new_expr(E::Undefined {}, expr.loc);
@@ -2048,7 +2048,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
                 
                 if p.source.path.is_node_module() {
-                    p.log
+                    p.log()
                         .add_error(
                             Some(p.source),
                             expr.loc,
@@ -2067,12 +2067,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     (record.path.text, record.range)
                 };
                 let copied = Expr { loc: expr.loc, data: expr.data };
-                let start_error_count = p.log.errors;
+                let start_error_count = p.log().errors;
                 p.macro_call_count += 1;
                 let macro_result = match macro_context_call(
                     p.options.macro_context.as_deref_mut(),
                     record_path_text,
-                    p.log,
+                    p.log(),
                     p.source,
                     record_range,
                     copied,
@@ -2085,8 +2085,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // cross-crate `MacroError` enum lives in `_jsc`; until
                         // it's threaded through, treat every failure as
                         // `MacroFailed` and log only if nothing was logged yet.
-                        if p.log.errors == start_error_count {
-                            p.log
+                        if p.log().errors == start_error_count {
+                            p.log()
                                 .add_error(Some(p.source), expr.loc, b"macro threw exception")
                                 .expect("unreachable");
                         }
@@ -2163,7 +2163,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && original_name == b"useState"
                     {
-                        p.log
+                        p.log()
                             .add_error(
                                 Some(p.source),
                                 expr.loc,
@@ -2253,7 +2253,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Validate: exactly one argument required
         if e_.args.len != 1 {
-            p.log
+            p.log()
                 .add_error(
                     Some(p.source),
                     loc,
@@ -2267,7 +2267,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Validate: argument must be a string literal
         if !matches!(arg.data, Data::EString(..)) {
-            p.log
+            p.log()
                 .add_error(
                     Some(p.source),
                     arg.loc,
@@ -2282,7 +2282,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
         let flag_string = arg.data.e_string().unwrap();
         if flag_string.is_utf16 {
-            p.log
+            p.log()
                 .add_error(
                     Some(p.source),
                     arg.loc,
@@ -2294,7 +2294,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // feature() can only be used directly in an if statement or ternary condition
         if !p.in_branch_condition {
-            p.log
+            p.log()
                 .add_error(
                     Some(p.source),
                     loc,

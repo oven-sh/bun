@@ -233,7 +233,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(key) = prop_key {
                         if let js_ast::expr::Data::EString(str_) = &key.data {
                             if str_.eql_comptime(b"constructor") {
-                                p.log
+                                p.log()
                                     .add_error(
                     Some(p.source),
                                         first_decorator_loc,
@@ -566,7 +566,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // conversion errors
                 if !invalid_log.is_empty() {
                     for loc_ in invalid_log.iter() {
-                        loc_.add_error(p.log, p.source);
+                        loc_.add_error(p.log(), p.source);
                     }
                 }
                 let mut arrow_data = FnOrArrowDataParse {
@@ -593,7 +593,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // If this isn't an arrow function, then types aren't allowed
         if type_colon_range.len > 0 {
-            p.log
+            p.log()
                 .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"")?;
             return Err(err!("SyntaxError"));
         }
@@ -620,7 +620,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if items.len() > 0 {
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
-                p.log
+                p.log()
                     .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"")?;
                 return Err(err!("SyntaxError"));
             }
@@ -685,7 +685,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                 && name_text == b"await"
             {
-                p.log.add_range_error(
+                p.log().add_range_error(
                     Some(p.source),
                     p.lexer.range(),
                     b"Cannot use \"await\" as an identifier here",
@@ -818,7 +818,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else if raw == b"using" {
             // Handle an "using" declaration
             if opts.is_export {
-                p.log.add_error(
+                p.log().add_error(
                     Some(p.source),
                     token_range.loc,
                     b"Cannot use \"export\" with a \"using\" declaration",
@@ -857,7 +857,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             // Handle an "await using" declaration
             if opts.is_export {
-                p.log.add_error(
+                p.log().add_error(
                     Some(p.source),
                     token_range.loc,
                     b"Cannot use \"export\" with an \"await using\" declaration",
@@ -964,7 +964,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && name == b"yield")
                 {
                     // TODO: add fmt to addRangeError
-                    p.log
+                    p.log()
                         .add_range_error(
                     Some(p.source),
                             p.lexer.range(),
@@ -1020,7 +1020,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             // Commas after spread elements are not allowed
                             if has_spread && p.lexer.token == T::TComma {
-                                p.log
+                                p.log()
                                     .add_range_error(
                     Some(p.source),
                                         p.lexer.range(),
@@ -1079,7 +1079,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // Commas after spread elements are not allowed
                         if is_spread && p.lexer.token == T::TComma {
-                            p.log
+                            p.log()
                                 .add_range_error(
                     Some(p.source),
                                     p.lexer.range(),
@@ -1234,7 +1234,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if (kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant)
                 && p.lexer.is_contextual_keyword(b"let")
             {
-                p.log
+                p.log()
                     .add_range_error(
                     Some(p.source),
                         p.lexer.range(),
@@ -1511,7 +1511,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if needs_check && return_without_semicolon_start != -1 {
                     if let js_ast::stmt::Data::SExpr(_) = &stmt.data {
-                        p.log.add_warning(
+                        p.log().add_warning(
                     Some(p.source),
                             logger::Loc { start: return_without_semicolon_start + 6 },
                             b"The following expression is not returned because of an automatically-inserted semicolon",

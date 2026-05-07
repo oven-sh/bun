@@ -30,7 +30,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if level.gt(Level::Call) {
             let r = js_lexer::range_of_identifier(p.source, loc);
-            p.log
+            p.log()
                 .add_range_error(
                     Some(p.source),
                     r,
@@ -187,7 +187,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         if is_eval_or_arguments(original_name) {
                             let r = p.source.range_of_string(name.loc);
-                            p.log.add_range_error_fmt(
+                            p.log().add_range_error_fmt(
                                 Some(p.source),
                                 r,
                                 format_args!(
@@ -241,7 +241,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Reject forbidden names
                 if is_eval_or_arguments(original_name) {
                     let r = js_lexer::range_of_identifier(p.source, name.loc);
-                    p.log.add_range_error_fmt(
+                    p.log().add_range_error_fmt(
                         Some(p.source),
                         r,
                         format_args!(

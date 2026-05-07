@@ -13,11 +13,6 @@ use crate::{c_api, JSGlobalObject, JSValue, VM};
 // `bun_string::encoding::Encoding` (re-exported there as `NodeEncoding`).
 #[allow(unused_imports)]
 use bun_string::encoding::Encoding;
-// `webcore::encoding::{construct_from_u8,u16}` live in
-// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — reached via
-// the fn-ptr hooks in `bun_string::webcore_encoding` (installed by
-// `bun_runtime::init()`), same dep-break pattern as `encode_into_from*`.
-use bun_string::webcore_encoding;
 use bun_paths::PathBuffer;
 use bun_simdutf_sys::simdutf;
 use bun_string::{strings, String as BunString, ZStr};
@@ -183,21 +178,10 @@ impl ZigString {
         }
     }
 
-    pub fn encode(&self, encoding: Encoding) -> Vec<u8> {
-        self.encode_with_allocator(encoding)
-    }
-
-    // Zig: encodeWithAllocator — allocator param dropped (global mimalloc)
-    pub fn encode_with_allocator(&self, encoding: Encoding) -> Vec<u8> {
-        // PERF(port): was `inline else` monomorphization over ByteString ×
-        // Encoding (Zig). The dep-cycle hook takes `Encoding` at runtime; the
-        // real impl in `webcore/encoding.rs` already runtime-switches on the
-        // const tag, so no work is lost — profile in Phase B.
-        match self.as_() {
-            ByteString::Latin1(repr) => webcore_encoding::construct_from_u8(repr, encoding),
-            ByteString::Utf16(repr) => webcore_encoding::construct_from_u16(repr, encoding),
-        }
-    }
+    // `encode` / `encodeWithAllocator` — moved UP to
+    // `bun_runtime::webcore::encoding::ZigStringEncode`. The encoder bodies
+    // (`jsc.WebCore.encoding.constructFrom{U8,U16}`) live in `bun_runtime`;
+    // defining them here would be a forward dep.
 
     pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
         if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {

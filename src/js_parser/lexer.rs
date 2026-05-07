@@ -19,8 +19,10 @@ use crate::{Indentation, IndentationCharacter};
 // route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
 
-#[path = "lexer/identifier.rs"]
-pub mod identifier;
+// Unicode ID-Start/ID-Continue tables moved DOWN to `bun_string` (pure data;
+// no upward deps) so `bun_string::lexer` / `MutableString` get full coverage
+// without a `bun_js_parser` dep. Re-export to preserve the public path.
+pub use bun_string::identifier;
 
 pub type CodePoint = i32;
 type JavascriptString<'s> = &'s [u16];

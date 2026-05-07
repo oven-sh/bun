@@ -281,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         left: &mut Expr,
     ) -> CResult {
         if old_optional_chain.is_some() {
-            p.log
+            p.log()
                 .add_range_error(
                     Some(p.source),
                     p.lexer.range(),
@@ -318,7 +318,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         left: &mut Expr,
     ) -> CResult {
         if old_optional_chain.is_some() {
-            p.log
+            p.log()
                 .add_range_error(
                     Some(p.source),
                     p.lexer.range(),
@@ -1099,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let ExprData::EUnary(unary) = &left.data {
             if unary.op == OpCode::UnNot {
                 // TODO:
-                // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
+                // p.log().addRangeWarning(source: ?Source, r: Range, text: string)
             }
         }
 
@@ -1122,7 +1122,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if let ExprData::EUnary(unary) = &left.data {
                 if unary.op == OpCode::UnNot {
                     // TODO:
-                    // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
+                    // p.log().addRangeWarning(source: ?Source, r: Range, text: string)
                 }
             }
         }

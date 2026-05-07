@@ -241,7 +241,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub macro_: MacroState<'a>,
     pub allocator: &'a Bump,
     pub options: ParserOptions<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log` and
+    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log()` and
     /// `lexer.log`); Rust cannot store two `&'a mut Log` to one allocation
     /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
@@ -712,6 +712,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     };
     pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
 
+    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
+    /// other `self.*` fields as arguments (`self.log().add_error(Some(self.source), …)`)
+    /// without a borrow-checker conflict; callers must not hold two results of
+    /// `log()` live at once. Matches Zig's two-aliasing-`*Log` model.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log(&self) -> &mut logger::Log {
+        // SAFETY: `self.log()` was created from an `&'a mut Log` that outlives
+        // `'a` (and therefore `self`). `self.lexer.log` aliases the same
+        // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
+        // exists to be invalidated by this transient reborrow.
+        unsafe { &mut *self.log().as_ptr() }
+    }
+
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
     //    can reference them; the full bodies with SCAN_ONLY require-scan and
     //    @typeInfo branches stay in the gated block below) ────────────────
@@ -860,7 +874,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             *c = b'*';
                         }
                     }
-                    self.log.add_range_error_fmt_with_note(
+                    self.log().add_range_error_fmt_with_note(
                         Some(self.source),
                         r,
                         format_args!(
@@ -875,7 +889,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         r,
                     )?;
                 } else {
-                    self.log.add_range_error_fmt_with_note(
+                    self.log().add_range_error_fmt_with_note(
                         Some(self.source),
                         r,
                         format_args!(
@@ -1008,7 +1022,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
             let r = js_lexer::range_of_identifier(self.source, state.loc);
-            self.log
+            self.log()
                 .add_range_debug(
                     Some(self.source),
                     r,
@@ -1038,7 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
             let r = js_lexer::range_of_identifier(self.source, arg.loc);
-            self.log
+            self.log()
                 .add_range_debug(
                     Some(self.source),
                     r,
@@ -1560,7 +1574,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 ),
                 ..Default::default()
             }]);
-            self.log.add_range_error_fmt_with_notes(
+            self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 js_lexer::range_of_identifier(self.source, loc),
                 notes,
@@ -1611,14 +1625,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
-            self.log
+            self.log()
                 .add_range_error(Some(self.source), r, b"Cannot use an \"await\" expression here")
                 .expect("unreachable");
         }
 
         if errors.invalid_expr_yield.len > 0 {
             let r = errors.invalid_expr_yield;
-            self.log
+            self.log()
                 .add_range_error(Some(self.source), r, b"Cannot use a \"yield\" expression here")
                 .expect("unreachable");
         }
@@ -1657,7 +1671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let r = js_lexer::range_of_identifier(self.source, loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
             let original = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
-            self.log
+            self.log()
                 .add_range_error_fmt(
                     Some(self.source),
                     r,
@@ -2720,7 +2734,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             } else {
                 // make this a warning instead of an error because we don't support "preserve" right now
-                self.log.add_range_warning_fmt(
+                self.log().add_range_warning_fmt(
                     Some(self.source),
                     runtime.range,
                     format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(text)),
@@ -2913,7 +2927,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if let Some(existing_member) =
                             unsafe { scope_parent.as_ref() }.get_member_with_hash(name, hash.unwrap())
                         {
-                            self.log
+                            self.log()
                                 .add_symbol_already_declared_error(
                                     self.source,
                                     name,
@@ -3037,7 +3051,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                         let _ = write!(&mut msg, "{} was originally declared here", bstr::BStr::new(name));
                                         let notes: Box<[logger::Data]> =
                                             Box::new([logger::range_data(Some(self.source), r, msg)]);
-                                        self.log
+                                        self.log()
                                             .add_range_error_fmt_with_notes(
                                                 Some(self.source),
                                                 js_lexer::range_of_identifier(self.source, member_in_scope.loc),
@@ -3103,13 +3117,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // unconditional in release builds. Preserve that grouping here.
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         if (cfg!(debug_assertions) && order.loc.start != loc.start) || unsafe { &*order.scope }.kind != kind {
-            self.log.level = logger::Level::Verbose;
-            let _ = self.log.add_debug_fmt(
+            self.log().level = logger::Level::Verbose;
+            let _ = self.log().add_debug_fmt(
                 Some(self.source),
                 loc,
                 format_args!("Expected this scope (.{})", <&'static str>::from(kind)),
             );
-            let _ = self.log.add_debug_fmt(
+            let _ = self.log().add_debug_fmt(
                 Some(self.source),
                 order.loc,
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -3169,9 +3183,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // PORT NOTE: reshaped for borrowck — copy out loc before borrowing self mutably.
                 if let Some(prev_loc) = self.scopes_in_order[last_i].as_ref().map(|s| s.loc) {
                     if prev_loc.start >= loc.start {
-                        self.log.level = logger::Level::Verbose;
-                        let _ = self.log.add_debug_fmt(Some(self.source), prev_loc, format_args!("Previous Scope"));
-                        let _ = self.log.add_debug_fmt(Some(self.source), loc, format_args!("Next Scope"));
+                        self.log().level = logger::Level::Verbose;
+                        let _ = self.log().add_debug_fmt(Some(self.source), prev_loc, format_args!("Previous Scope"));
+                        let _ = self.log().add_debug_fmt(Some(self.source), loc, format_args!("Next Scope"));
                         self.panic(
                             "Scope location must be greater than previous",
                             format_args!("{} must be greater than {}", loc.start, prev_loc.start),
@@ -3208,7 +3222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(scope_index)
     }
 
-    // Note: do not write to "p.log" in this function. Any errors due to conversion
+    // Note: do not write to "p.log()" in this function. Any errors due to conversion
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
@@ -3342,7 +3356,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(initial) = initializer {
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {
-                self.log
+                self.log()
                     .add_range_error(Some(self.source), equals_range, b"A rest argument cannot have a default initializer")
                     .expect("unreachable");
             } else {
@@ -3353,7 +3367,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn forbid_lexical_decl(&mut self, loc: logger::Loc) -> Result<(), bun_core::Error> {
-        Ok(self.log.add_error(Some(self.source), loc, b"Cannot use a declaration in a single-statement context")?)
+        Ok(self.log().add_error(Some(self.source), loc, b"Cannot use a declaration in a single-statement context")?)
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
@@ -3369,11 +3383,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         if let Some(r) = errors.invalid_expr_default_value {
-            self.log.add_range_error(Some(self.source), r, b"Unexpected \"=\"").expect("unreachable");
+            self.log().add_range_error(Some(self.source), r, b"Unexpected \"=\"").expect("unreachable");
         }
 
         if let Some(r) = errors.invalid_expr_after_question {
-            self.log
+            self.log()
                 .add_range_error_fmt(
                     Some(self.source),
                     r,
@@ -3475,7 +3489,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if alias == b"feature" {
                     // Check for duplicate imports of feature
                     if self.bundler_feature_flag_ref.is_valid() {
-                        self.log.add_error(Some(self.source), item.alias_loc, b"`feature` from \"bun:bundle\" may only be imported once")?;
+                        self.log().add_error(Some(self.source), item.alias_loc, b"`feature` from \"bun:bundle\" may only be imported once")?;
                         continue;
                     }
                     // Declare the symbol and store the ref
@@ -3483,7 +3497,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
                 } else {
-                    self.log.add_error_fmt(
+                    self.log().add_error_fmt(
                         self.source,
                         item.alias_loc,
                         format_args!("\"bun:bundle\" has no export named \"{}\"", bstr::BStr::new(alias)),
@@ -3710,7 +3724,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
                     let alias: &[u8] = unsafe { &*item.alias };
                     if !(alias == b"default" || alias == b"db") {
-                        self.log.add_error(
+                        self.log().add_error(
                             Some(self.source),
                             item.name.loc,
                             b"sqlite imports only support the \"default\" or \"db\" imports",
@@ -3723,7 +3737,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 for item in unsafe { &*stmt.items }.iter() {
                     // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
                     if unsafe { &*item.alias } != b"default" {
-                        self.log.add_error(
+                        self.log().add_error(
                             Some(self.source),
                             item.name.loc,
                             b"This loader type only supports the \"default\" import",
@@ -3889,7 +3903,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         return Ok(());
                     }
                     // PERF(port): was comptimePrint — runtime format here is fine for error path
-                    self.log.add_error_fmt(
+                    self.log().add_error_fmt(
                         Some(self.source),
                         value.loc,
                         format_args!("for-{} loop variables cannot have an initializer", loop_type),
@@ -3897,7 +3911,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             }
             _ => {
-                self.log.add_error_fmt(
+                self.log().add_error_fmt(
                     Some(self.source),
                     decls[0].binding.loc,
                     format_args!("for-{} loops must have a single declaration", loop_type),
@@ -3928,7 +3942,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let ident_ref = unsafe { &**ident }.r#ref;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let name = unsafe { &*self.symbols[ident_ref.inner_index() as usize].original_name };
-                        self.log.add_range_error_fmt(
+                        self.log().add_range_error_fmt(
                             Some(self.source),
                             r,
                             format_args!(
@@ -3940,7 +3954,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // return;/
                     }
                     _ => {
-                        self.log.add_error_fmt(
+                        self.log().add_error_fmt(
                             Some(self.source),
                             decl.binding.loc,
                             format_args!("This {} must be initialized", what),
@@ -4080,14 +4094,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // logger::Data is !Copy (Cow) — build the notes Box directly.
             let notes: Box<[logger::Data]> =
                 Box::new([logger::range_data(Some(self.source), where_, why.to_vec())]);
-            self.log.add_range_error_fmt_with_notes(
+            self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
                 notes,
                 format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
             )?;
         } else if !can_be_transformed && self.is_strict_mode_output_format() {
-            self.log.add_range_error_fmt(
+            self.log().add_range_error_fmt(
                 Some(self.source),
                 r,
                 format_args!(
@@ -4247,7 +4261,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     MR::Forbidden => {
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let orig = unsafe { &*self.symbols[symbol_idx].original_name };
-                        self.log.add_symbol_already_declared_error(
+                        self.log().add_symbol_already_declared_error(
                             self.source,
                             orig,
                             loc,
@@ -4300,7 +4314,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 unsafe { &*self.symbols[name.ref_.unwrap().inner_index() as usize].original_name };
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
-                self.log
+                self.log()
                     .add_range_error(
                         Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
@@ -4311,7 +4325,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 && func.flags.contains(Flags::Function::IsGenerator)
                 && original_name == b"yield"
             {
-                self.log
+                self.log()
                     .add_range_error(
                         Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
@@ -4503,15 +4517,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
         if (location.start as usize) < self.lexer.source.contents.len() && !location.is_empty() {
-            let _ = self.log.add_range_error_fmt(
+            let _ = self.log().add_range_error_fmt(
                 Some(self.source),
                 logger::Range { loc: location, ..Default::default() },
                 format_args!("panic here"),
             );
         }
 
-        self.log.level = logger::Level::Verbose;
-        let _ = self.log.print(&mut panic_stream);
+        self.log().level = logger::Level::Verbose;
+        let _ = self.log().print(&mut panic_stream);
 
         Output::panic(format_args!("{}\n{}{}", fmt, args, panic_stream.as_str()));
     }
@@ -6640,7 +6654,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         let r = js_lexer::range_of_identifier(self.source, loc);
-        self.log
+        self.log()
             .add_range_error_fmt(Some(self.source), r, format_args!("There is no containing label named \"{}\"", bstr::BStr::new(name)))
             .expect("unreachable");
 
@@ -6825,7 +6839,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::ExprData::EArray(mut arr) => {
                 for item in arr.items.slice_mut() {
                     let js_ast::ExprData::EString(mut s) = item.data else {
-                        let _ = self.log.add_error(Some(self.source), item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
+                        let _ = self.log().add_error(Some(self.source), item.loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
                         continue;
                     };
                     let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut s, item.loc) else { return };
@@ -6849,7 +6863,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break 'found i;
                 }
             }
-            let _ = self.log.add_error(Some(self.source), loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
+            let _ = self.log().add_error(Some(self.source), loc, Self::IMPORT_META_HOT_ACCEPT_ERR);
             return None;
         };
 

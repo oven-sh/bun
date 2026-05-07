@@ -1650,27 +1650,28 @@ impl BunLogOptions {
     }
 
     pub fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-        // TODO(port): `bun_logger::Location.file` / `.line_text` are currently
-        // `&'static [u8]`. Zig (ParseTask.zig:874-884) passes `this.path()`
-        // through *unduped* and dupes `source_line_text` via
-        // `log.msgs.allocator` so it is freed with the Log. Carrying owned
-        // bytes here requires those fields to become `Cow<'static,[u8]>`.
-        // `Box::leak` to fake `'static` is forbidden (PORTING.md §Forbidden),
-        // so until the type change lands we omit the borrowed path/line_text
-        // rather than leak per-message. The only caller (`log_fn`) is itself
-        // only reachable from the ``-gated `run` below.
-        let _ = self.path();
-        let _ = self.source_line_text();
+        // Zig (ParseTask.zig:874-884) passes `this.path()` through and dupes
+        // `source_line_text` via `log.msgs.allocator`. `Location.{file,line_text}`
+        // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
+        // (freed when the Log drops) and returns a lifetime-erased borrow —
+        // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
+        // Zig stored it unduped (a raw slice into C-plugin memory that may be
+        // freed after `log_fn` returns — a latent UAF in the spec); duping is
+        // strictly safer and matches the intent.
+        let source_line_text = self.source_line_text();
+        let file = log.dupe(self.path());
+        let line_text = if !source_line_text.is_empty() {
+            Some(log.dupe(source_line_text))
+        } else {
+            None
+        };
         let location = Location::init(
-            // TODO(port): self.path() — blocked on Location.file: Cow<'static,[u8]>
-            b"",
+            file,
             namespace,
             self.line.max(-1),
             self.column.max(-1),
             (self.column_end - self.column).max(0) as u32,
-            // TODO(port): Some(Cow::Owned(self.source_line_text().to_vec()))
-            // — blocked on Location.line_text: Option<Cow<'static,[u8]>>
-            None,
+            line_text,
         );
         let mut msg = Msg {
             data: logger::Data {
@@ -2302,21 +2303,31 @@ fn run_with_source_code(
 
     let output_format = topts.output_format;
 
-    // PORT NOTE: `ParserOptions::init` takes `bun_js_parser::options::JSX::Pragma`,
-    // distinct from `crate::options::jsx::Pragma` (TYPE_ONLY divergence). Until
-    // those unify, construct from defaults and copy the one field both share.
-    // TODO(port): replace with `task.jsx.clone()` once Pragma types unify.
-    let mut opts = ParserOptions::init(Default::default(), loader);
+    // CYCLEBREAK: `crate::options::jsx::Pragma` → `bun_js_parser::options::JSX::Pragma`
+    // via `From` (options.rs jsx mod). Preserves jsxImportSource/runtime/etc.
+    // (.zig:1207).
+    let mut opts = ParserOptions::init(task.jsx.clone().into(), loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    // TODO(port): TYPE_ONLY divergence — `transpiler.options.allow_unresolved`
-    // is `crate::options::AllowUnresolved`, distinct from
-    // `bun_js_parser::options::AllowUnresolved`.
-    opts.allow_unresolved = &js_parser::options::AllowUnresolved::DEFAULT;
-    // TODO(port): TYPE_ONLY divergence — `transpiler.macro_context` is
-    // `Option<js_ast::Macro::MacroContext>` (owned), distinct from
-    // `Option<&'a mut bun_js_parser::MacroContext>`.
-    opts.macro_context = None;
+    // CYCLEBREAK MOVE_DOWN: `AllowUnresolved` is now the same nominal type on
+    // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
+    // a worker-owned `Transpiler` that outlives the parse.
+    // SAFETY: ARENA — see `leak_static`; `topts` outlives `opts`.
+    opts.allow_unresolved =
+        unsafe { core::mem::transmute::<&options::AllowUnresolved, &'static _>(&topts.allow_unresolved) };
+    // `Transpiler.macro_context` is `Option<bun_js_parser::Macro::MacroContext>`
+    // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
+    // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
+    // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` mirrors
+    // Zig `transpiler.macro_context.?` — caller (`BundleV2::init`) guarantees
+    // it is set before any ParseTask runs.
+    // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
+    // `'static` erasure: the context outlives the parse.
+    opts.macro_context = unsafe {
+        Some(core::mem::transmute::<&mut _, &'static mut _>(
+            (*transpiler).macro_context.as_mut().unwrap(),
+        ))
+    };
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2347,10 +2358,15 @@ fn run_with_source_code(
     opts.features.standard_decorators =
         !loader.is_typescript() || !(task.experimental_decorators || task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
-    // TODO(port): `bundler_feature_flags` is `Option<Box<StringSet>>` on both
-    // sides; cannot move out of `&transpiler.options`. Phase B: store as
-    // `Option<&'a StringSet>` on `RuntimeFeatures`.
-    opts.features.bundler_feature_flags = None;
+    // PORT NOTE: Zig stores a `*const StringSet` (shared); Rust models it as
+    // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
+    // CLI-supplied flag set). PERF(port): Phase B should retype
+    // `RuntimeFeatures.bundler_feature_flags` to `Option<&'a StringSet>` so
+    // this clone disappears.
+    opts.features.bundler_feature_flags = topts
+        .bundler_feature_flags
+        .as_deref()
+        .map(|s| Box::new(bun_core::handle_oom(s.clone())));
     // JavaScriptCore implements `using` / `await using` natively, so when
     // targeting Bun there is no need to lower them.
     opts.features.lower_using = !target.is_bun();

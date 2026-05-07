@@ -1102,7 +1102,10 @@ pub struct Options<'a> {
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [logger::Source]>,
 
-    pub commonjs_named_exports: CommonJSNamedExports,
+    /// Borrowed from `BundledAst.commonjs_named_exports`. Zig passed the
+    /// unmanaged `StringArrayHashMap` header by value (shallow copy of
+    /// shared storage); the printer only reads from it.
+    pub commonjs_named_exports: Option<&'a CommonJSNamedExports>,
     pub commonjs_named_exports_deoptimized: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_ref: Ref,
@@ -1126,11 +1129,19 @@ pub struct Options<'a> {
 
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
-    pub ts_enums: TsEnumsMap,
+    /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
+    /// bundle). Zig passed the unmanaged map header by value; the printer
+    /// only reads from it.
+    pub ts_enums: Option<&'a TsEnumsMap>,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
-    pub line_offset_tables: Option<SourceMap::line_offset_table::List>,
+    /// Borrowed from `LinkerGraph.files[i].line_offset_table`. The same
+    /// source can print into multiple part-ranges/chunks, so the table must
+    /// not be consumed. `get_source_map_builder` shallow-copies it into the
+    /// builder (`ManuallyDrop`, never freed on the bundler path — matches
+    /// Zig `printWithWriter`).
+    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
@@ -1165,7 +1176,7 @@ impl<'a> Default for Options<'a> {
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
-            commonjs_named_exports: Default::default(),
+            commonjs_named_exports: None,
             commonjs_named_exports_deoptimized: false,
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_ref: Ref::NONE,
@@ -1180,7 +1191,7 @@ impl<'a> Default for Options<'a> {
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
-            ts_enums: Default::default(),
+            ts_enums: None,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -3081,13 +3092,16 @@ where
                 // PORT NOTE: reshaped for borrowck — find the matching index first,
                 // then drop the immutable iter borrow before printing.
                 let mut found: Option<usize> = None;
-                for (idx, value) in self.options.commonjs_named_exports.values().iter().enumerate() {
-                    if value.loc_ref.ref_.unwrap().eql(id.ref_) { found = Some(idx); break; }
+                if let Some(exports) = self.options.commonjs_named_exports {
+                    for (idx, value) in exports.values().iter().enumerate() {
+                        if value.loc_ref.ref_.unwrap().eql(id.ref_) { found = Some(idx); break; }
+                    }
                 }
                 if let Some(idx) = found {
-                    let key: *const [u8] = &self.options.commonjs_named_exports.keys()[idx][..];
-                    let value_loc_ref = self.options.commonjs_named_exports.values()[idx].loc_ref;
-                    let value_needs_decl = self.options.commonjs_named_exports.values()[idx].needs_decl;
+                    let exports = self.options.commonjs_named_exports.unwrap();
+                    let key: *const [u8] = &exports.keys()[idx][..];
+                    let value_loc_ref = exports.values()[idx].loc_ref;
+                    let value_needs_decl = exports.values()[idx].needs_decl;
                     struct V { loc_ref: js_ast::LocRef, needs_decl: bool }
                     let value = V { loc_ref: value_loc_ref, needs_decl: value_needs_decl };
                     if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
@@ -5860,7 +5874,7 @@ where
             let ref_ = self.symbols().follow(id.ref_);
             if let Some(symbol) = self.symbols().get_const(ref_) {
                 if symbol.kind == js_ast::ast::symbol::Kind::TsEnum {
-                    if let Some(enum_value) = self.options.ts_enums.get(&ref_) {
+                    if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
                         if let Some(value) = enum_value.get(name) {
                             return Some(value.decode());
                         }

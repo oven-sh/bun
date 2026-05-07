@@ -121,7 +121,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Forbid optional chaining in decorators
             if p.lexer.token == T::TQuestionDot {
                 let err_loc = p.lexer.loc();
-                p.log.add_error(
+                p.log().add_error(
                     Some(p.source),
                     err_loc,
                     b"Optional chaining is not allowed in decorator expressions",

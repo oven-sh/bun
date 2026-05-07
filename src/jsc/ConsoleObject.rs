@@ -1490,6 +1490,12 @@ pub mod formatter {
     /// RAII: write `prev` back through `place` on drop (Zig
     /// `defer this.field = prev;`). Holds a raw `*mut` so the body of the
     /// scope can freely take `&mut self` without aliasing the borrow.
+    ///
+    /// NOTE(aliasing): the `addr_of_mut!(self.field)` → body uses `&mut self`
+    /// → guard derefs raw pointer pattern is sound under Tree Borrows but
+    /// pops the raw pointer's tag under Stacked Borrows. Miri runs of this
+    /// module require `-Zmiri-tree-borrows`. Applies to `Decrement` below and
+    /// the `scopeguard::defer!` raw-pointer captures throughout `print_as`.
     pub(super) struct Restore<T: Copy> {
         place: *mut T,
         prev: T,

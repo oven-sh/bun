@@ -281,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
                         && self.lexer.token == T::TColon
                     {
-                        self.log
+                        self.log()
                             .add_range_error(Some(self.source), r, b"Unexpected \"const\"")?;
                     }
                 }
@@ -1135,7 +1135,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Only report an error for the first invalid modifier
             if invalid_modifier_range.len > 0 {
-                self.log.add_range_error_fmt(
+                self.log().add_range_error_fmt(
                     Some(self.source),
                     invalid_modifier_range,
                     format_args!(

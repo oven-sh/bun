@@ -548,7 +548,7 @@ impl<'a> ImportScanner<'a> {
                             };
                             p.record_export(name.loc, original_name, name.ref_.unwrap())?;
                         } else {
-                            p.log.add_range_error(
+                            p.log().add_range_error(
                                 Some(p.source),
                                 logger::Range { loc: st.func.open_parens_loc, len: 2 },
                                 b"Exported functions must have a name",
@@ -566,7 +566,7 @@ impl<'a> ImportScanner<'a> {
                             };
                             p.record_export(name.loc, original_name, name.ref_.unwrap())?;
                         } else {
-                            p.log.add_range_error(
+                            p.log().add_range_error(
                                 Some(p.source),
                                 logger::Range { loc: st.class.body_loc, len: 0 },
                                 b"Exported classes must have a name",

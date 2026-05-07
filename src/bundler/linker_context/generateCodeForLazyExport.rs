@@ -192,8 +192,6 @@ pub fn generate_code_for_lazy_export(
                     idx: IndexInt,
                     compose_loc: Loc,
                 ) {
-                    let ref_ = css_ref.to_real_ref(idx);
-                    let _ = ref_;
                     let _ = self.allocator;
                     let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
                     // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
@@ -306,7 +304,6 @@ pub fn generate_code_for_lazy_export(
                                         });
                                     }
                                 }
-                                Some(_) => {}
                                 None => {
                                     // it is from the current file
                                     for name in compose.names.slice() {
@@ -421,17 +418,10 @@ pub fn generate_code_for_lazy_export(
 
     // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
     let stmt: Stmt = unsafe { (*part.stmts)[0] };
-    if !matches!(stmt.data, StmtData::SLazyExport(_)) {
+    let StmtData::SLazyExport(lazy) = stmt.data else {
         panic!("Internal error: expected top-level lazy export statement");
-    }
-
-    let expr = Expr {
-        data: match stmt.data {
-            StmtData::SLazyExport(d) => *d,
-            _ => unreachable!(),
-        },
-        loc: stmt.loc,
     };
+    let expr = Expr { data: *lazy, loc: stmt.loc };
 
     match exports_kind {
         js_ast::ExportsKind::Cjs => {
@@ -588,6 +578,6 @@ pub use crate::ThreadPool;
 // PORT STATUS
 //   source:     src/bundler/linker_context/generateCodeForLazyExport.zig (421 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      Heavy borrowck reshaping (Visitor moved into loop; `parts` re-borrowed); Stmt/Expr.Data union variant names guessed; arena allocator threading deferred to Phase B.
+//   todos:      0
+//   notes:      Heavy borrowck reshaping (Visitor moved into loop; `parts` re-borrowed); arena allocator threading deferred to Phase B.
 // ──────────────────────────────────────────────────────────────────────────

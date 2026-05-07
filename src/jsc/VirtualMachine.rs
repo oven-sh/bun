@@ -48,8 +48,10 @@ pub static mut Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub static mut SYNTHETIC_ALLOCATION_LIMIT: usize = u32::MAX as usize;
-#[unsafe(export_name = "Bun__stringSyntheticAllocationLimit")]
-pub static mut STRING_ALLOCATION_LIMIT: usize = u32::MAX as usize;
+// `string_allocation_limit` lives in `bun_string` (read by `String::max_length`
+// without an upward dep on this crate) and is C-exported there as
+// `Bun__stringSyntheticAllocationLimit`. Re-export under the Zig spec name.
+pub use bun_string::STRING_ALLOCATION_LIMIT;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type aliases
@@ -3876,12 +3878,27 @@ impl VirtualMachine {
         }
 
         {
-            // Groups that must survive the per-file isolation swap.
-            // TODO(b2-cycle): `rare_data.spawn_ipc_group` /
-            // `test_parallel_ipc_group` / `self.ipc.initialized.group` are
-            // gated behind `()` placeholders; pass null skips until widened.
-            let skip_spawn_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
-            let skip_test_parallel_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
+            // Groups that must survive the per-file isolation swap: this
+            // process's own inbound IPC, the spawn-IPC pool, and the
+            // test-parallel channel.
+            let (skip_spawn_ipc, skip_test_parallel_ipc): (*mut uws::SocketGroup, *mut uws::SocketGroup) =
+                match self.rare_data.as_deref_mut() {
+                    Some(rare) => (
+                        core::ptr::from_mut(&mut rare.spawn_ipc_group),
+                        core::ptr::from_mut(&mut rare.test_parallel_ipc_group),
+                    ),
+                    None => (core::ptr::null_mut(), core::ptr::null_mut()),
+                };
+            #[cfg(unix)]
+            let skip_process_ipc: *mut uws::SocketGroup = match &self.ipc {
+                Some(IPCInstanceUnion::Initialized(inst)) => {
+                    // SAFETY: `inst` was produced by `IPCInstance::new` and is
+                    // live for as long as `self.ipc` holds it.
+                    unsafe { (**inst).group }
+                }
+                _ => core::ptr::null_mut(),
+            };
+            #[cfg(not(unix))]
             let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
             // SAFETY: process-global usockets loop is live.
             let loop_ = unsafe { &mut *uws::Loop::get() };
@@ -3891,9 +3908,9 @@ impl VirtualMachine {
                 let next = unsafe { (*group.as_ptr()).next };
                 let g = group.as_ptr();
                 // PORT NOTE: `head` is `*mut bun_uws_sys::SocketGroup`; the
-                // skip-set placeholders above are typed against the
-                // `bun_uws::SocketGroup` mirror — `.cast()` for the
-                // pointer-equality check until the duplicate collapses.
+                // skip-set above is typed against the `bun_uws::SocketGroup`
+                // mirror — `.cast()` for the pointer-equality check until the
+                // duplicate collapses.
                 if g != skip_spawn_ipc.cast() && g != skip_process_ipc.cast() && g != skip_test_parallel_ipc.cast() {
                     // SAFETY: see above.
                     unsafe { (*g).close_all() };
@@ -3915,7 +3932,8 @@ impl VirtualMachine {
         // SAFETY: `event_loop` is a self-pointer into this VM.
         let _ = unsafe { (*self.event_loop()).drain_microtasks() };
 
-        // TODO(b2-cycle): `auto_killer.kill()` / `.clear()` — `()` placeholder.
+        let _ = self.auto_killer.kill();
+        self.auto_killer.clear();
 
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
@@ -3939,25 +3957,25 @@ impl VirtualMachine {
         let old_global = self.global;
         // SAFETY: `old_global` valid for VM lifetime; `console` is the live
         // per-VM ConsoleObject.
-        // SAFETY: `old_global` valid for VM lifetime; `console` is the live
-        // per-VM ConsoleObject.
         let new_global: *mut JSGlobalObject =
             JSGlobalObject::create_for_test_isolation(unsafe { &*old_global }, self.console.cast());
-        {
         self.global = new_global;
         VMHolder::CACHED_GLOBAL_OBJECT.set(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
         self.has_loaded_constructors = true;
-        // TODO(b2-cycle): `self.ipc.initialized.global_this = new_global` —
-        // gated behind `Option<()>` placeholder.
+        if let Some(IPCInstanceUnion::Initialized(inst)) = self.ipc {
+            // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
+            // until `IPCInstance::deinit`; repoint at the new global so
+            // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
+            unsafe { (*inst).global_this = new_global };
+        }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
                 if hook.global_this == old_global {
                     hook.global_this = new_global;
                 }
             }
-        }
         }
     }
 

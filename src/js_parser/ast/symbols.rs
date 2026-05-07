@@ -52,7 +52,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Forbid referencing "arguments" inside class bodies
                 if scope.forbid_arguments && !did_forbid_arguments && name == b"arguments" {
                     let r = js_lexer::range_of_identifier(self.source, loc);
-                    self.log
+                    self.log()
                         .add_range_error_fmt(
                             Some(self.source),
                             r,

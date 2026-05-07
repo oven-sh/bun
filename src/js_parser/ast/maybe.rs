@@ -704,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // runtime. When the API is not validated in this
                             // way, the developer may unintentionally read or
                             // write internal fields of HMRModule.
-                            p.log
+                            p.log()
                                 .add_error_fmt(
                                     Some(p.source),
                                     loc,
@@ -832,7 +832,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return;
         }
 
-        p.log
+        p.log()
             .add_range_error(
                 Some(p.source),
                 logger::Range { loc: comma_after_spread, len: 1 },

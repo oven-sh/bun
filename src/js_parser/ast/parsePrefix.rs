@@ -45,7 +45,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             _ => {}
         }
 
-        p.log
+        p.log()
             .add_range_error(Some(p.source), super_range, b"Unexpected \"super\"")
             .expect("unreachable");
         Ok(p.new_expr(E::Super {}, loc))
@@ -93,7 +93,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn pfx_t_this(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         if p.fn_or_arrow_data_parse.is_this_disallowed {
-            p.log
+            p.log()
                 .add_range_error(Some(p.source), p.lexer.range(), b"Cannot use \"this\" here")
                 .expect("unreachable");
         }
@@ -141,7 +141,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             AsyncPrefixExpression::IsAwait => {
                 match p.fn_or_arrow_data_parse.allow_await {
                     AwaitOrYield::ForbidAll => {
-                        p.log
+                        p.log()
                             .add_range_error(
                                 Some(p.source),
                                 name_range,
@@ -151,7 +151,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     AwaitOrYield::AllowExpr => {
                         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
-                            p.log
+                            p.log()
                                 .add_range_error(
                                     Some(p.source),
                                     name_range,
@@ -190,7 +190,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             AsyncPrefixExpression::IsYield => {
                 match p.fn_or_arrow_data_parse.allow_yield {
                     AwaitOrYield::ForbidAll => {
-                        p.log
+                        p.log()
                             .add_range_error(
                                 Some(p.source),
                                 name_range,
@@ -200,7 +200,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     AwaitOrYield::AllowExpr => {
                         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield {
-                            p.log
+                            p.log()
                                 .add_range_error(
                                     Some(p.source),
                                     name_range,
@@ -209,7 +209,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .expect("unreachable");
                         } else {
                             if level.gt(Level::Assign) {
-                                p.log
+                                p.log()
                                     .add_range_error(
                                         Some(p.source),
                                         name_range,
@@ -241,7 +241,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 | T::TNumericLiteral
                                 | T::TBigIntegerLiteral
                                 | T::TStringLiteral => {
-                                    p.log
+                                    p.log()
                                         .add_range_error(
                                             Some(p.source),
                                             name_range,
@@ -391,7 +391,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     loc: value.loc,
                     len: i32::try_from(name.len()).unwrap(),
                 };
-                p.log
+                p.log()
                     .add_range_error_fmt(
                         Some(p.source),
                         range,
@@ -515,7 +515,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
-                    p.log
+                    p.log()
                         .add_range_error(
                             Some(p.source),
                             p.lexer.range(),
@@ -583,7 +583,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
                     && name_text == b"await"
                 {
-                    p.log
+                    p.log()
                         .add_range_error(
                             Some(p.source),
                             p.lexer.range(),

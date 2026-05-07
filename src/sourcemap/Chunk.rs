@@ -291,7 +291,13 @@ impl SourceMapFormatCtx for VLQSourceMap {
 
 pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
-    pub line_offset_tables: line_offset_table::List,
+    /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
+    /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` (Zig
+    /// passed the unmanaged `MultiArrayList` header by value and never
+    /// `deinit`s on that path). The `printAst`/`printCommonJS` paths generate
+    /// a fresh table and free it explicitly (mirrors Zig's
+    /// `defer source_map_builder.line_offset_tables.deinit(...)`).
+    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List>,
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
     pub generated_column: i32,
@@ -328,7 +334,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
     fn default() -> Self {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
-            line_offset_tables: line_offset_table::List::EMPTY,
+            line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::EMPTY),
             prev_state: SourceMapState::default(),
             last_generated_update: 0,
             generated_column: 0,
@@ -480,7 +486,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         }
 
         self.prev_loc = loc;
-        let list = &self.line_offset_tables;
+        let list = &*self.line_offset_tables;
 
         // We have no sourcemappings.
         // This happens for example when importing an asset which does not support sourcemaps

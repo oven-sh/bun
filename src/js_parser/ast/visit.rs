@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // FunctionBodyContainsUseStrict of FunctionBody is true and
         // IsSimpleParameterList of FormalParameters is false."
         if strict_loc.is_some() && !has_simple_args {
-            self.log
+            self.log()
                 .add_range_error(
                     Some(self.source),
                     self.source.range_of_string(strict_loc.unwrap()),
@@ -644,7 +644,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 if let Some(dup) = duplicate_arg_check {
                     if dup.get_or_put_contains(name) {
-                        self.log
+                        self.log()
                             .add_range_error_fmt(
                                 Some(self.source),
                                 js_lexer::range_of_identifier(self.source, binding.loc),

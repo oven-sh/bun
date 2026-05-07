@@ -2,13 +2,11 @@ use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 use core::marker::{PhantomData, PhantomPinned};
 
-
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::zig_string::ZigString;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
-use crate::StringJsc;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult, VM,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
@@ -736,8 +734,8 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            if args.len() > 0 { args[0] } else { JSValue::ZERO },
-            if args.len() > 1 { args[1] } else { JSValue::ZERO },
+            args.get(0).copied().unwrap_or(JSValue::ZERO),
+            args.get(1).copied().unwrap_or(JSValue::ZERO),
         );
     }
 

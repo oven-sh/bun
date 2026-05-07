@@ -519,9 +519,10 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     let prev = unsafe {
         let p = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT;
         crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT = limit;
-        crate::virtual_machine::STRING_ALLOCATION_LIMIT = limit;
         p
     };
+    crate::virtual_machine::STRING_ALLOCATION_LIMIT
+        .store(limit, core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_number(prev as f64))
 }
 

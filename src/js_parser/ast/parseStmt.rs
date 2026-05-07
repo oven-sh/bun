@@ -343,7 +343,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 value = None;
                 if p.lexer.token == T::TDefault {
                     if found_default {
-                        p.log.add_range_error(
+                        p.log().add_range_error(
                             Some(p.source),
                             p.lexer.range(),
                             b"Multiple default clauses are not allowed",
@@ -496,7 +496,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if is_for_await {
             let await_range = p.lexer.range();
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
-                p.log.add_range_error(
+                p.log().add_range_error(
                     Some(p.source),
                     await_range,
                     b"Cannot use \"await\" outside an async function",
@@ -592,7 +592,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Detect for-of loops
         if p.lexer.is_contextual_keyword(b"of") || is_for_await {
             if let Some(r) = bad_let_range {
-                p.log.add_range_error(
+                p.log().add_range_error(
                     Some(p.source),
                     r,
                     b"\"let\" must be wrapped in parentheses to be used as an expression here",
@@ -712,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
     ) -> Result<Stmt> {
         if p.fn_or_arrow_data_parse.is_return_disallowed {
-            p.log.add_range_error(
+            p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
                 b"A return statement cannot be used here",
@@ -740,7 +740,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<Stmt> {
         p.lexer.next()?;
         if p.lexer.has_newline_before {
-            p.log.add_error(
+            p.log().add_error(
                 Some(p.source),
                 logger::Loc { start: loc.start + 5 },
                 b"Unexpected newline after \"throw\"",
@@ -868,7 +868,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let async_range = p.lexer.range();
                     p.lexer.next()?;
                     if p.lexer.has_newline_before {
-                        p.log.add_range_error(
+                        p.log().add_range_error(
                             Some(p.source),
                             async_range,
                             b"Unexpected newline after \"async\"",
@@ -889,7 +889,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 let type_range = p.lexer.range();
                                 p.lexer.next()?;
                                 if p.lexer.has_newline_before {
-                                    p.log.add_error_fmt(
+                                    p.log().add_error_fmt(
                                         Some(p.source),
                                         type_range.end(),
                                         format_args!("Unexpected newline after \"type\""),
@@ -1172,10 +1172,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if path.is_macro {
-                    p.log
+                    p.log()
                         .add_error(Some(p.source), path.loc, b"cannot use macro in export statement")?;
                 } else if path.import_tag != ImportRecordTag::None {
-                    p.log.add_error(
+                    p.log().add_error(
                         Some(p.source),
                         loc,
                         b"cannot use export statement with \"type\" attribute",
@@ -1225,13 +1225,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     if parsed_path.is_macro {
-                        p.log.add_error(
+                        p.log().add_error(
                             Some(p.source),
                             loc,
                             b"export from cannot be used with \"type\": \"macro\"",
                         )?;
                     } else if parsed_path.import_tag != ImportRecordTag::None {
-                        p.log.add_error(
+                        p.log().add_error(
                             Some(p.source),
                             loc,
                             b"export from cannot be used with \"type\" attribute",

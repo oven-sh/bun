@@ -55,18 +55,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 js_ast::ExprData::EString(str_) => {
                     if !opts.is_static && str_.eql_comptime(b"constructor") {
                         if kind == PropertyKind::Get {
-                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter").expect("unreachable");
                         } else if kind == PropertyKind::Set {
-                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter").expect("unreachable");
                         } else if opts.is_async {
-                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function").expect("unreachable");
                         } else if opts.is_generator {
-                            p.log.add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function").expect("unreachable");
                         } else {
                             is_constructor = true;
                         }
                     } else if opts.is_static && str_.eql_comptime(b"prototype") {
-                        p.log.add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"").expect("unreachable");
+                        p.log().add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"").expect("unreachable");
                     }
                 }
                 _ => {}
@@ -119,7 +119,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
                     // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
-                    p.log
+                    p.log()
                         .add_range_error_fmt(
                             Some(p.source),
                             r,
@@ -138,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
                     }
                     let key_name = p.key_name_for_error(key);
-                    p.log
+                    p.log()
                         .add_range_error_fmt(
                             Some(p.source),
                             r,
@@ -183,7 +183,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let name = p.load_name_from_ref(private.ref_);
                 if name == b"#constructor" {
-                    p.log.add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"").expect("unreachable");
+                    p.log().add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"").expect("unreachable");
                 }
                 private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
             }
@@ -505,7 +505,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Handle invalid identifiers in property names
                     // https://github.com/oven-sh/bun/issues/12039
                     if p.lexer.token == T::TSyntaxError {
-                        p.log
+                        p.log()
                             .add_range_error_fmt(
                                 Some(p.source),
                                 name_range,
@@ -534,9 +534,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && name == b"yield")
                         {
                             if name == b"await" {
-                                p.log.add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here").expect("unreachable");
                             } else {
-                                p.log.add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here").expect("unreachable");
                             }
                         }
 
@@ -613,7 +613,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 || (opts.is_static && str_.eql_comptime(b"prototype"))
                             {
                                 // TODO: fmt error message to include string value.
-                                p.log.add_range_error(Some(p.source), key_range, b"Invalid field name").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), key_range, b"Invalid field name").expect("unreachable");
                             }
                         }
                         _ => {}
@@ -638,7 +638,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if p.lexer.token == T::TEquals {
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if !opts.declare_range.is_empty() {
-                            p.log.add_range_error(
+                            p.log().add_range_error(
                                 Some(p.source),
                                 p.lexer.range(),
                                 b"Class fields that use \"declare\" cannot be initialized",
@@ -665,7 +665,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(private) => {
                         let name = p.load_name_from_ref(private.ref_);
                         if name == b"#constructor" {
-                            p.log.add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"").expect("unreachable");
                         }
 
                         let declare: symbol::Kind = if opts.is_static {
@@ -702,7 +702,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Auto-accessor fields cannot be methods
             if kind == PropertyKind::AutoAccessor && p.lexer.token == T::TOpenParen {
-                p.log
+                p.log()
                     .add_range_error(Some(p.source), key_range, b"auto-accessor properties cannot have a method body")
                     .expect("unreachable");
                 return Err(err!("SyntaxError"));

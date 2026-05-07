@@ -1693,6 +1693,28 @@ impl ZigStringSlice {
         matches!(self, Self::WTF { .. })
     }
 
+    /// `ZigString.Slice.cloneRef` — produce an independently-droppable copy
+    /// of this slice that views the *same bytes*: `Static` is bitwise-copied,
+    /// `WTF` bumps the StringImpl refcount, `Owned` deep-copies the buffer.
+    ///
+    /// Used by `PathLike::clone()` so a cloned path returns identical bytes
+    /// from `slice()` (unlike `SliceWithUnderlyingString::dupe_ref`, which
+    /// drops the utf8 view).
+    pub fn clone_ref(&self) -> Self {
+        match self {
+            Self::Static(p, l) => Self::Static(*p, *l),
+            Self::Owned(v) => Self::Owned(v.clone()),
+            Self::WTF { string_impl, ptr, len } => {
+                // SAFETY: invariant of the WTF variant is that `string_impl`
+                // points at a live `WTF::StringImpl` for as long as `self`
+                // exists; bumping its refcount yields a second owner whose
+                // `Drop` will pair with this ref.
+                unsafe { (**string_impl).r#ref() };
+                Self::WTF { string_impl: *string_impl, ptr: *ptr, len: *len }
+            }
+        }
+    }
+
     /// Consume an `Owned` slice into the raw `(ptr, len)` pair without freeing,
     /// for hand-off to a foreign owner (JSC external string). Any other
     /// variant returns `None` and leaves `self` untouched.

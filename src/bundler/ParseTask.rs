@@ -1212,22 +1212,24 @@ fn get_ast(
             // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
             // index a populated symbol table (.zig:613).
             let symbols = css_symbols_to_parser_symbols(extra.symbols);
-            let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast_impl(
-                    bump,
-                    &mut topts.define,
-                    opts,
-                    &mut temp_log,
-                    root,
-                    source,
-                    b"",
-                    symbols,
-                )?
-                .unwrap(),
+            // PORT NOTE: Zig `defer temp_log.appendToMaybeRecycled(log, source)`
+            // (.zig:564-566) flushes on EVERY exit including this `try`; mirror
+            // by matching explicitly so accumulated CSS-module diagnostics are
+            // not dropped on the error path.
+            let lazy = js_parser::new_lazy_export_ast_impl(
+                bump,
+                &mut topts.define,
+                opts,
+                &mut temp_log,
+                root,
+                source,
+                b"",
+                symbols,
             );
+            let _ = temp_log.append_to_maybe_recycled(log, source);
+            let mut ast = JSAst::init(lazy?.unwrap());
             ast.css = Some(css_ast_heap);
             ast.import_records = import_records;
-            let _ = temp_log.append_to_maybe_recycled(log, source);
             return Ok(ast);
         }
         // TODO:
@@ -2602,12 +2604,19 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
         }
 
         // PORT NOTE: reshaped for borrowck — `this` and `this.stage.needs_parse`
-        // both borrowed mutably; take the entry out, pass `&mut entry`, write back.
+        // both borrowed mutably. Zig (.zig:1369) passes `&this.stage.needs_parse`
+        // in-place so the entry's `Contents::Owned` buffer survives in
+        // `task.stage` for the bundle's lifetime (Success.source.contents
+        // borrows it via `leak_static`). Take it out, parse, then *write it
+        // back* on every path before `break 'value` so dropping the local
+        // can't free the buffer underneath the borrowed source.
         let mut entry = match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
             ParseTaskStage::NeedsParse(e) => e,
             ParseTaskStage::NeedsSourceCode => unreachable!(),
         };
-        match run_with_source_code(this, worker, &mut step, &mut log, &mut entry) {
+        let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
+        this.stage = ParseTaskStage::NeedsParse(entry);
+        match parsed {
             Ok(ast) => {
                 // When using HMR, always flag asts with errors as parse failures.
                 // Not done outside of the dev server out of fear of breaking existing code.

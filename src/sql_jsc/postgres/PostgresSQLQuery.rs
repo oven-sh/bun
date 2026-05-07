@@ -370,10 +370,10 @@ impl PostgresSQLQuery {
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
         if simple {
             if values.get_length(global_this)? > 0 {
-                return Err(global_this.throw_invalid_arguments("simple query cannot have parameters"));
+                return Err(global_this.throw_invalid_arguments(format_args!("simple query cannot have parameters")));
             }
             if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments("query is too long"));
+                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
             }
         }
         if !pending_value.js_type().is_array_like() {

@@ -1947,7 +1947,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
             let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                 unreachable!()
             };
-            let _ = adv_buf.write(data);
+            handle_oom(adv_buf.write(data));
             let mut slice_start: usize = 0;
             loop {
                 let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
@@ -2122,7 +2122,7 @@ pub mod IPCHandlers {
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     if adv_buf.unused_capacity_slice().len() < suggested_size {
-                        let _ = adv_buf.ensure_unused_capacity(suggested_size);
+                        handle_oom(adv_buf.ensure_unused_capacity(suggested_size));
                     }
                     let available = adv_buf.unused_capacity_slice();
                     log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);

@@ -1410,6 +1410,100 @@ where
         Err(global.throw2("Server() is not a constructor", ()))
     }
 
+    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
+    //
+    // PORT NOTE: Zig's `host_fn.wrapInstanceMethod(ThisServer, "name", false)`
+    // is a comptime type-directed argument decoder (see host_fn.zig:493-648).
+    // The `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
+    // replace it hasn't landed, so the per-type decode arms used by the
+    // server (`ZigString`, `JSValue`, `?JSValue`, `*WebCore.Request`) are
+    // open-coded here. They mirror the Zig branches exactly: same error
+    // messages, same undefined/null handling, same eat order.
+
+    /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        // ?jsc.JSValue
+        let abruptly = iter.next_eat();
+        Ok(self.stop_from_js(abruptly))
+    }
+
+    /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn dispose(&mut self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        Ok(self.dispose_from_js())
+    }
+
+    /// `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_upgrade(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<4>();
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        // jsc.JSValue
+        let object = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        // ?jsc.JSValue
+        let optional = iter.next_eat();
+        self.on_upgrade(global, object, optional)
+    }
+
+    /// `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_publish(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<5>();
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        // jsc.ZigString
+        let topic_value = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        if topic_value.is_undefined_or_null() {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        }
+        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        // jsc.JSValue
+        let message_value = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        // ?jsc.JSValue
+        let compress_value = iter.next_eat();
+        self.publish(global, topic, message_value, compress_value)
+    }
+
+    /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_request_ip(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        // *jsc.WebCore.Request
+        let arg = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing Request object")))?;
+        let request = <Request as bun_jsc::JsClass>::from_js(arg)
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Expected Request object")))?;
+        // SAFETY: from_js returns a live *mut Request
+        self.request_ip(unsafe { &*request })
+    }
+
+    /// `pub const doReload = onReload`
+    #[inline]
+    pub fn do_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.on_reload(global, callframe)
+    }
+
+    /// `pub const doFetch = onFetch`
+    #[inline]
+    pub fn do_fetch(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.on_fetch(global, callframe)
+    }
+
+    /// `pub const doTimeout = timeout`
+    #[inline]
+    pub fn do_timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.timeout(global, callframe)
+    }
 
     pub fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
         if matches!(self.config.address, server_config::Address::Unix(_)) {

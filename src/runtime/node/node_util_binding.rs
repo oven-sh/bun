@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
 use bun_str::strings::EncodingNonAscii;
 use bun_sys::UV_E;

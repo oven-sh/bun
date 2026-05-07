@@ -47,7 +47,6 @@ pub mod js_bindings {
         }
         #[cfg(target_os = "macos")]
         {
-            // TODO(port): move to bun_sys::darwin
             unsafe extern "C" {
                 fn _dyld_get_image_header(image_index: u32) -> *const core::ffi::c_void;
                 fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;

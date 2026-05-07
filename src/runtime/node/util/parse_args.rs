@@ -854,8 +854,6 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-// TODO(port): Zig used `comptime { @export(&jsc.toJSHostFn(parseArgs), .{ .name = "Bun__NodeUtil__jsParseArgs" }) }`.
-// The #[bun_jsc::host_fn] macro should emit the extern "C" shim with this exact symbol name.
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
@@ -887,27 +885,31 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     // Phase 0.B: Parse and validate config
 
     let config_strict: JSValue = match config {
-        Some(c) => c.get_own(global, "strict")?,
+        Some(c) => c.get_own(global, &String::static_("strict"))?,
         None => None,
     }
     .unwrap_or(JSValue::TRUE);
     let mut config_allow_positionals: JSValue = match config {
         Some(c) => c
-            .get_own(global, "allowPositionals")?
+            .get_own(global, &String::static_("allowPositionals"))?
             .unwrap_or(JSValue::from(!config_strict.to_boolean())),
         None => JSValue::from(!config_strict.to_boolean()),
     };
     let config_return_tokens: JSValue = match config {
-        Some(c) => c.get_own(global, "tokens")?,
+        Some(c) => c.get_own(global, &String::static_("tokens"))?,
         None => None,
     }
     .unwrap_or(JSValue::FALSE);
     let config_allow_negative: JSValue = match config {
-        Some(c) => c.get_own(global, "allowNegative")?.unwrap_or(JSValue::FALSE),
+        Some(c) => c
+            .get_own(global, &String::static_("allowNegative"))?
+            .unwrap_or(JSValue::FALSE),
         None => JSValue::FALSE,
     };
     let config_options: JSValue = match config {
-        Some(c) => c.get_own(global, "options")?.unwrap_or(JSValue::UNDEFINED),
+        Some(c) => c
+            .get_own(global, &String::static_("options"))?
+            .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
 
@@ -979,7 +981,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     for option in &option_defs {
         if let Some(default_value) = option.default_value {
             if !option.long_name.eql_comptime(b"__proto__") {
-                if state.values.get_own(global, option.long_name)?.is_none() {
+                if state.values.get_own(global, &option.long_name)?.is_none() {
                     bun_output::scoped_log!(
                         parseArgs,
                         "  Setting \"{}\" to default value",
@@ -1010,7 +1012,5 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/util/parse_args.zig (764 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      validators fmt-string+args calling convention, JSPropertyIterator config shape, and host_fn export name need Phase B confirmation; option_defs borrow overlaps &mut state in tokenize_args (may need reshape).
+//   confidence: high
 // ──────────────────────────────────────────────────────────────────────────

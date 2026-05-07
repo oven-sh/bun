@@ -1276,14 +1276,18 @@ impl RunCommand {
                 "\\node.exe"
             );
             let conv_len = converted.len();
-            target_path_buffer[conv_len..conv_len + FILE_NAME.len()]
-                .copy_from_slice(FILE_NAME.as_bytes());
-            target_path_buffer[conv_len + FILE_NAME.len()] = 0;
+            let total = conv_len + FILE_NAME.len();
+            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
+            target_path_buffer[total] = 0;
 
-            // Zig: `allocator.dupeZ` — process-lifetime, never freed.
-            let owned = bun_str::ZStr::from_bytes(&target_path_buffer[..conv_len + FILE_NAME.len()]);
-            // PORT NOTE: process-lifetime path string (one-shot per CLI run).
-            Ok(&*Box::leak(owned))
+            // Zig: `allocator.dupeZ` — process-lifetime, never freed. Park the
+            // bytes in the per-process `runner_arena()` instead of `Box::leak`
+            // (PORTING.md §Forbidden bars per-call `Box::leak`).
+            let stored: &'static [u8] =
+                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
+            // SAFETY: `stored[total] == 0` (written above before the copy);
+            // arena-backed slice lives for process lifetime.
+            Ok(unsafe { ZStr::from_raw(stored.as_ptr(), total) })
         }
     }
 

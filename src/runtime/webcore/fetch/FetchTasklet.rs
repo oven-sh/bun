@@ -25,49 +25,12 @@ use crate::webcore::resumable_sink::ResumableFetchSink;
 use crate::webcore::streams::{StreamError, StreamResult};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure};
 
-// PORT NOTE: `bun_jsc` does not yet export `JsTerminatedResult`; alias locally.
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+use bun_jsc::JsTerminatedResult;
 // PORT NOTE: `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
-// ─── local AnyPromise shim: `bun_jsc::AnyPromise` (lib.rs enum stub) lacks
-// resolve/reject; the real impl in `bun_jsc::any_promise` is gated. Dispatch
-// through the underlying `JSPromise` cell (JSInternalPromise subclasses it).
-trait AnyPromiseExt {
-    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()>;
-    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()>;
-}
-impl AnyPromiseExt for jsc::AnyPromise {
-    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()> {
-        let p: *mut jsc::JSPromise = match self {
-            jsc::AnyPromise::Normal(p) => p,
-            jsc::AnyPromise::Internal(p) => p as *mut jsc::JSPromise,
-        };
-        // SAFETY: variant payload is a live JSC heap cell from `as_any_promise`.
-        unsafe { (*p).resolve(global, value) }
-    }
-    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()> {
-        let p: *mut jsc::JSPromise = match self {
-            jsc::AnyPromise::Normal(p) => p,
-            jsc::AnyPromise::Internal(p) => p as *mut jsc::JSPromise,
-        };
-        // TODO(port): `value.attach_async_stack_from_promise(global, p)` once
-        // that helper is reachable from this crate. Fall back to plain reject.
-        // SAFETY: see `resolve`.
-        unsafe { (*p).reject(global, Ok(value)) }
-    }
-}
-
-// PORT NOTE: `d2i_X509`/`X509_free` are in BoringSSL but not yet bound in `bun_boringssl_sys`; declare locally.
-unsafe extern "C" {
-    fn d2i_X509(
-        out: *mut *mut boringssl::c::X509,
-        inp: *mut *const u8,
-        len: core::ffi::c_long,
-    ) -> *mut boringssl::c::X509;
-    fn X509_free(x: *mut boringssl::c::X509);
-}
+use boringssl::c::{d2i_X509, X509_free};
 
 /// Local `EventLoopCtx` accessor for `KeepAlive::ref_/unref` (mirrors
 /// `node_zlib_binding::vm_ctx`). Zig passed `*VirtualMachine` directly via
@@ -1606,10 +1569,12 @@ impl FetchTasklet {
         // guards `buffer` against the HTTP thread between acquire/release.
         let stream_buffer = unsafe { (*thread_safe_stream_buffer).acquire() };
         let _release = scopeguard::guard((), move |_| unsafe { (*thread_safe_stream_buffer).release() });
-        // PORT NOTE: `high_water_mark` is a private field on ResumableSink with no
-        // accessor; default to its init-time value (16384) until an accessor lands.
-        let high_water_mark: usize = 16384;
-        let _ = self.sink;
+        // SAFETY: sink alive while self.sink is Some (guaranteed by the
+        // `ReadableStream` request-body path that reaches here).
+        let high_water_mark: usize = match self.sink {
+            Some(sink) => unsafe { (*sink).high_water_mark() } as usize,
+            None => 16384,
+        };
 
         let mut needs_schedule = false;
 

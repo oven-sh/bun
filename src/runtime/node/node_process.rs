@@ -120,32 +120,15 @@ pub static Bun__versions_usockets: CStrPtr =
 pub static Bun__version_sha: CStrPtr =
     CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
 
-// ─── gated: remaining accessors that reach not-yet-un-gated surfaces ────────
-//   - get_title/set_title:      crate::cli::process_title / set_process_title
-//                               (mutable global; not yet exported by cli/mod.rs)
-//   - create_exec_argv:         vm.worker() / vm.standalone_module_graph()
-//                               accessor shapes, BunString::to_js,
-//                               crate::cli::arguments::AUTO_PARAMS_TAKING_VALUE_SET,
-//                               bun_core::append_options_env / bun_options_argc
-//   - create_argv:              vm.worker() typed accessor (.argv()/.eval_mode()),
-//                               BunString::to_js_array
-//   - get_eval:                 vm.module_loader().eval_source() shape
-//   - get_cwd/set_cwd:          super::path::get_cwd, transpiler().fs()
-//                               top_level_dir_buf*/set_top_level_dir surface
-//   - bun_process_edit_windows_env_var: BunString wtf-impl accessors
-//                               (utf16_byte_length / value().wtf_string_impl())
-// TODO(b2-blocked): un-gate once the above land. uncaught_exception/BunObject
-// are external blockers, not referenced here.
-
 mod _impl {
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
 use bun_jsc::zig_string::ZigString;
-use bun_str::{self as bstr_, String as BunString, strings};
+use bun_str::{String as BunString, strings};
 use bun_sys as Syscall;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_core::{self, Environment, Global, env_var};
+use bun_paths::{PathBuffer, SEP};
+use bun_core::env_var;
 
 #[cfg(windows)]
 unsafe extern "C" {

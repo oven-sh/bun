@@ -753,7 +753,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         _ => packed_map::Shared::LineCount(packed_map::LineCount(line_count)),
                     };
                     self.current_chunk_source_maps.push(CurrentChunkSourceMapData {
-                        file_index: FileIndex(file_index.get()),
+                        file_index: ServerFileIndex::init(file_index.get()),
                         source_map: packed,
                     });
                 }

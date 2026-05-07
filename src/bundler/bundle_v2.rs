@@ -969,17 +969,16 @@ pub mod api {
             }
         }
 
-        /// Mirrors `JSBundler.Resolve` (zig:1234). `js_task` is the real
-        /// `bun_event_loop::AnyTask` (lower-tier crate, no JSC dep), filled
-        /// by T6 (`bun_runtime`) via `dispatch_js()`. `task` remains erased
-        /// (`jsc::AnyEventLoop::Task` lives in T6).
+        /// Mirrors `JSBundler.Resolve` (zig:1234). Both `js_task` and `task`
+        /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
+        /// `run_on_js_thread()` are implemented inherently (no T6 hook).
         pub struct Resolve {
             pub bv2: *mut BundleV2<'static>,
             pub import_record: MiniImportRecord,
             pub value: ResolveValue,
             pub js_task: bun_event_loop::AnyTask::AnyTask,
-            // SAFETY: erased `jsc::AnyEventLoop::Task` storage; T6 casts in-place.
-            pub task: [usize; 4],
+            /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
+            pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
         }
         impl Default for Resolve {
             fn default() -> Self {
@@ -988,7 +987,7 @@ pub mod api {
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: [0; 4],
+                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
             }
         }
@@ -1001,19 +1000,45 @@ pub mod api {
                     import_record: record,
                     value: ResolveValue::Pending,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: [0; 4],
+                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
             }
-            /// Hops to the JS thread via the registered event-loop hook. The
-            /// actual `runOnJSThread` body (which calls into the C++ plugin)
-            /// is owned by T6; here we hand the boxed `Resolve` to it.
+            /// Hops to the JS thread to call the `onResolve` plugin chain.
+            /// Zig spec (JSBundler.zig:1311):
+            ///   `this.js_task = AnyTask.init(this);
+            ///    bv2.jsLoopForPlugins().enqueueTaskConcurrent(
+            ///      jsc.ConcurrentTask.create(this.js_task.task()))`
             pub fn dispatch(&mut self) {
-                let hook = super::super::dispatch::PLUGIN_RESOLVE_HOOK
-                    .load(core::sync::atomic::Ordering::Acquire);
-                if !hook.is_null() {
-                    // SAFETY: hook was registered by runtime with matching sig.
-                    unsafe { (*hook)(self) };
+                self.js_task = bun_event_loop::AnyTask::AnyTask {
+                    ctx: core::ptr::NonNull::new(self as *mut Self as *mut core::ffi::c_void),
+                    callback: Self::run_on_js_thread_wrap,
+                };
+                let task =
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                // SAFETY: `bv2` is a valid backref set by `init`; plugins is
+                // Some (asserted by `js_loop_for_plugins`).
+                unsafe { (*self.bv2).js_loop_for_plugins().enqueue_task_concurrent(task) };
+            }
+            pub fn run_on_js_thread(&mut self) {
+                let kind = self.import_record.kind;
+                // PORT NOTE: reshaped for borrowck — capture the erased self
+                // pointer before borrowing fields immutably for the FFI call.
+                let self_ptr = self as *mut Self as *mut core::ffi::c_void;
+                // SAFETY: `bv2` is a valid backref; `plugins` is Some.
+                unsafe {
+                    (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                    );
                 }
+            }
+            fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
+                // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
+                unsafe { &mut *(ctx as *mut Resolve) }.run_on_js_thread();
+                Ok(())
             }
         }
 

@@ -4640,7 +4640,7 @@ impl DevServer<'_> {
 
     pub fn respond_for_html_bundle(
         &mut self,
-        html: &mut HTMLBundleRoute,
+        html: *mut HTMLBundleRoute,
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {

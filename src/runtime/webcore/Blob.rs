@@ -4363,62 +4363,13 @@ impl Blob {
 pub use crate::webcore::Lifetime as BlobLifetime;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local FFI shims for `ZigString` JSC methods not yet on `bun_jsc::ZigStringJsc`.
-// Mirrors the `BunObject.rs` `ZigStringToJs` pattern.
-// TODO(port): hoist into `bun_jsc::ZigStringJsc` once that trait grows these.
+// `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
+// `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`;
+// `zig_string_to_external_u16` is the free-fn form re-exported from
+// `bun_jsc`. Only Blob-local extension traits remain here.
 // ──────────────────────────────────────────────────────────────────────────
 mod zigstring_blob_ext {
     use super::*;
-    unsafe extern "C" {
-        fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-        fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-        fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
-        fn ZigString__external(
-            this: *const ZigString,
-            global: *const JSGlobalObject,
-            ctx: *mut c_void,
-            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
-        ) -> JSValue;
-        fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    }
-    // PORT NOTE: `to_js` / `to_external_value` / `to_json_object` live on the
-    // crate-level `ZigStringBlobExt` (pulled in via `use super::*`). This local
-    // trait only adds `external` (the JSC finalizer-backed external string),
-    // which the crate-level trait doesn't carry yet, to avoid E0034 collisions.
-    pub(super) trait ZigStringExternalExt {
-        fn external(
-            &self,
-            global: &JSGlobalObject,
-            ctx: *mut c_void,
-            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
-        ) -> JSValue;
-    }
-    impl ZigStringExternalExt for ZigString {
-        #[inline] fn external(
-            &self,
-            global: &JSGlobalObject,
-            ctx: *mut c_void,
-            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
-        ) -> JSValue {
-            // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live;
-            // ownership of `ctx` transfers to JSC's finalizer.
-            unsafe { ZigString__external(self, global, ctx, cb) }
-        }
-    }
-    // Silence dead_code on the unused FFI re-decls (kept for symbol parity;
-    // `to_js`/`to_external_value`/`to_json_object` resolve via the crate-level
-    // `ZigStringBlobExt` instead).
-    #[allow(dead_code)]
-    const _: (unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue,
-              unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue,
-              unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue) =
-        (ZigString__toValueGC, ZigString__toExternalValue, ZigString__toJSONObject);
-    #[inline]
-    pub(super) fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `ptr[..len]` is a leaked default-allocator `Box<[u16]>`;
-        // ownership transfers to JSC's external-string finalizer.
-        unsafe { ZigString__toExternalU16(ptr, len, global) }
-    }
 
     /// Zig `JSValue.jsTypeLoose()` — like `js_type()` but returns `Cell` for non-cell values.
     pub(super) trait JSValueBlobExt {
@@ -4452,11 +4403,8 @@ mod zigstring_blob_ext {
         }
     }
 }
-use zigstring_blob_ext::{
-    ZigStringExternalExt as _, JSValueBlobExt as _, ZigStringSliceBlobExt as _,
-    zig_string_to_external_u16,
-};
-use bun_jsc::{StringJsc as _, ZigStringJsc as _};
+use zigstring_blob_ext::{JSValueBlobExt as _, ZigStringSliceBlobExt as _};
+use bun_jsc::{StringJsc as _, ZigStringJsc as _, zig_string_to_external_u16};
 
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}

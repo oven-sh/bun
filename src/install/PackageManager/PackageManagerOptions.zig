@@ -217,7 +217,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
 
 /// `frozenLockfile = true` in `bunfig.toml` applies only to plain
 /// `bun install` — when the user explicitly asks to change the
-/// dependency graph (`bun add`, `bun remove`, `bun update <pkg>`,
+/// dependency graph (`bun add`, `bun remove`, `bun update`,
 /// `bun install <pkg>`, `bun link`, `bun unlink`, `bun patch`,
 /// `bun patch-commit`) the bunfig setting is ignored.
 ///

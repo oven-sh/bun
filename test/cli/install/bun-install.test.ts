@@ -6871,6 +6871,15 @@ cache = false
         expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
         expect(out).not.toContain("installed bar");
         expect(await exited).toBe(1);
+
+        // the mutation must not have leaked to disk — package.json unchanged,
+        // bar was never extracted.
+        expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { baz: "0.0.3" },
+        });
+        expect(await exists(join(ctx.package_dir, "node_modules", "bar"))).toBe(false);
       });
     });
 
@@ -6913,6 +6922,14 @@ cache = false
         expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
         expect(out).not.toContain("installed bar");
         expect(await exited).toBe(1);
+
+        // same as above — frozen must mean no filesystem changes.
+        expect(await file(join(ctx.package_dir, "package.json")).json()).toEqual({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { baz: "0.0.3" },
+        });
+        expect(await exists(join(ctx.package_dir, "node_modules", "bar"))).toBe(false);
       });
     });
   });

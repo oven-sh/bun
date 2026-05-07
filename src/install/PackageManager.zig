@@ -174,7 +174,7 @@ pub const Subcommand = enum {
 
     /// Whether `frozenLockfile = true` in `bunfig.toml` should apply to this
     /// subcommand. Explicit mutation commands (`bun add`, `bun remove`,
-    /// `bun update <pkg>`, `bun link`, `bun unlink`, `bun patch`,
+    /// `bun update`, `bun link`, `bun unlink`, `bun patch`,
     /// `bun patch-commit`) are intentionally excluded because the user asked
     /// to change the dependency graph — failing the command would defeat the
     /// point. The CLI flag `--frozen-lockfile` still forces the behavior on

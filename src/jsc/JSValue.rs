@@ -984,6 +984,16 @@ impl JSValue {
         let v = unsafe { JSC__JSValue__getOwnByValue(self, global, property_value) };
         if v.is_empty() { None } else { Some(v) }
     }
+    /// `Object.hasOwnProperty(key)` (Zig: `JSValue.hasOwnPropertyValue`,
+    /// JSValue.zig:793). `self` **must** be an object — the C++ side
+    /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
+    /// can throw, so this is routed through `from_js_host_call_generic`.
+    #[track_caller]
+    pub fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__hasOwnPropertyValue(self, global, key)
+        })
+    }
     pub fn get_object(self) -> Option<*mut JSObject> {
         if !self.is_object() { return None; }
         // Cell-tagged JSValues *are* the cell pointer (NotCellMask bits are zero).
@@ -1457,6 +1467,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
+    fn JSC__JSValue__hasOwnPropertyValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> bool;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putBunString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
     fn JSC__JSValue__putMayBeIndex(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);

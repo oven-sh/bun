@@ -2103,17 +2103,17 @@ pub fn parse_into_binary_lockfile(
                         pkg.resolutions = DependencySlice { off, len };
 
                         if let Some(bin) = deps_os_cpu_libc_bin_bundle_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                            pkg.bin = Bin::parse_append(&bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
                         } else if let Some(bin_dir) = deps_os_cpu_libc_bin_bundle_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(bin_dir, &mut string_buf)?;
+                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut string_buf)?;
                         }
 
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
-                                pkg.meta.os = Negatable::<Npm::OperatingSystem>::from_json(os)?;
+                                pkg.meta.os = Negatable::<Npm::OperatingSystem>::from_json(&os)?;
                             }
                             if let Some(arch) = deps_os_cpu_libc_bin_bundle_obj.get(b"cpu") {
-                                pkg.meta.arch = Negatable::<Npm::Architecture>::from_json(arch)?;
+                                pkg.meta.arch = Negatable::<Npm::Architecture>::from_json(&arch)?;
                             }
                             // TODO(dylan-conway)
                             // if (os_cpu_libc_obj.get("libc")) |libc| {
@@ -2134,9 +2134,9 @@ pub fn parse_into_binary_lockfile(
                         }
 
                         if let Some(bin) = bin_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                            pkg.bin = Bin::parse_append(&bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
                         } else if let Some(bin_dir) = bin_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(bin_dir, &mut string_buf)?;
+                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut string_buf)?;
                         }
                     }
                     _ => {}
@@ -2207,7 +2207,7 @@ pub fn parse_into_binary_lockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_buf.bytes.as_slice())?;
+            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
             let entry = pkg_map.get_or_put(pkg_path);
             if entry.found_existing {

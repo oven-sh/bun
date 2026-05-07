@@ -1225,7 +1225,8 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
                     self.manager,
                     pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
-                    resolution.value.npm.version,
+                    // SAFETY: tag == Npm checked by match arm.
+                    unsafe { resolution.value.npm }.version,
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
@@ -1233,7 +1234,8 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Git => {
                 installer.cache_dir_subpath = package_manager::cached_git_folder_name(
                     self.manager,
-                    &resolution.value.git,
+                    // SAFETY: tag == Git checked by match arm.
+                    unsafe { &resolution.value.git },
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
@@ -1241,7 +1243,8 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Github => {
                 installer.cache_dir_subpath = package_manager::cached_github_folder_name(
                     self.manager,
-                    &resolution.value.github,
+                    // SAFETY: tag == Github checked by match arm.
+                    unsafe { &resolution.value.github },
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
@@ -1282,7 +1285,8 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::LocalTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
                     self.manager,
-                    resolution.value.local_tarball,
+                    // SAFETY: tag == LocalTarball checked by match arm.
+                    unsafe { resolution.value.local_tarball },
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
@@ -1290,7 +1294,8 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
                     self.manager,
-                    resolution.value.remote_tarball,
+                    // SAFETY: tag == RemoteTarball checked by match arm.
+                    unsafe { resolution.value.remote_tarball },
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);

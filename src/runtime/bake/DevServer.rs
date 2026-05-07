@@ -6086,6 +6086,7 @@ pub fn read_string32(reader: &mut &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
     Ok(data.to_vec().into_boxed_slice())
 }
 
+#[derive(Default)]
 pub struct TestingBatch {
     /// Keys are borrowed. See doc comment in Zig source.
     pub entry_points: EntryPointList,

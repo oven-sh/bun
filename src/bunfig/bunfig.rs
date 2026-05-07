@@ -266,9 +266,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // parse_registry / parse_registry_url_string / parse_registry_object bodies
-    // live in the `phase_a_draft` impl block below.
-
     fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::ENull(_) => {
@@ -650,32 +647,38 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = expr_get(&test_, b"coveragePathIgnorePatterns") {
-                    // TODO(b2-blocked): CodeCoverageOptions.ignore_patterns is
-                    // `&'static [&'static [u8]]`; retype to Vec<Box<[u8]>> before un-gating.
-                    match &expr.data {
-                        ExprData::EString(_) => {
-                            
-                            { /* see phase_a_draft */ }
-                        }
-                        ExprData::EArray(arr) => {
-                            for item in arr.items.slice() {
-                                if !matches!(item.data, ExprData::EString(_)) {
-                                    self.add_error(
-                                        item.loc,
-                                        b"coveragePathIgnorePatterns array must contain only strings",
-                                    )?;
-                                    return Ok(());
-                                }
+                    'brk: {
+                        match &expr.data {
+                            ExprData::EString(s) => {
+                                self.ctx.test_options.coverage.ignore_patterns =
+                                    vec![estring_to_owned(s, self.bump)];
                             }
-                            
-                            { /* see phase_a_draft */ }
-                        }
-                        _ => {
-                            self.add_error(
-                                expr.loc,
-                                b"coveragePathIgnorePatterns must be a string or array of strings",
-                            )?;
-                            return Ok(());
+                            ExprData::EArray(arr) => {
+                                let items = arr.items.slice();
+                                if items.is_empty() {
+                                    break 'brk;
+                                }
+                                let mut patterns: Vec<Box<[u8]>> =
+                                    Vec::with_capacity(items.len());
+                                for item in items {
+                                    let ExprData::EString(s) = &item.data else {
+                                        self.add_error(
+                                            item.loc,
+                                            b"coveragePathIgnorePatterns array must contain only strings",
+                                        )?;
+                                        return Ok(());
+                                    };
+                                    patterns.push(estring_to_owned(s, self.bump));
+                                }
+                                self.ctx.test_options.coverage.ignore_patterns = patterns;
+                            }
+                            _ => {
+                                self.add_error(
+                                    expr.loc,
+                                    b"coveragePathIgnorePatterns must be a string or array of strings",
+                                )?;
+                                return Ok(());
+                            }
                         }
                     }
                 }

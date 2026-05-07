@@ -143,8 +143,6 @@ impl Request {
 // Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
 // short-circuit on a JS-side stream that was already read (Zig:
 // `T.js.bodyGetCached(this_value)`).
-// TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
-
 impl crate::webcore::body::BodyOwnerJs for Request {
     fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
         js_gen::body_get_cached(this_value)

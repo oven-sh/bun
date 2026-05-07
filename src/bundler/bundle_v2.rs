@@ -2695,8 +2695,9 @@ impl<'a> BundleV2<'a> {
         // arena gains a `create<T>()` helper.
         let pool = Box::leak(Box::new(ThreadPool::default()));
         if cli_watch_flag {
-            // CYCLEBREAK GENUINE: hot_reloader is T6; runtime registers a
-            // watcher hook and writes `bun_watcher` directly.
+            // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
+            // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
+            // and writes `bun_watcher` directly after `init()` returns.
         }
         // errdefer pool.destroy();
         // TODO(port): errdefer this.graph.heap.deinit() — Drop handles arena teardown

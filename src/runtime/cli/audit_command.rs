@@ -99,11 +99,12 @@ impl AuditCommand {
         // non-null and exclusively owned by this thread for the command's
         // duration (mirrors Zig's `*PackageManager`).
         let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
+        let json_output = manager.options.json_output;
 
         let code = Self::audit(
             ctx,
             manager,
-            manager.options.json_output,
+            json_output,
             audit_level,
             production,
             audit_ignore_list,

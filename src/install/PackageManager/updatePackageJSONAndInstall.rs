@@ -144,15 +144,24 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    let current_package_json = match manager.workspace_package_json_cache.get_with_path(
-        // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-        unsafe { &mut *manager.log },
-        manager.original_package_json_path.as_bytes(),
-        GetJSONOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
+    // PORT NOTE: reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
+    // borrowed from `manager.workspace_package_json_cache`, but we then need
+    // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
+    // holding the entry. Zig held `*MapEntry` and `*PackageManager` simultaneously
+    // (no aliasing rules); mirror that by demoting to `*mut MapEntry` and re-
+    // borrowing at point of use. The cache map is not mutated again until the
+    // next `get_with_path` call below, so the pointer remains valid.
+    let current_package_json_ptr: *mut MapEntry = match manager
+        .workspace_package_json_cache
+        .get_with_path(
+            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+            unsafe { &mut *manager.log },
+            manager.original_package_json_path.as_bytes(),
+            GetJSONOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
         GetResult::ParseErr(err) => {
             // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
             let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
@@ -175,8 +184,13 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
             Global::crash();
         }
-        GetResult::Entry(entry) => entry,
+        GetResult::Entry(entry) => entry as *mut MapEntry,
     };
+    // SAFETY: see PORT NOTE above — pointer into `manager.workspace_package_json_cache`,
+    // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
+    // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
+    // disjoint manager fields.
+    let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it

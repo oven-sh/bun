@@ -16,17 +16,8 @@
 #[path = "MutableString.rs"] pub mod mutable_string;
 pub mod wtf;
 
-// `bun.strings.*` — 132 SIMD-backed scanners over highway/simdutf FFI.
-// Submodules (unicode_draft etc.) gated inside; core scalar+highway fns real.
+// `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI.
 #[path = "immutable.rs"] pub mod immutable;
-// Full Phase-A draft of string.zig (the 5-variant String impl). Real
-// `String`/`ZigString` already implemented above; this draft is the broader
-// surface (encode_with_allocator, ref_count_allocator, etc.) and depends on
-// `bun_cpp` (BunString FFI shim crate, not yet wired) plus ~30 ZigString
-// methods that haven't been split out from `string.zig` yet. Draft module
-// dropped from build (duplicate of live impls above); file kept on disk as
-// move-in reference until `bun_cpp` lands.
-// #[path = "lib_draft_b1.rs"] mod draft;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplStruct};

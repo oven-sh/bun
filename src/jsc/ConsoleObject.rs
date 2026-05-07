@@ -4716,12 +4716,13 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
-                // SAFETY: JSX props are always objects; `get_object()` returned a
-                // live JSC heap cell, borrow bounded by this stack frame.
-                let props_obj = unsafe { &*props.get_object().unwrap() };
-                let mut props_iter = jsc::JSPropertyIterator::<
-                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(true, true) },
-                >::init(self.global_this, props_obj)?;
+                // JSX props are always objects.
+                let props_obj = props.get_object().unwrap();
+                let mut props_iter = jsc::JSPropertyIterator::init(
+                    self.global_this,
+                    props_obj,
+                    jsc::PropertyIteratorOptions { skip_empty_name: true, include_value: true },
+                )?;
 
                 let children_prop = props.get(self.global_this, "children")?;
                 if props_iter.len > 0 {

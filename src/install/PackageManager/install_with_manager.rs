@@ -279,10 +279,10 @@ pub fn install_with_manager(
                     Diff::generate(
                         unsafe { &mut *mgr },
                         unsafe { &mut *log },
-                        unsafe { &mut *from_lockfile },
+                        unsafe { &*from_lockfile },
                         &mut lockfile,
-                        &mut root,
-                        &mut maybe_root,
+                        &root,
+                        &maybe_root,
                         update_requests,
                         Some(&mut mapping[..]),
                     )?

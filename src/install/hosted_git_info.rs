@@ -1069,8 +1069,7 @@ impl HostProvider {
 
     /// Parse a URL and return the appropriate host provider, if any.
     fn from_url(url: &JscUrl) -> Option<HostProvider> {
-        let proto_str = url.protocol();
-        // Drop handles `defer proto_str.deref()`.
+        let proto_str = OwnedString::new(url.protocol());
 
         // Try shortcut first (github:, gitlab:, etc.)
         if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice(), false) {
@@ -1085,8 +1084,7 @@ impl HostProvider {
         const _MAX_HOSTNAME_LEN: usize = 253;
         // PERF(port): was stack-fallback (FixedBufferAllocator) — profile in Phase B
 
-        let hostname_str = url.hostname();
-        // Drop handles `defer hostname_str.deref()`.
+        let hostname_str = OwnedString::new(url.hostname());
 
         let hostname_utf8 = hostname_str.to_utf8();
         let hostname = strings::without_prefix(hostname_utf8.slice(), b"www.");

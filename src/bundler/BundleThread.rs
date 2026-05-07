@@ -133,7 +133,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// on error drain `this.linker.source_maps.*_wait_group` then deinit.
     ///
     /// PORT NOTE: the un-gated `BundleV2` impl does not yet expose `init` /
-    /// `run_from_js_in_new_thread` (they live in `bundle_v2::__phase_a_draft`
+    /// `run_from_js_in_new_thread` (they live in `bundle_v2::_the gated draft block (now dissolved)`
     /// pending the linker pipeline un-gate). The Zig `@compileError` already
     /// proves this body is `JSBundleCompletionTask`-specific, so the
     /// construction + run is delegated to the trait impl in T6, which has

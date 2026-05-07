@@ -14,7 +14,7 @@
 // ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
 // TODO(b2-blocked): AsyncHTTP/HTTPContext/HTTPThread/ProxyTunnel are mutually
 // recursive (HTTPClient ↔ HTTPContext ↔ HTTPThread ↔ AsyncHTTP ↔ ProxyTunnel ↔
-// h2_client/h3_client) and must land together with the `_phase_a_draft` block
+// h2_client/h3_client) and must land together with the `the gated draft block (now dissolved)` block
 // below. ssl_config + ssl_wrapper are now resolved (un-gated this pass);
 // remaining lower-tier blockers are method bodies on
 // bun_uws::NewSocketHandler (connect/adopt/ext/write/…) and
@@ -107,7 +107,7 @@ pub const extremely_verbose: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
-// PORT NOTE: extracted from the gated `_phase_a_draft` block so `InternalState`
+// PORT NOTE: extracted from the gated `the gated draft block (now dissolved)` block so `InternalState`
 // can name it. The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
     // TODO(port): borrows owned_buf — raw slice ptr to avoid a self-referential lifetime.
@@ -151,7 +151,7 @@ impl Drop for HTTPResponseMetadata {
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2: extracted from `_phase_a_draft` — standalone items with no deps on
+// B-2: extracted from `the gated draft block (now dissolved)` — standalone items with no deps on
 // the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -430,7 +430,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
-// Extracted from `_phase_a_draft`. The heavy `impl HTTPClient` (socket
+// Extracted from `the gated draft block (now dissolved)`. The heavy `impl HTTPClient` (socket
 // dispatch / state machine) remains gated below until the missing
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.

@@ -1,33 +1,26 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    // TODO(b2-blocked): bun_bundler::Transpiler — opaque `Transpiler(())`; needs `.env`
-    // TODO(b2-blocked): bun_ini::load_npmrc (real signature — currently shadow stub `fn()`)
-    // TODO(b2-blocked): bun_api::BunInstall
-    // TODO(b2-blocked): bun_dotenv::Loader / Map (init + HashTable surface)
-    
-    pub fn load_npmrc_from_js(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> bun_jsc::JsResult<JSValue> {
-        use bun_string::String as BunString;
-        use bun_logger::{Log, Source};
-        use bun_install::npm::Registry;
-        use bun_ini::{config_iterator, load_npmrc};
-        use bun_dotenv as dotenv;
+    pub fn load_npmrc_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use bun_api::BunInstall;
+        use bun_core::ZStr;
+        use bun_dotenv as dotenv;
+        use bun_ini::{config_iterator, load_npmrc};
+        use bun_install::npm::Registry;
+        use bun_logger::{Log, Source};
+        use bun_string::String as BunString;
 
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_bun_string(global)?;
         let npmrc_utf8 = npmrc_contents.to_utf8();
-        let source = Source::init_path_string(b"<js>", npmrc_utf8.as_bytes());
+        let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
 
-        let mut log = Log::new();
+        let mut log = Log::init();
 
         // PERF(port): was ArenaAllocator bulk-free — profile in Phase B
         // (all `allocator.create`/`toOwnedSlice` below now use the global mimalloc)
@@ -36,48 +29,48 @@ impl IniTestingAPIs {
         // PORT NOTE: reshaped for borrowck — Zig returned either a VM-owned *Loader or
         // an arena-allocated *Loader from a labeled block. Per PORTING.md §Forbidden
         // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
-        // `Option`s and borrow uniformly. Both drop at fn return — same lifetime as
-        // the original arena.
+        // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
+        // return — same lifetime as the original arena.
         let mut map_storage: Option<Box<dotenv::Map>> = None;
         let mut env_storage: Option<dotenv::Loader<'_>> = None;
-        let env: &dotenv::Loader<'_> = if envjs.is_empty_or_undefined_or_null() {
-            global.bun_vm().transpiler.env
+        let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
+            // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
+            // `transpiler.env` is set during VM init (transpiler.rs).
+            unsafe { (*global.bun_vm()).transpiler.env }
         } else {
             let mut envmap = dotenv::map::HashTable::new();
             let Some(envobj) = envjs.get_object() else {
-                return Err(global.throw_type_error("env must be an object"));
+                return Err(global.throw_type_error(format_args!("env must be an object")));
             };
-            // TODO(port): JSPropertyIterator took comptime options struct
-            // `.{ .skip_empty_name = false, .include_value = true }` in Zig.
             let mut object_iter = bun_jsc::JSPropertyIterator::init(
                 global,
                 envobj,
-                bun_jsc::JSPropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                },
+                bun_jsc::JSPropertyIteratorOptions::new(
+                    /* skip_empty_name */ false,
+                    /* include_value   */ true,
+                ),
             )?;
 
-            envmap.reserve(usize::from(object_iter.len));
+            envmap.ensure_total_capacity(object_iter.len)?;
 
             while let Some(key) = object_iter.next()? {
-                let keyslice = key.to_owned_slice()?;
+                let keyslice = key.to_owned_slice();
                 let value = object_iter.value;
                 if value.is_undefined() {
                     continue;
                 }
 
                 let value_str = value.get_zig_string(global)?;
-                let slice = value_str.to_owned_slice()?;
+                let slice = value_str.to_owned_slice();
 
                 // Zig: `catch return globalThis.throwOutOfMemoryValue()` — Rust aborts on OOM.
                 envmap.put(
-                    keyslice,
+                    &keyslice,
                     dotenv::map::Entry {
-                        value: slice,
+                        value: slice.into_boxed_slice(),
                         conditional: false,
                     },
-                );
+                )?;
             }
 
             map_storage = Some(Box::new(dotenv::Map { map: envmap }));
@@ -85,15 +78,32 @@ impl IniTestingAPIs {
             // return, mirroring the Zig arena's bulk-free.
             let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
             env_storage = Some(dotenv::Loader::init(map_ref));
-            env_storage.as_ref().unwrap()
+            // SAFETY: `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to
+            // `'static` so both `if` arms unify on a single pointer type. The borrow
+            // does not escape this function — `load_npmrc` only reads through it and
+            // both `env_storage` / `map_storage` drop at fn return.
+            unsafe {
+                core::mem::transmute::<*mut dotenv::Loader<'_>, *mut dotenv::Loader<'static>>(
+                    env_storage.as_mut().unwrap() as *mut _,
+                )
+            }
         };
 
-        // SAFETY: all-zero is a valid BunInstall (#[repr(C)] POD per schema codegen).
-        let mut install: Box<BunInstall> =
-            Box::new(unsafe { core::mem::zeroed::<BunInstall>() });
+        let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
-        if load_npmrc(&mut *install, env, b".npmrc", &mut log, &source, &mut configs).is_err() {
-            return Ok(log.to_js(global, "error"));
+        // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
+        // both outlive this call and are not aliased for its duration.
+        if load_npmrc(
+            &mut install,
+            unsafe { &mut *env },
+            ZStr::from_static(b".npmrc\0"),
+            &mut log,
+            &source,
+            &mut configs,
+        )
+        .is_err()
+        {
+            return bun_logger_jsc::log_to_js(&log, global, b"error");
         }
 
         let (
@@ -105,7 +115,7 @@ impl IniTestingAPIs {
         ) = 'brk: {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
-                    BunString::from_static(Registry::DEFAULT_URL),
+                    BunString::static_(Registry::DEFAULT_URL),
                     BunString::empty(),
                     BunString::empty(),
                     BunString::empty(),
@@ -123,26 +133,44 @@ impl IniTestingAPIs {
         };
         // `defer { *.deref() }` deleted — bun_string::String impls Drop.
 
-        // TODO(port): `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
-        // an anon struct's fields at comptime. Phase B needs a builder or proc-macro;
-        // approximated here as a (name, JSValue) slice.
-        Ok(bun_jsc::JSObject::create(
-            global,
-            &[
-                ("default_registry_url", default_registry_url.to_js(global)),
-                ("default_registry_token", default_registry_token.to_js(global)),
-                ("default_registry_username", default_registry_username.to_js(global)),
-                ("default_registry_password", default_registry_password.to_js(global)),
-                ("default_registry_email", default_registry_email.to_js(global)),
-            ],
-        )?
-        .to_js())
+        // PORT NOTE: `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
+        // an anon struct's fields at comptime. Rust has no field reflection; mirror with
+        // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
+        // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
+        // stays on the stack for JSC's conservative scan.
+        struct Pojo {
+            default_registry_url: BunString,
+            default_registry_token: BunString,
+            default_registry_username: BunString,
+            default_registry_password: BunString,
+            default_registry_email: BunString,
+        }
+        impl bun_jsc::js_object::PojoFields for Pojo {
+            const FIELD_COUNT: usize = 5;
+            fn put_fields(
+                &self,
+                global: &JSGlobalObject,
+                mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
+            ) -> JsResult<()> {
+                put(b"default_registry_url", self.default_registry_url.to_js(global)?)?;
+                put(b"default_registry_token", self.default_registry_token.to_js(global)?)?;
+                put(b"default_registry_username", self.default_registry_username.to_js(global)?)?;
+                put(b"default_registry_password", self.default_registry_password.to_js(global)?)?;
+                put(b"default_registry_email", self.default_registry_email.to_js(global)?)?;
+                Ok(())
+            }
+        }
+        let pojo = Pojo {
+            default_registry_url,
+            default_registry_token,
+            default_registry_username,
+            default_registry_password,
+            default_registry_email,
+        };
+        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }
 
-    // TODO(b2-blocked): bun_bundler::Transpiler — opaque `Transpiler(())`; needs `.env`
-    // TODO(b2-blocked): bun_js_parser_jsc::ExprJsc::to_js (parser.out is js_parser::Expr)
-    
-    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> bun_jsc::JsResult<JSValue> {
+    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use bun_ini::Parser;
 
         let arguments_ = frame.arguments_old::<1>();
@@ -152,19 +180,21 @@ impl IniTestingAPIs {
         let bunstr = jsstr.to_bun_string(global)?;
         let utf8str = bunstr.to_utf8();
 
-        let mut parser = Parser::init(
-            b"<src>",
-            utf8str.slice(),
-            global.bun_vm().transpiler.env,
-        );
+        // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
+        // `transpiler.env` is set during VM init (transpiler.rs).
+        let env = unsafe { &mut *(*global.bun_vm()).transpiler.env };
+        let mut parser = Parser::init(b"<src>", utf8str.slice(), env);
 
-        // PERF(port): Zig passed `parser.arena.allocator()`; ini is not an AST crate so
-        // the allocator param is dropped.
-        parser.parse()?;
+        // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
+        // `parser.arena.allocator()`); split the borrow via raw ptr so the bump
+        // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
+        // not moved/dropped for the lifetime of `parser`.
+        let bump: &bun_alloc::Arena = unsafe { &*(&parser.arena as *const bun_alloc::Arena) };
+        parser.parse(bump)?;
 
-        match parser.out.to_js(global) {
+        match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),
-            Err(e) => Err(global.throw_error(e, "failed to turn AST into JS")),
+            Err(e) => Err(global.throw_error(e.into(), "failed to turn AST into JS")),
         }
     }
 }
@@ -173,6 +203,6 @@ impl IniTestingAPIs {
 // PORT STATUS
 //   source:     src/install_jsc/ini_jsc.zig (129 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      arena removed (test-only path); JSObject::create anon-struct + JSPropertyIterator comptime opts need Phase-B API; dotenv::Loader/Map ownership reshaped to fn-scope Options (no Box::leak per §Forbidden)
+//   todos:      0
+//   notes:      arena removed (test-only path); JSObject::create anon-struct ported as local PojoFields impl; dotenv::Loader/Map ownership reshaped to fn-scope Options (no Box::leak per §Forbidden); env lifetime erased to *mut Loader<'static> to unify VM-owned/local-constructed arms
 // ──────────────────────────────────────────────────────────────────────────

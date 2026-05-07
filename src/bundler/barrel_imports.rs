@@ -294,7 +294,7 @@ fn resolve_barrel_records(
 ) -> i32 {
     // TODO(b2-blocked): `resolve_import_records` / `process_resolve_queue` /
     // `patch_import_record_source_indices` live on the gated
-    // `__phase_a_draft::BundleV2` and have not yet been hoisted onto the
+    // `_the gated draft block (now dissolved)::BundleV2` and have not yet been hoisted onto the
     // un-gated `crate::bundle_v2::BundleV2`. The Zig body
     // (barrel_imports.zig:210-233) is reproduced verbatim below for the
     // moment those methods land; until then this path is a no-op (records

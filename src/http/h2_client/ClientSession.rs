@@ -1183,6 +1183,6 @@ enum HeaderResult {
 //   notes:      heavy raw-ptr back-refs (ctx/client/stream); ref()/deref()
 //               RAII via SessionRefGuard (ref_scope); HTTPClient/
 //               HTTPContext methods routed through h2_* bridge stubs until
-//               lib.rs _phase_a_draft un-gates; u31/u24 aliased to u32;
+//               lib.rs the gated draft block (now dissolved) un-gates; u31/u24 aliased to u32;
 //               parse_frames borrows read_buffer via raw slice
 // ──────────────────────────────────────────────────────────────────────────

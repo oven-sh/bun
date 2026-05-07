@@ -1196,17 +1196,22 @@ impl VirtualMachine {
 
         if self.should_destruct_main_thread_on_exit() {
             // SAFETY: `event_loop` is a self-pointer into this VM.
-            if let Some(_t) = unsafe { (*self.event_loop()).forever_timer.take() } {
-                // TODO(b2): `uws::Timer::deinit(true)` — not surfaced in
-                // `bun_uws_sys::Timer` at this tier yet.
+            if let Some(t) = unsafe { (*self.event_loop()).forever_timer.take() } {
+                // SAFETY: `t` is the live usockets timer created in
+                // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
+                // frees it without re-entering the loop. Spec
+                // VirtualMachine.zig:967 `t.deinit(true)`.
+                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
             // live worker and wait for each to reach shutdown() first.
-            // TODO(b2-cycle): `webcore::WebWorker::terminate_all_and_wait(10_000)`
-            // lives in `bun_runtime` (forward-dep cycle). Route through
-            // `RuntimeHooks` once a slot is added.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: hook contract — main-thread only; futex-waits on
+                // every registered worker until each unparks at shutdown().
+                unsafe { (hooks.terminate_all_workers_and_wait)(10_000) };
+            }
 
             // Embedded per-VM socket groups must drain while JSC is still
             // alive (closeAll() fires on_close → JS). After JSC teardown,

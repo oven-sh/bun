@@ -451,7 +451,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 
 // ── bridge impls removed ────────────────────────────────────────────────
 // Formerly placeholder scaffolding while sibling modules were behind
-// `_phase_a_draft`. All 19 functions now have real ported bodies in their
+// `the gated draft block (now dissolved)`. All 19 functions now have real ported bodies in their
 // home modules; the state machine calls them directly:
 //   - h2::ClientSession::{create,attach,enqueue}      → src/http/h2_client/ClientSession.rs
 //   - h3::ClientContext::{get_or_create,connect}       → src/http/h3_client/ClientContext.rs

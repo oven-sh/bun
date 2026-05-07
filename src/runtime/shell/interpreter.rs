@@ -923,7 +923,7 @@ impl Interpreter {
                 match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
                     Ok(id) => id,
                     Err(e) => {
-                        self.throw(&ShellErr::new_sys(e));
+                        self.throw(ShellErr::new_sys(e));
                         // Spec: Zig's `Binary.makeChild` returns `null` here and
                         // the caller falls through as if the subshell exited 0
                         // (Binary.zig:55-61, 130-134); Stmt.zig returns `.failed`
@@ -1020,12 +1020,17 @@ impl Interpreter {
         &self.root_io
     }
 
-    pub fn throw(&mut self, err: &ShellErr) {
-        // Spec: `throwShellErr(err, event_loop)` raises a JS exception.
-        // TODO(b2-blocked): bun_jsc — throw_shell_err(err, self.event_loop).
-        // Until JSC is wired, stash the underlying syscall error so `finish`/
-        // the JS resolve path can surface it instead of silently dropping it.
-        self.last_err = Some(err.0.clone());
+    /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints
+    /// and exits(1); `js` raises a JS exception. Dispatch on `global_this`
+    /// (set only on the JS event-loop path by `create_shell_interpreter`).
+    pub fn throw(&mut self, err: ShellErr) {
+        if self.global_this.is_null() {
+            // Mini event loop — diverges (exit 1).
+            err.throw_mini();
+        }
+        // SAFETY: `global_this` was set by `create_shell_interpreter`; the
+        // global outlives the interpreter (held by the JS wrapper).
+        let _ = err.throw_js(unsafe { &*self.global_this });
     }
 
     // ── run loop ───────────────────────────────────────────────────────────

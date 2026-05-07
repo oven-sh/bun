@@ -516,6 +516,10 @@ impl ShellSubprocess {
         }
 
         let cmd_parent = &mut *spawn_args.cmd_parent;
+        // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
+        // completion. Zig threads this implicitly via `Base.interpreter`; the
+        // NodeId-arena port stashes it on `Cmd.interp`.
+        let interp = cmd_parent.interp;
         // Build the `[*:null]?[*:0]const u8` argv view for spawnProcess. Zig's
         // `Cmd.args` is `ArrayList(?[*:0]const u8)` so it just appends `null`;
         // the Rust port stores `Vec<Vec<u8>>`, so materialise a contiguous
@@ -588,6 +592,7 @@ impl ShellSubprocess {
             event_loop,
             subprocess,
             spawn_stdout,
+            interp,
             DEFAULT_MAX_BUFFER_SIZE,
             true,
         );
@@ -598,6 +603,7 @@ impl ShellSubprocess {
             event_loop,
             subprocess,
             spawn_stderr,
+            interp,
             DEFAULT_MAX_BUFFER_SIZE,
             true,
         );
@@ -1079,7 +1085,7 @@ impl Readable {
                     readable
                 }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type,
+                    event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
             };
@@ -1099,12 +1105,12 @@ impl Readable {
             // where the user passed in a Blob with an fd
             Stdio::Blob(_) => Readable::Ignore,
             Stdio::Memfd(memfd) => Readable::Memfd(*memfd),
-            Stdio::Pipe => {
-                Readable::Pipe(PipeReader::create(event_loop, process, result, None, out_type))
-            }
+            Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                event_loop, process, result, None, out_type, interp,
+            )),
             Stdio::ArrayBuffer(array_buffer) => {
                 let readable = Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type,
+                    event_loop, process, result, None, out_type, interp,
                 ));
                 if let Readable::Pipe(pipe) = &readable {
                     // TODO(port): Arc interior mutability for buffered_output.
@@ -1124,7 +1130,7 @@ impl Readable {
                 readable
             }
             Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                event_loop, process, result, shellio, out_type,
+                event_loop, process, result, shellio, out_type, interp,
             )),
             Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
         }

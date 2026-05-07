@@ -2279,11 +2279,11 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value("oldPath", "string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
+                ctx.throw_invalid_argument_type_value(b"oldPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
             })?;
             let new_path = match PathLike::from_js(ctx, arguments)? {
                 Some(p) => p,
-                None => { old_path.deinit(); return Err(ctx.throw_invalid_argument_type_value("newPath", "string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))); }
+                None => { old_path.deinit(); return Err(ctx.throw_invalid_argument_type_value(b"newPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))); }
             };
             Ok(Rename { old_path, new_path })
         }
@@ -2304,7 +2304,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments("path must be a string or TypedArray")
+                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else { break 'brk 0 };
@@ -2334,7 +2334,7 @@ pub mod args {
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
-                arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments("Expected an ArrayBufferView[]"))?,
+                arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]")))?,
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
@@ -2342,7 +2342,7 @@ pub mod args {
                     if pos_value.is_number() {
                         position = Some(pos_value.to_int64() as u64);
                     } else {
-                        return Err(ctx.throw_invalid_arguments("position must be a number"));
+                        return Err(ctx.throw_invalid_arguments(format_args!("position must be a number")));
                     }
                 }
             }
@@ -2370,7 +2370,7 @@ pub mod args {
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
-                arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments("Expected an ArrayBufferView[]"))?,
+                arguments.protect_eat_next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]")))?,
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
@@ -2378,7 +2378,7 @@ pub mod args {
                     if pos_value.is_number() {
                         position = Some(pos_value.to_int64() as u64);
                     } else {
-                        return Err(ctx.throw_invalid_arguments("position must be a number"));
+                        return Err(ctx.throw_invalid_arguments(format_args!("position must be a number")));
                     }
                 }
             }
@@ -2422,17 +2422,17 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer path.deinit()` — fires on every error return, including
             // `try validateInteger`. Model with scopeguard, defused on success.
             let path = scopeguard::guard(path, |p| p.deinit());
             let uid: UidT = 'brk: {
-                let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
+                let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("uid is required"))); };
                 arguments.eat();
                 break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
-                let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
+                let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("gid is required"))); };
                 arguments.eat();
                 break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
@@ -2452,12 +2452,12 @@ pub mod args {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let uid: UidT = 'brk: {
-                let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
+                let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("uid is required"))); };
                 arguments.eat();
                 break 'brk wrap_to::<UidT>(validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
-                let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
+                let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("gid is required"))); };
                 arguments.eat();
                 break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
@@ -2488,14 +2488,14 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer path.deinit()` — also covers the `try timeLikeFromJS` throws.
             let path = scopeguard::guard(path, |p| p.deinit());
-            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("atime is required"))?)?
-                .ok_or_else(|| ctx.throw_invalid_arguments("atime must be a number or a Date"))?;
+            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime is required")))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date")))?;
             arguments.eat();
-            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("mtime is required"))?)?
-                .ok_or_else(|| ctx.throw_invalid_arguments("mtime must be a number or a Date"))?;
+            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime is required")))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date")))?;
             arguments.eat();
             Ok(Lutimes { path: scopeguard::ScopeGuard::into_inner(path), atime, mtime })
         }
@@ -2511,7 +2511,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer path.deinit()` — also covers the `try modeFromJS` throw.
             let path = scopeguard::guard(path, |p| p.deinit());
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
@@ -2553,7 +2553,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer path.deinit()` — covers the `try get_boolean_strict` throw.
             let path = scopeguard::guard(path, |p| p.deinit());
             let big_int = 'brk: {
@@ -2581,7 +2581,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer path.deinit()` (node_fs.zig:1756).
             let path = scopeguard::guard(path, |p| p.deinit());
             let mut throw_if_no_entry = true;
@@ -2635,10 +2635,10 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.old_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Link> {
-            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("oldPath must be a string or TypedArray"))?;
+            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("oldPath must be a string or TypedArray")))?;
             let new_path = match PathLike::from_js(ctx, arguments)? {
                 Some(p) => p,
-                None => { old_path.deinit(); return Err(ctx.throw_invalid_arguments("newPath must be a string or TypedArray")); }
+                None => { old_path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("newPath must be a string or TypedArray"))); }
             };
             Ok(Link { old_path, new_path })
         }
@@ -2663,10 +2663,10 @@ pub mod args {
         pub fn deinit_and_unprotect(&self) { self.target_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.target_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
-            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("target must be a string or TypedArray"))?;
+            let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("target must be a string or TypedArray")))?;
             // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883).
             let old_path = scopeguard::guard(old_path, |p| p.deinit());
-            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888).
             let new_path = scopeguard::guard(new_path, |p| p.deinit());
             // The type argument is only available on Windows and
@@ -2712,7 +2712,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readlink> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut encoding = Encoding::Utf8;
             if let Some(val) = arguments.next() {
                 arguments.eat();
@@ -2736,7 +2736,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Realpath> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut encoding = Encoding::Utf8;
             if let Some(val) = arguments.next() {
                 arguments.eat();
@@ -2766,7 +2766,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Unlink> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             Ok(Unlink { path })
         }
     }
@@ -2788,7 +2788,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn deinit(&self) { self.path.deinit(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut recursive = false;
             let mut force = false;
             let mut max_retries: u32 = 0;
@@ -2798,11 +2798,11 @@ pub mod args {
                 if val.is_object() {
                     if let Some(boolean) = val.get(ctx, "recursive")? {
                         if boolean.is_boolean() { recursive = boolean.to_boolean(); }
-                        else { path.deinit(); return Err(ctx.throw_invalid_arguments("The \"options.recursive\" property must be of type boolean.")); }
+                        else { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("The \"options.recursive\" property must be of type boolean."))); }
                     }
                     if let Some(boolean) = val.get(ctx, "force")? {
                         if boolean.is_boolean() { force = boolean.to_boolean(); }
-                        else { path.deinit(); return Err(ctx.throw_invalid_arguments("The \"options.force\" property must be of type boolean.")); }
+                        else { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("The \"options.force\" property must be of type boolean."))); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
                         retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
@@ -2812,7 +2812,7 @@ pub mod args {
                     }
                 } else if !val.is_undefined() {
                     path.deinit();
-                    return Err(ctx.throw_invalid_arguments("The \"options\" argument must be of type object."));
+                    return Err(ctx.throw_invalid_arguments(format_args!("The \"options\" argument must be of type object.")));
                 }
             }
             Ok(RmDir { path, recursive, force, max_retries, retry_delay })
@@ -2842,7 +2842,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Mkdir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut recursive = false;
             let mut mode: Mode = 0o777;
             if let Some(val) = arguments.next() {
@@ -2874,7 +2874,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.prefix.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<MkdirTemp> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value("prefix", "string, Buffer, or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
+                ctx.throw_invalid_argument_type_value(b"prefix", b"string, Buffer, or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
             })?;
             let mut encoding = Encoding::Utf8;
             if let Some(val) = arguments.next() {
@@ -2907,7 +2907,7 @@ pub mod args {
             }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readdir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
@@ -2950,7 +2950,7 @@ pub mod args {
         pub fn deinit_and_unprotect(&self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Open> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut flags = FileSystemFlags::R;
             let mut mode: Mode = DEFAULT_PERMISSION;
             if let Some(val) = arguments.next() {
@@ -2996,11 +2996,11 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
-            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("atime is required"))?)?
-                .ok_or_else(|| ctx.throw_invalid_arguments("atime must be a number or a Date"))?;
+            let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime is required")))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date")))?;
             arguments.eat();
-            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments("mtime is required"))?)?
-                .ok_or_else(|| ctx.throw_invalid_arguments("mtime must be a number or a Date"))?;
+            let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime is required")))?)?
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date")))?;
             arguments.eat();
             Ok(Futimes { fd, atime, mtime })
         }
@@ -3049,10 +3049,10 @@ pub mod args {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let fd = FD::from_js_validated(fd_value, ctx)?.ok_or_else(|| throw_invalid_fd_error(ctx, fd_value))?;
             let buffer_value = arguments.next();
-            let bv = buffer_value.ok_or_else(|| ctx.throw_invalid_arguments("data is required"))?;
-            let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| ctx.throw_invalid_argument_type_value("buffer", "string or TypedArray", bv))?;
+            let bv = buffer_value.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
+            let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv))?;
             if bv.is_string() && !bv.is_string_literal() {
-                return Err(ctx.throw_invalid_argument_type_value("buffer", "string or TypedArray", bv));
+                return Err(ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv));
             }
             let encoding = if matches!(buffer, StringOrBuffer::Buffer(_)) { Encoding::Buffer } else { Encoding::Utf8 };
             // `errdefer args.deinit()` — guard so any `?`-propagated JsError below
@@ -3130,9 +3130,9 @@ pub mod args {
             //  validateBuffer(buffer);
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
-                ctx.throw_invalid_arguments("buffer is required"))?;
+                ctx.throw_invalid_arguments(format_args!("buffer is required")))?;
             let buffer = Buffer::from_js(ctx, buffer_value)
-                .ok_or_else(|| ctx.throw_invalid_argument_type_value("buffer", "TypedArray", buffer_value))?;
+                .ok_or_else(|| ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value))?;
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
             // if (offset == null) {
@@ -3202,7 +3202,7 @@ pub mod args {
                 }
                 position.to_int64()
             } else {
-                return Err(ctx.throw_invalid_argument_type_value("position", "number or bigint", position_value));
+                return Err(ctx.throw_invalid_argument_type_value(b"position", b"number or bigint", position_value));
             };
 
             // Bun needs `null` to tell the native function if to use pread or read
@@ -3242,7 +3242,7 @@ pub mod args {
         }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
+            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or a file descriptor")))?;
             // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
             // releases the parsed path (matches node_fs.zig).
             let path = scopeguard::guard(path, |p| p.deinit());
@@ -3258,7 +3258,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments("Invalid flag"))?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Invalid flag")))?;
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal_ptr) = AbortSignal::from_js(value) {
@@ -3267,7 +3267,7 @@ pub mod args {
                             *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value("signal", "AbortSignal", value));
+                            return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
                     }
                 }
@@ -3306,11 +3306,11 @@ pub mod args {
             if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<WriteFile> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
+            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or a file descriptor")))?;
             // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
             // releases the parsed path (matches node_fs.zig).
             let path = scopeguard::guard(path, |p| p.deinit());
-            let data_value = arguments.next_eat().ok_or_else(|| ctx.throw_invalid_arguments("data is required"))?;
+            let data_value = arguments.next_eat().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::W;
             let mut mode: Mode = DEFAULT_PERMISSION;
@@ -3326,7 +3326,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments("Invalid flag"))?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Invalid flag")))?;
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -3338,14 +3338,14 @@ pub mod args {
                             *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value("signal", "AbortSignal", value));
+                            return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
                     }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value("flush", "boolean", flush_));
+                            return Err(ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_));
                         }
                     }
                 }
@@ -3378,7 +3378,7 @@ pub mod args {
     impl OpenDir {
         pub fn deinit(&self) { self.path.deinit(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<OpenDir> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut encoding = Encoding::Buffer;
             let mut buffer_size: c_int = 32;
             if let Some(arg) = arguments.next() {
@@ -3391,7 +3391,7 @@ pub mod args {
                     if let Ok(e) = get_encoding(arg, ctx, encoding) { encoding = e; }
                     if let Some(bs) = arg.get(ctx, "bufferSize")? {
                         buffer_size = bs.to_int32();
-                        if buffer_size < 0 { path.deinit(); return Err(ctx.throw_invalid_arguments("bufferSize must be > 0")); }
+                        if buffer_size < 0 { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("bufferSize must be > 0"))); }
                     }
                 }
             }
@@ -3418,7 +3418,7 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Access> {
-            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3449,10 +3449,10 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.src.to_thread_safe(); self.dest.to_thread_safe(); }
         pub fn deinit_and_unprotect(&self) { self.src.deinit_and_unprotect(); self.dest.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<CopyFile> {
-            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("src must be a string or TypedArray"))?;
+            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
             let dest = match PathLike::from_js(ctx, arguments)? {
                 Some(p) => p,
-                None => { src.deinit(); return Err(ctx.throw_invalid_arguments("dest must be a string or TypedArray")); }
+                None => { src.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray"))); }
             };
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
@@ -3485,10 +3485,10 @@ pub mod args {
             if self.flags.deinit_paths { self.src.deinit(); self.dest.deinit(); }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
-            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("src must be a string or TypedArray"))?;
+            let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
             let dest = match PathLike::from_js(ctx, arguments)? {
                 Some(p) => p,
-                None => { src.deinit(); return Err(ctx.throw_invalid_arguments("dest must be a string or TypedArray")); }
+                None => { src.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray"))); }
             };
             let mut recursive = false;
             let mut error_on_exist = false;
@@ -7319,7 +7319,7 @@ fn throw_invalid_fd_error(global: &JSGlobalObject, value: JSValue) -> JsError {
             bun_core::fmt::double(value.as_number())
         )).throw();
     }
-    global.throw_invalid_argument_type_value("fd", "number", value)
+    global.throw_invalid_argument_type_value(b"fd", b"number", value)
 }
 
 #[unsafe(no_mangle)]

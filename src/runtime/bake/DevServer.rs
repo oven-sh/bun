@@ -2879,7 +2879,9 @@ impl DevServer {
             unsafe { &*heap_ptr },
             event_loop,
             false, // watching is handled separately
-            Some(bun_threading::work_pool::WorkPool::get()),
+            Some(::core::ptr::NonNull::from(
+                bun_threading::work_pool::WorkPool::get(),
+            )),
             heap,
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>());

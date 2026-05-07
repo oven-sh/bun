@@ -3589,6 +3589,12 @@ impl BunXFastPath {
             i += 1;
             i += Self::append_windows_argument(&mut command_line[i..], arg);
         }
+        // Zig: `ctx.passthrough = passthrough;` — `direct_launch_callback` →
+        // `Run.boot` reads `vm.argv = ctx.passthrough`, so the assignment must
+        // happen before the shim may call back. Current callers pass a clone of
+        // `ctx.passthrough` so this is a write-back of identical data, but the
+        // spec contract is that *this* `passthrough` wins.
+        ctx.passthrough = passthrough.to_vec();
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let env_buf = unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::ENVIRONMENT_BUFFER) };

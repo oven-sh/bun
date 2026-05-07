@@ -88,12 +88,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     }
 
     let mut cwd_buf = PathBuffer::uninit();
-    // SAFETY: `bun_paths::PathBuffer` and `bun_core::PathBuffer` are
-    // layout-identical `#[repr(C)]` newtypes over `[u8; MAX_PATH_BYTES]`;
-    // pointer cast is sound (see run_command.rs for the same shim).
-    let cwd = match bun_core::getcwd(unsafe {
-        &mut *(core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
-    }) {
+    let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             Output::err(err, "Could not query current working directory", ());
@@ -1620,7 +1615,9 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
     if let Some(value) = pt.module_map.get(utf8.slice()) {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
-        return pt.bundled_outputs[value.0 as usize].value.clone().to_bun_string();
+        // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
+        // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
+        return pt.bundled_outputs[value.0 as usize].value.to_bun_string_ref();
     }
     BunString::dead()
 }
@@ -1633,7 +1630,7 @@ pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunSt
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.0 as usize].value.clone().to_bun_string();
+        return pt.bundled_outputs[value.0 as usize].value.to_bun_string_ref();
     }
     BunString::dead()
 }

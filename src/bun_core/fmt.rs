@@ -805,10 +805,7 @@ pub struct DebugUTF32PathFormatter<'a> {
 impl Display for DebugUTF32PathFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut path_buf = crate::PathBuffer::uninit();
-        // SAFETY: writing into uninit bytes, only reading back `result.count` of them.
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(path_buf.as_mut_ptr() as *mut u8, crate::MAX_PATH_BYTES)
-        };
+        let buf = path_buf.as_mut_slice();
         // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
         let result = unsafe {
             bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(

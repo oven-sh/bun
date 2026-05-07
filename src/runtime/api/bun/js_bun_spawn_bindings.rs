@@ -231,9 +231,7 @@ fn get_argv0(
             .throw());
     }
     // Heap allocate it to ensure we don't run out of stack space.
-    // SAFETY: `which()` writes into the buffer before reading any byte of it.
-    let mut path_buf: Box<bun_core::PathBuffer> =
-        unsafe { Box::new(bun_core::PathBuffer::uninit().assume_init()) };
+    let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
     // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
 
     let actual_argv0: ZBox;

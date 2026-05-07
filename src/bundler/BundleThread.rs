@@ -238,8 +238,8 @@ impl<C: CompletionStruct> BundleThread<C> {
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
             // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
-            timer.init(unsafe { (*instance).waker.loop_.uv_loop });
-            timer.start(u64::MAX, u64::MAX, timer_callback);
+            timer.init(unsafe { (*instance).waker.uv_loop() });
+            timer.start(u64::MAX, u64::MAX, Some(timer_callback));
         }
 
         let mut has_bundled = false;

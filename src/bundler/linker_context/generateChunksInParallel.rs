@@ -364,7 +364,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             if strings::index_of(&rel_path, b"/./").is_some() {
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let rel_path_fixed: Box<[u8]> = Box::from(
-                    &*path::resolve_path::normalize_buf::<path::resolve_path::Posix>(&rel_path, &mut buf),
+                    &*path::resolve_path::normalize_buf::<path::platform::Posix>(&rel_path, &mut buf),
                 );
                 chunk.final_rel_path = leak_static(rel_path_fixed);
                 continue;

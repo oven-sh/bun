@@ -135,7 +135,7 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
     #[cfg(windows)]
     {
         // On Windows, remove NT path prefixes before checking
-        let canonicalized = strings::without_nt_prefix::<u8>(str_);
+        let canonicalized = strings::paths::without_nt_prefix::<u8>(str_);
         return is_bun_standalone_file_path_canonicalized(canonicalized);
     }
     #[cfg(not(windows))]
@@ -169,8 +169,8 @@ impl StandaloneModuleGraph {
         #[cfg(windows)]
         {
             let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::without_nt_prefix::<u8>(name);
-            let normalized = path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
+            let input = strings::paths::without_nt_prefix::<u8>(name);
+            let normalized = path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
             return self.files.get_mut(normalized);
         }
         #[cfg(not(windows))]
@@ -204,8 +204,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         #[cfg(windows)]
         let file = {
             let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::without_nt_prefix::<u8>(name);
-            let normalized = path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
+            let input = strings::paths::without_nt_prefix::<u8>(name);
+            let normalized = path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
             self.files.get(normalized)
         };
         #[cfg(not(windows))]
@@ -395,7 +395,8 @@ impl File {
         // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
         let mut result: Stat = unsafe { core::mem::zeroed() };
         result.st_size = self.contents.len() as _;
-        result.st_mode = libc::S_IFREG | 0o644;
+        // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
+        result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
     }
 
@@ -1068,31 +1069,32 @@ pub fn inject(
             let mut in_buf = WPathBuffer::uninit();
             strings::copy_u8_into_u16(&mut in_buf, self_exe.as_bytes());
             in_buf[self_exe.len()] = 0;
-            // SAFETY: in_buf[self_exe.len()] == 0 written above.
-            let in_ = unsafe { bun_str::WStr::from_raw(in_buf.as_ptr(), self_exe.len()) };
             let mut out_buf = WPathBuffer::uninit();
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
             out_buf[zname.len()] = 0;
-            // SAFETY: out_buf[zname.len()] == 0 written above.
-            let out = unsafe { bun_str::WStr::from_raw(out_buf.as_ptr(), zname.len()) };
 
-            if let Err(e) = bun_sys::copy_file(in_, out).unwrap_result() {
+            use bun_sys::windows as w;
+            // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
+            // retain the pointers past return.
+            if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
+                let e = w::Win32Error::get();
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    e.name()
+                    e.int()
                 ));
                 return Fd::invalid();
             }
-            use bun_sys::windows as w;
+            let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
-                Syscall::OpenFileOptions {
+                Syscall::NtCreateFileOptions {
                     access_mask: w::SYNCHRONIZE | w::GENERIC_WRITE | w::GENERIC_READ | w::DELETE,
                     disposition: w::FILE_OPEN,
                     options: w::FILE_SYNCHRONOUS_IO_NONALERT | w::FILE_OPEN_REPARSE_POINT,
+                    ..Default::default()
                 },
-            ).unwrap_result() {
+            ) {
                 Ok(f) => f,
                 Err(e) => {
                     Output::pretty_errorln(format_args!(
@@ -1396,7 +1398,7 @@ pub fn inject(
             let total_byte_count: usize;
             #[cfg(windows)]
             {
-                total_byte_count = bytes.len() + 8 + match Syscall::set_file_offset_to_end_windows(cloned_executable_fd).unwrap_result() {
+                total_byte_count = bytes.len() + 8 + match Syscall::set_file_offset_to_end_windows(cloned_executable_fd) {
                     Ok(v) => v,
                     Err(e) => {
                         Output::pretty_errorln(format_args!(
@@ -1493,14 +1495,7 @@ pub fn inject(
             || inject_options.copyright.is_some()
         {
             let mut zname_buf = OSPathBuffer::uninit();
-            let zname_w = match bun_str::strings::to_w_path_normalized(&mut zname_buf, zname.as_bytes()) {
-                Ok(w) => w,
-                Err(e) => {
-                    Output::err(e, "failed to resolve executable path", format_args!(""));
-                    cleanup(zname, cloned_executable_fd);
-                    return Fd::invalid();
-                }
-            };
+            let zname_w = strings::paths::to_w_path_normalized(&mut zname_buf, zname.as_bytes());
 
             // Single call to set all Windows metadata at once
             if let Err(e) = bun_sys::windows::rescle::set_windows_metadata(
@@ -1677,7 +1672,7 @@ pub fn to_executable(
             Err(e) => {
                 if fd != Fd::INVALID { fd.close(); }
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get temp file path: {}", e.name()
+                    "Failed to get temp file path: {}", bstr::BStr::new(e.name())
                 )));
             }
         };
@@ -1686,32 +1681,33 @@ pub fn to_executable(
         // On Windows, we need an absolute path for MoveFileExW
         // Get the current working directory and join with outfile
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd_path = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(p) => p,
+        let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+            Ok(len) => &cwd_buf[..len],
             Err(e) => {
                 if fd != Fd::INVALID { fd.close(); }
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get current directory: {}", e.name()
+                    "Failed to get current directory: {}", bstr::BStr::new(e.name())
                 )));
             }
         };
         let dest_path = if bun_paths::is_absolute(outfile) {
             outfile
         } else {
-            path::join_abs_string(cwd_path, &[outfile], path::Style::Auto)
+            path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
         };
 
         // Convert paths to Windows UTF-16
         let mut temp_buf_w = OSPathBuffer::uninit();
         let mut dest_buf_w = OSPathBuffer::uninit();
-        let temp_w = bun_str::strings::to_w_path_normalized(&mut temp_buf_w, temp_path);
-        let dest_w = bun_str::strings::to_w_path_normalized(&mut dest_buf_w, dest_path);
+        let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
+        let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
 
-        // Ensure null termination
-        let temp_buf_u16 = bun_core::reinterpret_slice::<u16>(&mut temp_buf_w);
-        let dest_buf_u16 = bun_core::reinterpret_slice::<u16>(&mut dest_buf_w);
-        temp_buf_u16[temp_w.len()] = 0;
-        dest_buf_u16[dest_w.len()] = 0;
+        // `to_w_path_normalized` already NUL-terminates (`buf[len] = 0`); the
+        // explicit re-slice below is just to derive the wide-string pointers.
+        let temp_buf_u16: &mut [u16] = &mut temp_buf_w;
+        let dest_buf_u16: &mut [u16] = &mut dest_buf_w;
+        temp_buf_u16[temp_w_len] = 0;
+        dest_buf_u16[dest_w_len] = 0;
 
         // Close the file handle before moving (Windows requires this)
         fd.close();
@@ -1722,15 +1718,15 @@ pub fn to_executable(
         // SAFETY: NUL-terminated wide strings constructed above.
         if unsafe {
             windows::kernel32::MoveFileExW(
-                temp_buf_u16[..temp_w.len()].as_ptr(),
-                dest_buf_u16[..dest_w.len()].as_ptr(),
+                temp_buf_u16[..temp_w_len].as_ptr(),
+                dest_buf_u16[..dest_w_len].as_ptr(),
                 windows::MOVEFILE_COPY_ALLOWED | windows::MOVEFILE_REPLACE_EXISTING | windows::MOVEFILE_WRITE_THROUGH,
             )
         } == windows::FALSE
         {
             let werr = windows::Win32Error::get();
             if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::Errno::EISDIR {
+                if sys_err == bun_sys::SystemErrno::EISDIR {
                     return Ok(CompileResult::fail_fmt(format_args!(
                         "{} is a directory. Please choose a different --outfile or delete the directory",
                         bstr::BStr::new(outfile)
@@ -1759,7 +1755,7 @@ pub fn to_executable(
         {
             // The file has been moved to dest_path
             if let Err(e) = windows::rescle::set_windows_metadata(
-                dest_buf_u16[..dest_w.len()].as_ptr(),
+                dest_buf_u16[..dest_w_len].as_ptr(),
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),

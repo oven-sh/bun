@@ -514,6 +514,31 @@ impl core::ops::Deref for WStr {
     #[inline] fn deref(&self) -> &[u16] { &self.0 }
 }
 
+/// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time
+/// ASCII→UTF-16LE widening for Windows path / API literals; mirrors Zig
+/// `bun.strings.w("lit")` / `std.unicode.utf8ToUtf16LeStringLiteral`.
+///
+/// Restricted to ASCII (`debug_assert` in the const evaluator) — every call
+/// site is a hard-coded path component (`"node_modules"`, `".git"`, etc.).
+#[macro_export]
+macro_rules! wstr {
+    ($lit:literal) => {{
+        const __BYTES: &[u8] = $lit.as_bytes();
+        const __N: usize = __BYTES.len();
+        const __W: [u16; __N + 1] = {
+            let mut out = [0u16; __N + 1];
+            let mut i = 0;
+            while i < __N {
+                debug_assert!(__BYTES[i].is_ascii(), "wstr!() literal must be ASCII");
+                out[i] = __BYTES[i] as u16;
+                i += 1;
+            }
+            out
+        };
+        &__W
+    }};
+}
+
 /// `zstr!("lit")` → `&'static ZStr`. Mirrors Zig `"lit"` which is `*const [N:0]u8`.
 #[macro_export]
 macro_rules! zstr {

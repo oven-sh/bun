@@ -2306,14 +2306,27 @@ pub mod StdioFlags {
     pub const writable_pipe: super::c_uint = super::UV_WRITABLE_PIPE;
     pub const nonblock_pipe: super::c_uint = super::UV_NONBLOCK_PIPE;
     pub const overlapped_pipe: super::c_uint = super::UV_OVERLAPPED_PIPE;
+    // SCREAMING_CASE aliases — Zig exposes both via the implicit
+    // tag↔int coercion; downstream `bun_spawn` was authored against the
+    // upper-case form (process.zig:1261 `StdioFlags.INHERIT_FD`).
+    pub const IGNORE: super::c_uint = super::UV_IGNORE;
+    pub const CREATE_PIPE: super::c_uint = super::UV_CREATE_PIPE;
+    pub const INHERIT_FD: super::c_uint = super::UV_INHERIT_FD;
+    pub const INHERIT_STREAM: super::c_uint = super::UV_INHERIT_STREAM;
+    pub const READABLE_PIPE: super::c_uint = super::UV_READABLE_PIPE;
+    pub const WRITABLE_PIPE: super::c_uint = super::UV_WRITABLE_PIPE;
+    pub const NONBLOCK_PIPE: super::c_uint = super::UV_NONBLOCK_PIPE;
+    pub const OVERLAPPED_PIPE: super::c_uint = super::UV_OVERLAPPED_PIPE;
 }
-pub const UV_PROCESS_SETUID: c_int = 1;
-pub const UV_PROCESS_SETGID: c_int = 2;
-pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_int = 4;
-pub const UV_PROCESS_DETACHED: c_int = 8;
-pub const UV_PROCESS_WINDOWS_HIDE: c_int = 16;
-pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
-pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
+// `uv_process_flags` — `c_uint` to match `uv_process_options_t.flags` so
+// `flags |= UV_PROCESS_*` typechecks (uv.h declares the enum unsigned).
+pub const UV_PROCESS_SETUID: c_uint = 1;
+pub const UV_PROCESS_SETGID: c_uint = 2;
+pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_uint = 4;
+pub const UV_PROCESS_DETACHED: c_uint = 8;
+pub const UV_PROCESS_WINDOWS_HIDE: c_uint = 16;
+pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_uint = 32;
+pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_uint = 64;
 
 pub const UV_PRIORITY_LOW: c_int = 19;
 pub const UV_PRIORITY_BELOW_NORMAL: c_int = 10;

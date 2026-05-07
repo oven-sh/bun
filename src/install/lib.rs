@@ -363,14 +363,18 @@ pub(crate) mod install {
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
-#[cfg(windows)]
+// `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls) —
+// in Zig it is a separate `exe` artifact whose output is `@embedFile`d above;
+// it is never linked into the library. The Rust port lives alongside for
+// reference but is built as its own binary target, not as a `mod` of this lib
+// (it has no `std`, pulls private ntdll surface, and would drag a second
+// `#[global_allocator]` into the crate graph).
+#[cfg(any())]
 #[path = "windows-shim/bun_shim_impl.rs"]
 mod _bun_shim_impl;
 pub mod windows_shim {
     pub use crate::_bin_linking_shim as bin_linking_shim;
     pub use bin_linking_shim::BinLinkingShim;
-    #[cfg(windows)]
-    pub use crate::_bun_shim_impl as bun_shim_impl;
 }
 
 #[path = "resolvers/folder_resolver.rs"]

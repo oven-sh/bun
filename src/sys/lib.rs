@@ -2695,6 +2695,17 @@ mod windows_impl {
         }
         Ok(new)
     }
+    /// sys.zig:3822 `setFileOffsetToEndWindows` — `SetFilePointerEx(.., FILE_END)`
+    /// returning the new offset as `usize`.
+    pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
+        let mut new: i64 = 0;
+        // SAFETY: `fd` is a valid kernel handle (caller invariant).
+        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
+        if ok == w::FALSE {
+            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+        }
+        Ok(usize::try_from(new).expect("int cast"))
+    }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // sys.zig:452-455 — windows: `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated

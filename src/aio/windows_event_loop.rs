@@ -493,6 +493,17 @@ impl Waker {
         })
     }
 
+    /// The libuv loop backing the process-global `WindowsLoop`. Exposed so
+    /// callers that need a bare `uv_loop_t*` (e.g. `BundleThread`'s keep-alive
+    /// timer) can wire libuv handles without holding a `&WindowsLoop` borrow
+    /// against the shared global.
+    #[inline]
+    pub fn uv_loop(&self) -> *mut uv::Loop {
+        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton; its
+        // `uv_loop` is set by `us_create_loop` and immutable for the process.
+        unsafe { (*self.loop_).uv_loop }
+    }
+
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
     #[allow(unused)]
     pub fn get_fd(&self) -> Fd {

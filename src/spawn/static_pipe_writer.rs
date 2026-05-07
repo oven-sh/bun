@@ -4,6 +4,8 @@ use core::mem::size_of;
 use bun_aio::Loop as AsyncLoop;
 use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriter, WriteStatus};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_sys;
 
@@ -122,9 +124,11 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
 
 #[cfg(windows)]
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_windows::libuv::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_sys::windows::libuv::Loop {
         // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
-        unsafe { (*this).loop_() }
+        // `platform_event_loop()` returns the live `uws::WindowsLoop*`; its
+        // embedded `uv_loop` is what `bun_io` expects.
+        unsafe { (*(*this).event_loop.platform_event_loop()).uv_loop }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump.
@@ -224,7 +228,21 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let this_ref = unsafe { &mut *this };
         #[cfg(windows)]
         {
-            this_ref.writer.set_pipe(this_ref.stdio_result.buffer);
+            // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
+            // `StdioResult` is the `WindowsStdioResult` union; only the
+            // `.Buffer` arm carries a pipe to attach. Ownership of the boxed
+            // `uv::Pipe` transfers into the writer's `Source::Pipe`, so we
+            // `Box::into_raw` it back out (set_pipe re-wraps via `Box::from_raw`).
+            if let crate::process::WindowsStdioResult::Buffer(pipe) =
+                core::mem::replace(
+                    &mut this_ref.stdio_result,
+                    crate::process::WindowsStdioResult::Unavailable,
+                )
+            {
+                // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
+                // takes ownership via `Box::from_raw`.
+                unsafe { this_ref.writer.set_pipe(Box::into_raw(pipe)) };
+            }
         }
         this_ref.writer.set_parent(this);
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.

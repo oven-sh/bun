@@ -40,7 +40,7 @@ fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     { Timespec { sec: s.st_mtimespec.tv_sec as i64, nsec: s.st_mtimespec.tv_nsec as i64 } }
     #[cfg(windows)]
-    { Timespec { sec: s.st_mtim.tv_sec as i64, nsec: s.st_mtim.tv_nsec as i64 } }
+    { Timespec { sec: s.mtim.sec as i64, nsec: s.mtim.nsec as i64 } }
 }
 
 impl StatHash {

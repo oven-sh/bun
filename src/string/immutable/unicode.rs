@@ -1176,7 +1176,7 @@ pub(super) fn append_utf8_machine_word_to_utf16_machine_word(
 }
 
 #[inline]
-pub(super) fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
+pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
     let output = output_;
     let input = input_;
     debug_assert!(input.len() <= output.len());

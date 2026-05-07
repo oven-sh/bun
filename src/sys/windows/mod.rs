@@ -152,6 +152,7 @@ pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
+pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
 pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SHARE_DELETE;

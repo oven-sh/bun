@@ -6,63 +6,78 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 
+use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
-#[allow(unused_imports)]
-use bun_bundler::options_impl::LoaderExt;
 use bun_core::Output;
+use bun_http_types::MimeType::MimeType;
+use bun_string::{PathString, ZigStringSlice};
+
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
+use crate::webcore::blob::store::StoreExt as _;
+use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::Blob;
-use bun_string::PathString;
 
-/// Heap-dupe a path slice and return a borrowed view suitable for
-/// `PathString::init`. Mirrors Zig's `allocator.dupe(u8, path)` — the
-/// allocation is owned by the consuming `Blob.Store` (freed via the store's
-/// `deinit`), so it is intentionally not dropped here.
+/// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
+/// outlives the borrowed source. Mirrors Zig's `allocator.dupe(u8, path)`.
 #[inline]
-fn dupe_path(path: &[u8]) -> &'static [u8] {
-    // PORT NOTE: Zig hands the duped slice to `PathString.init` and the store
-    // takes ownership; in Rust we leak the `Box` to obtain a `'static` borrow
-    // for `PathString` (which only stores ptr+len). The store frees it via the
-    // FFI-side allocator on drop.
-    Box::leak(Box::<[u8]>::from(path))
+fn dupe_path_like(path: &[u8]) -> PathLike {
+    PathLike::EncodedSlice(
+        ZigStringSlice::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()),
+    )
+}
+
+/// Set the store's `mime_type` and point `blob.content_type` at it. The
+/// pointer borrows from `blob.store` (held for the blob's lifetime), so it
+/// stays valid without a separate allocation.
+#[inline]
+fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
+    if let Some(store) = blob.store.as_ref() {
+        // SAFETY: `store` is the freshly-allocated backing store uniquely owned
+        // by `blob`; no other borrow exists yet.
+        let store_ptr = store.as_ptr();
+        unsafe { (*store_ptr).mime_type = mime };
+        blob.content_type = unsafe { (*store_ptr).mime_type.value.as_ref() } as *const [u8];
+    } else {
+        // No store ⇒ empty bytes ⇒ JS never reads `content_type`; match Zig
+        // by leaving the default `b""`.
+        let _ = mime;
+    }
 }
 
 pub struct SavedFile;
 
 impl SavedFile {
-    pub fn to_js(
-        global_this: &JSGlobalObject,
-        path: &[u8],
-        byte_size: usize,
-    ) -> JSValue {
+    pub fn to_js(global_this: &JSGlobalObject, path: &[u8], byte_size: usize) -> JSValue {
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
         // Bun-owned global; we hold a unique `&mut` only for this call.
         let mime_type = unsafe { &mut *global_this.bun_vm() }.mime_type(path);
         let store = BlobStore::init_file(
             PathOrFileDescriptor::Path(PathLike::String(PathString::init(path))),
-            mime_type.as_ref(),
+            mime_type,
         )
         .expect("unreachable");
 
         let mut blob = Blob::init_with_store(store, global_this);
-        if let Some(mime) = mime_type {
-            blob.content_type = mime.value;
-        }
+        // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
+        // `init_with_store` already populated it from the store's `File`
+        // mime (which is the same value), so the overwrite is a no-op.
         blob.size = byte_size as BlobSizeType;
-        // TODO(port): blob.allocator = bun.default_allocator — allocator field dropped in Rust
-        blob.to_js(global_this)
+        let ptr = Blob::new(blob);
+        // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
+        // `Blob::new`; ownership transfers to the JS wrapper.
+        unsafe { (*ptr).to_js(global_this) }
     }
 }
 
 /// Extension trait wiring `to_js` / `to_blob` onto `OutputFile` from the
-/// `bun_bundler_jsc` crate (the base `bun_bundler` crate has no JSC dep).
+/// `bun_bundler` crate (the base `bun_bundler` crate has no JSC dep).
 pub trait OutputFileJsc {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue;
-    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::AllocError>;
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error>;
 }
 
 impl OutputFileJsc for OutputFile {
@@ -98,19 +113,15 @@ impl OutputFileJsc for OutputFile {
                     if copy.fd.is_valid() {
                         PathOrFileDescriptor::Fd(copy.fd)
                     } else {
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            dupe_path(copy.pathname.as_ref()),
-                        )))
+                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
                     },
-                    Some(&mime),
+                    Some(mime),
                 ) {
                     Ok(b) => b,
-                    Err(err) => {
-                        Output::panic(format_args!(
-                            "error: Unable to create file blob: \"{}\"",
-                            err.name()
-                        ));
-                    }
+                    Err(err) => Output::panic(format_args!(
+                        "error: Unable to create file blob: \"{}\"",
+                        err.name()
+                    )),
                 };
 
                 let build_output = Box::new(BuildArtifact {
@@ -119,29 +130,30 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                    ..Default::default()
+                    sourcemap: StrongOptional::empty(),
                 });
 
-                build_output.to_js(global_object)
+                // SAFETY: `build_output` is a fresh heap payload; ownership
+                // transfers to the JS `BuildArtifact` wrapper (`finalize`
+                // reclaims it).
+                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
             }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text.as_ref());
 
-                let store_path: &[u8] = match owned_pathname {
-                    Some(p) => p,
-                    None => dupe_path(self.src_path.text.as_ref()),
+                let store_path = match owned_pathname {
+                    Some(p) => PathLike::String(PathString::init(p)),
+                    None => dupe_path_like(self.src_path.text.as_ref()),
                 };
                 let file_blob = match BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::String(PathString::init(store_path))),
-                    Some(&mime),
+                    PathOrFileDescriptor::Path(store_path),
+                    Some(mime),
                 ) {
                     Ok(b) => b,
-                    Err(err) => {
-                        Output::panic(format_args!(
-                            "error: Unable to create file blob: \"{}\"",
-                            err.name()
-                        ));
-                    }
+                    Err(err) => Output::panic(format_args!(
+                        "error: Unable to create file blob: \"{}\"",
+                        err.name()
+                    )),
                 };
 
                 let build_output = Box::new(BuildArtifact {
@@ -150,23 +162,16 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
-                    ..Default::default()
+                    sourcemap: StrongOptional::empty(),
                 });
 
-                build_output.to_js(global_object)
+                // SAFETY: see `Copy` arm.
+                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
-                // TODO(port): @constCast(buffer.bytes) — ownership transfer of bytes into Blob.
-                let mut blob = Blob::init(bytes, global_object);
-                if let Some(store) = blob.store {
-                    // SAFETY: `store` is the freshly-allocated backing store
-                    // returned by `Blob::init`; uniquely owned by `blob` here.
-                    unsafe { &mut *store.as_ptr() }.set_mime_type(&mime);
-                    blob.content_type = mime.value;
-                } else {
-                    blob.content_type = mime.value;
-                }
+                let mut blob = Blob::init(bytes.into_vec(), global_object);
+                set_blob_mime(&mut blob, mime);
                 blob.size = bytes_len as BlobSizeType;
 
                 let path: Box<[u8]> = match owned_pathname {
@@ -180,10 +185,11 @@ impl OutputFileJsc for OutputFile {
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
-                    ..Default::default()
+                    sourcemap: StrongOptional::empty(),
                 });
 
-                build_output.to_js(global_object)
+                // SAFETY: see `Copy` arm.
+                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
             }
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
@@ -192,11 +198,7 @@ impl OutputFileJsc for OutputFile {
         }
     }
 
-    // TODO(port): narrow error set
-    fn to_blob(
-        &mut self,
-        global_this: &JSGlobalObject,
-    ) -> Result<Blob, bun_core::AllocError> {
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error> {
         match &self.value {
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
                 panic!("Unexpected pending output file")
@@ -220,34 +222,23 @@ impl OutputFileJsc for OutputFile {
                     if copy.fd.is_valid() {
                         PathOrFileDescriptor::Fd(copy.fd)
                     } else {
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            dupe_path(copy.pathname.as_ref()),
-                        )))
+                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
                     },
-                    Some(&mime),
+                    Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                        dupe_path(self.src_path.text.as_ref()),
-                    ))),
-                    Some(&mime),
+                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text.as_ref())),
+                    Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
-                // TODO(port): @constCast(buffer.bytes) — ownership transfer of bytes into Blob.
-                let mut blob = Blob::init(bytes, global_this);
-                if let Some(store) = blob.store {
-                    // SAFETY: freshly-allocated store, uniquely owned by `blob`.
-                    unsafe { &mut *store.as_ptr() }.set_mime_type(&mime);
-                    blob.content_type = mime.value;
-                } else {
-                    blob.content_type = mime.value;
-                }
+                let mut blob = Blob::init(bytes.into_vec(), global_this);
+                set_blob_mime(&mut blob, mime);
                 blob.size = bytes_len as BlobSizeType;
                 Ok(blob)
             }
@@ -262,7 +253,7 @@ impl OutputFileJsc for OutputFile {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler_jsc/output_file_jsc.zig (214 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      mem::replace reshape for borrowck; allocator params dropped; PathString borrows leak-duped slices (store frees on drop, FFI side).
+//   confidence: high
+//   notes:      mem::replace reshape for borrowck; allocator params dropped;
+//               duped paths carried as `PathLike::EncodedSlice` (owned).
 // ──────────────────────────────────────────────────────────────────────────

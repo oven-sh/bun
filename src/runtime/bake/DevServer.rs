@@ -1345,7 +1345,7 @@ pub enum DevHandlerId {
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
-unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
+extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,

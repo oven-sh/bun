@@ -1149,11 +1149,11 @@ impl Run {
 
         // ── hot-reloader enable (bun.js.zig:390-394) ───────────────────────
         match ctx.debug.hot_reload {
-            cli::HotReload::Hot => bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+            cli::command::HotReload::Hot => bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
                 self.vm,
                 Some(entry),
             ),
-            cli::HotReload::Watch => {
+            cli::command::HotReload::Watch => {
                 bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
                     self.vm,
                     Some(entry),

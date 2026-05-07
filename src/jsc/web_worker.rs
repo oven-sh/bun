@@ -1346,10 +1346,14 @@ fn resolve_entry_point_specifier(
     let str_static: &'static [u8] =
         unsafe { core::slice::from_raw_parts(str.as_ptr(), str.len()) };
 
+    // SAFETY: graph slices borrow from the embedded module graph, which is
+    // process-lifetime (`'static`). Erase the trait-method's elided lifetime.
+    let extend = |s: &[u8]| -> &'static [u8] {
+        unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+    };
+
     if let Some(graph) = parent.standalone_module_graph {
-        // SAFETY: hook contract — `graph` is the opaque `StandaloneModuleGraph*`
-        // stored at VM init; valid for VM lifetime.
-        if unsafe { (hooks.standalone_graph_find)(graph, str) }.is_some() {
+        if graph.find(str).is_some() {
             return Some(str_static);
         }
 
@@ -1370,7 +1374,9 @@ fn resolve_entry_point_specifier(
                 let base_len = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Loose,
                 >(
-                    hooks.standalone_graph_base_path, &mut pathbuf, &[str]
+                    graph.base_public_path_with_default_suffix(),
+                    &mut pathbuf,
+                    &[str],
                 )
                 .len();
                 let extname_len = bun_paths::extension(&pathbuf[..base_len]).len();
@@ -1378,11 +1384,8 @@ fn resolve_entry_point_specifier(
                 // ./foo -> ./foo.js
                 if extname_len == 0 {
                     pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    // SAFETY: see graph hook contract above.
-                    if let Some(js_file) =
-                        unsafe { (hooks.standalone_graph_find)(graph, &pathbuf[0..base_len + 3]) }
-                    {
-                        return Some(js_file);
+                    if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
+                        return Some(extend(js_file));
                     }
                     break 'try_from_extension;
                 }
@@ -1392,11 +1395,8 @@ fn resolve_entry_point_specifier(
                 // ./foo.ts -> ./foo.js
                 if extname == b".ts" {
                     pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    // SAFETY: see graph hook contract above.
-                    if let Some(js_file) =
-                        unsafe { (hooks.standalone_graph_find)(graph, &pathbuf[0..base_len]) }
-                    {
-                        return Some(js_file);
+                    if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
+                        return Some(extend(js_file));
                     }
                     break 'try_from_extension;
                 }
@@ -1410,11 +1410,8 @@ fn resolve_entry_point_specifier(
                             pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
                                 .copy_from_slice(b".js");
                             let as_js = &pathbuf[0..base_len - ext.len() + js_len];
-                            // SAFETY: see graph hook contract above.
-                            if let Some(js_file) =
-                                unsafe { (hooks.standalone_graph_find)(graph, as_js) }
-                            {
-                                return Some(js_file);
+                            if let Some(js_file) = graph.find(as_js) {
+                                return Some(extend(js_file));
                             }
                             break 'try_from_extension;
                         }

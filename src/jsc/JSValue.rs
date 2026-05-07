@@ -1900,7 +1900,7 @@ impl JSValue {
         unsafe { JSC__JSValue__getDirectIndex(self, global, i) }
     }
     /// `JSValue.getNameProperty` (JSValue.zig:1119) — write the value's
-    /// `.name` (function/class name) into `ret`. No-op for `undefined`/`null`.
+    /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
     pub fn get_name_property(
         self,
         global: &JSGlobalObject,

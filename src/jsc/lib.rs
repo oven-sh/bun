@@ -1650,6 +1650,7 @@ pub trait StringJsc {
     fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_string::String {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
@@ -1669,6 +1670,9 @@ impl StringJsc for bun_string::String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         bun_string_jsc::to_type_error_instance(self, global)
+    }
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        bun_string_jsc::to_range_error_instance(self, global)
     }
 }
 

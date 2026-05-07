@@ -987,8 +987,7 @@ impl EventLoop {
     ) -> JsResult<JSValue> {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
-        // SAFETY: bun_vm() returns the live owning VM for this global.
-        let jsc_vm = unsafe { (*global_object.bun_vm()).jsc_vm };
+        let jsc_vm = global_object.bun_vm().jsc_vm;
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }
@@ -1082,9 +1081,7 @@ impl EventLoop {
 /// Testing API to expose event loop state
 #[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let vm = global_object.bun_vm();
-    // SAFETY: bun_vm() returns the live owning VM for this global.
-    let vm_ref = unsafe { &*vm };
+    let vm_ref = global_object.bun_vm();
     // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
     let event_loop = unsafe { &*vm_ref.event_loop() };
     let result = JSValue::create_empty_object(global_object, 3);

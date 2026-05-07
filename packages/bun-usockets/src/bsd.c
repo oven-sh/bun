@@ -1013,6 +1013,17 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
+        #if defined(_WIN32)
+            // With SO_EXCLUSIVEADDRUSE set (which Bun does by default when
+            // LIBUS_LISTEN_EXCLUSIVE_PORT is passed), Windows returns
+            // WSAEACCES instead of WSAEADDRINUSE when the port is already
+            // bound. Libuv/Node normalize this to EADDRINUSE — do the same
+            // so callers get a consistent code cross-platform.
+            // https://learn.microsoft.com/en-us/windows/win32/winsock/so-exclusiveaddruse
+            if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT) && *error == WSAEACCES) {
+                *error = WSAEADDRINUSE;
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

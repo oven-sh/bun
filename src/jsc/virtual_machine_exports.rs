@@ -202,6 +202,144 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
     }
 }
 
+/// Spec PluginRunner.zig:34 `onResolve`. Dispatch body for
+/// `bun_bundler::transpiler::PluginRunner.on_resolve` — defined here (the
+/// construction site) because the body needs `JSGlobalObject` /
+/// `runOnResolvePlugins`, which `bun_bundler` cannot name.
+fn plugin_runner_on_resolve(
+    global_object: *mut c_void,
+    specifier: &[u8],
+    importer: &[u8],
+    log: &mut bun_logger::Log,
+    loc: bun_logger::Loc,
+    target: bun_bundler::transpiler::PluginTarget,
+) -> Result<Option<bun_paths::fs::Path<'static>>, bun_core::Error> {
+    use bun_bundler::transpiler::PluginRunner;
+    use bun_paths::fs::Path as FsPath;
+    use std::io::Write as _;
+
+    // SAFETY: `global_object` is the `*mut JSGlobalObject` stored verbatim by
+    // `Bun__onDidAppendPlugin` below; the VM (and its global) outlives every
+    // `Linker::link` call that reaches this hook.
+    let global = unsafe { &*global_object.cast::<JSGlobalObject>() };
+    // SAFETY: `PluginTarget` and `BunPluginTarget` are both `#[repr(u8)]` with
+    // identical discriminants (Bun=0, Node=1, Browser=2).
+    let target: crate::BunPluginTarget = unsafe { core::mem::transmute(target) };
+
+    let namespace_slice = PluginRunner::extract_namespace(specifier);
+    let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
+        BunString::init(namespace_slice)
+    } else {
+        BunString::empty()
+    };
+    let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
+        namespace,
+        BunString::init(specifier).substring(if namespace.length() > 0 {
+            namespace.length() + 1
+        } else {
+            0
+        }),
+        BunString::init(importer),
+        target,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(path_value) = on_resolve_plugin.get(global, "path")? else {
+        return Ok(None);
+    };
+    if path_value.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+    if !path_value.is_string() {
+        log.add_error(None, loc, b"Expected \"path\" to be a string")
+            .expect("unreachable");
+        return Ok(None);
+    }
+
+    let file_path = path_value.to_bun_string(global)?;
+
+    if file_path.length() == 0 {
+        log.add_error(
+            None,
+            loc,
+            b"Expected \"path\" to be a non-empty string in onResolve plugin",
+        )
+        .expect("unreachable");
+        return Ok(None);
+    } else if
+    // TODO: validate this better
+    file_path.eql_comptime(b".")
+        || file_path.eql_comptime(b"..")
+        || file_path.eql_comptime(b"...")
+        || file_path.eql_comptime(b" ")
+    {
+        log.add_error(None, loc, b"Invalid file path from onResolve plugin")
+            .expect("unreachable");
+        return Ok(None);
+    }
+    let mut static_namespace = true;
+    let user_namespace: BunString = 'brk: {
+        if let Some(namespace_value) = on_resolve_plugin.get(global, "namespace")? {
+            if !namespace_value.is_string() {
+                log.add_error(None, loc, b"Expected \"namespace\" to be a string")
+                    .expect("unreachable");
+                return Ok(None);
+            }
+
+            let namespace_str = namespace_value.to_bun_string(global)?;
+            if namespace_str.length() == 0 {
+                break 'brk BunString::init(b"file");
+            }
+
+            if namespace_str.eql_comptime(b"file") {
+                break 'brk BunString::init(b"file");
+            }
+
+            if namespace_str.eql_comptime(b"bun") {
+                break 'brk BunString::init(b"bun");
+            }
+
+            if namespace_str.eql_comptime(b"node") {
+                break 'brk BunString::init(b"node");
+            }
+
+            static_namespace = false;
+
+            break 'brk namespace_str;
+        }
+
+        break 'brk BunString::init(b"file");
+    };
+
+    // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and returned
+    // the allocator-owned slice by value inside `Fs.Path`. `FsPath<'static>`
+    // borrows, so we leak the formatted buffer to model the same
+    // caller-owns-forever contract.
+    let mut path_buf: Vec<u8> = Vec::new();
+    write!(&mut path_buf, "{}", file_path).expect("unreachable");
+    let path_static: &'static [u8] = path_buf.leak();
+
+    if static_namespace {
+        // `byte_slice()` borrows `&self`; re-match to recover the `'static`
+        // literal so the result typechecks as `FsPath<'static>` without an
+        // extra alloc.
+        let ns: &'static [u8] = if user_namespace.eql_comptime(b"bun") {
+            b"bun"
+        } else if user_namespace.eql_comptime(b"node") {
+            b"node"
+        } else {
+            b"file"
+        };
+        Ok(Some(FsPath::init_with_namespace(path_static, ns)))
+    } else {
+        let mut ns_buf: Vec<u8> = Vec::new();
+        write!(&mut ns_buf, "{}", user_namespace).expect("unreachable");
+        let ns_static: &'static [u8] = ns_buf.leak();
+        Ok(Some(FsPath::init_with_namespace(path_static, ns_static)))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
     if jsc_vm.plugin_runner.is_some() {
@@ -210,9 +348,10 @@ pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &J
 
     jsc_vm.plugin_runner = Some(bun_bundler::transpiler::PluginRunner {
         // PORT NOTE: `PluginRunner.global_object` is `*mut c_void` at the
-        // `bun_bundler` tier (cycle-break — `JSGlobalObject` lives here);
-        // `bundler_jsc` casts back when dispatching `on_resolve`.
+        // `bun_bundler` tier (cycle-break — `JSGlobalObject` lives here); the
+        // `on_resolve` dispatch slot casts it back.
         global_object: global.as_ptr().cast(),
+        on_resolve: plugin_runner_on_resolve,
     });
     // SAFETY: `plugin_runner` was just set to `Some` above; the `Option` slot
     // is embedded in `*jsc_vm` and stable for the VM's lifetime, so taking a

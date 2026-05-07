@@ -1,5 +1,3 @@
-// TODO: figure out if we actually need this
-
 use core::fmt;
 
 use crate::ast;

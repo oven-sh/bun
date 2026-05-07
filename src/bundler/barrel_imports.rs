@@ -335,8 +335,26 @@ fn resolve_barrel_records(
 /// Returns the number of newly scheduled parse tasks.
 pub fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,
-    result: &mut parse_task::Success,
+    result_source_index: u32,
+    result_ast_target: bun_options_types::Target,
 ) -> Result<i32, AllocError> {
+    // PORT NOTE: Zig passed `*ParseTask.Result.Success` and read `result.ast`
+    // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*
+    // `result.ast` into `graph.ast`, so this fn reads the just-written
+    // `graph.ast[result_source_index]` instead. Phase 1/2 only read
+    // `import_records` / `named_imports` for THIS index; the BFS (Phase 3)
+    // takes fresh `&mut graph.ast` borrows after these raw reads are dead.
+    //
+    // SAFETY: `graph.ast` SoA columns are not reallocated for the duration of
+    // this fn (no `graph.ast.append`/`set`); `items_*_mut()` in the BFS only
+    // re-slices the existing backing. The raw pointers below are dereferenced
+    // only during Phase 1/2 (queue seeding), strictly before the BFS takes any
+    // `&mut` to the same column.
+    let file_import_records: *const BabyList<import_record::ImportRecord> =
+        &this.graph.ast.items_import_records()[result_source_index as usize];
+    let file_named_imports: *const js_ast::NamedImports =
+        &this.graph.ast.items_named_imports()[result_source_index as usize];
+
     // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
     let dev_handle = this.dev_server_handle().copied();

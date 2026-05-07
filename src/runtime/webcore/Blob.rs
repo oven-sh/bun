@@ -5541,33 +5541,49 @@ impl Blob {
 
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {
-                #[allow(unused_mut)]
-                let mut slice = path_or_fd.path().slice();
-
                 #[cfg(windows)]
-                if slice == b"/dev/null" {
+                if path_or_fd.path().slice() == b"/dev/null" {
+                    // Release the caller-owned path before overwriting (Zig:
+                    // `path_or_fd.deinit()`); the assignment also runs
+                    // PathLike's Drop, but the explicit call keeps Zig parity.
+                    path_or_fd.deinit();
                     *path_or_fd = PathOrFileDescriptor::Path(
                         crate::webcore::node_types::PathLike::String(
-                            bun_str::PathString::init(b"\\\\.\\NUL"),
+                            // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
+                            bun_str::PathString::init_owned(b"\\\\.\\NUL".to_vec()),
                         ),
                     );
-                    slice = path_or_fd.path().slice();
                 }
 
-                // TODO(b2-blocked): standalone_module_graph — VM field is an
-                // opaque `Option<NonNull<c_void>>` until the graph type is
-                // ported; cannot `.find(slice)` on it yet. Re-gated.
-                
+                // SAFETY: bun_vm() is live for the duration of a host call.
+                if let Some(graph_ptr) =
+                    unsafe { &*global_this.bun_vm() }.standalone_module_graph
                 {
-                    // blocked_on: bun_jsc::VirtualMachine::standalone_module_graph
-                    // (typed as `Option<NonNull<c_void>>` until the graph type is ported)
-                    if let Some(graph) = unsafe { &*global_this.bun_vm() }.standalone_module_graph {
-                        if let Some(file) = graph.find(slice) {
-                            return file.blob(global_this).dupe();
+                    // SAFETY: `standalone_module_graph` points at a process-
+                    // lifetime `bun_standalone_graph::Graph` set during VM init
+                    // (see `VirtualMachine::init`); the field is typed
+                    // `NonNull<c_void>` only to break the jsc→standalone cycle.
+                    let graph = unsafe {
+                        &mut *graph_ptr.cast::<bun_standalone_graph::Graph>().as_ptr()
+                    };
+                    if let Some(file) = graph.find(path_or_fd.path().slice()) {
+                        use crate::api::standalone_graph_jsc::FileJsc as _;
+                        let blob = file.file_blob(global_this).dupe();
+                        // Zig: `defer { if (path_or_fd.path != .string) {
+                        //   path_or_fd.deinit(); path_or_fd.* = .{ .path = .{ .string = empty } };
+                        // } }` — release a SliceWithUnderlying / encoded-slice
+                        // path the graph short-circuit would otherwise leak.
+                        if !path_or_fd.path().is_string() {
+                            path_or_fd.deinit();
+                            *path_or_fd = PathOrFileDescriptor::Path(
+                                crate::webcore::node_types::PathLike::String(
+                                    bun_str::PathString::default(),
+                                ),
+                            );
                         }
+                        return blob;
                     }
                 }
-                let _ = slice;
 
                 path_or_fd.to_thread_safe();
                 core::mem::replace(

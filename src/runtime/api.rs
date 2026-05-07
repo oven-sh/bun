@@ -179,6 +179,8 @@ pub mod yaml_object;
 pub mod csrf_jsc;
 #[path = "api/glob.rs"]
 pub mod glob;
+#[path = "api/standalone_graph_jsc.rs"]
+pub mod standalone_graph_jsc;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the

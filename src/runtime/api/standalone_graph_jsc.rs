@@ -8,7 +8,10 @@ use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
 use bun_str::{self as bstring, strings};
 
-use crate::api::standalone_graph::{File, StandaloneModuleGraph};
+// PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
+// `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
+// `File` is re-exported at the crate root.
+use bun_standalone_graph::{File, StandaloneModuleGraph};
 use crate::webcore::Blob;
 use crate::webcore::blob::Store;
 

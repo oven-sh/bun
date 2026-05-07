@@ -312,6 +312,9 @@ pub use encoding_label::EncodingLabel;
 #[path = "webcore/encoding.rs"]
 pub mod encoding;
 
+#[path = "webcore/wasm_streaming.rs"]
+pub mod wasm_streaming;
+
 #[path = "webcore/TextDecoder.rs"]
 pub mod text_decoder;
 pub use text_decoder::TextDecoder;

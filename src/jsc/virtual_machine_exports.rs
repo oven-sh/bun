@@ -180,7 +180,7 @@ impl HandledPromiseContext {
         // SAFETY: `global_this` was the live global at enqueue time; the VM is
         // process-lifetime and the global outlives the event-loop tick.
         let global = unsafe { &*context.global_this };
-        let _ = unsafe { (*global.bun_vm()).handled_promise(global, context.promise.get()) };
+        let _ = global.bun_vm().handled_promise(global, context.promise.get());
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
         // Strong's Drop replaces the explicit `.unprotect()`.
         Ok(())
@@ -195,9 +195,9 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
         global_this: global.as_ptr(),
         promise: Strong::create(promise_js, global),
     }));
-    // SAFETY: bun_vm()/event_loop() never null for a Bun-owned global.
+    // SAFETY: `event_loop()` never returns null for a Bun-owned global.
     unsafe {
-        (*(*global.bun_vm()).event_loop())
+        (*global.bun_vm().event_loop())
             .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
     }
 }
@@ -368,9 +368,9 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     }
 
     if !args.ptr[0].is_number() {
-        return Err(global.throw_invalid_arguments(
-            "setSyntheticAllocationLimitForTesting expects a number",
-        ));
+        return Err(global.throw_invalid_arguments(format_args!(
+            "setSyntheticAllocationLimitForTesting expects a number"
+        )));
     }
 
     let limit: usize =

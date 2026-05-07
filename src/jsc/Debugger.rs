@@ -878,17 +878,34 @@ impl TestReporterHandle {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
-    // TODO(b2): `vm.debugger` field type — see file header. Real body stores
-    // `agent` into `debugger.test_reporter_agent.handle` and calls
-    // `retroactively_report_discovered_tests` (needs `bun_runtime::test_runner`).
-    let _ = agent;
-    bun_core::scoped_log!(TestReporterAgent, "enable");
+    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
+    // on the JS thread.
+    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+        bun_core::scoped_log!(TestReporterAgent, "enable");
+        debugger.test_reporter_agent.handle = agent;
+
+        // Retroactively report any tests that were already discovered before
+        // the debugger connected.
+        //
+        // LAYERING: `retroactivelyReportDiscoveredTests` (spec
+        // Debugger.zig:351) reaches into `jsc.Jest.Jest.runner` /
+        // `bun_test.DescribeScope`, which live in `bun_runtime::test_runner`
+        // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: `agent` is a live C++ handle (just stored above).
+            unsafe { (hooks.retroactively_report_discovered_tests)(agent) };
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__TestReporterAgentDisable(_agent: *mut TestReporterHandle) {
-    // TODO(b2): `vm.debugger` field type — clears `test_reporter_agent.handle`.
-    bun_core::scoped_log!(TestReporterAgent, "disable");
+    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
+    // on the JS thread.
+    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+        bun_core::scoped_log!(TestReporterAgent, "disable");
+        debugger.test_reporter_agent.handle = core::ptr::null_mut();
+    }
 }
 
 impl TestReporterAgent {
@@ -974,16 +991,22 @@ impl LifecycleHandle {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
-    // TODO(b2): `vm.debugger` field type — stores `agent` into
-    // `debugger.lifecycle_reporter_agent.handle`.
-    let _ = agent;
-    bun_core::scoped_log!(LifecycleAgent, "enable");
+    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
+    // on the JS thread.
+    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+        bun_core::scoped_log!(LifecycleAgent, "enable");
+        debugger.lifecycle_reporter_agent.handle = agent;
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__LifecycleAgentDisable(_agent: *mut LifecycleHandle) {
-    // TODO(b2): `vm.debugger` field type — clears `lifecycle_reporter_agent.handle`.
-    bun_core::scoped_log!(LifecycleAgent, "disable");
+    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
+    // on the JS thread.
+    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+        bun_core::scoped_log!(LifecycleAgent, "disable");
+        debugger.lifecycle_reporter_agent.handle = core::ptr::null_mut();
+    }
 }
 
 impl LifecycleAgent {
@@ -1009,10 +1032,9 @@ impl LifecycleAgent {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/Debugger.zig (535 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      B-2 un-gate: type surface real; wait_for_debugger /
-//               start_js_debugger_thread / retroactive jest reporting /
-//               agent-enable wiring gated on `vm.debugger` field type +
-//               RuntimeHooks dispatch (forward-dep on bun_runtime).
+//   confidence: high
+//   notes:      retroactivelyReportDiscoveredTests dispatched through
+//               RuntimeHooks (Jest runner lives in bun_runtime — cycle).
+//               Windows libuv-timer shim in wait_for_debugger_if_necessary
+//               pending bun_sys::windows::libuv::Timer port.
 // ──────────────────────────────────────────────────────────────────────────

@@ -570,7 +570,7 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
-    pub fn create_error_instance(&self, fmt: &'static str, args: Arguments<'_>) -> JSValue {
+    pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
         // PORT NOTE: Zig branched at comptime on whether `args` is empty. With
         // `core::fmt::Arguments`, `as_str()` returns `Some(&'static str)` when
         // there are no interpolated args — equivalent fast path.
@@ -588,8 +588,11 @@ impl JSGlobalObject {
         if write!(&mut buf, "{}", args).is_err() {
             // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
             // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
+            // PORT NOTE: Zig fell back to the literal `fmt` string here; in Rust the fmt
+            // string is folded into `Arguments`, and `write!` into `Vec<u8>` only fails if
+            // a `Display` impl errors. Empty-string fallback matches "no error about an error".
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str(fmt).to_error_instance(self);
+            return ZigString::static_str("").to_error_instance(self);
         }
 
         // Ensure we clone it.
@@ -597,7 +600,7 @@ impl JSGlobalObject {
         str.to_error_instance(self)
     }
 
-    pub fn create_type_error_instance(&self, fmt: &'static str, args: Arguments<'_>) -> JSValue {
+    pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
             return ZigString::static_str(fmt).to_type_error_instance(self);
         }
@@ -606,7 +609,7 @@ impl JSGlobalObject {
         use std::io::Write;
         if write!(&mut buf, "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str(fmt).to_type_error_instance(self);
+            return ZigString::static_str("").to_type_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_type_error_instance(self)
@@ -629,7 +632,7 @@ impl JSGlobalObject {
         Ok(str.to_dom_exception_instance(self, code))
     }
 
-    pub fn create_syntax_error_instance(&self, fmt: &'static str, args: Arguments<'_>) -> JSValue {
+    pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
             return ZigString::static_str(fmt).to_syntax_error_instance(self);
         }
@@ -638,13 +641,13 @@ impl JSGlobalObject {
         use std::io::Write;
         if write!(&mut buf, "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str(fmt).to_syntax_error_instance(self);
+            return ZigString::static_str("").to_syntax_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_syntax_error_instance(self)
     }
 
-    pub fn create_range_error_instance(&self, fmt: &'static str, args: Arguments<'_>) -> JSValue {
+    pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
             return ZigString::static_str(fmt).to_range_error_instance(self);
         }
@@ -653,14 +656,14 @@ impl JSGlobalObject {
         use std::io::Write;
         if write!(&mut buf, "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return ZigString::static_str(fmt).to_range_error_instance(self);
+            return ZigString::static_str("").to_range_error_instance(self);
         }
         let str = ZigString::from_utf8(&buf);
         str.to_range_error_instance(self)
     }
 
-    pub fn create_range_error(&self, fmt: &'static str, args: Arguments<'_>) -> JSValue {
-        let err = self.create_error_instance(fmt, args);
+    pub fn create_range_error(&self, args: Arguments<'_>) -> JSValue {
+        let err = self.create_error_instance(args);
         if err.is_empty() {
             debug_assert!(self.has_exception());
             return JSValue::ZERO;
@@ -678,8 +681,8 @@ impl JSGlobalObject {
         JscError::INVALID_ARG_TYPE.fmt(self, args)
     }
 
-    pub fn throw_sys_error(&self, opts: SysErrOptions, fmt: &'static str, message: Arguments<'_>) -> JsError {
-        let err = self.create_error_instance(fmt, message);
+    pub fn throw_sys_error(&self, opts: SysErrOptions, message: Arguments<'_>) -> JsError {
+        let err = self.create_error_instance(message);
         if err.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;

@@ -5346,18 +5346,17 @@ impl Blob {
                             // SAFETY: `as_` returns a live `*mut BuildArtifact` rooted by `top_value`.
                             return Ok(unsafe { &(*artifact_ptr).blob }.dupe());
                         } else {
-                            let sliced = current.to_slice_clone(global)?;
-                            // PORT NOTE: Zig checked `sliced.allocator.get()` to detect
-                            // an owned (heap) slice; `ZigStringSlice` collapsed the
-                            // allocator-vtable into an enum, so dispatch on the variant.
-                            match sliced {
-                                ZigStringSlice::Owned(v) => {
-                                    return Ok(Blob::init(v, global));
-                                }
-                                _ => {
-                                    return Blob::try_create(sliced.slice(), global, false)
-                                        .map_err(Into::into);
-                                }
+                            // PORT NOTE: Zig checked `sliced.allocator.get()` to
+                            // detect an owned (heap) slice; `ZigStringSlice`
+                            // collapsed the allocator-vtable into an enum, so
+                            // dispatch on the variant. Zig passes
+                            // `is_all_ascii = false` here (the slice came from
+                            // an arbitrary DOMWrapper coercion, not a known-ASCII
+                            // source) and *falls through* — no `return` — when
+                            // there's no allocator (i.e. the empty slice), letting
+                            // the joiner path below handle it.
+                            if let ZigStringSlice::Owned(v) = current.to_slice_clone(global)? {
+                                return Ok(Blob::init_with_all_ascii(v, global, false));
                             }
                         }
                     }

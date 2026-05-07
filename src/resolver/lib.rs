@@ -7,10 +7,9 @@
 #![feature(adt_const_params, sync_unsafe_cell)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 UN-GATED — Resolver::{resolve, dir_info_cached, load_as_file,
-// load_as_file_or_directory, load_node_modules} now compile from
-// `__phase_a_body` below. Higher-tier deps (bun_install / bun_bundler /
-// bun_http) are FORWARD_DECL'd; the auto-install path is re-gated.
+// Resolver body. Higher-tier deps are reached via lower-tier crates:
+// bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->
+// crate::StandaloneModuleGraph trait; HardcodedModule -> bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
 // Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is now un-gated as
@@ -2772,18 +2771,11 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 //   ✓ bun_bundler::options::jsx::Pragma::parse_package_name → crate::fs::parse_package_name (inlined)
 //   ✓ bun_bundler::cache::Json → crate::tsconfig_json::JsonCache (manual vtable, §Dispatch cold-path)
 //   ✓ bun_bundler::cache::Set → crate::cache::Set (MOVE_DOWN; bundler re-exports/extends)
-//   ✗ bun_bundler::options::{BundleOptions, Packages} — TODO(b0-genuine): MOVE_DOWN to bun_options_types
-//
-// Remaining peer-crate blocks on __phase_a_body (NOT cycle-related):
-//   bun_install::{PackageManager, WakeHandler, dependency, lockfile, resolution, npm} — higher tier
-//   bun_http::{HTTPThread} — higher tier
-//   bun_js_parser::Expr query API (as_property/as_string/as_bool/as_array) — same tier, not yet ported
-
-// ──────────────────────────────────────────────────────────────────────────
-// Phase-A draft body — B-2 UN-GATED.
-// Higher-tier deps (bun_install / bun_bundler / bun_http) are FORWARD_DECL'd
-// in `__forward_decls` below so the node_modules resolution algorithm compiles.
-// ──────────────────────────────────────────────────────────────────────────
+//   ✓ bun_bundler::options::{BundleOptions, Packages} -> crate::options (canonical resolver-tier defs)
+//   ✓ bun_install::{PackageManager, dependency, lockfile, resolution} -> bun_install_types::AutoInstaller
+//   ✓ bun_http::HTTPThread -> folded into AutoInstaller init hook
+//   ✓ HardcodedModule -> bun_resolve_builtins
+//   ✓ StandaloneModuleGraph -> crate::StandaloneModuleGraph trait + bun_options_types::standalone_path
 pub mod __phase_a_body {
 use super::{is_package_path, is_package_path_not_absolute};
 
@@ -6312,9 +6304,6 @@ impl<'a> Resolver<'a> {
         MatchResultUnion::NotFound
     }
 
-    // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
-    // path above (also re-gated).
-    
     fn dir_info_for_resolution(
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
@@ -6467,9 +6456,6 @@ impl<'a> Resolver<'a> {
         Ok(Some(dir_info_ptr))
     }
 
-    // TODO(b2-blocked): bun_install — re-gated; only reached from the auto-install
-    // path above (also re-gated).
-    
     fn enqueue_dependency_to_resolve(
         &mut self,
         // PORT NOTE: Zig `package_json_: ?*PackageJSON` (mutable). Carried as

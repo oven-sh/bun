@@ -54,24 +54,12 @@ impl InitCommand {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let original_mode: Option<bun_sys::windows::DWORD> = bun_sys::windows::update_stdio_mode_flags(
-            bun_sys::windows::StdHandle::StdIn,
-            bun_sys::windows::ModeFlags {
+        let _stdin_mode = bun_sys::windows::StdinModeGuard::set(
+            bun_sys::windows::UpdateStdioModeFlagsOpts {
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                 ..Default::default()
             },
-        )
-        .ok();
-
-        #[cfg(windows)]
-        scopeguard::defer! {
-            if let Some(mode) = original_mode {
-                // SAFETY: stdin handle is valid for the lifetime of the process.
-                unsafe {
-                    let _ = bun_sys::windows::c::SetConsoleMode(Fd::stdin().native(), mode);
-                }
-            }
-        };
+        );
 
         let mut input: Vec<u8> = Vec::new();
         // TODO(port): bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024)

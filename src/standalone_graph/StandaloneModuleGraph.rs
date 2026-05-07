@@ -2030,7 +2030,7 @@ pub fn serialize_json_source_map_for_standalone(
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    use bun_logger::js_ast::{expr::Data as AstData, Expr as AstExpr, Stmt as AstStmt};
+    use bun_logger::js_ast::expr::Data as AstData;
 
     // PERF(port): Zig threaded an arena allocator through; here we own a local
     // bump arena and drop it on return (matches `defer arena.free`).

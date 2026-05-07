@@ -145,7 +145,6 @@ pub struct Dependency {
 // `JsonExprView` trait (which abstracts over `bun_logger::js_ast::Expr` and
 // `bun_js_parser::Expr`), neither of which is reachable from this crate.
 
-<<<<<<< Updated upstream
 /// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`] (Zig: `enum(uN)
 /// { none = 0, all = all_value, _ }` open-enum with associated bit consts).
 pub trait NegatableEnum: Copy + Eq {
@@ -164,65 +163,6 @@ pub trait NegatableEnum: Copy + Eq {
     fn has(self, other: Self::Int) -> bool;
     fn to_raw(self) -> Self::Int;
     fn from_raw(n: Self::Int) -> Self;
-||||||| Stash base
-macro_rules! os_arch_flags {
-    ($name:ident, $bits:ty, [$( $variant:ident = $lit:literal => $bit:expr ),* $(,)?]) => {
-        bitflags::bitflags! {
-            #[derive(Default, Clone, Copy, PartialEq, Eq)]
-            pub struct $name: $bits {
-                $( const $variant = 1 << $bit; )*
-            }
-        }
-        impl $name {
-            #[inline] pub fn none() -> Self { Self::empty() }
-            #[inline] pub fn negatable(self) -> Negatable<$name> { Negatable { has: self, not: Self::empty() } }
-            fn match_name(s: &[u8]) -> Option<Self> {
-                match s { $( $lit => Some(Self::$variant), )* _ => None }
-            }
-        }
-        impl Negatable<$name> {
-            /// Port of `npm.zig` `Negatable.apply` — `!foo` clears, `foo` sets.
-            pub fn apply(&mut self, s: &[u8]) {
-                let (neg, key) = if let Some(rest) = s.strip_prefix(b"!") { (true, rest) } else { (false, s) };
-                if let Some(bit) = <$name>::match_name(key) {
-                    if neg { self.not |= bit; } else { self.has |= bit; }
-                }
-            }
-            #[inline] pub fn combine(self) -> $name {
-                if self.has.is_empty() { <$name>::all() & !self.not } else { self.has & !self.not }
-            }
-        }
-    };
-=======
-macro_rules! os_arch_flags {
-    ($name:ident, $bits:ty, [$( $variant:ident = $lit:literal => $bit:expr ),* $(,)?]) => {
-        bitflags::bitflags! {
-            #[derive(Default, Clone, Copy, PartialEq, Eq)]
-            pub struct $name: $bits {
-                $( const $variant = 1 << $bit; )*
-            }
-        }
-        impl $name {
-            #[inline] pub fn none() -> Self { Self::empty() }
-            #[inline] pub fn negatable(self) -> Negatable<$name> { Negatable { has: self, not: Self::empty() } }
-            fn match_name(s: &[u8]) -> Option<Self> {
-                match s { $( $lit => Some(Self::$variant), )* _ => None }
-            }
-        }
-        impl Negatable<$name> {
-            /// Port of `npm.zig` `Negatable.apply` — `!foo` clears, `foo` sets.
-            pub fn apply(&mut self, s: &[u8]) {
-                let (neg, key) = if let Some(rest) = s.strip_prefix(b"!") { (true, rest) } else { (false, s) };
-                if let Some(bit) = <$name>::match_name(key) {
-                    if neg { self.not |= bit; } else { self.has |= bit; }
-                }
-            }
-            #[inline] pub fn combine(self) -> $name {
-                if self.has.is_empty() { <$name>::all() & !self.not } else { self.has & !self.not }
-            }
-        }
-    };
->>>>>>> Stashed changes
 }
 
 /// Port of `install/npm.zig` `Negatable(T)` — accumulates an `os`/`cpu`/`libc`

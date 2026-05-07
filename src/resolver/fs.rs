@@ -1137,12 +1137,10 @@ impl RealFS {
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB under Stacked Borrows. Take `entries_mutex` for the
         // whole operation so the `&mut BSSMapInner` is exclusive.
-        self.entries_mutex.lock();
-        let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
-        let _unlock_guard = scopeguard::guard((), move |_| {
-            // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
-            unsafe { (*mutex_ptr).unlock() };
-        });
+        // PORT NOTE: `MutexGuard` holds the mutex by raw pointer (no borrow of
+        // `self`), so the `&mut self` calls below (`readdir`, `read_directory_error`)
+        // remain unconstrained while the lock is held.
+        let _unlock_guard = self.entries_mutex.lock_guard();
 
         // PORT NOTE: `at_index` returns a raw `*mut EntriesOption` (matching Zig's
         // `*EntriesOption`). Form short-lived `&mut` only at each use site below;
@@ -1757,18 +1755,15 @@ impl RealFS {
 
         crate::Resolver::assert_valid_cache_key(dir);
         let mut cache_result: Option<allocators::Result> = None;
-        if FeatureFlags::ENABLE_ENTRY_CACHE {
-            self.entries_mutex.lock();
-        }
-        // PORT NOTE: defer entries_mutex.unlock() — using scopeguard via raw-ptr so the
-        // guard doesn't borrow `&self` (Zig: `defer self.entries_mutex.unlock()`).
-        let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
-        let _unlock_guard = scopeguard::guard((), move |_| {
-            if FeatureFlags::ENABLE_ENTRY_CACHE {
-                // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
-                unsafe { (*mutex_ptr).unlock() };
-            }
-        });
+        // PORT NOTE: Zig `defer self.entries_mutex.unlock()`. `MutexGuard` holds the
+        // mutex by raw pointer (no borrow of `self`), so the `&mut self` calls below
+        // (`open_dir`, `readdir`, `read_directory_error`, `entries.put`) remain
+        // unconstrained while the lock is held.
+        let _unlock_guard = if FeatureFlags::ENABLE_ENTRY_CACHE {
+            Some(self.entries_mutex.lock_guard())
+        } else {
+            None
+        };
 
         let mut in_place: Option<*mut DirEntry> = None;
 
@@ -1815,14 +1810,14 @@ impl RealFS {
 
         let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
         // PORT NOTE: Zig `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // runs on EVERY exit path including the `try`s below — wrap in a scopeguard so we never
+        // runs on EVERY exit path including the `try`s below — defer the close so we never
         // leak the directory FD when `DirnameStore::append` / `self.entries.put` early-return via `?`.
-        // `Dir` is `Copy`, so the closure captures a copy of `handle`; uses below remain valid.
-        let _close_handle_guard = scopeguard::guard((), move |_| {
+        // `Dir` is `Copy`, so the `move` closure captures a copy of `handle`; uses below remain valid.
+        scopeguard::defer! {
             if should_close_handle {
                 handle.close();
             }
-        });
+        }
 
         // if we get this far, it's a real directory, so we can just store the dir name.
         let dir: &'static [u8] = if !had_handle {
@@ -2298,9 +2293,9 @@ impl RealFS {
             if handle == w::INVALID_HANDLE_VALUE {
                 return Ok(cache);
             }
-            let _close_guard = scopeguard::guard((), |_| {
+            scopeguard::defer! {
                 let _ = w::CloseHandle(handle);
-            });
+            }
 
             let mut info: w::BY_HANDLE_FILE_INFORMATION =
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)

@@ -299,6 +299,7 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
+                    t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
                     t.configure_linker();
                 }

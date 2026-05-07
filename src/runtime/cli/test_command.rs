@@ -1893,12 +1893,6 @@ impl TestCommand {
 
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
-        // PORT NOTE (layering): `InitOptions` carries the low-tier subset
-        // (`transform_options`/`debugger` live in `bun_options_types`, a dep of
-        // `bun_jsc`, so they thread through here and are consumed by
-        // `RuntimeHooks::init_runtime_state` → `Transpiler::init` /
-        // `configureDebugger`). `store_fd` is patched post-init (matches
-        // `init_with_module_graph` / `init_worker`).
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
@@ -1908,17 +1902,17 @@ impl TestCommand {
                 env_loader: core::ptr::NonNull::new(
                     (&raw mut *env_loader).cast::<DotEnv::Loader<'static>>(),
                 ),
+                // we must store file descriptors because we reuse them for
+                // iterating through the directory tree recursively
+                //
+                // in the future we should investigate if refactoring this to not
+                // rely on the dir fd yields a performance improvement
+                store_fd: true,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
             })?
         };
-        // we must store file descriptors because we reuse them for
-        // iterating through the directory tree recursively
-        //
-        // in the future we should investigate if refactoring this to not
-        // rely on the dir fd yields a performance improvement
-        vm.transpiler.resolver.store_fd = true;
         vm.argv = core::mem::take(&mut ctx.passthrough);
         vm.preload = core::mem::take(&mut ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;

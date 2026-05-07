@@ -125,6 +125,10 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// Spec VirtualMachine.zig:1211 `Options.store_fd`. Must be applied to
+    /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
+    /// `top_level_dir`, so it threads through `init_runtime_state`.
+    pub store_fd: bool,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -150,6 +154,7 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
+            store_fd: false,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -3371,6 +3376,7 @@ impl VirtualMachine {
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
+            store_fd: opts.store_fd,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,

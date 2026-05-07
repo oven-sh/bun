@@ -254,10 +254,6 @@ pub struct Group {
 // auto-`!Send` from `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
 unsafe impl Sync for Group {}
-// SAFETY: `List::tail` is a self-referential backref into `head.next` (see
-// `and_range`) — moves with its referent, so sending the whole `List` is sound.
-unsafe impl Send for List {}
-unsafe impl Sync for List {}
 
 impl Default for Group {
     fn default() -> Self {

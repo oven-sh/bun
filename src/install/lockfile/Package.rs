@@ -379,13 +379,6 @@ macro_rules! pkg_ext_trait {
 pkg_ext_trait!(PackageListExt for MultiArrayList<Package<SemverIntType>>);
 pkg_ext_trait!(PackageSliceExt for bun_collections::multi_array_list::Slice<Package<SemverIntType>>);
 
-/// `Package.List` (Zig: `MultiArrayList(Package)`). The associated-type
-/// indirection lets `lockfile.rs` name `<Package as PackageListProvider>::List`
-/// without instantiating the generic at the field site.
-impl<SemverIntType: VersionInt> lockfile::PackageListProvider for Package<SemverIntType> {
-    type List = MultiArrayList<Package<SemverIntType>>;
-}
-
 impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
     fn default() -> Self {
         Self {

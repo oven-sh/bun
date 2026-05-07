@@ -75,12 +75,12 @@ fn load_bunfig(
     // SAFETY: `ctx.log` is the process-global Log written once during
     // single-threaded CLI startup; no other `&mut` to it is live here.
     let original_level = unsafe { (*log_ptr).level };
-    scopeguard::defer! {
-        // SAFETY: same as above; runs on the same thread.
-        unsafe { (*log_ptr).level = original_level };
-    }
     // SAFETY: see above.
     unsafe { (*log_ptr).level = logger::Level::Warn };
+    let _guard = scopeguard::guard(original_level, move |lvl| {
+        // SAFETY: same as above; runs on the same thread.
+        unsafe { (*log_ptr).level = lvl };
+    });
     ctx.debug.loaded_bunfig = true;
     Bunfig::parse(cmd, &source, ctx)
 }

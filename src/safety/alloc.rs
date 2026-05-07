@@ -1,110 +1,42 @@
-// OBSOLETE per PORTING.md §Allocators — Zig allocator-identity checks (`assertEq`,
-// `CheckedAllocator`) replaced by AtomicPtr hooks in `lib.rs`. Draft kept for diff-pass only;
-// not included in the module tree.
-use core::ffi::c_void;
+//! Allocator-identity safety checks (Zig: `bun.safety.alloc`).
+//!
+//! Zig's `std.mem.Allocator` is a `{ ptr: *anyopaque, vtable: *const VTable }`
+//! pair; this module compares those two words to catch a single unmanaged
+//! container being driven by mismatched allocators. The Rust port uses
+//! [`bun_alloc::StdAllocator`] (the literal `{ptr, vtable}` struct) so the
+//! comparison semantics are identical — no fat-pointer transmutes.
+//!
+//! Higher-tier `is_instance` checks (`MimallocArena`, `allocation_scope`,
+//! `LinuxMemFdAllocator`, `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`,
+//! arena vtable) live in crates above `bun_safety` in the dep graph and are
+//! reached via the [`crate::ALLOC_HAS_PTR`] / [`crate::IS_MIMALLOC_ARENA`]
+//! AtomicPtr hooks (CYCLEBREAK §Debug-hook).
+
 use core::fmt;
 
-use bun_alloc::{self, Allocator, MimallocArena, NullableAllocator};
-#[cfg(target_os = "linux")]
-use bun_alloc::LinuxMemFdAllocator;
-use bun_core::Output;
-use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
-
-// TODO(port): Zig's `std.mem.Allocator` is a `{ ptr: *anyopaque, vtable: *const VTable }` pair.
-// In Rust the closest analogue is `&dyn bun_alloc::Allocator` (fat pointer = data + vtable).
-// The helpers below extract those two words for identity comparison. Revisit in Phase B once
-// `bun_alloc::Allocator`'s exact shape is fixed — if it ends up being a concrete struct rather
-// than a trait object, these helpers and every signature in this file change.
-
-#[inline]
-fn vtable_of(alloc: &dyn Allocator) -> *const () {
-    let raw: *const dyn Allocator = alloc;
-    // SAFETY: `*const dyn Trait` is a two-word fat pointer (data, vtable). Layout is
-    // guaranteed by the Rust ABI for trait objects.
-    unsafe { core::mem::transmute::<*const dyn Allocator, [*const (); 2]>(raw)[1] }
-}
-
-#[inline]
-fn ptr_of(alloc: &dyn Allocator) -> *const c_void {
-    alloc as *const dyn Allocator as *const c_void
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-fn no_alloc(
-    _ptr: *mut c_void,
-    _len: usize,
-    _alignment: usize, // TODO(port): std.mem.Alignment
-    _ret_addr: usize,
-) -> Option<*mut u8> {
-    None
-}
-
-// TODO(port): `dummy_vtable` / `arena_vtable` exist in Zig to obtain the vtable pointer that
-// `std.heap.ArenaAllocator` hands out, so `has_ptr` can recognize arena-backed allocators by
-// vtable identity. In Rust the arena type is `bumpalo::Bump` (re-exported as `bun_alloc::Arena`)
-// and there is no equivalent "extract the vtable from a dummy instance at comptime" trick on
-// stable. Phase B should replace this with `bun_alloc::Arena::is_instance(alloc)` (a downcast
-// check) and delete `no_alloc` / `DUMMY_VTABLE` / `ARENA_VTABLE` entirely.
-#[allow(dead_code)]
-static DUMMY_VTABLE: () = ();
-
-// TODO(port): see note on DUMMY_VTABLE. Placeholder so `has_ptr` compiles structurally.
-fn arena_vtable() -> *const () {
-    // PORT NOTE: Zig computes this at comptime via a labeled block; Rust cannot const-eval
-    // a trait-object vtable extraction. Compute lazily instead.
-    // TODO(port): replace with bun_alloc::Arena::VTABLE or an is_instance check.
-    core::ptr::null()
-}
-
-// PORT NOTE: `cfg!()` keeps both branches in the type-checker (PORTING.md §Platform conditionals).
-// `LinuxMemFdAllocator` / `heap_breakdown::Zone` may be cfg-gated in `bun_alloc`, so gate the
-// reference itself with `#[cfg]` helpers that vanish on other targets.
-// TODO(port): verify LinuxMemFdAllocator / heap_breakdown::Zone are exported unconditionally in
-// bun_alloc; if so, these helpers can be inlined back into `has_ptr`.
-#[inline]
-fn linux_memfd_is_instance(alloc: &dyn Allocator) -> bool {
-    #[cfg(target_os = "linux")]
-    { return LinuxMemFdAllocator::is_instance(alloc); }
-    #[cfg(not(target_os = "linux"))]
-    { let _ = alloc; false }
-}
-
-#[inline]
-fn heap_breakdown_zone_is_instance(alloc: &dyn Allocator) -> bool {
-    // TODO(port): `bun.heap_breakdown.enabled` is a comptime build flag; map to a cfg feature.
-    #[cfg(feature = "heap_breakdown")]
-    { return bun_alloc::heap_breakdown::Zone::is_instance(alloc); }
-    #[cfg(not(feature = "heap_breakdown"))]
-    { let _ = alloc; false }
-}
+use bun_alloc::{basic, NullableAllocator, StdAllocator};
+use bun_core::{Output, StoredTrace};
 
 /// Returns true if `alloc` definitely has a valid `.ptr`.
-fn has_ptr(alloc: &dyn Allocator) -> bool {
-    vtable_of(alloc) == arena_vtable()
-        || bun_alloc::allocation_scope::is_instance(alloc)
-        || linux_memfd_is_instance(alloc)
-        || bun_alloc::MaxHeapAllocator::is_instance(alloc)
-        || vtable_of(alloc) == bun_alloc::c_allocator_vtable()
-        || vtable_of(alloc) == bun_alloc::z_allocator_vtable()
-        || MimallocArena::is_instance(alloc)
-        /* TODO(port): CachedBytecode hook */
-        // Hook-registered: bun_bundler::allocator_has_pointer (CYCLEBREAK §Debug-hook ALLOC_HAS_PTR).
-        // NOTE: Zig predicates compare *vtable identity* (bundle_v2.zig:4423, string.zig:979),
-        // so pass the vtable half of the fat pointer, not the data half.
-        || crate::call_alloc_predicate(&crate::ALLOC_HAS_PTR, vtable_of(alloc))
-        || heap_breakdown_zone_is_instance(alloc)
-        // Hook-registered: bun_str::String::is_wtf_allocator (CYCLEBREAK §Debug-hook IS_WTF_ALLOCATOR).
-        || crate::call_alloc_predicate(&crate::IS_WTF_ALLOCATOR, vtable_of(alloc))
+fn has_ptr(alloc: StdAllocator) -> bool {
+    // In-tier vtable-identity checks (`bun_alloc` is a direct dep).
+    core::ptr::eq(alloc.vtable, basic::C_ALLOCATOR.vtable)
+        || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
+        || bun_alloc::String::is_wtf_allocator(alloc)
+        // Higher-tier checks (arena, allocation_scope, LinuxMemFdAllocator,
+        // MaxHeapAllocator, MimallocArena, CachedBytecode, bundle_v2,
+        // heap_breakdown::Zone) are folded into a single hook the runtime
+        // registers at init. Unset hook ⇒ `false` (safe under-approximation).
+        || crate::call_alloc_predicate(&crate::ALLOC_HAS_PTR, alloc)
 }
 
 /// Returns true if the allocators are definitely different.
-fn guaranteed_mismatch(alloc1: &dyn Allocator, alloc2: &dyn Allocator) -> bool {
-    if vtable_of(alloc1) != vtable_of(alloc2) {
+fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
+    if !core::ptr::eq(alloc1.vtable, alloc2.vtable) {
         return true;
     }
-    let ptr1 = if has_ptr(alloc1) { ptr_of(alloc1) } else { return false };
-    let ptr2 = if has_ptr(alloc2) { ptr_of(alloc2) } else { return false };
+    let ptr1 = if has_ptr(alloc1) { alloc1.ptr } else { return false };
+    let ptr2 = if has_ptr(alloc2) { alloc2.ptr } else { return false };
     ptr1 != ptr2
 }
 
@@ -112,47 +44,41 @@ fn guaranteed_mismatch(alloc1: &dyn Allocator, alloc2: &dyn Allocator) -> bool {
 ///
 /// This function may have false negatives; that is, it may fail to detect that two allocators
 /// are different. However, in practice, it's a useful safety check.
-pub fn assert_eq(alloc1: &dyn Allocator, alloc2: &dyn Allocator) {
+pub fn assert_eq(alloc1: StdAllocator, alloc2: StdAllocator) {
     assert_eq_fmt(alloc1, alloc2, format_args!("allocators do not match"));
 }
 
 /// Asserts that two allocators are equal, with a formatted message.
-pub fn assert_eq_fmt(
-    alloc1: &dyn Allocator,
-    alloc2: &dyn Allocator,
-    args: fmt::Arguments<'_>,
-) {
+pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Arguments<'_>) {
     if !ENABLED {
         return;
     }
     'blk: {
-        if vtable_of(alloc1) != vtable_of(alloc2) {
-            Output::err(
+        if !core::ptr::eq(alloc1.vtable, alloc2.vtable) {
+            Output::err_tag(
                 "allocator mismatch",
                 format_args!(
                     "vtables differ: {:p} and {:p}",
-                    vtable_of(alloc1),
-                    vtable_of(alloc2),
+                    alloc1.vtable as *const _,
+                    alloc2.vtable as *const _,
                 ),
             );
             break 'blk;
         }
-        let ptr1 = if has_ptr(alloc1) { ptr_of(alloc1) } else { return };
-        let ptr2 = if has_ptr(alloc2) { ptr_of(alloc2) } else { return };
+        let ptr1 = if has_ptr(alloc1) { alloc1.ptr } else { return };
+        let ptr2 = if has_ptr(alloc2) { alloc2.ptr } else { return };
         if ptr1 == ptr2 {
             return;
         }
-        Output::err(
+        Output::err_tag(
             "allocator mismatch",
             format_args!(
                 "vtables are both {:p} but pointers differ: {:p} and {:p}",
-                vtable_of(alloc1),
-                ptr1,
-                ptr2,
+                alloc1.vtable as *const _, ptr1, ptr2,
             ),
         );
     }
-    bun_core::assertf(false, args);
+    bun_core::assertf!(false, "{}", args);
 }
 
 /// Use this in unmanaged containers to ensure multiple allocators aren't being used with the same
@@ -160,7 +86,6 @@ pub fn assert_eq_fmt(
 /// `CheckedAllocator::set` (for non-const methods) or `CheckedAllocator::assert_eq` (for const
 /// methods). (Exception: methods like `clone` which explicitly accept any allocator should not call
 /// any methods on this type.)
-#[derive(Default)]
 pub struct CheckedAllocator {
     // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
     #[cfg(feature = "ci_assert")]
@@ -170,36 +95,46 @@ pub struct CheckedAllocator {
     trace: StoredTrace,
 }
 
+impl Default for CheckedAllocator {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "ci_assert")]
+            allocator: NullableAllocator::NULL,
+            #[cfg(debug_assertions)]
+            trace: StoredTrace::EMPTY,
+        }
+    }
+}
+
 impl CheckedAllocator {
     #[inline]
-    pub fn init(alloc: &dyn Allocator) -> Self {
+    pub fn init(alloc: StdAllocator) -> Self {
         let mut self_ = Self::default();
         self_.set(alloc);
         self_
     }
 
-    pub fn set(&mut self, alloc: &dyn Allocator) {
+    pub fn set(&mut self, alloc: StdAllocator) {
         if !ENABLED {
             return;
         }
         #[cfg(feature = "ci_assert")]
-        {
-            if self.allocator.is_null() {
-                self.allocator = NullableAllocator::init(Some(alloc));
-                #[cfg(debug_assertions)]
-                {
-                    // TODO(port): @returnAddress() — use a backtrace capture or caller-provided ip.
-                    self.trace = StoredTrace::capture(0);
-                }
-            } else {
-                self.assert_eq(alloc);
+        if self.allocator.is_null() {
+            self.allocator = NullableAllocator::init(Some(alloc));
+            #[cfg(debug_assertions)]
+            {
+                // PORT NOTE: Zig passes `@returnAddress()`. Rust has no stable
+                // equivalent; `None` lets `StoredTrace::capture` start from the
+                // immediate caller frame instead.
+                self.trace = StoredTrace::capture(None);
             }
+        } else {
+            self.assert_eq(alloc);
         }
-        #[cfg(not(feature = "ci_assert"))]
-        let _ = alloc;
     }
 
-    pub fn assert_eq(&self, alloc: &dyn Allocator) {
+    pub fn assert_eq(&self, alloc: StdAllocator) {
         if !ENABLED {
             return;
         }
@@ -210,24 +145,23 @@ impl CheckedAllocator {
                 return;
             }
 
-            Output::err(
+            Output::err_tag(
                 "allocator mismatch",
                 format_args!("cannot use multiple allocators with the same collection"),
             );
             #[cfg(debug_assertions)]
             {
-                Output::err(
+                Output::err_tag(
                     "allocator mismatch",
                     format_args!("collection first used here, with a different allocator:"),
                 );
-                // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+                // Hook-registered: `bun_crash_handler::dump_stack_trace`
+                // (frame_count = 10, stop_at_jsc_llint = true).
                 crate::dump_stored_trace(&self.trace);
             }
             // Assertion will always fail. We want the error message.
             crate::alloc::assert_eq(old_alloc, alloc);
         }
-        #[cfg(not(feature = "ci_assert"))]
-        let _ = alloc;
     }
 
     /// Transfers ownership of the collection to a new allocator.
@@ -242,7 +176,7 @@ impl CheckedAllocator {
     /// * `&MimallocArena` (const)
     /// * `MimallocArena::Borrowed`
     ///
-    /// If you only have a `&dyn Allocator`, see `MimallocArena::Borrowed::downcast`.
+    /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
     pub fn transfer_ownership(&mut self, new_allocator: impl AsMimallocArenaAllocator) {
         if !ENABLED {
@@ -252,47 +186,41 @@ impl CheckedAllocator {
         {
             let new_std = new_allocator.allocator();
 
-            // PORT NOTE: Zig uses `defer self.* = .init(new_std)`. scopeguard would need a
-            // `&mut self` capture overlapping the reads below; reshaped for borrowck by hoisting
-            // the assignment to both exit paths.
-            let old_allocator = match self.allocator.get() {
-                Some(a) => a,
-                None => {
-                    *self = Self::init(new_std);
-                    return;
-                }
+            // PORT NOTE: Zig uses `defer self.* = .init(new_std)`. A scopeguard
+            // would need a `&mut self` capture overlapping the reads below, so
+            // the assignment is hoisted to both early returns instead.
+            let Some(old_allocator) = self.allocator.get() else {
+                *self = Self::init(new_std);
+                return;
             };
-            if MimallocArena::is_instance(old_allocator) {
+            if crate::call_alloc_predicate(&crate::IS_MIMALLOC_ARENA, old_allocator) {
                 *self = Self::init(new_std);
                 return;
             }
 
             #[cfg(debug_assertions)]
             {
-                Output::err_generic(format_args!("collection first used here:"));
-                // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+                Output::err_generic("collection first used here:", ());
+                // Hook-registered: `bun_crash_handler::dump_stack_trace`.
                 crate::dump_stored_trace(&self.trace);
             }
             panic!(
                 "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",
-                vtable_of(old_allocator),
+                old_allocator.vtable as *const _,
             );
         }
-        #[cfg(not(feature = "ci_assert"))]
-        let _ = new_allocator;
     }
 }
 
-// TODO(port): Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
-// MimallocArena.Borrowed` via `anytype` + comptime switch. This trait stands in for that set;
-// Phase B should impl it for `&MimallocArena` and `bun_alloc::MimallocArenaBorrowed`.
+/// Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
+/// MimallocArena.Borrowed` via `anytype` + comptime switch and calls
+/// `.allocator()` on the result. `MimallocArena` lives in `bun_runtime` (above
+/// this crate), so callers implement this trait there.
 pub trait AsMimallocArenaAllocator {
-    fn allocator(&self) -> &dyn Allocator;
+    fn allocator(&self) -> StdAllocator;
 }
 
 pub const ENABLED: bool = cfg!(feature = "ci_assert");
-// TODO(port): `bun.Environment.ci_assert` is a build-time flag distinct from debug_assertions;
-// mapped to a cargo feature here. Phase B: wire the actual feature in Cargo.toml.
 
 #[allow(dead_code)]
 const TRACES_ENABLED: bool = cfg!(debug_assertions);
@@ -300,7 +228,7 @@ const TRACES_ENABLED: bool = cfg!(debug_assertions);
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/safety/alloc.zig (192 lines)
-//   confidence: low
-//   todos:      10
-//   notes:      Entire module compares Zig Allocator {ptr,vtable} identity; Rust has no direct analogue. Ported structurally over `&dyn bun_alloc::Allocator` fat-pointer parts, but Phase B must decide whether this safety layer survives at all (most Rust callers won't pass allocators). arena_vtable/ci_assert/heap_breakdown gated on placeholder cfg features; LinuxMemFdAllocator/Zone refs wrapped in #[cfg] helpers.
+//   confidence: medium
+//   todos:      0
+//   notes:      Reworked from `&dyn Allocator` fat-pointer transmutes to `StdAllocator` (the literal {ptr, vtable} port) so .ptr/.vtable compare exactly as in Zig. Higher-tier `is_instance` checks (arena/allocation_scope/LinuxMemFd/MaxHeap/MimallocArena/CachedBytecode/bundle_v2/heap_breakdown) folded into the `ALLOC_HAS_PTR` hook; `MimallocArena::is_instance` for `transfer_ownership` via `IS_MIMALLOC_ARENA` hook. `is_wtf_allocator`/c_allocator/z_allocator vtable checks are direct (already moved down to bun_alloc).
 // ──────────────────────────────────────────────────────────────────────────

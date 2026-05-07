@@ -303,8 +303,41 @@ pub trait RepositoryExt: Sized {
     ) -> Result<ExtractData, Error>;
 }
 
+/// Zig: `Repository.exec` (private associated fn). Lifted to a module-level
+/// free fn because trait methods cannot be private; called only from this
+/// file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-    Repository::__exec(env, argv)
+    // PORT NOTE: Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
+    // `Map` is move-only; clone via `clone_with_allocator` so callers can
+    // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
+    let mut env = bun_core::handle_oom(env.clone_with_allocator());
+    let std_map = env.std_env_map()?;
+    // TODO(port): narrow error set
+
+    // TODO(port): std::process is banned — replace with bun_spawn::spawn_sync.
+    // Zig used std.process.Child.run on both Windows and POSIX (identical arms).
+    let result = bun_spawn::run(bun_spawn::RunOptions { argv, env_map: std_map.get() })?;
+
+    match result.term {
+        bun_spawn::Term::Exited(sig) => {
+            if sig == 0 {
+                return Ok(result.stdout);
+            } else if
+            // remote: The page could not be found <-- for non git
+            // remote: Repository not found. <-- for git
+            // remote: fatal repository '<url>' does not exist <-- for git
+            (strings::contains(&result.stderr, b"remote:")
+                && strings::contains(&result.stderr, b"not")
+                && strings::contains(&result.stderr, b"found"))
+                || strings::contains(&result.stderr, b"does not exist")
+            {
+                return Err(err!("RepositoryNotFound"));
+            }
+        }
+        _ => {}
+    }
+
+    Err(err!("InstallFailed"))
 }
 
 impl RepositoryExt for Repository {
@@ -326,7 +359,7 @@ impl RepositoryExt for Repository {
         })
     }
 
-    pub fn parse_append_github(
+    fn parse_append_github(
         input: &[u8],
         buf: &mut StringBuf<'_>,
     ) -> Result<Repository, AllocError> {
@@ -363,7 +396,7 @@ impl RepositoryExt for Repository {
         Ok(result)
     }
 
-    pub fn create_dependency_name_from_version_literal(
+    fn create_dependency_name_from_version_literal(
         repository: &Repository,
         lockfile: &mut Install::Lockfile,
         dep_id: Install::DependencyID,
@@ -403,59 +436,7 @@ impl RepositoryExt for Repository {
         name.to_vec()
     }
 
-    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
-        if owner_order != Ordering::Equal {
-            return owner_order;
-        }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
-        if repo_order != Ordering::Equal {
-            return repo_order;
-        }
-
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
-    }
-
-    // `comptime StringBuilder: type` → trait bound on `bun_semver::StringBuilder`
-    // (lower-tier crate); body only calls `.count()` and `.append::<String>()`.
-    pub fn count<B>(&self, buf: &[u8], builder: &mut B)
-    where
-        B: StringBuilderLike,
-    {
-        builder.count(self.owner.slice(buf));
-        builder.count(self.repo.slice(buf));
-        builder.count(self.committish.slice(buf));
-        builder.count(self.resolved.slice(buf));
-        builder.count(self.package_name.slice(buf));
-    }
-
-    pub fn clone<B>(&self, buf: &[u8], builder: &mut B) -> Repository
-    where
-        B: StringBuilderLike,
-    {
-        Repository {
-            owner: builder.append::<String>(self.owner.slice(buf)),
-            repo: builder.append::<String>(self.repo.slice(buf)),
-            committish: builder.append::<String>(self.committish.slice(buf)),
-            resolved: builder.append::<String>(self.resolved.slice(buf)),
-            package_name: builder.append::<String>(self.package_name.slice(buf)),
-        }
-    }
-
-    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
-            return false;
-        }
-        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
-            return false;
-        }
-        if self.resolved.is_empty() || rhs.resolved.is_empty() {
-            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
-        }
-        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
-    }
-
-    pub fn format_as(
+    fn format_as(
         &self,
         label: &str,
         buf: &[u8],
@@ -469,7 +450,7 @@ impl RepositoryExt for Repository {
         write!(writer, "{}", formatter)
     }
 
-    pub fn fmt_store_path<'a>(
+    fn fmt_store_path<'a>(
         &'a self,
         label: &'a str,
         string_buf: &'a [u8],
@@ -481,7 +462,7 @@ impl RepositoryExt for Repository {
         }
     }
 
-    pub fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a> {
+    fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a> {
         Formatter {
             repository: self,
             buf,
@@ -489,44 +470,7 @@ impl RepositoryExt for Repository {
         }
     }
 
-    fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-        // PORT NOTE: Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
-        // `Map` is move-only; clone via `clone_with_allocator` so callers can
-        // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
-        let mut env = bun_core::handle_oom(env.clone_with_allocator());
-        let std_map = env.std_env_map()?;
-        // TODO(port): narrow error set
-
-        // TODO(port): std::process is banned — replace with bun_spawn::spawn_sync.
-        // Zig used std.process.Child.run on both Windows and POSIX (identical arms).
-        let result = bun_spawn::run(bun_spawn::RunOptions {
-            argv,
-            env_map: std_map.get(),
-        })?;
-
-        match result.term {
-            bun_spawn::Term::Exited(sig) => {
-                if sig == 0 {
-                    return Ok(result.stdout);
-                } else if
-                // remote: The page could not be found <-- for non git
-                // remote: Repository not found. <-- for git
-                // remote: fatal repository '<url>' does not exist <-- for git
-                (strings::contains(&result.stderr, b"remote:")
-                    && strings::contains(&result.stderr, b"not")
-                    && strings::contains(&result.stderr, b"found"))
-                    || strings::contains(&result.stderr, b"does not exist")
-                {
-                    return Err(err!("RepositoryNotFound"));
-                }
-            }
-            _ => {}
-        }
-
-        Err(err!("InstallFailed"))
-    }
-
-    pub fn try_ssh(url: &[u8]) -> Option<&[u8]> {
+    fn try_ssh(url: &[u8]) -> Option<&[u8]> {
         // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
         // SAFETY: raw-ptr field projection — retags only `ssh_path_buf`. See tl_bufs().
         let ssh_path_buf = unsafe { &mut (*tl_bufs()).ssh_path_buf };
@@ -597,7 +541,7 @@ impl RepositoryExt for Repository {
         None
     }
 
-    pub fn try_https(url: &[u8]) -> Option<&[u8]> {
+    fn try_https(url: &[u8]) -> Option<&[u8]> {
         // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
         // SAFETY: raw-ptr field projection — retags only `final_path_buf`. See tl_bufs().
         let final_path_buf = unsafe { &mut (*tl_bufs()).final_path_buf };
@@ -644,7 +588,7 @@ impl RepositoryExt for Repository {
         None
     }
 
-    pub fn download(
+    fn download(
         env: &bun_dotenv::Map,
         log: &mut bun_logger::Log,
         cache_dir: bun_sys::Dir,
@@ -682,7 +626,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = Self::exec(
+                if let Err(err) = exec(
                     env,
                     &[b"git", b"-C", path, b"fetch", b"--quiet"],
                 ) {
@@ -706,7 +650,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = Self::exec(
+                if let Err(err) = exec(
                     env,
                     &[
                         b"git",
@@ -735,7 +679,7 @@ impl RepositoryExt for Repository {
         }
     }
 
-    pub fn find_commit(
+    fn find_commit(
         env: &mut bun_dotenv::Loader,
         log: &mut bun_logger::Log,
         repo_dir: bun_sys::Dir,
@@ -777,7 +721,7 @@ impl RepositoryExt for Repository {
             &argv_without
         };
 
-        let out = match Self::exec(shared, argv) {
+        let out = match exec(shared, argv) {
             Ok(v) => v,
             Err(err) => {
                 log.add_error_fmt(
@@ -799,7 +743,7 @@ impl RepositoryExt for Repository {
         // in-place; here we own `out` and copy the trimmed slice. Revisit ownership.
     }
 
-    pub fn checkout(
+    fn checkout(
         env: &bun_dotenv::Map,
         log: &mut bun_logger::Log,
         cache_dir: bun_sys::Dir,
@@ -839,7 +783,7 @@ impl RepositoryExt for Repository {
                     unsafe { &mut (*bufs).final_path_buf },
                 )?;
 
-                if let Err(err) = Self::exec(
+                if let Err(err) = exec(
                     env,
                     &[
                         b"git",
@@ -866,7 +810,7 @@ impl RepositoryExt for Repository {
                     &[folder_name],
                 );
 
-                if let Err(err) = Self::exec(
+                if let Err(err) = exec(
                     env,
                     &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
                 ) {

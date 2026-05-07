@@ -2836,19 +2836,15 @@ pub(crate) mod __forward_decls {
     pub use ::bun_install_types::resolver_hooks::Resolution;
     pub use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
 }
-// bun_paths shim — adds the resolver-shaped wrappers (Option-returning dirname,
-// PosixToWinNormalizer, join helpers) until bun_paths exposes them at the root.
+// bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
+// `dirname` (`Option`-returning, `std.fs.path.dirname` semantics) and
+// `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
+// glob / explicit re-export below, no local re-implementation.
 mod bun_paths {
     pub use ::bun_paths::*;
     pub use ::bun_paths::resolve_path::is_sep_any;
+    pub use ::bun_paths::resolve_path::PosixToWinNormalizer;
 
-    /// Port of `std.fs.path.dirname` (Option-returning).
-    // TODO(b2-blocked): bun_paths::dirname — Zig `std.fs.path.dirname` returns
-    // null for root; bun_paths exposes only `dirname_simple` / generic `dirname<P>`.
-    pub fn dirname(p: &[u8]) -> Option<&[u8]> {
-        let d = ::bun_paths::dirname_simple(p);
-        if d.is_empty() || d == p { None } else { Some(d) }
-    }
     /// Value-dispatch over `Platform` to the const-generic `PlatformT`
     /// monomorphizations in `resolve_path`. The resolver body threads
     /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from Zig's
@@ -3692,7 +3688,10 @@ impl DebugMeta {
                 r
             };
             let data = logger::range_data(source, suggestion_range, self.suggestion_message);
-            // TODO(b2-blocked): bun_logger::Location has no `suggestion` field yet (Zig has it).
+            // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
+            // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
+            // `logErrorMsg` is uncalled in the Zig source so the field access is never
+            // type-checked under lazy compilation. Mirror the effective behavior (no-op).
             let _ = &self.suggestion_text;
             self.notes.push(data);
         }

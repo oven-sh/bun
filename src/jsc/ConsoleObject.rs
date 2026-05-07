@@ -2049,8 +2049,6 @@ pub mod formatter {
                 && js_type != jsc::JSType::ProxyObject
                 && value.is_callable()
             {
-                // TODO(phase-c): `JSValue::is_class` not yet ported.
-                
                 if value.is_class(global_this) {
                     return Ok(TagResult { tag: TagPayload::Class, cell: js_type });
                 }
@@ -2137,14 +2135,9 @@ pub mod formatter {
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
                 T::ProxyObject => {
-                    // TODO(phase-c): `JSValue::get_proxy_internal_field` /
-                    // `jsc::ProxyField` not yet ported — assume live proxy.
-                    
-                    {
-                        let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
-                        if handler.is_empty() || handler.is_undefined_or_null() {
-                            return Ok(TagResult { tag: TagPayload::RevokedProxy, cell: js_type });
-                        }
+                    let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
+                    if handler.is_empty() || handler.is_undefined_or_null() {
+                        return Ok(TagResult { tag: TagPayload::RevokedProxy, cell: js_type });
                     }
                     TagPayload::Proxy
                 }
@@ -2210,8 +2203,7 @@ pub mod formatter {
         }
     }
 
-    // TODO(phase-c): `jsc::C::CellType` not yet exported; only used by gated
-    // `print_as` body, so alias to `JSType` to keep the type name resolvable.
+    /// Mirrors Zig's `jsc.C.CellType` — same enum as `JSType` in this codebase.
     #[allow(dead_code)]
     type CellType = jsc::JSType;
 
@@ -2231,10 +2223,6 @@ pub mod formatter {
         J, // j
     }
 
-    // TODO(phase-c): re-gated — `write_with_formatting` body references
-    // unported `JSValue`/`ZigString` surface (~5 errs). Restore once the
-    // missing methods land.
-    
     impl<'a> Formatter<'a> {
         // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
         // via `comptime Slice: type`. Phase A handles only the `&[u8]` path; the
@@ -2540,8 +2528,6 @@ pub mod formatter {
         pub estimated_line_length: &'w mut usize,
     }
 
-    // TODO(phase-c): re-gated — body references unported helpers.
-    
     impl<'w> WrappedWriter<'w> {
         pub const IS_WRAPPED_WRITER: bool = true;
 
@@ -2728,7 +2714,6 @@ pub mod formatter {
         pub count: usize,
     }
 
-     // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
         MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
     {
@@ -2795,7 +2780,6 @@ pub mod formatter {
         pub is_first: bool,
     }
 
-     // TODO(phase-c): re-gated — calls gated `Formatter::format`.
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
         pub extern "C" fn for_each(
             _: *mut jsc::VM,
@@ -2842,7 +2826,6 @@ pub mod formatter {
         pub parent: JSValue,
     }
 
-     // TODO(phase-c): re-gated — body references unported `JSValue` surface.
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
         pub fn handle_first_property(
             &mut self,
@@ -3974,10 +3957,6 @@ pub mod formatter {
     // `self.estimated_line_length`. Logic and ordering are preserved 1:1.
     // ───────────────────────────────────────────────────────────────────────
 
-    // TODO(phase-c): re-gated — `print_array`/`print_object`/… bodies (~1200L)
-    // reference ~40 unported `JSValue` methods. `format` dispatcher stubbed
-    // below; restore once `print_as` un-gates.
-    
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
             let mut opts = TagOptions::HIDE_GLOBAL;

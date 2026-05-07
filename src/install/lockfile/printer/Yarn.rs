@@ -125,15 +125,7 @@ fn packages(
             resolutions: resolved,
         };
         // PERF(port): std.sort.pdq → sort_unstable_by (Rust uses pdqsort internally)
-        alphabetized_names.sort_unstable_by(|&a, &b| {
-            if alphabetizer.is_alphabetical(a, b) {
-                Ordering::Less
-            } else if alphabetizer.is_alphabetical(b, a) {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        });
+        alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));
     }
 
     // When printing, we start at 1

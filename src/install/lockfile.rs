@@ -209,13 +209,7 @@ pub struct Lockfile {
     pub saved_config_version: Option<ConfigVersion>,
 }
 
-// TODO(port): placeholder trait for Package::List (MultiArrayList<Package>). Phase B: use bun_collections::MultiArrayList<Package>.
-pub trait PackageListProvider {
-    type List;
-}
-/// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`. Aliased here so the
-/// `<Package as PackageListProvider>::List` projection (which has no impl yet)
-/// is not load-bearing.
+/// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
 pub type PackageList = self::package::List<u64>;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2183,7 +2177,8 @@ impl Lockfile {
 
                 resolutions = self.packages.items_resolution();
 
-                for (i, &existing_id) in existing_ids.iter().enumerate() {
+                for i in 0..existing_ids.len() {
+                    let existing_id = existing_ids[i];
                     if pkg
                         .resolution
                         .order(&resolutions[existing_id as usize], buf, buf)
@@ -2199,8 +2194,6 @@ impl Lockfile {
                 Ok(new_id)
             }
         }
-        // TODO(port): borrowck — `entry.value_ptr` borrows package_index while we also
-        // call self.packages.append/items_resolution. Phase B may need to restructure.
     }
 
     pub fn get_or_put_id(
@@ -2793,14 +2786,7 @@ impl Lockfile {
                 pkg_names: l_pkg_names,
                 string_buf: l_string_buf,
             };
-            l_buf.sort_by(|a, b| {
-                if sorter.is_less_than(*a, *b) {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            });
-            // PERF(port): Zig used pdqsort; slice::sort_by is stable mergesort. Profile in Phase B.
+            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
         }
 
         {
@@ -2808,13 +2794,7 @@ impl Lockfile {
                 pkg_names: r_pkg_names,
                 string_buf: r_string_buf,
             };
-            r_buf.sort_by(|a, b| {
-                if sorter.is_less_than(*a, *b) {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            });
+            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
         }
 
         let l_pkg_name_hashes = l_pkgs.items_name_hash();

@@ -1,8 +1,7 @@
 use core::mem::size_of;
 
-use crate::bake::dev_server::{DeferredRequest, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents};
+use crate::bake::dev_server::{deferred_request, packed_map, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents};
 use bun_collections::ArrayHashMap;
-// TODO(port): HTMLBundle lives under bun.jsc.API in Zig but is defined in src/runtime/api/server/ — verify crate path in Phase B.
 use crate::api::server::html_bundle::HTMLBundleRoute;
 
 #[derive(Clone, Copy, Default)]

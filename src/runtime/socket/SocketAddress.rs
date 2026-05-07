@@ -955,7 +955,10 @@ pub mod inet {
 
     // Zig `std.posix.sockaddr.in`/`.in6` shape (field names without `sin_`
     // prefix). Layout matches the platform C struct; on BSD a leading `len: u8`
-    // precedes `family: u8` (sa_family_t = u8 there).
+    // precedes `family: u8` (sa_family_t = u8 there). Zig defaults
+    // `len = @sizeOf(in)`, mirrored here via the `ZEROED` associated const so
+    // struct-update initializers (`..sockaddr_in::ZEROED`) work uniformly on
+    // all targets and in `const` context.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -966,6 +969,16 @@ pub mod inet {
         pub addr: u32,
         pub zero: [u8; 8],
     }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    impl sockaddr_in {
+        pub const ZEROED: Self = Self {
+            len: core::mem::size_of::<Self>() as u8,
+            family: 0,
+            port: 0,
+            addr: 0,
+            zero: [0; 8],
+        };
+    }
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -974,6 +987,10 @@ pub mod inet {
         pub port: in_port_t,
         pub addr: u32,
         pub zero: [u8; 8],
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    impl sockaddr_in {
+        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[repr(C)]
@@ -986,6 +1003,17 @@ pub mod inet {
         pub addr: [u8; 16],
         pub scope_id: u32,
     }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    impl sockaddr_in6 {
+        pub const ZEROED: Self = Self {
+            len: core::mem::size_of::<Self>() as u8,
+            family: 0,
+            port: 0,
+            flowinfo: 0,
+            addr: [0; 16],
+            scope_id: 0,
+        };
+    }
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -995,6 +1023,10 @@ pub mod inet {
         pub flowinfo: u32,
         pub addr: [u8; 16],
         pub scope_id: u32,
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    impl sockaddr_in6 {
+        pub const ZEROED: Self = Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
     }
 }
 

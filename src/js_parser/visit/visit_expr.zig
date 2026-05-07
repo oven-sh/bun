@@ -1773,6 +1773,8 @@ var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
 
 const string = []const u8;
 
+const DefineData = @import("../../bundler/defines.zig").DefineData;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
@@ -1793,8 +1795,6 @@ const Symbol = js_ast.Symbol;
 
 const G = js_ast.G;
 const Property = G.Property;
-
-const DefineData = @import("../../bundler/defines.zig").DefineData;
 
 const js_parser = bun.js_parser;
 const ExprIn = js_parser.ExprIn;

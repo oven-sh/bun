@@ -1286,6 +1286,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
             // Back-compat boolean used by native code until fully migrated
             Bun__Node__UseSystemCA.store(store == BunCAStore::System, core::sync::atomic::Ordering::Relaxed);
+        } else {
+            // Spec Arguments.zig: `Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system)`
+            // is written unconditionally; preserve that always-write semantics
+            // even when no CA flag/env was supplied (default `.bundled` ⇒ false).
+            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
         }
     }
 

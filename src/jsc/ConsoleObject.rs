@@ -2318,6 +2318,10 @@ pub mod formatter {
     #[allow(dead_code)]
     type CellType = jsc::JSType;
 
+    thread_local! {
+        static NAME_BUF: RefCell<[u8; 512]> = const { RefCell::new([0; 512]) };
+    }
+
     /// <https://console.spec.whatwg.org/#formatter>
     #[derive(Copy, Clone, Eq, PartialEq)]
     enum PercentTag {
@@ -4333,18 +4337,11 @@ pub mod formatter {
             // formatted `value`; otherwise we fall through to the generic
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // Stack scratch buffer (Zig: `threadlocal var name_buf: [512]u8`).
-                // The hook may recurse back into `print_private` (e.g.
-                // `Response::write_format` → `print_as(.Private, …)`), so a
-                // thread-local `RefCell` borrow here would panic on re-entry.
-                // 512B on the stack is fine and matches the Zig semantics of a
-                // freshly-clobbered scratch region per call.
-                let mut name_buf = [0u8; 512];
-                // SAFETY: JS-thread only; `self`/`writer_` borrow stack
-                // locals for the hook's duration.
-                let handled = unsafe {
-                    (hooks.console_print_runtime_object)(self, writer_, value, &mut name_buf, C)
-                }?;
+                let handled = NAME_BUF.with_borrow_mut(|buf| {
+                    // SAFETY: JS-thread only; `self`/`writer_` borrow stack
+                    // locals for the hook's duration.
+                    unsafe { (hooks.console_print_runtime_object)(self, writer_, value, buf, C) }
+                })?;
                 if handled {
                     return Ok(());
                 }

@@ -280,8 +280,8 @@ pub enum FileSystemError {
 static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
 // PORTING.md §Global mutable state: highest-fd watermark, mutated only on the
-// resolver thread. `RacyCell` (not `AtomicI32`) because `RawFd` is a `*mut`
-// HANDLE on Windows; the Windows path early-returns before touching it.
+// resolver thread. The Windows path early-returns before touching it (see
+// `set_max_fd`), so the `= 0` initializer matching POSIX `i32` is fine.
 pub(crate) static MAX_FD: bun_core::RacyCell<bun_sys::RawFd> = bun_core::RacyCell::new(0);
 pub(crate) static INSTANCE_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);

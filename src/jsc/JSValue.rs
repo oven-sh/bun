@@ -1292,9 +1292,7 @@ impl JSValue {
                 callback: JSValue,
             ) -> JSValue;
         }
-        // No `is_callable()` precondition: `Timer::sleep` passes a Promise here
-        // (Zig spec JSValue.zig:2267 has no assert; the C++ shim returns
-        // non-callables unchanged).
+        debug_assert!(self.is_callable());
         // SAFETY: `global` is a live JSGlobalObject; FFI shim is total over any JSValue.
         unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
     }

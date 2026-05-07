@@ -372,12 +372,10 @@ static const WTF::String toStringStatic(ZigString str)
         return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
     }
 
-    // Rust `&'static str` / `&'static [u8]` literals are NOT null-terminated,
-    // so the previous `ASCIILiteral::fromLiteralUnsafe` path (which `strlen`s
-    // and asserts a trailing NUL) over-reads. Intern via a length-bounded span
-    // instead — same atom-table caching, no NUL dependency.
     auto* untagged = untag(str.ptr);
-    return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
+    ASSERT(untagged[str.len] == 0);
+    ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
+    return WTF::String(ascii);
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)

@@ -931,7 +931,7 @@ impl ServerConfig {
             {
                 if args.development.is_hmr_enabled() {
                     use crate::bake::bake_body as bb;
-                    use bun_schema::api::DotEnvBehavior;
+                    use bun_options_types::schema::api::DotEnvBehavior;
 
                     // PORT NOTE: Zig threaded `init_ctx.arena` from
                     // `ServerInitContext`; the Rust `ServerInitContext` dropped

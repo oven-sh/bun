@@ -215,6 +215,18 @@ impl core::fmt::Display for PathOrFileDescriptor {
 }
 
 impl PathOrFileDescriptor {
+    /// Zig: `pathlike == .path`.
+    #[inline]
+    pub fn is_path(&self) -> bool {
+        matches!(self, Self::Path(_))
+    }
+
+    /// Zig: `pathlike == .fd`.
+    #[inline]
+    pub fn is_fd(&self) -> bool {
+        matches!(self, Self::Fd(_))
+    }
+
     /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's `pathlike.path`
     /// direct field access, used only after the caller has matched on the tag).
     #[inline]

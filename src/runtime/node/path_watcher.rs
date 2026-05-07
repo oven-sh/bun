@@ -29,16 +29,16 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
-use bun_core::Output;
-use bun_paths::{self as path, PathBuffer};
-use bun_str::{strings, ZStr};
-use bun_sys::{self as sys, Fd, FdExt, Tag as Syscall};
+use bun_core::{handle_oom, zstr, Output, ZStr};
+use bun_paths::resolve_path::{join_string_buf, join_z_buf, platform};
+use bun_paths::{self as path, path_buffer_pool, PathBuffer};
+use bun_str::strings;
+use bun_sys::{self as sys, Fd, FdExt, Tag};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
-use bun_jsc::VirtualMachine;
+use bun_jsc::VirtualMachineRef as VirtualMachine;
 
-// TODO(port): exact module path for FSWatcher/Event in bun_runtime
 use crate::node::node_fs_watcher::{self as fswatcher, Event, FSWatcher};
 type EventPathString = fswatcher::EventPathString;
 
@@ -52,7 +52,7 @@ macro_rules! log {
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
-// TODO(port): static mut — guarded by DEFAULT_MANAGER_MUTEX; consider OnceLock in Phase B
+// PORT NOTE: static mut — guarded by DEFAULT_MANAGER_MUTEX; matches Zig's plain global.
 static mut DEFAULT_MANAGER: Option<&'static PathWatcherManager> = None;
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
@@ -231,27 +231,28 @@ impl PathWatcher {
     /// Called from the platform reader thread with `manager.mutex` held.
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     fn emit(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
-        // TODO(port): std.time.milliTimestamp() equivalent
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
-        for (ctx, last) in self.handlers.keys().iter().zip(self.handlers.values_mut()) {
-            if last.should_emit(h, timestamp, event_type) {
-                on_path_update_fn(Some(*ctx), event_type.to_event(rel_path.into()), is_file);
+        // PORT NOTE: reshaped for borrowck — index instead of zip(keys, values_mut).
+        for i in 0..self.handlers.len() {
+            let ctx = self.handlers.keys()[i];
+            if self.handlers.values_mut()[i].should_emit(h, timestamp, event_type) {
+                on_path_update_fn(Some(ctx), event_type.to_event(rel_path.into()), is_file);
             }
         }
     }
 
     fn emit_error(&mut self, err: sys::Error) {
-        for ctx in self.handlers.keys() {
-            on_path_update_fn(Some(*ctx), Event::Error(err), false);
+        for &ctx in self.handlers.keys() {
+            on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
         }
     }
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
     fn flush(&mut self) {
-        for ctx in self.handlers.keys() {
-            on_update_end_fn(Some(*ctx));
+        for &ctx in self.handlers.keys() {
+            on_update_end_fn(Some(ctx));
         }
     }
 
@@ -345,12 +346,12 @@ pub fn watch(
     // resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
     // of lstat + open + (stat) in the old code. `O.PATH` is 0 on macOS (degrades to
     // O_RDONLY, which is what F_GETPATH needs anyway).
-    let mut resolve_buf = bun_paths::path_buffer_pool().get();
+    let mut resolve_buf = path_buffer_pool::get();
     let mut is_file = false;
     let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
         Ok(f) => f,
         Err(e) => {
-            if e.get_errno() == sys::E::NOTDIR {
+            if e.get_errno() == sys::E::ENOTDIR {
                 is_file = true;
                 match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
                     Ok(f) => f,
@@ -362,7 +363,7 @@ pub fn watch(
         }
     };
     let _close_probe = scopeguard::guard(probe_fd, |fd| fd.close());
-    let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut *resolve_buf) {
+    let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
         Err(_) => path, // fall back to the caller's path; best effort
         Ok(r) => {
             let len = r.len();
@@ -372,35 +373,32 @@ pub fn watch(
         }
     };
 
-    let mut key_buf = bun_paths::path_buffer_pool().get();
-    let key = PathWatcherManager::make_key(&mut *key_buf, resolved.as_bytes(), recursive);
+    let mut key_buf = path_buffer_pool::get();
+    let key = PathWatcherManager::make_key(&mut key_buf, resolved.as_bytes(), recursive);
 
     manager.mutex.lock();
 
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     let watchers = unsafe { &mut *manager.watchers.get() };
-    let gop = watchers.get_or_put(key);
-    if gop.found_existing {
-        let existing = *gop.value_ptr;
+    if let Some(&existing) = watchers.get(key) {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { (*existing).handlers.put(ctx, ChangeEvent::default()) };
+        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
         manager.mutex.unlock();
         return Ok(existing);
     }
 
     // New watcher: own the key and path.
-    *gop.key_ptr = Box::<[u8]>::from(key);
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
-        path: ZStr::from_bytes(resolved.as_bytes()),
+        path: ZStr::boxed(resolved.as_bytes()),
         recursive,
         is_file,
         handlers: ArrayHashMap::default(),
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { (*watcher).handlers.put(ctx, ChangeEvent::default()) };
-    *gop.value_ptr = watcher;
+    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    handle_oom(watchers.put(key, watcher));
 
     // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
     // which live under `manager.mutex`, so call it while still locked.
@@ -489,26 +487,26 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         Ok(f) => f,
     };
     let _close = scopeguard::guard(dfd, |f| f.close());
-    let mut it = sys::DirIterator::iterate(dfd, sys::DirIteratorEncoding::U8);
-    let mut abs_buf = bun_paths::path_buffer_pool().get();
-    let mut rel_buf = bun_paths::path_buffer_pool().get();
+    let mut it = sys::dir_iterator::iterate(dfd);
+    let mut abs_buf = path_buffer_pool::get();
+    let mut rel_buf = path_buffer_pool::get();
     loop {
         let entry = match it.next() {
             Err(_) => return,
             Ok(None) => return,
             Ok(Some(e)) => e,
         };
-        let child_is_file = entry.kind != sys::DirEntryKind::Directory;
+        let child_is_file = entry.kind != sys::EntryKind::Directory;
         if DIRS_ONLY && child_is_file {
             continue;
         }
         let name = entry.name.slice();
         let child_abs =
-            path::join_z_buf(&mut *abs_buf, &[abs_dir.as_bytes(), name], path::Style::Posix);
+            join_z_buf::<platform::Posix>(abs_buf.as_mut_slice(), &[abs_dir.as_bytes(), name]);
         let child_rel: &[u8] = if rel_dir.is_empty() {
             name
         } else {
-            path::join_string_buf(&mut *rel_buf, &[rel_dir, name], path::Style::Posix)
+            join_string_buf::<platform::Posix>(rel_buf.as_mut_slice(), &[rel_dir, name])
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
@@ -613,37 +611,38 @@ mod inotify_masks {
 impl Linux {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
         use bun_sys::linux::IN;
-        let rc = sys::syscall::inotify_init1(IN::CLOEXEC);
-        if let Some(err) = sys::errno_sys(rc, Syscall::Watch) {
-            return Err(err);
+        // SAFETY: FFI call; flags are valid.
+        let rc = unsafe { sys::linux::inotify_init1(IN::CLOEXEC) };
+        if rc < 0 {
+            return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
-        manager.platform.get_mut().fd = Fd::from_native(i32::try_from(rc).unwrap());
+        manager.platform.get_mut().fd = Fd::from_native(rc);
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
-        match bun_threading::spawn(move || {
+        let spawn_result = std::thread::Builder::new().spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
             Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        }) {
-            Ok(thread) => thread.detach(),
-            Err(_) => {
-                manager.platform.get_mut().fd.close();
-                return Err(sys::Error {
-                    errno: sys::E::NOMEM as _,
-                    syscall: Syscall::Watch,
-                    ..Default::default()
-                });
-            }
+        });
+        if spawn_result.is_err() {
+            manager.platform.get_mut().fd.close();
+            return Err(sys::Error {
+                errno: sys::E::ENOMEM as _,
+                syscall: Tag::watch,
+                ..Default::default()
+            });
         }
+        // JoinHandle dropped → thread detached.
         Ok(())
     }
 
     /// Caller holds `manager.mutex`.
     fn add_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
-        Linux::add_one(manager, watcher, &watcher.path, b"")?;
+        // PORT NOTE: reshaped for borrowck — clone path so &/&mut on watcher don't overlap.
+        let root = ZStr::boxed(watcher.path.as_bytes());
+        Linux::add_one(manager, watcher, &root, b"")?;
         if watcher.recursive && !watcher.is_file {
-            Linux::walk_and_add(manager, watcher, &watcher.path.clone(), b"");
-            // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap on watcher.
+            Linux::walk_and_add(manager, watcher, &root, b"");
         }
         Ok(())
     }

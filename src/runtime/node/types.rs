@@ -1430,33 +1430,11 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
 // ──────────────────────────────────────────────────────────────────────────
 
-
-
-impl Clone for PathOrFileDescriptor {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Fd(fd) => Self::Fd(*fd),
-            Self::Path(p) => Self::Path(p.clone()),
-        }
-    }
-}
-
-#[repr(u8)]
-pub enum PathOrFileDescriptorSerializeTag {
-    Fd,
-    Path,
-}
-
-impl PathOrFileDescriptorSerializeTag {
-    #[inline]
-    pub fn from_raw(raw: u8) -> Option<Self> {
-        match raw {
-            0 => Some(Self::Fd),
-            1 => Some(Self::Path),
-            _ => None,
-        }
-    }
-}
+// LAYERING: `Clone for PathOrFileDescriptor` and the `SerializeTag` enum now
+// live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
+// foreign-type impl here). Re-export the tag so downstream
+// `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
+pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 // PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
 // `Drop` for the path-owning variants, so an explicit `dupe()` is provided for

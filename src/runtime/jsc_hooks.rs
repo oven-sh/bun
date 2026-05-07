@@ -1852,15 +1852,33 @@ fn transpile_source_code_inner(
             );
             // ── Watcher fd / package_json lookup ────────────────────────────
             // Spec :170-176.
-            // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher
-            // gated). `index_of` / `watchlist()` un-gate with `hot_reloader.rs`.
             let mut fd: Option<bun_sys::Fd> = None;
-            #[allow(unused)]
-            let mut package_json: Option<*mut c_void> = None;
-            
-            // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher
-            // gated in hot_reloader.rs). `index_of`/`watchlist()` un-gate with it.
-            let _ = hash;
+            let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
+            {
+                use bun_watcher::{WatchItemColumns as _, WatchItemField};
+                // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher`
+                // set during VM init (BACKREF); cast recovers the concrete type.
+                let import_watcher: *mut bun_jsc::ImportWatcher =
+                    unsafe { (*jsc_vm).bun_watcher }.cast();
+                if !import_watcher.is_null() {
+                    // SAFETY: non-null per check above; only the JS thread
+                    // mutates the watchlist shape.
+                    let iw = unsafe { &*import_watcher };
+                    if let Some(index) = iw.index_of(hash) {
+                        if let Some(watchlist) = iw.watchlist() {
+                            let watcher_fd = watchlist.items_fd()[index as usize];
+                            fd = if watcher_fd.is_valid() { Some(watcher_fd) } else { None };
+                            // SAFETY: column `PackageJson` is
+                            // `Option<&'static PackageJSON>` per WatchItem layout.
+                            package_json = unsafe {
+                                watchlist.items::<Option<&'static bun_watcher::PackageJSON>>(
+                                    WatchItemField::PackageJson,
+                                )[index as usize]
+                            };
+                        }
+                    }
+                }
+            }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.
@@ -2600,18 +2618,28 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :561-592 — final ResolvedSource.
-                // TODO(b2-cycle): `package_json` is `Option<*mut c_void>`
-                // (ImportWatcher gated) — spec reads `pj.module_type` to
-                // override `module_type`. Fall back to `module_type` until
-                // `bun_watcher` un-gates the typed `*mut PackageJSON`.
-                let _ = package_json;
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
-                    L::Js | L::Jsx | L::Ts | L::Tsx => match module_type {
-                        ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
-                        ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
-                        _ => ResolvedSourceTag::Javascript,
-                    },
+                    L::Js | L::Jsx | L::Ts | L::Tsx => {
+                        // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
+                        // forward-decl (CYCLEBREAK) of
+                        // `bun_resolver::package_json::PackageJSON`; cast
+                        // through to read `module_type`.
+                        // SAFETY: `package_json` (when set) is a VM-lifetime
+                        // backref into the resolver's package.json cache.
+                        let module_type_ = package_json
+                            .map(|pj| unsafe {
+                                (*(pj as *const bun_watcher::PackageJSON
+                                    as *const bun_resolver::package_json::PackageJSON))
+                                    .module_type
+                            })
+                            .unwrap_or(module_type);
+                        match module_type_ {
+                            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
+                            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
+                            _ => ResolvedSourceTag::Javascript,
+                        }
+                    }
                     _ => ResolvedSourceTag::Javascript,
                 };
 
@@ -2767,7 +2795,60 @@ fn transpile_source_code_inner(
             }
 
             // Spec :756-803 — auto-watch for non-virtual absolute paths.
-            // TODO(b2-cycle): `vm.bun_watcher.addFile` — ImportWatcher gated.
+            'auto_watch: {
+                if args.virtual_source.is_some() {
+                    break 'auto_watch;
+                }
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                if !unsafe { (*jsc_vm).is_watcher_enabled() } {
+                    break 'auto_watch;
+                }
+                if !bun_paths::is_absolute(path.text)
+                    || bun_string::strings::contains(path.text, b"node_modules")
+                {
+                    break 'auto_watch;
+                }
+                // kqueue watchers need a file descriptor to receive event
+                // notifications on it; inotify/win32 watch by path.
+                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    if path.text.len() >= buf.len() {
+                        break 'auto_watch;
+                    }
+                    let z = bun_paths::z(path.text, &mut buf);
+                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+                        Ok(fd) => fd,
+                        Err(_) => break 'auto_watch,
+                    }
+                } else {
+                    bun_sys::Fd::INVALID
+                };
+                let hash = bun_watcher::Watcher::get_hash(path.text);
+                // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher`
+                // set when `is_watcher_enabled()`; cast recovers the concrete
+                // type.
+                let watcher =
+                    unsafe { &mut *((*jsc_vm).bun_watcher as *mut bun_jsc::ImportWatcher) };
+                if watcher
+                    .add_file::<true>(
+                        input_fd,
+                        path.text,
+                        hash,
+                        loader,
+                        bun_sys::Fd::INVALID,
+                        None,
+                    )
+                    .is_err()
+                {
+                    // Spec :785-799 — close the fd we just opened on macOS;
+                    // not a transpile failure (the user didn't open it).
+                    #[cfg(target_os = "macos")]
+                    if input_fd.is_valid() {
+                        use bun_sys::FdExt as _;
+                        input_fd.close();
+                    }
+                }
+            }
 
             // Spec :805-823 — `export default <path string>`.
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
@@ -2823,27 +2904,8 @@ fn transpile_source_code_inner(
 /// Spec ModuleLoader.zig:273-291 / :319-336 — register the just-opened file
 /// with the dev-server watcher (if enabled, absolute, and not in
 /// `node_modules`). Factored out because the spec inlines it twice.
-///
-/// Un-gated no-op stub so the two live call sites compile; the real body
-/// below is ``-gated on `ImportWatcher`. Un-gate both
-/// atomically.
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn maybe_watch_file(
-    _jsc_vm: *mut VirtualMachine,
-    _should_close_input_file_fd: &mut bool,
-    _input_file_fd: bun_sys::Fd,
-    _is_node_override: bool,
-    _path: &Fs::Path,
-    _hash: u32,
-    _loader: Loader,
-    _package_json: Option<*mut c_void>,
-) {
-    // TODO(b2-cycle): un-gate with `ImportWatcher` (`hot_reloader.rs`).
-}
-
- // TODO(b2-cycle): un-gate with `ImportWatcher` (`hot_reloader.rs`).
-#[inline]
 fn maybe_watch_file(
     jsc_vm: *mut VirtualMachine,
     should_close_input_file_fd: &mut bool,
@@ -2852,8 +2914,9 @@ fn maybe_watch_file(
     path: &Fs::Path,
     hash: u32,
     loader: Loader,
-    package_json: Option<*mut c_void>,
+    package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     if !unsafe { (*jsc_vm).is_watcher_enabled() } {
         return;
     }
@@ -2867,9 +2930,17 @@ fn maybe_watch_file(
         return;
     }
     *should_close_input_file_fd = false;
-    // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher gated in
-    // hot_reloader.rs). `add_file` un-gates with it.
-    let _ = (jsc_vm, input_file_fd, hash, loader, package_json);
+    // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *((*jsc_vm).bun_watcher as *mut bun_jsc::ImportWatcher) };
+    let _ = watcher.add_file::<true>(
+        input_file_fd,
+        path.text,
+        hash,
+        loader,
+        bun_sys::Fd::INVALID,
+        package_json,
+    );
 }
 
 // Spec ModuleLoader.zig:681-708 — generated `bun:sqlite` import shims.

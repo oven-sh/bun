@@ -1047,11 +1047,11 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         }
 
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-        // `bun_vm()` returns the raw `*mut VirtualMachine`; Zig's
-        // `bunVMConcurrently` is the same pointer minus a thread-local debug
-        // assert, so derefing it off-thread is the intended semantics.
+        // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
+        // documented accessor for off-thread (work-pool) callers; the
+        // event-loop's concurrent queue is MPSC-safe.
         unsafe {
-            let vm = (*this.global_object).bun_vm();
+            let vm = (*this.global_object).bun_vm_concurrently();
             (*(*vm).event_loop()).enqueue_task_concurrent(
                 ConcurrentTask::create_from(this as *mut Self),
             );
@@ -2106,10 +2106,9 @@ impl AsyncReaddirRecursiveTask {
         }
 
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-        // `bun_vm()` returns the raw `*mut VirtualMachine`; `bun_vm_concurrently`
-        // (which only skips the JS-thread assert) is not on the lib.rs surface
-        // yet, so deref the pointer directly — safe to call from any thread.
-        let vm = unsafe { &mut *(*self.global_object).bun_vm() };
+        // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
+        // documented accessor for off-thread (work-pool) callers.
+        let vm = unsafe { &mut *(*self.global_object).bun_vm_concurrently() };
         vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(self as *mut Self)));
     }
 
@@ -7067,7 +7066,22 @@ pub trait ReaddirEntry: Sized {
     /// `ExpectedType == jsc.Node.Dirent` — whether the caller needs to track
     /// a cached `dirent_path` BunString.
     const IS_DIRENT: bool;
+    /// `Environment.isWindows && (T == String || T == Dirent)` — selects the
+    /// UTF-16 `DirIterator` arm on Windows (`readdir_with_entries` only).
+    const IS_U16: bool;
     fn destroy_entry(&mut self);
+    /// Windows-only: append from a UTF-16 directory entry name.
+    /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch
+    /// for `strings::from_w_path` when `encoding != utf8`.
+    #[cfg_attr(not(windows), allow(unused_variables))]
+    fn append_entry_w(
+        entries: &mut Vec<Self>, utf16_name: &[u16], dirent_path: &BunString,
+        kind: sys::FileKind, encoding: Encoding, re_encoding_buffer: Option<&mut PathBuffer>,
+    ) {
+        let _ = (entries, utf16_name, dirent_path, kind, encoding, re_encoding_buffer);
+        // Zig: `@compileError("unreachable")` — Buffer never takes the u16 path.
+        unreachable!("ReaddirEntry::append_entry_w on a u8-only entry type");
+    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir;
     /// Non-recursive readdir: append one entry given the bare entry name.
     /// `dirent_path` is the basename's directory (encoded once per dir).
@@ -7089,10 +7103,24 @@ pub trait ReaddirEntry: Sized {
 }
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
+    const IS_U16: bool = Environment::IS_WINDOWS;
     fn destroy_entry(&mut self) { self.deref(); }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::Files(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding) {
         entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
+    }
+    fn append_entry_w(entries: &mut Vec<Self>, utf16_name: &[u16], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, re_encoding_buffer: Option<&mut PathBuffer>) {
+        // node_fs.zig:4655-4662
+        match encoding {
+            Encoding::Buffer => unreachable!(),
+            // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
+            // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
+            Encoding::Utf8 => entries.push(BunString::clone_utf16(utf16_name)),
+            enc => {
+                let utf8_path = strings::paths::from_w_path(&mut re_encoding_buffer.unwrap()[..], utf16_name);
+                entries.push(webcore::encoding::to_bun_string(utf8_path.as_bytes(), enc));
+            }
+        }
     }
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);
@@ -7105,11 +7133,21 @@ impl ReaddirEntry for BunString {
 }
 impl ReaddirEntry for Dirent {
     const IS_DIRENT: bool = true;
+    const IS_U16: bool = Environment::IS_WINDOWS;
     fn destroy_entry(&mut self) { self.deref(); }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::WithFileTypes(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding) {
         entries.push(Dirent {
             name: webcore::encoding::to_bun_string(utf8_name, encoding),
+            path: dirent_path.dupe_ref(),
+            kind,
+        });
+    }
+    fn append_entry_w(entries: &mut Vec<Self>, utf16_name: &[u16], dirent_path: &BunString, kind: sys::FileKind, _encoding: Encoding, _re_encoding_buffer: Option<&mut PathBuffer>) {
+        // node_fs.zig:4648-4654 — Windows Dirent always clones the raw UTF-16
+        // name (no re-encoding) and skips the lstatat() DT_UNKNOWN fallback.
+        entries.push(Dirent {
+            name: BunString::clone_utf16(utf16_name),
             path: dirent_path.dupe_ref(),
             kind,
         });
@@ -7128,6 +7166,7 @@ impl ReaddirEntry for Dirent {
 }
 impl ReaddirEntry for Buffer {
     const IS_DIRENT: bool = false;
+    const IS_U16: bool = false;
     fn destroy_entry(&mut self) { self.destroy(); }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::Buffers(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding) {

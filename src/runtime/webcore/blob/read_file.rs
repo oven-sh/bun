@@ -1,33 +1,27 @@
-// ──────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): body depends on `bun_io::{Action, Loop, Poll, Request}`,
-// `bun_jsc::{AnyPromise, WorkTask, to_js_host_call, JsTerminatedResult}`,
-// `bun_threading::{ThreadPool, WorkPool, WorkPoolTask}`, and
-// `crate::webcore::blob::{FileOpener, FileCloser}` modeled as generic structs
-// (they're currently traits). Module is un-gated so `crate::webcore::blob::read_file`
-// is a real path; the heavy body re-gates here.
-// ──────────────────────────────────────────────────────────────────────────
-
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{offset_of, MaybeUninit};
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicPtr, Ordering};
 
 use bun_core::{self, Error};
-use bun_io::{self as io, Action, FileAction, Loop, Poll, Request};
+use bun_io::{self as io, FileAction};
 use bun_jsc::{
-    self as jsc, AnyPromise, EventLoop, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue,
-    JsResult, SystemError, WorkTask,
+    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    SysErrorJsc as _, SystemError,
 };
 use crate::webcore::blob::{
-    Blob, ClosingState, FileCloser, FileOpener, SizeType, Store, StoreRef,
+    Blob, ClosingState, FileCloser, FileOpener, SizeType, StoreRef, MAX_SIZE,
 };
-use crate::webcore::blob::store::{Bytes as ByteStore, File as FileStore};
+use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::webcore::Lifetime;
 use bun_str::String as BunString;
 use bun_sys::{self, Fd, Stat};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_threading::{self, ThreadPool, WorkPool, WorkPoolTask};
+#[cfg(windows)]
+use bun_jsc::EventLoop;
+use bun_threading::{WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
 bun_output::declare_scope!(ReadFile, hidden);
@@ -53,7 +47,7 @@ pub trait ReadFileToJs {
         b: &mut Blob,
         g: &JSGlobalObject,
         by: &mut [u8],
-        lifetime: jsc::Lifetime,
+        lifetime: Lifetime,
     ) -> JsResult<JSValue>;
 }
 
@@ -71,9 +65,9 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
 
     pub fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was Box::into_raw'd by doReadFile(); we take ownership here.
-        let handler = unsafe { Box::from_raw(handler) };
-        let mut promise = handler.promise.swap();
-        let mut blob = handler.context.take_ownership();
+        let mut handler = unsafe { Box::from_raw(handler) };
+        let promise = handler.promise.swap();
+        let mut blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.
         // (blob is dropped at end of scope — Drop handles deinit.)
@@ -86,26 +80,16 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
                     blob.size = (bytes.len() as SizeType).min(blob.size);
                 }
                 // Zig defined a local `WrappedFn` struct to adapt the comptime
-                // `Function` into the `toJSHostCall` shape. In Rust we inline
-                // the closure.
-                let wrapped = |b: &mut Blob, g: &JSGlobalObject, by: &mut [u8]| -> JSValue {
-                    // TODO(port): jsc.toJSHostCall(@src(), Function, ...) — need
-                    // the Rust equivalent that records source location + catches.
-                    jsc::to_js_host_call(g, F::call, (b, g, by, jsc::Lifetime::Temporary))
-                };
-
-                AnyPromise::wrap(
-                    AnyPromise::Normal(promise),
-                    global_this,
-                    wrapped,
-                    (&mut blob, global_this, bytes),
-                )?;
+                // `Function` into the `toJSHostCall` shape; Rust closures + the
+                // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
+                // give the same source-location/exception-scope behaviour.
+                AnyPromise::Normal(promise as *mut _).wrap(global_this, move |g| {
+                    F::call(&mut blob, g, bytes, Lifetime::Temporary)
+                })?;
             }
             ReadFileResultType::Err(err) => {
-                promise.reject(
-                    global_this,
-                    err.to_error_instance_with_async_stack(global_this, &promise),
-                )?;
+                let val = err.to_error_instance_with_async_stack(global_this, promise);
+                promise.reject(global_this, Ok(val))?;
             }
         }
         Ok(())
@@ -271,8 +255,8 @@ impl ReadFile {
             compile_error!("Do not call ReadFile.create_with_ctx on Windows, see ReadFileUV");
         }
 
-        // store.ref() — handled by cloning the Arc before storing.
-        let file_store = store.data.file.clone();
+        // store.ref() — `StoreRef` carries the +1; held in `self.store`.
+        let file_store = store.data.as_file().clone();
         let read_file = Box::new(ReadFile {
             file_store,
             byte_store: ByteStore::default(),
@@ -293,7 +277,11 @@ impl ReadFile {
             on_complete_callback,
             io_task: None,
             io_poll: io::Poll::default(),
-            io_request: io::Request::new(Self::on_request_readable),
+            io_request: io::Request {
+                next: AtomicPtr::new(core::ptr::null_mut()),
+                callback: Self::on_request_readable,
+                scheduled: false,
+            },
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
@@ -366,12 +354,12 @@ impl ReadFile {
             self.close_after_io = self.io_request.scheduled;
         }
 
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&mut self.task as *mut WorkPoolTask);
     }
 
     pub fn on_io_error(&mut self, err: bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_core::errno_to_err(err.errno));
+        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         self.system_error = Some(err.to_system_error());
         self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
         // On macOS, we use one-shot mode, so:
@@ -382,7 +370,7 @@ impl ReadFile {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&mut self.task as *mut WorkPoolTask);
     }
 
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
@@ -468,7 +456,7 @@ impl ReadFile {
                             return true;
                         }
                         _ => {
-                            self.errno = Some(bun_core::errno_to_err(err.errno));
+                            self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
                             self.system_error = Some(err.to_system_error());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
@@ -477,7 +465,7 @@ impl ReadFile {
                                             self.file_store.pathlike.path().slice(),
                                         )
                                     } else {
-                                        BunString::empty()
+                                        BunString::EMPTY
                                     };
                             }
                             return false;
@@ -496,7 +484,8 @@ impl ReadFile {
         let cb_ctx = this.on_complete_ctx;
 
         if this.store.is_none() && this.system_error.is_some() {
-            let system_error = this.system_error.clone().unwrap();
+            let mut this = this;
+            let system_error = this.system_error.take().unwrap();
             drop(this);
             cb(cb_ctx, ReadFileResultType::Err(system_error));
             return Ok(());
@@ -590,8 +579,7 @@ impl ReadFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
-                // SAFETY: io_task is a valid back-pointer set in run_async().
-                unsafe { (*io_task).on_finish() };
+                ReadFileTask::on_finish(io_task);
             }
         }
     }

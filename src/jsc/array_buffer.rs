@@ -372,6 +372,28 @@ impl ArrayBuffer {
         }
     }
 
+    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it as an
+    /// `ArrayBuffer` without copying. The buffer is released via
+    /// [`MarkedArrayBuffer_deallocator`] when the resulting JS object is
+    /// collected (see [`ArrayBuffer::to_js`] / [`ArrayBuffer::to_js_unchecked`]).
+    ///
+    /// Prefer this over `Box::leak` + [`ArrayBuffer::from_bytes`] at call sites
+    /// so the ownership transfer is explicit.
+    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> ArrayBuffer {
+        let len = bytes.len();
+        // Ownership transfers to JSC; `to_js` installs a deallocator that
+        // `mi_free`s the pointer on GC. `into_raw` (not `leak`) expresses that
+        // this is an FFI hand-off, not a leak.
+        let ptr = Box::into_raw(bytes).cast::<u8>();
+        ArrayBuffer {
+            len: u32::try_from(len).unwrap() as usize,
+            byte_len: u32::try_from(len).unwrap() as usize,
+            typed_array_type,
+            ptr,
+            ..Default::default()
+        }
+    }
+
     pub fn to_js_unchecked(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         // The reason for this is
         // JSC C API returns a detached arraybuffer

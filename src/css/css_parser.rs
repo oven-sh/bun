@@ -2538,8 +2538,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 let mut custom_media = ArrayHashMap::default();
                 for rule in self.rules.v.iter() {
                     if let CssRule::CustomMedia(cm) = rule {
-                        // SAFETY: `DashedIdent.v` points into the parser arena.
-                        let key: Box<[u8]> = unsafe { &*cm.name.v }.into();
+                        let key: Box<[u8]> = cm.name.v().into();
                         custom_media.insert(key, cm.deep_clone(allocator));
                     }
                 }

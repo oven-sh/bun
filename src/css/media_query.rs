@@ -206,8 +206,8 @@ impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Standard(a), Self::Standard(b)) => a == b,
+            (Self::Custom(a), Self::Custom(b)) => a.v() == b.v(),
             // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Custom(a), Self::Custom(b)) => unsafe { *a.v == *b.v },
             (Self::Unknown(a), Self::Unknown(b)) => unsafe { *a.v == *b.v },
             _ => false,
         }

@@ -425,9 +425,8 @@ impl BrotliCompressionStream {
 impl Drop for BrotliCompressionStream {
     fn drop(&mut self) {
         if !self.brotli.is_null() {
-            // SAFETY: self.brotli was created by BrotliEncoder::create_instance
-            // and is destroyed exactly once here.
-            BrotliEncoder::destroy_instance(unsafe { &mut *self.brotli });
+            // Created by BrotliEncoder::create_instance; destroyed exactly once here.
+            BrotliEncoder::destroy_instance(self.brotli_mut());
         }
     }
 }

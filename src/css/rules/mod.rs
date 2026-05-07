@@ -400,8 +400,7 @@ pub(super) fn dashed_ident_to_css(
     ident: &css::css_values::ident::DashedIdent,
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
-    // SAFETY: DashedIdent.v points into the parser arena which outlives the AST.
-    let v = unsafe { &*ident.v };
+    let v = ident.v();
     dest.write_str("--")?;
     // blocked_on: Printer::write_dashed_ident — css-module dashed-ident scoping
     // path is gated; fall through to the unscoped tail it shares.

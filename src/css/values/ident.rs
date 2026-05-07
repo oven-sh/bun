@@ -89,8 +89,7 @@ impl DashedIdentReference {
             None => false,
         };
         if dashed_idents {
-            // SAFETY: arena-owned slice; see DashedIdent.v
-            let ident_v = unsafe { &*self.ident.v };
+            let ident_v = self.ident.v();
             let source_index = dest.loc.source_index;
             let bump = dest.allocator;
             // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
@@ -143,6 +142,19 @@ pub struct DashedIdent {
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
+    /// Borrow the underlying arena-owned slice.
+    ///
+    /// `v` is always constructed from a valid parser-arena slice
+    /// (`expect_ident()` / source text) and the arena outlives every
+    /// `DashedIdent` produced from it. The slice is never null and never
+    /// mutated, so handing out `&[u8]` is sound.
+    #[inline]
+    pub fn v(&self) -> &[u8] {
+        // SAFETY: arena-owned, never null, immutable for the parse session
+        // (see type-level TODO(port) on `'bump` threading).
+        unsafe { &*self.v }
+    }
+
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
@@ -167,15 +179,14 @@ impl DashedIdent {
 
     pub fn hash(&self, hasher: &mut Wyhash) {
         // PORT NOTE: Zig used css.implementHash (comptime field-walk) → arena slice bytes.
-        // SAFETY: arena-owned slice valid for the parse session.
-        hasher.update(unsafe { &*self.v });
+        hasher.update(self.v());
     }
 
     /// Borrow the underlying arena slice.
     /// SAFETY: caller must ensure the parser arena outlives the borrow.
     #[inline]
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { &*self.v }
+        self.v()
     }
 }
 
@@ -435,9 +446,8 @@ impl core::fmt::Display for IdentOrRef {
             let r = self.as_ref().unwrap();
             return write!(writer, "Ref({:?})", r);
         }
-        // SAFETY: arena slice reconstructed from packed ptr/len
-        let v = unsafe { &*self.as_ident().unwrap().v };
-        write!(writer, "Ident({})", bstr::BStr::new(v))
+        let ident = self.as_ident().unwrap();
+        write!(writer, "Ident({})", bstr::BStr::new(ident.v()))
     }
 }
 

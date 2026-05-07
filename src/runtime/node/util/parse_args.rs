@@ -868,7 +868,9 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     // Phase 0.A: Get and validate type of input args
     let config_args: JSValue = match config {
-        Some(c) => c.get_own(global, "args")?.unwrap_or(JSValue::UNDEFINED),
+        Some(c) => c
+            .get_own(global, &String::static_("args"))?
+            .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
     let args: ArgsSlice = if !config_args.is_undefined_or_null() {

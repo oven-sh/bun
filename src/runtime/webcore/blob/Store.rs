@@ -638,6 +638,3 @@ pub extern "C" fn BlobArrayBuffer_deallocator(
     // owns one outstanding reference being released here.
     unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
 }
-
-fn __test_compile_reaches_here() { let x: () = 1u32; }
-this is not rust

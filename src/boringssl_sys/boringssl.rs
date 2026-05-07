@@ -528,6 +528,15 @@ pub const SSL_VERIFY_PEER_IF_NO_OBC: c_int = 0x04;
 pub const SSL_SENT_SHUTDOWN: c_int = 1;
 pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
 
+pub const SSL_TLSEXT_ERR_OK: c_int = 0;
+pub const SSL_TLSEXT_ERR_ALERT_WARNING: c_int = 1;
+pub const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
+pub const SSL_TLSEXT_ERR_NOACK: c_int = 3;
+
+pub const OPENSSL_NPN_UNSUPPORTED: c_int = 0;
+pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
+pub const OPENSSL_NPN_NO_OVERLAP: c_int = 2;
+
 /// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
 pub type ssl_renegotiate_mode_t = c_uint;
 pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
@@ -659,6 +668,33 @@ unsafe extern "C" {
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
+    pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
+    pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
+    pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
+    pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
+    pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
+    pub fn SSL_select_next_proto(
+        out: *mut *mut u8,
+        out_len: *mut u8,
+        peer: *const u8,
+        peer_len: c_uint,
+        supported: *const u8,
+        supported_len: c_uint,
+    ) -> c_int;
+    pub fn SSL_CTX_set_alpn_select_cb(
+        ctx: *mut SSL_CTX,
+        cb: Option<
+            unsafe extern "C" fn(
+                ssl: *mut SSL,
+                out: *mut *const u8,
+                out_len: *mut u8,
+                in_: *const u8,
+                in_len: c_uint,
+                arg: *mut c_void,
+            ) -> c_int,
+        >,
+        arg: *mut c_void,
+    );
 
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;

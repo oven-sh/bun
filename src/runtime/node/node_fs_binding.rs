@@ -1,7 +1,7 @@
 use core::mem::ManuallyDrop;
 
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsClass, JsResult, SysErrorJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SysErrorJsc};
 
 use crate::node::fs::{self, args, async_, ret, FsArgument, FsReturn, NodeFS};
 
@@ -291,7 +291,7 @@ fn unwatch_file_impl(
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "NodeJSFS")]
 #[derive(Default)]
 pub struct Binding {
     pub node_fs: NodeFS,
@@ -437,7 +437,9 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     let vm = unsafe { core::ptr::NonNull::new_unchecked(global.bun_vm()) };
     module.node_fs.vm = Some(vm);
 
-    module.to_js(global)
+    // SAFETY: `module` is `Box::new`-allocated; ownership transfers to the GC
+    // wrapper (`NodeJSFS__create`) and is reclaimed in `Binding::finalize`.
+    unsafe { Binding::to_js_ptr(Box::into_raw(module), global) }
 }
 
 #[bun_jsc::host_fn]

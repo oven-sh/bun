@@ -683,13 +683,17 @@ impl BlobExt for Blob {
     }
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
-        ptr: &mut *mut u8,
-        end: *mut u8,
+        ptr: *mut *mut u8,
+        end: *const u8,
     ) -> JsResult<JSValue> {
-        let total_length: usize = (end as usize) - (*ptr as usize);
-        // SAFETY: caller guarantees [*ptr, end) is a valid byte range.
+        // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
+        // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
+        // non-null and `[*ptr, end)` is the serialized byte range owned by
+        // SerializedScriptValue for the duration of this call.
+        let cursor = unsafe { &mut *ptr };
+        let total_length: usize = (end as usize) - (*cursor as usize);
         let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { core::slice::from_raw_parts(*ptr, total_length) });
+            bun_io::FixedBufferStream::new(unsafe { core::slice::from_raw_parts(*cursor, total_length) });
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
@@ -705,9 +709,9 @@ impl BlobExt for Blob {
             Err(_) => unreachable!(),
         };
 
-        // Advance the pointer by the number of bytes consumed
-        // SAFETY: buffer_stream.pos() <= (end - *ptr) by construction; result stays within [*ptr, end].
-        *ptr = unsafe { (*ptr).add(buffer_stream.pos) };
+        // Advance the caller's cursor by the number of bytes consumed.
+        // SAFETY: buffer_stream.pos <= total_length by construction; result stays within [*ptr, end].
+        *cursor = unsafe { (*cursor).add(buffer_stream.pos) };
 
         Ok(result)
     }

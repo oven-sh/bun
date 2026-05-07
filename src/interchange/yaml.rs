@@ -36,12 +36,7 @@ impl YAML {
         // counter API is `yaml_parse_inc()` (atomic fetch_add by 1, no arg).
         bun_core::analytics::Features::yaml_parse_inc();
 
-        // PORT NOTE: the Zig allocator param was dropped from `Parser::init`
-        // (global mimalloc); `bump` is accepted for signature parity with Zig
-        // and downstream callers, currently unused. See `// allocator dropped`
-        // on the `Parser` struct.
-        let _ = bump;
-        let mut parser: Parser<Utf8> = Parser::init(source.contents());
+        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -106,10 +101,7 @@ impl From<YamlParseError> for bun_core::Error {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
-    // PORT NOTE: allocator param accepted for Zig signature parity; `Parser`
-    // currently uses the global allocator (`// allocator dropped`).
-    let _ = bump;
-    let mut parser: Parser<Enc> = Parser::init(input);
+    let mut parser: Parser<Enc> = Parser::init(bump, input);
 
     match parser.parse() {
         Ok(stream) => ParseResult::success(stream, &parser),
@@ -1753,7 +1745,7 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit]) -> Expr {
+    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => {
@@ -1768,7 +1760,19 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                 // type-checks for `unit() == u8`. For `Utf16` we route through
                 // `E::String::init_utf16` instead of mirroring the Zig compile
                 // error (Rust eagerly monomorphizes).
-                let s = value.slice(input);
+                //
+                // LIFETIME: Zig's `String.list` is `array_list.Managed` backed
+                // by `parser.allocator` (the bump arena), so `list.items`
+                // outlives the scalar token. The Rust port uses a global-alloc
+                // `Vec` that is dropped with the local `scalar` immediately
+                // after this returns — the resulting `EString.data` would
+                // dangle. Dupe `.list` bytes into the bump arena to recover the
+                // Zig lifetime; `.range` already borrows `input` (source text)
+                // which outlives the Expr → JS conversion.
+                let s: &[Enc::Unit] = match value {
+                    YamlString::Range(range) => range.slice(input),
+                    YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
+                };
                 let estring = match Enc::KIND {
                     EncodingKind::Utf16 => {
                         // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
@@ -2205,7 +2209,11 @@ pub struct Parser<'i, Enc: Encoding> {
     pub line: Line,
     pub token: Token<Enc>,
 
-    // allocator dropped — global mimalloc
+    /// Zig `parser.allocator`. Growable buffers in this port use the global
+    /// allocator (and `Drop`); the arena is threaded for the few places that
+    /// must hand a borrowed slice into the long-lived `Expr` tree (see
+    /// `NodeScalar::to_expr`).
+    pub bump: &'i bun_alloc::Arena,
 
     pub context: ContextStack,
     pub block_indents: IndentStack,
@@ -2224,9 +2232,10 @@ pub struct Parser<'i, Enc: Encoding> {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    pub fn init(input: &'i [Enc::Unit]) -> Self {
+    pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
         Self {
             input,
+            bump,
             pos: Pos::from(0),
             line_indent: Indent::NONE,
             line: Line::from(1),
@@ -3494,14 +3503,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
                                 // 3
-                                break 'node scalar.data.to_expr(scalar_start, self.input);
+                                break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                             }
                         }
 
                         match self.context.get() {
                             Context::FlowKey => {
                                 // 1
-                                break 'node scalar.data.to_expr(scalar_start, self.input);
+                                break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                             }
                             Context::FlowIn | Context::BlockOut | Context::BlockIn => {
                                 if scalar_line != self.token.line && !opts.explicit_mapping_key {
@@ -3510,7 +3519,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key = scalar.data.to_expr(scalar_start, self.input);
+                        let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
 
@@ -3532,7 +3541,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Ok(mapping);
                     }
 
-                    break 'node scalar.data.to_expr(scalar_start, self.input);
+                    break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                 }
 
                 TokenData::Directive => return Err(Self::unexpected_token()),

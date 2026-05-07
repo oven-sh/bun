@@ -1715,6 +1715,13 @@ impl Expect {
         unsafe { (*vm).auto_garbage_collect() };
     }
 
+    /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard owns the
+    /// `&mut Expect` borrow, re-lends it via `Deref`/`DerefMut`, and calls `post_match`
+    /// on drop so every exit path (success, `?`, explicit `return Err`) triggers the GC sweep.
+    pub fn post_match_guard<'a>(&'a mut self, global: &'a JSGlobalObject) -> PostMatchGuard<'a> {
+        PostMatchGuard { expect: self, global }
+    }
+
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.arguments_old::<1>().ptr[0];
@@ -1732,6 +1739,35 @@ impl Expect {
         }
 
         Err(global_this.throw_value(arg))
+    }
+}
+
+/// RAII guard returned by [`Expect::post_match_guard`]. Owns the `&mut Expect` for the
+/// duration of a matcher body and runs `post_match` on drop — the Rust shape of Zig's
+/// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
+pub struct PostMatchGuard<'a> {
+    expect: &'a mut Expect,
+    global: &'a JSGlobalObject,
+}
+
+impl core::ops::Deref for PostMatchGuard<'_> {
+    type Target = Expect;
+    #[inline]
+    fn deref(&self) -> &Expect {
+        self.expect
+    }
+}
+
+impl core::ops::DerefMut for PostMatchGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Expect {
+        self.expect
+    }
+}
+
+impl Drop for PostMatchGuard<'_> {
+    fn drop(&mut self) {
+        self.expect.post_match(self.global);
     }
 }
 

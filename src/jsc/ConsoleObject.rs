@@ -812,7 +812,7 @@ impl<'a> TablePrinter<'a> {
                 {
                     let result = value_formatter
                         .format::<ENABLE_ANSI_COLORS>(tag, writer, value, self.global_object);
-                    if let Some(node) = value_formatter.map_node.take() {
+                    if let Some(mut node) = value_formatter.map_node.take() {
                         self.value_formatter.map_node = None;
                         // SAFETY: `node` came from `visited::Pool::get_node()`
                         // (INIT = Some), so `data` is initialized.
@@ -1546,7 +1546,12 @@ pub mod formatter {
         /// slice cannot express that without forcing `'a` to outlive locals.
         pub remaining_values: *const [JSValue],
         pub map: visited::Map,
-        pub map_node: Option<Box<visited::PoolNode>>,
+        /// Pooled backing for `map`. `None` until the first cell that can have
+        /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
+        /// Raw pointer (not `Box`) because `visited::Pool` owns the
+        /// `Box::into_raw`/`from_raw` lifecycle — mirrors Zig
+        /// `?*Visited.Pool.Node`.
+        pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
         pub hide_native: bool,
         pub indent: u32,
         pub depth: u16,

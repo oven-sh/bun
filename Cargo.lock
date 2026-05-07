@@ -1183,6 +1183,7 @@ dependencies = [
  "bun_js_parser",
  "bun_logger",
  "bun_options_types",
+ "bun_paths",
  "bun_sourcemap",
  "bun_string",
  "bun_sys",

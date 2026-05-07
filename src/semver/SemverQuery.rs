@@ -245,6 +245,16 @@ pub struct Group {
     pub flags: FlagsBitSet,
 }
 
+// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
+// by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
+// the caller's source buffer (PORTING.md §`[]const u8` struct-field) and is
+// only dereferenced under the same single-thread parse/stringify call. Neither
+// pointer aliases data owned by another thread. Zig models both as plain
+// pointers and freely sends `Group` across the lockfile/resolver thread pool;
+// auto-`!Send` from `NonNull`/`*const` is overly conservative here.
+unsafe impl Send for Group {}
+unsafe impl Sync for Group {}
+
 impl Default for Group {
     fn default() -> Self {
         Self {

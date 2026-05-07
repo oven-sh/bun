@@ -2280,7 +2280,7 @@ pub fn install_isolated_packages(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
-                                &pkg_res.value.npm.version,
+                                pkg_res.value.npm.version,
                                 pkg_res.value.npm.url.slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),

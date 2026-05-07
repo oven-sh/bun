@@ -601,9 +601,9 @@ pub fn enqueue_dependency_to_root(
 }
 
 /// Mirrors Zig's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
-/// by `enqueueDependencyToRoot`: `Ctx = void`, every `on*` is `{}` so the
-/// `HAS_*` const-gates compile out the callback paths.
-struct VoidRunTasksCallbacks;
+/// by `enqueueDependencyToRoot` and `runAndWaitFn`: `Ctx = void`, every `on*`
+/// is `{}` so the `HAS_*` const-gates compile out the callback paths.
+pub struct VoidRunTasksCallbacks;
 impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
     type Ctx = ();
 }

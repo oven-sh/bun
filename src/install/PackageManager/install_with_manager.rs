@@ -437,7 +437,15 @@ pub fn install_with_manager(
                         }
                     }
 
-                    unsafe { (*to_lockfile).trusted_dependencies = lockfile.trusted_dependencies.clone() };
+                    // PORT NOTE: `ArrayHashMap::clone()` is an inherent fallible method (Zig:
+                    // `try trusted_dependencies.clone(allocator)`), not the `Clone` trait, so
+                    // `Option::clone` won't see it — map by hand.
+                    unsafe {
+                        (*to_lockfile).trusted_dependencies = match &lockfile.trusted_dependencies {
+                            Some(td) => Some(td.clone()?),
+                            None => None,
+                        };
+                    }
 
                     unsafe { &mut (*to_lockfile).buffers.dependencies }.reserve(len as usize);
                     unsafe { &mut (*to_lockfile).buffers.resolutions }.reserve(len as usize);
@@ -480,10 +488,12 @@ pub fn install_with_manager(
                         // `buffers.dependencies`/`resolutions` slots we write here.
                         let cloned =
                             new_dep.clone_in(unsafe { &mut *mgr }, &lockfile.buffers.string_bytes, builder)?;
-                        unsafe { &mut (*to_lockfile).buffers.dependencies }[off as usize + i] = cloned;
+                        unsafe { (*to_lockfile).buffers.dependencies[off as usize + i] = cloned };
                         if mapping[i] != invalid_package_id {
-                            unsafe { &mut (*to_lockfile).buffers.resolutions }[off as usize + i] =
-                                old_resolutions[mapping[i] as usize];
+                            unsafe {
+                                (*to_lockfile).buffers.resolutions[off as usize + i] =
+                                    old_resolutions[mapping[i] as usize];
+                            }
                         }
                     }
 

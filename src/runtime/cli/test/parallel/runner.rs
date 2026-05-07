@@ -98,17 +98,9 @@ pub fn run_as_coordinator(
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 
     // Owned NUL-terminated path bytes (Zig: `[:0]const u8` from allocPrintSentinel).
-<<<<<<< Updated upstream
-    // ZStr is a borrow header; we must own the backing storage here.
-    let mut worker_tmpdir = WorkerTmpdir(None);
-||||||| Stash base
-    // ZStr is a borrow header; we must own the backing storage here.
-    let mut worker_tmpdir: Option<Box<[u8]>> = None;
-=======
     // ZStr is a borrow header; we must own the backing storage here. Drop
     // recursively removes the directory once the run finishes.
     let mut worker_tmpdir = WorkerTmpdir(None);
->>>>>>> Stashed changes
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
@@ -147,11 +139,8 @@ pub fn run_as_coordinator(
             drop(jr);
             // reporter.reporters.junit already None via .take()
         }
-        worker_tmpdir = Some(dir);
+        worker_tmpdir.0 = Some(dir);
     }
-    // Rebind into the RAII owner once the path is finalized so its Drop runs on
-    // every exit path (Zig: `defer if (worker_tmpdir) |d| deleteTree(d)`).
-    let worker_tmpdir = WorkerTmpdir(worker_tmpdir);
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
     // env map once per worker after .put() — appending after the fact would

@@ -271,11 +271,11 @@ impl PipeReader {
         // `defer this.detach()` — detach may drop the last ref, so run it after computing the result.
         // TODO(port): self-deref at scope exit; ensure no `&mut self` borrow outlives detach().
         let this_ptr: *mut PipeReader = self;
-        let _guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: `self` is valid for the duration of this call; detach() may free it,
-            // but only after the guard fires at scope exit when no other borrow remains.
+            // but only after this defer fires at scope exit when no other borrow remains.
             unsafe { PipeReader::detach(this_ptr) };
-        });
+        }
 
         match &self.state {
             State::Pending => {

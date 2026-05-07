@@ -1145,8 +1145,8 @@ impl Drop for DevServer {
             // map drops; Zig's explicit `deinit` was the allocator-free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
-            self.timer_heap()
-                .remove(&mut self.source_maps.weak_ref_sweep_timer as *mut EventLoopTimer);
+            let timer_ptr: *mut EventLoopTimer = &mut self.source_maps.weak_ref_sweep_timer;
+            self.timer_heap().remove(timer_ptr);
         }
 
         for event in &mut self.watcher_atomics.events {

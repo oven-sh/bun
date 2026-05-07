@@ -1183,9 +1183,9 @@ impl WebWorker {
         }
         #[cfg(windows)]
         {
-            // SAFETY: per-thread libuv loop teardown; closes any handles still
-            // open on this worker's loop and drops the thread-local pointer.
-            unsafe { bun_sys::windows::libuv::Loop::shutdown() };
+            // Per-thread libuv loop teardown; closes any handles still open on
+            // this worker's loop and drops the thread-local pointer.
+            bun_sys::windows::libuv::Loop::shutdown();
         }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner. `destroy()` is the port of

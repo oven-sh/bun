@@ -1383,21 +1383,16 @@ pub mod fs {
         }
     }
 
+    // PORT NOTE (deleted): the `as_sys_seam` / `as_sys_seam_mut` opaque-ZST
+    // cast helpers and the matching `bun_sys::fs::FsVTable` provider were a
+    // dep-cycle workaround (PORTING.md §Forbidden). Consumers that need
+    // `DirEntry` (`bun_install`, `bun_router`, `bun_bundler`) depend on this
+    // crate directly; `bun_dotenv` (which sits below us) takes
+    // `impl DirEntryProbe` instead of a concrete type.
     impl DirEntry {
-        // PORT NOTE (deleted): the `as_sys_seam` / `as_sys_seam_mut` opaque
-        // ZST cast helpers and the matching `bun_sys::fs::FsVTable` provider
-        /// they sit below `bun_resolver` in the crate graph; this is the
-        /// **single** place the resolver→sys reinterpret happens, so high-tier
-        /// callers (bun_install, bun_bundler, bun_runtime) never open-code
-        /// `as *mut ZST` casts.
-        #[inline]
-        pub fn as_sys_seam(&self) -> &bun_sys::fs::DirEntry {
-            // SAFETY: `bun_sys::fs::DirEntry` is a `#[repr(C)]` ZST opaque whose
-            // every method dispatches through the resolver-registered vtable,
-            // which casts the pointer back to `*const Self`. Pointer identity
-            // round-trips; no field of the ZST is ever accessed.
-            unsafe { &*(self as *const Self as *const bun_sys::fs::DirEntry) }
-        }
+        #[doc(hidden)]
+        #[deprecated(note = "deleted; pass &DirEntry directly")]
+        pub fn _seam_removed(&self) {}
 
         /// Mutable variant of [`Self::as_sys_seam`].
         #[inline]

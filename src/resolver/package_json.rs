@@ -1162,7 +1162,11 @@ impl PackageJSON {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            let key: Box<[u8]> = r_fs.normalize(_key_str);
+                            // PORT NOTE: inherent `FileSystem::normalize` (fs.rs)
+                            // returns a threadlocal-backed `&[u8]` and shadows the
+                            // owned-returning trait method; UFCS to get the `Box`.
+                            let key: Box<[u8]> =
+                                FileSystemPackageJsonExt::normalize(r_fs, _key_str);
 
                             match &value.data {
                                 js_ast::ExprData::EString(str) => {

@@ -75,14 +75,14 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     object.put(
         global,
         b"name",
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &update_requests[0].name)?,
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, update_requests[0].name)?,
     );
     object.put(
         global,
         b"version",
         crate::dependency_jsc::version_to_js(
             &update_requests[0].version,
-            &update_requests[0].version_buf,
+            update_requests[0].version_buf(),
             global,
         )?,
     );

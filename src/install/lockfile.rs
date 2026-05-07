@@ -1631,19 +1631,19 @@ impl<'a> Printer<'a> {
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {
-                    LoadStep::OpenFile => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::OpenFile => Output::pretty_errorln(format_args!(
                         "<r><red>error<r> opening lockfile:<r> {}.",
                         cause.value.name()
                     )),
-                    LoadStep::ParseFile => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::ParseFile => Output::pretty_errorln(format_args!(
                         "<r><red>error<r> parsing lockfile:<r> {}",
                         cause.value.name()
                     )),
-                    LoadStep::ReadFile => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::ReadFile => Output::pretty_errorln(format_args!(
                         "<r><red>error<r> reading lockfile:<r> {}",
                         cause.value.name()
                     )),
-                    LoadStep::Migrating => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::Migrating => Output::pretty_errorln(format_args!(
                         "<r><red>error<r> while migrating lockfile:<r> {}",
                         cause.value.name()
                     )),

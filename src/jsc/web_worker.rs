@@ -381,6 +381,40 @@ impl WebWorker {
         self.requested_terminate.load(Ordering::Acquire)
     }
 
+    /// Zig: `worker.eval_mode` field — whether this worker was started in
+    /// eval mode (entry source is a string, not a file).
+    #[inline]
+    pub fn eval_mode(&self) -> bool {
+        self.eval_mode
+    }
+
+    /// Zig: `worker.argv: []const WTFStringImpl` field — borrowed from the C++
+    /// `WorkerOptions` (kept alive by the owning `WebCore::Worker`).
+    #[inline]
+    pub fn argv(&self) -> &[WTFStringImpl] {
+        if self.argv_ptr.is_null() {
+            return &[];
+        }
+        // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
+        // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
+        unsafe { core::slice::from_raw_parts(self.argv_ptr, self.argv_len) }
+    }
+
+    /// Zig: `worker.execArgv: ?[]const WTFStringImpl` — `None` when
+    /// `inherit_exec_argv` (the worker inherits the parent's execArgv),
+    /// otherwise `Some(slice)` (possibly empty) borrowed from C++ WorkerOptions.
+    #[inline]
+    pub fn exec_argv(&self) -> Option<&[WTFStringImpl]> {
+        if self.inherit_exec_argv {
+            return None;
+        }
+        if self.exec_argv_ptr.is_null() {
+            return Some(&[]);
+        }
+        // SAFETY: see `argv()`.
+        Some(unsafe { core::slice::from_raw_parts(self.exec_argv_ptr, self.exec_argv_len) })
+    }
+
     fn set_requested_terminate(&self) -> bool {
         self.requested_terminate.swap(true, Ordering::Release)
     }

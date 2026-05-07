@@ -889,15 +889,13 @@ pub mod api {
                 None
             }
 
+            /// Build a `bun_resolver::Result` for a matched key. `key` must
+            /// already satisfy `'static` — see [`resolve`], which copies the
+            /// map-owned key into the build's bump arena before calling here so
+            /// the resulting `Path<'static>` borrows arena memory rather than
+            /// forging a `'static` from a map borrow.
             #[inline]
-            fn result_for_key(key: &[u8]) -> bun_resolver::Result {
-                // SAFETY: Zig `getKey` hands back a borrow into `self.map`;
-                // `bun_resolver::Result` stores `Path<'static>` as the porting
-                // convention for `[]const u8` fields. The map outlives every
-                // returned `Result` (FileMap is owned by the build's Config).
-                // PERF(port): revisit once `Result` is lifetime-generic.
-                let key: &'static [u8] =
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key) };
+            fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
                 bun_resolver::Result {
                     path_pair: bun_resolver::PathPair {
                         primary: crate::ungate_support::bun_fs::Path::init_with_namespace(

@@ -37,7 +37,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
     (
-        Fd::from_std_dir(cache_dir),
+        Fd::from_std_dir(&cache_dir),
         AbsPath::from(this.cache_directory_path.as_bytes()).expect("cache_directory_path is absolute"),
     )
 }
@@ -193,7 +193,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] =
-                match sys::get_fd_path(Fd::from_std_dir(cache_directory), &mut path_buf) {
+                match sys::get_fd_path(Fd::from_std_dir(&cache_directory), &mut path_buf) {
                     Ok(p) => &p[..],
                     Err(_) => b"it",
                 };

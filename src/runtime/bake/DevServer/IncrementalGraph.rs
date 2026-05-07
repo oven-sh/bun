@@ -1821,7 +1821,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         file_index: FileIndex,
         gts: &mut GraphTraceState,
         goal: TraceImportGoal, // PERF(port): was comptime monomorphization — profile in Phase B
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::Error> {
         self.owner().graph_safety_lock.assert_locked();
 
         if cfg!(feature = "debug_logs") {
@@ -1912,9 +1912,17 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 }
 
                 if goal == TraceImportGoal::FindErrors && file.failed {
-                    let _ = &g.owner().bundling_failures;
-                    // TODO(port): blocked_on: bun_collections::ArrayHashMap::get_key_adapted
-                    todo!("blocked_on: bun_collections::ArrayHashMap::get_key_adapted");
+                    let owner = OwnerPacked::new(Side::Client, file_index.get());
+                    let dev = g.owner();
+                    let fail = dev
+                        .bundling_failures
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            Output::panic(format_args!("Failed to get bundling failure"))
+                        });
+                    dev.incremental_result.failures_added.push(fail);
+                    return Ok(());
                 }
             }
         }

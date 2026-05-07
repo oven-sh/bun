@@ -3309,13 +3309,6 @@ impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> fo
         match v { Some(i) => Self(i.get()), None => Self::NONE }
     }
 }
-// Body-module `FileIndex` (non-const-generic) — same wire shape as the header
-// `FileIndex<SIDE>`; provided so `incremental_graph_body` call sites can `.into()`.
-impl From<Option<crate::bake::dev_server::incremental_graph::BodyFileIndex>> for CachedFileIndex {
-    fn from(v: Option<crate::bake::dev_server::incremental_graph::BodyFileIndex>) -> Self {
-        match v { Some(i) => Self(i.get()), None => Self::NONE }
-    }
-}
 
 impl<'a> HotUpdateContext<'a> {
     pub fn get_cached_index(

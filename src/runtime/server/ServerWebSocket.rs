@@ -546,9 +546,12 @@ impl ServerWebSocket {
         let this_ref = unsafe { &mut *this };
         this_ref.this_value.finalize();
         if let Some(signal) = this_ref.signal.take() {
-            AbortSignalExt::pending_activity_unref(&*signal);
-            // Arc drop = unref()
-            drop(signal);
+            // SAFETY: `signal` was stored with a +1 ref by the upgrade caller;
+            // it stays live until this paired unref.
+            unsafe {
+                signal.as_ref().pending_activity_unref();
+                signal.as_ref().unref();
+            }
         }
         // SAFETY: allocated via Box::into_raw in `init`
         drop(unsafe { Box::from_raw(this) });

@@ -645,9 +645,10 @@ impl RunCommand {
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                     }
-                    // TODO(b2): `Log::print` wants `fmt::Write`; route through
-                    // `Output::error_writer()` once a shim lands. See
-                    // `_boot_and_handle_error` for the same wart.
+                    // SAFETY: `ctx.log` set in `create_context_data` (single-
+                    // threaded CLI startup), process-lifetime.
+                    let _ = unsafe { ctx.log() }
+                        .print(Output::error_writer() as *mut bun_core::io::Writer);
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                         bstr::BStr::new(err.name()),
@@ -657,9 +658,9 @@ impl RunCommand {
                     return Err(err);
                 }
                 Ok(None) => {
-                    // TODO(b2): `ctx.log.print(Output.errorWriter())` — same
-                    // writer-shim wart as the `Err` arm above; route the
-                    // buffered resolver diagnostics once the shim lands.
+                    // SAFETY: see `Err` arm above.
+                    let _ = unsafe { ctx.log() }
+                        .print(Output::error_writer() as *mut bun_core::io::Writer);
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(bun_core::err!("CouldntReadCurrentDirectory"));

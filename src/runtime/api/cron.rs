@@ -748,18 +748,22 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             err_msg: None,
             tmp_path: None,
         }));
-        // SAFETY: just allocated; unique.
-        let job_ref = unsafe { &mut *job };
+        // SAFETY: just allocated; unique. Short-lived borrow ends before
+        // `start_*` (which may free `job`).
+        let promise_value = {
+            let job_ref = unsafe { &mut *job };
+            job_ref.poll.ref_(vm_ctx());
+            job_ref.promise.value()
+        };
 
-        let promise_value = job_ref.promise.value();
-        job_ref.poll.ref_(vm_ctx());
-
+        // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+        // synchronous failure or hands it to the event loop on success.
         #[cfg(target_os = "macos")]
-        job_ref.start_mac();
+        unsafe { CronRegisterJob::start_mac(job) };
         #[cfg(windows)]
-        job_ref.start_windows();
+        unsafe { CronRegisterJob::start_windows(job) };
         #[cfg(all(not(target_os = "macos"), not(windows)))]
-        job_ref.start_linux();
+        unsafe { CronRegisterJob::start_linux(job) };
 
         Ok(promise_value)
 }
@@ -767,66 +771,69 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 impl CronRegisterJob {
     // -- Windows --
 
-    fn start_windows(&mut self) {
-        self.state = RegisterState::InstallingCrontab;
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_windows(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RegisterState::InstallingCrontab;
 
         let task_name = match alloc_print_z(format_args!(
             "bun-cron-{}",
-            bstr::BStr::new(self.title.as_bytes())
+            bstr::BStr::new(s.title.as_bytes())
         )) {
-            Ok(s) => s,
+            Ok(v) => v,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
 
         let xml = match cron_to_task_xml(
-            &self.parsed_cron,
-            self.bun_exe.as_bytes(),
-            self.title.as_bytes(),
-            self.schedule.as_bytes(),
-            self.abs_path.as_bytes(),
+            &s.parsed_cron,
+            s.bun_exe.as_bytes(),
+            s.title.as_bytes(),
+            s.schedule.as_bytes(),
+            s.abs_path.as_bytes(),
         ) {
             Ok(x) => x,
             Err(e) => {
                 if e == TaskXmlError::TooManyTriggers {
-                    self.set_err(format_args!(
+                    s.set_err(format_args!(
                         "This cron expression requires too many triggers for Windows Task Scheduler (max 48). Simplify the expression or use fewer restricted fields."
                     ));
                 } else {
-                    self.set_err(format_args!("Failed to build task XML"));
+                    s.set_err(format_args!("Failed to build task XML"));
                 }
-                return Self::finish(self);
+                return unsafe { Self::finish(this) };
             }
         };
 
         let xml_path = match make_temp_path("bun-cron-xml-") {
             Ok(p) => p,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let xml_path_ptr = xml_path.as_ptr();
-        self.tmp_path = Some(xml_path);
+        s.tmp_path = Some(xml_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.as_ref().unwrap(),
+            s.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
             Ok(f) => f,
             Err(_) => {
-                self.set_err(format_args!("Failed to create temp XML file"));
-                return Self::finish(self);
+                s.set_err(format_args!("Failed to create temp XML file"));
+                return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&xml).is_err() {
             file.close();
-            self.set_err(format_args!("Failed to write temp XML file"));
-            return Self::finish(self);
+            s.set_err(format_args!("Failed to write temp XML file"));
+            return unsafe { Self::finish(this) };
         }
         file.close();
 
@@ -841,7 +848,7 @@ impl CronRegisterJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
 }
@@ -902,10 +909,13 @@ enum RemoveState {
 impl BufferedReaderParent for CronRemoveJob {
     const HAS_ON_READ_CHUNK: bool = false;
     unsafe fn on_reader_done(this: *mut Self) {
-        unsafe { &mut *this }.on_reader_done()
+        // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as
+        // raw ptr — `maybe_finished` may free `this`.
+        unsafe { <Self as CronJobBase>::on_reader_done(this) }
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        unsafe { &mut *this }.on_reader_error(err)
+        // SAFETY: see `on_reader_done`.
+        unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
@@ -924,7 +934,7 @@ impl CronJobBase for CronRemoveJob {
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
     fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
     fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
-    fn maybe_finished(&mut self) { CronRemoveJob::maybe_finished(self) }
+    unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRemoveJob::maybe_finished(this) } }
 }
 
 impl CronRemoveJob {

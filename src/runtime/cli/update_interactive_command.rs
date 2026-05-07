@@ -516,7 +516,7 @@ impl UpdateInteractiveCommand {
                     if unsafe { (*ctx_log_ptr).has_errors() } {
                         // SAFETY: `manager.log` aliases `ctx.log`; no other
                         // `&mut Log` is live here.
-                        let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
+                        unsafe { &*manager.log }.print(Output::error_writer() as *mut _)?;
                     }
                 }
                 Global::crash();

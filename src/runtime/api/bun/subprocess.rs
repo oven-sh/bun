@@ -966,8 +966,11 @@ impl Subprocess<'_> {
         }
         self.set_event_loop_timer_refd(false);
 
-        // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread only.
-        unsafe { (*jsc_vm).on_subprocess_exit(process as *const Process as *mut Process) };
+        // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
+        // only. `process` is the raw `*mut Process` threaded from the vtable
+        // thunk so the auto-killer's `(*process).deref()` keeps mutable
+        // provenance (no `&Process → *mut` round-trip).
+        unsafe { (*jsc_vm).on_subprocess_exit(process) };
 
         #[cfg(windows)]
         if self.flags.contains(Flags::OWNS_TERMINAL) {

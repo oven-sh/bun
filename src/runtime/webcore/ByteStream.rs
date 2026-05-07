@@ -284,32 +284,24 @@ impl ByteStream {
         stream: streams::Result,
         offset: usize,
         // PORT NOTE: Zig `base_address: []const u8` + `allocator` params dropped — `base_address`
-        // was only used for `allocator.free(@constCast(base_address))`, which is implicit Drop
-        // of the owned `stream` payload in Rust.
+        // was only used for `allocator.free(@constCast(base_address))`, which is the Drop of the
+        // owned `stream` payload in Rust.
     ) -> Result<(), bun_alloc::AllocError> {
-        let stream_ = stream;
-        let chunk = &stream_.slice()[offset..];
-
         if self.buffer.capacity() == 0 {
-            match &stream_ {
-                streams::Result::Owned(owned) => {
-                    // TODO(port): blocked_on bun_collections::BabyList::into_vec — copying for now
-                    // (Zig: `owned.listManaged(allocator).moveToUnmanaged()` moves the buffer).
-                    self.buffer = owned.slice().to_vec();
+            match stream {
+                streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
+                    // Zig: `owned.moveToListManaged(allocator)` — moves the buffer, no copy.
+                    self.buffer = owned.move_to_list_managed();
                     self.offset += offset;
                 }
-                streams::Result::OwnedAndDone(owned) => {
-                    // TODO(port): blocked_on bun_collections::BabyList::into_vec — copying for now.
-                    self.buffer = owned.slice().to_vec();
-                    self.offset += offset;
-                }
-                streams::Result::TemporaryAndDone(_) | streams::Result::Temporary(_) => {
+                streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
+                    let chunk = &temp.slice()[offset..];
                     self.buffer = Vec::with_capacity(chunk.len());
                     // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                     self.buffer.extend_from_slice(chunk);
                 }
                 streams::Result::Err(err) => {
-                    self.pending.result = streams::Result::Err(err.clone());
+                    self.pending.result = streams::Result::Err(err);
                 }
                 streams::Result::Done => {}
                 _ => unreachable!(),
@@ -317,19 +309,19 @@ impl ByteStream {
             return Ok(());
         }
 
-        match &stream_ {
-            streams::Result::TemporaryAndDone(_) | streams::Result::Temporary(_) => {
-                self.buffer.extend_from_slice(chunk);
+        match stream {
+            streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
+                self.buffer.extend_from_slice(&temp.slice()[offset..]);
             }
-            streams::Result::OwnedAndDone(_) | streams::Result::Owned(_) => {
-                self.buffer.extend_from_slice(chunk);
-                // Zig: `allocator.free(@constCast(base_address))` — implicit via drop of stream_.
+            streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
+                self.buffer.extend_from_slice(&owned.slice()[offset..]);
+                // Zig: `allocator.free(@constCast(base_address))` — `owned: ByteList` drops here.
             }
             streams::Result::Err(err) => {
                 if self.buffer_action.is_some() {
                     panic!("Expected buffer action to be null");
                 }
-                self.pending.result = streams::Result::Err(err.clone());
+                self.pending.result = streams::Result::Err(err);
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet

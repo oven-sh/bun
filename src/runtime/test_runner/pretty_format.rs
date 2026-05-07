@@ -251,91 +251,100 @@ impl JestPrettyFormat {
                     let _ = writer.write_all(b"\n");
                 }
             } else {
-                // PORT NOTE: defer { if (options.flush) writer.flush() } — handled below
-                if options.enable_colors {
-                    fmt.format::<W, true>(tag, writer, vals[0], global)?;
-                } else {
-                    fmt.format::<W, false>(tag, writer, vals[0], global)?;
-                }
-                if options.add_newline {
-                    let _ = writer.write_all(b"\n");
-                }
+                // Zig: `defer { if (options.flush) writer.flush() catch {} }`
+                // (.zig:123-125) — fires on `try` propagation too. Wrap the
+                // fallible body and flush before bubbling the result.
+                let result: JsResult<()> = (|| {
+                    if options.enable_colors {
+                        fmt.format::<W, true>(tag, writer, vals[0], global)?;
+                    } else {
+                        fmt.format::<W, false>(tag, writer, vals[0], global)?;
+                    }
+                    if options.add_newline {
+                        let _ = writer.write_all(b"\n");
+                    }
+                    Ok(())
+                })();
                 if options.flush {
                     let _ = writer.flush();
                 }
+                result?;
             }
 
             let _ = writer.flush();
             return Ok(());
         }
 
-        // PORT NOTE: defer { if (options.flush) writer.flush() } — handled at fn end
-
-        let mut this_value: JSValue = vals[0];
+        // Zig: `defer { if (options.flush) writer.flush() catch {} }` (.zig:152-154)
+        // — fires on every exit including `try` propagation from `Tag.get` /
+        // `fmt.format`. Wrap the fallible body and flush before bubbling.
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
-        let mut tag: TagResult;
 
-        let mut any = false;
-        if options.enable_colors {
-            if level == MessageLevel::Error {
-                let _ = writer.write_all(&pretty_fmt_const::<true>("<r><red>"));
+        let result: JsResult<()> = (|| {
+            let mut this_value: JSValue = vals[0];
+            let mut tag: TagResult;
+            let mut any = false;
+            if options.enable_colors {
+                if level == MessageLevel::Error {
+                    let _ = writer.write_all(&pretty_fmt_const::<true>("<r><red>"));
+                }
+                loop {
+                    if any {
+                        let _ = writer.write_all(b" ");
+                    }
+                    any = true;
+
+                    tag = Tag::get(this_value, global)?;
+                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
+                        tag.tag = Tag::StringPossiblyFormatted;
+                    }
+
+                    fmt.format::<W, true>(tag, writer, this_value, global)?;
+                    if fmt.remaining_values.is_empty() {
+                        break;
+                    }
+
+                    this_value = fmt.remaining_values[0];
+                    fmt.remaining_values = &fmt.remaining_values[1..];
+                }
+                if level == MessageLevel::Error {
+                    let _ = writer.write_all(&pretty_fmt_const::<true>("<r>"));
+                }
+            } else {
+                loop {
+                    if any {
+                        let _ = writer.write_all(b" ");
+                    }
+                    any = true;
+                    tag = Tag::get(this_value, global)?;
+                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
+                        tag.tag = Tag::StringPossiblyFormatted;
+                    }
+
+                    fmt.format::<W, false>(tag, writer, this_value, global)?;
+                    if fmt.remaining_values.is_empty() {
+                        break;
+                    }
+
+                    this_value = fmt.remaining_values[0];
+                    fmt.remaining_values = &fmt.remaining_values[1..];
+                }
             }
-            loop {
-                if any {
-                    let _ = writer.write_all(b" ");
-                }
-                any = true;
 
-                tag = Tag::get(this_value, global)?;
-                if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
-                    tag.tag = Tag::StringPossiblyFormatted;
-                }
-
-                fmt.format::<W, true>(tag, writer, this_value, global)?;
-                if fmt.remaining_values.is_empty() {
-                    break;
-                }
-
-                this_value = fmt.remaining_values[0];
-                fmt.remaining_values = &fmt.remaining_values[1..];
+            if options.add_newline {
+                let _ = writer.write_all(b"\n");
             }
-            if level == MessageLevel::Error {
-                let _ = writer.write_all(&pretty_fmt_const::<true>("<r>"));
-            }
-        } else {
-            loop {
-                if any {
-                    let _ = writer.write_all(b" ");
-                }
-                any = true;
-                tag = Tag::get(this_value, global)?;
-                if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
-                    tag.tag = Tag::StringPossiblyFormatted;
-                }
-
-                fmt.format::<W, false>(tag, writer, this_value, global)?;
-                if fmt.remaining_values.is_empty() {
-                    break;
-                }
-
-                this_value = fmt.remaining_values[0];
-                fmt.remaining_values = &fmt.remaining_values[1..];
-            }
-        }
-
-        if options.add_newline {
-            let _ = writer.write_all(b"\n");
-        }
+            Ok(())
+        })();
 
         if options.flush {
             let _ = writer.flush();
         }
 
         // map_node release handled by `impl Drop for Formatter`.
-        drop(fmt);
-        Ok(())
+        result
     }
 }
 
@@ -1370,8 +1379,8 @@ impl<'a> Formatter<'a> {
 
                         writer.write_all(b"\"");
                         let mut remaining = str;
-                        // `ZigString::char_at` widens to u16; Zig's `'\\'`/`'\r'` are
-                        // comptime_int so they coerce. Mirror that with explicit u16
+                        // `ZigString::char_at` returns u16; Zig's `'\\'`/`'\r'` are
+                        // comptime_int so they coerce. Mirror with explicit u16
                         // consts so the match arms type-check (.zig:955-969).
                         const BACKSLASH: u16 = b'\\' as u16;
                         const CR: u16 = b'\r' as u16;
@@ -1521,17 +1530,18 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
-                        // Width estimate for the JS double serialization.
+                        // Zig: `"{d}"` → `WTF::dtoa`. Compute once so the width
+                        // estimate and the printed bytes cannot diverge.
                         let mut dtoa_buf = [0u8; 124];
-                        self.add_for_new_line(
-                            bun_fmt::FormatDouble::dtoa(&mut dtoa_buf, num).len(),
+                        let dtoa = bun_fmt::FormatDouble::dtoa(&mut dtoa_buf, num);
+                        self.add_for_new_line(dtoa.len());
+                        writer.write_all(
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>").as_bytes(),
                         );
-                        writer.print(format_args!(
-                            "{}{}{}",
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>"),
-                            num,
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                        ));
+                        writer.write_all(dtoa);
+                        writer.write_all(
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes(),
+                        );
                     }
                 }
                 Tag::Undefined => {

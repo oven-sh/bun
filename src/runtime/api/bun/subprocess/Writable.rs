@@ -12,6 +12,8 @@ use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SignalHandler;
 use crate::api::bun_spawn::stdio::Stdio;
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{js, Flags, StaticPipeWriter, StdioResult, Subprocess};
 
@@ -79,14 +81,25 @@ impl<'a> Writable<'a> {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        // SAFETY: self points to Subprocess.stdin
-        let process: &mut Subprocess = unsafe {
-            &mut *(self as *mut _ as *mut u8)
+        // PORT NOTE: Zig `@fieldParentPtr("stdin", this)` recovers `*Subprocess`
+        // and freely interleaves access to both. In Rust, materializing
+        // `&mut Subprocess` while `&mut self` (== `&mut process.stdin`) is live
+        // is two overlapping unique borrows (UB under Stacked Borrows). Recover
+        // the parent as a raw pointer and touch its other fields only via raw
+        // projections; reborrow the whole struct as `&mut` only when no
+        // `stdin`-derived borrow is outstanding.
+        // SAFETY: `self` is `Subprocess.stdin` (signal.ptr was stored from a
+        // pointer with whole-`Subprocess` provenance).
+        let process: *mut Subprocess = unsafe {
+            (self as *mut Writable<'a> as *mut u8)
                 .sub(core::mem::offset_of!(Subprocess, stdin))
                 .cast::<Subprocess>()
         };
 
-        if let Some(this_jsvalue) = process.this_value.try_get() {
+        // SAFETY: `this_value` and `stdin` are disjoint fields; raw projection
+        // does not overlap the live `&mut self` borrow.
+        let this_value = unsafe { &*core::ptr::addr_of!((*process).this_value) };
+        if let Some(this_jsvalue) = this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -103,9 +116,14 @@ impl<'a> Writable<'a> {
             _ => {}
         }
 
-        process.on_stdin_destroyed();
+        // SAFETY: `&mut self` is not used between here and the raw write below,
+        // so this whole-struct reborrow is the sole live unique reference.
+        // `on_stdin_destroyed` reads `stdin` (via `has_pending_activity_stdio`)
+        // and so must own the full borrow.
+        unsafe { (*process).on_stdin_destroyed() };
 
-        *self = Writable::Ignore;
+        // SAFETY: raw projection of `stdin`; no other borrow live.
+        unsafe { *core::ptr::addr_of_mut!((*process).stdin) = Writable::Ignore };
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     pub fn on_start(&mut self) {}
@@ -394,13 +412,18 @@ impl<'a> Writable<'a> {
     }
 
     pub fn finalize(&mut self) {
-        // SAFETY: self points to Subprocess.stdin
-        let subprocess: &mut Subprocess = unsafe {
-            &mut *(self as *mut _ as *mut u8)
+        // PORT NOTE: see `on_close` — recover the parent as a raw pointer and
+        // project `this_value` via `addr_of!` so no `&mut Subprocess` overlaps
+        // the live `&mut self` (== `&mut subprocess.stdin`) borrow.
+        // SAFETY: `self` is `Subprocess.stdin`.
+        let subprocess: *mut Subprocess = unsafe {
+            (self as *mut Writable<'a> as *mut u8)
                 .sub(core::mem::offset_of!(Subprocess, stdin))
                 .cast::<Subprocess>()
         };
-        if let Some(this_jsvalue) = subprocess.this_value.try_get() {
+        // SAFETY: `this_value` and `stdin` are disjoint fields; raw projection.
+        let this_value = unsafe { &*core::ptr::addr_of!((*subprocess).this_value) };
+        if let Some(this_jsvalue) = this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }

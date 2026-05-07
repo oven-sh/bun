@@ -477,16 +477,12 @@ impl OutdatedCommand {
 
         // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
         // needs `&mut manager.manifests` while we hold shared field-path borrows
-        // on `manager.lockfile.*` / `manager.options.*`. Establish a single
-        // raw provenance root and project every disjoint field through it so
-        // the `&mut manifests` borrow is never invalidated by sibling reads
-        // (Stacked Borrows). `pm` is routed raw end-to-end; the callee never
-        // materializes `&mut PackageManager`.
+        // on `manager.lockfile.*` / `manager.options.*`. Route `pm` as a raw
+        // pointer end-to-end (the callee projects only disjoint fields and
+        // never materializes `&mut PackageManager`), and project the
+        // `manifests` receiver through the same raw root so receiver and
+        // `pm` arg share provenance.
         let pm_ptr: *mut PackageManager = manager;
-        // SAFETY: `pm_ptr` is the sole provenance root for the loop body; all
-        // field projections below are disjoint (`options`, `lockfile`,
-        // `manifests`).
-        let manager = unsafe { &mut *pm_ptr };
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
@@ -550,19 +546,20 @@ impl OutdatedCommand {
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
-                // SAFETY: `manifests.by_name_allow_expired` only touches
-                // `pm.options` / `pm.get_cache_directory()` / `pm.timestamp_*`,
-                // never `pm.manifests` (Zig invariant — `*PackageManager` is
-                // freely aliased there). The `&mut self` receiver is
-                // `manager.manifests`, disjoint from those reads.
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    unsafe { &mut *pm_ptr },
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended,
-                ) else {
+                // SAFETY: receiver and `pm` arg both projected from `pm_ptr`;
+                // the callee dereferences `pm` only for fields disjoint from
+                // `manifests` (see `by_name_hash_allow_expired` safety doc),
+                // so the `&mut manifests` borrow is never invalidated.
+                let Some(manifest) = (unsafe {
+                    (*pm_ptr).manifests.by_name_allow_expired(
+                        pm_ptr,
+                        &scope,
+                        package_name,
+                        Some(&mut expired),
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended,
+                    )
+                }) else {
                     continue;
                 };
 
@@ -763,16 +760,19 @@ impl OutdatedCommand {
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
-                // SAFETY: see PORT NOTE above — `by_name_allow_expired` reads
-                // `pm` fields disjoint from `pm.manifests`.
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    unsafe { &mut *pm_ptr },
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended,
-                ) else {
+                // SAFETY: receiver and `pm` arg both projected from `pm_ptr`;
+                // the callee dereferences `pm` only for fields disjoint from
+                // `manifests`.
+                let Some(manifest) = (unsafe {
+                    (*pm_ptr).manifests.by_name_allow_expired(
+                        pm_ptr,
+                        &scope,
+                        package_name,
+                        Some(&mut expired),
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended,
+                    )
+                }) else {
                     continue;
                 };
 

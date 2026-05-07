@@ -148,23 +148,15 @@ pub type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 pub type Poll = WriterImpl;
 
 impl IOWriter {
-    /// Spec: IOWriter.zig `runFromMainThread`. Dispatched by
-    /// `runtime::dispatch::run_task` when an [`IOWriter`] re-enqueues itself
-    /// after `EAGAIN` to retry the buffered write on the JS thread.
+    /// Spec: IOWriter.zig `runFromMainThread` — explicitly a no-op
+    /// (`// this is unused`). Kept only because `task_tag::ShellIOWriter`
+    /// exists in the Zig task-tag enum and the Rust dispatch table mirrors it.
+    /// No code path enqueues this tag.
     ///
     /// # Safety
-    /// `this` is the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
-    /// count was bumped by the enqueue.
-    pub unsafe fn run_from_main_thread(this: *mut IOWriter) {
-        // SAFETY: caller contract — `this` is live and the JS thread owns it.
-        let me = unsafe { &*this };
-        let st = me.state();
-        st.is_writing = false;
-        // Re-drive the buffered writer; it will call back into `on_write`/
-        // `on_err` which resume the queued children via `Yield::run`.
-        st.writer.on_poll(0, false);
-        // SAFETY: drop the strong ref the enqueue took (Zig `this.deref()`).
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
+    /// `this` must point to a live `IOWriter`.
+    pub unsafe fn run_from_main_thread(_this: *mut IOWriter) {
+        // intentionally empty — see spec.
     }
 
     /// Spec: IOWriter.zig `__deinit` (the body `AsyncDeinitWriter` posts back
@@ -453,8 +445,12 @@ impl IOWriter {
         {
             debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
             if let Some(poll) = s.writer.get_poll() {
-                // Spec: `poll.isWatching()` — closest vtable hook is `is_registered`.
-                if poll.is_registered() {
+                // Spec: `poll.isWatching()` — `is_registered() && !needs_rearm`.
+                // NOT `is_registered()`: after a one-shot fire that drains
+                // everything (no `register_poll()`), `PollWritable` stays set
+                // but `NeedsRearm` is set → `is_registered()` would return
+                // Suspended without re-arming and stall the queue forever.
+                if poll.is_watching() {
                     return WriteOutcome::Suspended;
                 }
             }
@@ -741,7 +737,11 @@ impl IOWriter {
         if !wrote_everything && s.writer_idx < s.writers.len() {
             #[cfg(windows)]
             {
-                self.set_writing(true);
+                // PORT NOTE: inline `set_writing(true)` instead of calling the
+                // helper — the helper re-derives `state()` while `s` is live,
+                // which is two simultaneous `&mut State` (UB under Stacked
+                // Borrows). Same discipline as the top of this fn.
+                s.is_writing = true;
                 s.writer.write();
             }
             #[cfg(not(windows))]
@@ -768,7 +768,7 @@ impl IOWriter {
             }
         }
         for ptr in targets {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_shell_system_error();
+            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             self.run_yield(Yield::OnIoWriterChunk { child: ptr, written: 0, err: Some(err) });
             self.cancel_chunks(ptr);
         }
@@ -845,7 +845,7 @@ impl IOWriter {
     /// Spec: IOWriter.zig `handleBrokenPipe`.
     fn handle_broken_pipe(&self, ptr: ChildPtr) -> Option<Yield> {
         if self.state().flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_shell_system_error();
+            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk { child: ptr, written: 0, err: Some(err) });
         }
         None
@@ -926,7 +926,7 @@ impl IOWriter {
         // the helper re-derives `state()` while `s` is still live, which is two
         // simultaneous `&mut State` (UB under Stacked Borrows).
         if s.flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_shell_system_error();
+            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Yield::OnIoWriterChunk { child, written: 0, err: Some(err) };
         }
         let end = s.buf.len();

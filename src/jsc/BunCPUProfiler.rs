@@ -216,11 +216,3 @@ fn generate_default_filename(
     let len = usize::try_from(cursor.position()).unwrap();
     Ok(&buf[..len])
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/BunCPUProfiler.zig (134 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      AutoAbsPath/Timespec crate paths guessed; CPUProfilerConfig slice fields use &'static pending lifetime decision
-// ──────────────────────────────────────────────────────────────────────────

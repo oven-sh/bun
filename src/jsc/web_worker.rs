@@ -169,6 +169,16 @@ pub struct WebWorker {
     // explicit arena rather than deleting per §Allocators non-AST rule, because
     // the VM's allocator IS this arena (load-bearing). Profile in Phase B.
     arena: UnsafeCell<Option<bun_alloc::Arena>>,
+    /// Heap-owned cloned env (Map + Loader) for the worker VM. In Zig both
+    /// were `allocator.create`'d on the worker arena and bulk-freed by
+    /// `arena.deinit()`. Rust's `Arena = bumpalo::Bump` does not run `Drop`
+    /// (so the inner `HashTable` would leak), and `clone_with_allocator()` no
+    /// longer routes through the arena allocator anyway — own them as `Box`es
+    /// here instead. `start_vm()` `Box::into_raw`s and stores the pointers;
+    /// `shutdown()` step 5 `Box::from_raw`s after `vm.destroy()` (loader
+    /// first, then map — `Loader<'static>` borrows `*map`).
+    worker_env_map: Cell<*mut bun_dotenv::Map>,
+    worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
     /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
@@ -514,6 +524,8 @@ impl WebWorker {
             parent_poll_ref: UnsafeCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: UnsafeCell::new(None),
+            worker_env_map: Cell::new(core::ptr::null_mut()),
+            worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
         }));
 

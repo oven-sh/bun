@@ -30,6 +30,18 @@ pub enum DotEnvFileSuffix {
 pub type Kind = DotEnvFileSuffix;
 pub type Mode = DotEnvFileSuffix;
 
+/// Port of the `*FileSystem.DirEntry` parameter to `Loader::load`
+/// (env_loader.zig). `bun_dotenv` sits below `bun_resolver` in the crate
+/// graph, so the concrete `bun_resolver::fs::DirEntry` is taken generically;
+/// the only operation `load_default_files` performs is `hasComptimeQuery`
+/// (fs.zig:305) — fast O(1) lookup of a known-at-compile-time filename in the
+/// directory's entry map. Implemented for `bun_resolver::fs::DirEntry`.
+pub trait DirEntryProbe {
+    /// Zig: `DirEntry.hasComptimeQuery(comptime query)`. The argument MUST
+    /// already be ASCII-lowercase (Zig lowercases at comptime; fs.zig:305-310).
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
+}
+
 /// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
 /// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
 /// transmutes/maps its `api::DotEnvBehavior` into this at the call site.
@@ -800,16 +812,18 @@ impl<'a> Loader<'a> {
     // Load .env.development if development
     // Load .env.production if !development
     // .env goes last
-    fn load_default_files(
+    fn load_default_files<D: DirEntryProbe + ?Sized>(
         &mut self,
         suffix: DotEnvFileSuffix,
-        dir: &mut bun_sys::fs::DirEntry,
+        dir: &D,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // PORT NOTE: bun_sys::fs::DirEntry::has_comptime_query forwards through the
-        // resolver→sys vtable seam (`dir_entry_has_comptime_query`) — see sys/lib.rs.
+        // PORT NOTE: Zig calls `dir.hasComptimeQuery(...)` on a
+        // `*FileSystem.DirEntry` (env_loader.zig). `bun_dotenv` sits below
+        // `bun_resolver` in the crate graph, so the directory entry is taken
+        // generically — `bun_resolver::fs::DirEntry` impls `DirEntryProbe`.
         {
             match suffix {
                 DotEnvFileSuffix::Development => {

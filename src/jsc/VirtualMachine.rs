@@ -5096,7 +5096,14 @@ impl VirtualMachine {
         // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
         // `bun.String` is `defer .deref()`-ed; hold the owning `bun_string::String`
         // alongside the slice so the latin1 view stays live for this fn.
-        let mut code_string_guard: Option<bun_string::String> = None;
+        // `bun_string::String` is `Copy` (no `Drop`), so use a scopeguard to
+        // run `.deref()` on every exit path (matches Zig `defer`).
+        let mut code_string_guard =
+            scopeguard::guard(None::<bun_string::String>, |s| {
+                if let Some(s) = s {
+                    s.deref();
+                }
+            });
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
@@ -5112,7 +5119,7 @@ impl VirtualMachine {
                                     code_string.latin1().len(),
                                 )
                             };
-                            code_string_guard = Some(code_string);
+                            *code_string_guard = Some(code_string);
                             Some(bytes)
                         }
                         Ok(s) => {

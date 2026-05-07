@@ -1698,8 +1698,8 @@ impl PathOrBlob {
 
         let Some(arg) = args.next_eat() else {
             return Err(ctx.throw_invalid_argument_type_value(
-                "destination",
-                "path, file descriptor, or Blob",
+                b"destination",
+                b"path, file descriptor, or Blob",
                 JSValue::UNDEFINED,
             ));
         };
@@ -1709,8 +1709,8 @@ impl PathOrBlob {
             return Ok(PathOrBlob::Blob(unsafe { (*blob).dupe() }));
         }
         Err(ctx.throw_invalid_argument_type_value(
-            "destination",
-            "path, file descriptor, or Blob",
+            b"destination",
+            b"path, file descriptor, or Blob",
             arg,
         ))
     }

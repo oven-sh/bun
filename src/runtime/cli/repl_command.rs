@@ -79,16 +79,17 @@ impl ReplCommand {
             });
 
         // Initialize the VM
-        // TODO(port): `jsc::VirtualMachineInitOptions` is currently a stub missing
-        // `log` / `args: TransformOptions` / `store_fd` / `eval` / `debugger` /
-        // `dns_result_order` — wire these once the upstream struct grows them.
+        // TODO(port): `jsc::VirtualMachineInitOptions` still lacks `store_fd` /
+        // `eval` / `dns_result_order` (wired post-init below where applicable).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             // TODO(port): allocator field — VM owns arena allocator; see note above
-            args: Vec::new(), // TODO(port): ctx.args is TransformOptions; InitOptions wants Vec<String>
-            graph: core::ptr::null_mut(),
+            transform_options: core::mem::take(&mut ctx.args),
+            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            log: core::ptr::NonNull::new(ctx.log),
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
+            ..Default::default()
         })?;
 
         // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.

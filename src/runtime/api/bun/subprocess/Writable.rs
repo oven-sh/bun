@@ -80,32 +80,33 @@ impl<'a> Writable<'a> {
 
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        // PORT NOTE: Zig `@fieldParentPtr("stdin", this)` recovers `*Subprocess`
-        // and freely interleaves access to both. In Rust, materializing
-        // `&mut Subprocess` while `&mut self` (== `&mut process.stdin`) is live
-        // is two overlapping unique borrows (UB under Stacked Borrows). Recover
-        // the parent as a raw pointer and touch its other fields only via raw
-        // projections; reborrow the whole struct as `&mut` only when no
-        // `stdin`-derived borrow is outstanding.
-        // SAFETY: `self` is `Subprocess.stdin` (signal.ptr was stored from a
-        // pointer with whole-`Subprocess` provenance).
-        let process: *mut Subprocess = unsafe {
-            (self as *mut Writable<'a> as *mut u8)
-                .sub(core::mem::offset_of!(Subprocess, stdin))
-                .cast::<Subprocess>()
-        };
+    //
+    // PORT NOTE: reshaped for borrowck — Zig `@fieldParentPtr("stdin", this)`
+    // recovers `*Subprocess` from `*Writable` and freely interleaves access to
+    // both. In Rust, deriving the parent from `&mut self` is out-of-provenance
+    // (the `&mut` only covers the `stdin` field) and yields two overlapping
+    // unique borrows. Instead the `SignalHandler` impl is on `Subprocess` and
+    // hands us the parent pointer directly; we raw-project `stdin` and never
+    // hold `&mut Subprocess` and `&mut Writable` at the same time.
+    pub fn on_close(process: *mut Subprocess<'a>, _: Option<bun_sys::Error>) {
+        // SAFETY: `process` is the live boxed `Subprocess`; raw place
+        // projection forms no intermediate reference.
+        let stdin: *mut Writable<'a> = unsafe { core::ptr::addr_of_mut!((*process).stdin) };
 
-        // SAFETY: `this_value` and `stdin` are disjoint fields; raw projection
-        // does not overlap the live `&mut self` borrow.
-        let this_value = unsafe { &*core::ptr::addr_of!((*process).this_value) };
-        if let Some(this_jsvalue) = this_value.try_get() {
+        // SAFETY: `this_value` and `stdin` are disjoint fields; this short-lived
+        // borrow ends before any whole-struct reborrow.
+        if let Some(this_jsvalue) = unsafe { (*process).this_value.try_get() } {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
         }
 
-        match self {
+        // SAFETY: `stdin` is a valid `*mut Writable`; the `&mut` lives only for
+        // the duration of `replace`. Moving the payload out and writing `.Ignore`
+        // here mirrors Zig's trailing `this.* = .{.ignore}` (hoisted before
+        // `on_stdin_destroyed` so no `stdin` borrow outlives the whole-struct
+        // reborrow; `update_has_pending_activity` does not read `stdin`).
+        match core::mem::replace(unsafe { &mut *stdin }, Writable::Ignore) {
             Writable::Buffer(buffer) => {
                 buffer.deref();
             }
@@ -116,14 +117,10 @@ impl<'a> Writable<'a> {
             _ => {}
         }
 
-        // SAFETY: `&mut self` is not used between here and the raw write below,
-        // so this whole-struct reborrow is the sole live unique reference.
-        // `on_stdin_destroyed` reads `stdin` (via `has_pending_activity_stdio`)
-        // and so must own the full borrow.
+        // SAFETY: `process` is live and no borrow of `*process` is outstanding;
+        // `on_stdin_destroyed` may `deref()` and free it as its last act, so
+        // this must be the final access.
         unsafe { (*process).on_stdin_destroyed() };
-
-        // SAFETY: raw projection of `stdin`; no other borrow live.
-        unsafe { *core::ptr::addr_of_mut!((*process).stdin) = Writable::Ignore };
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     pub fn on_start(&mut self) {}

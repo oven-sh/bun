@@ -3016,10 +3016,10 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = WPathBuffer::uninit();
-                // Storage for the `=X:` fast-path key. Hoisted so the pointer
-                // returned from the `'brk:` block stays live across `getenv_w`.
-                let mut arr: [u16; 4] = [0; 4];
+                let mut u16_buf = bun_paths::WPathBuffer::uninit();
+                // Storage for the `=X:` fast-path key. Declared here (not inside the
+                // `'brk:` block) so the slice it backs stays live across `getenv_w`.
+                let mut fast_key: [u16; 3];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -3028,16 +3028,15 @@ pub fn resolve_windows_t<'a, T: PathChar>(
 
                 // Translated from the following JS code:
                 //   process.env[`=${resolvedDevice}`]
-                let key_w: *const u16 = 'brk: {
+                let key_w: &[u16] = 'brk: {
                     if resolved_device_len == 2 && tmp_buf[1] == T::from_u8(CHAR_COLON) {
                         // Fast path for device roots
-                        arr = [
+                        fast_key = [
                             b'=' as u16,
                             u16::try_from(tmp_buf[0].as_u32()).unwrap(),
                             CHAR_COLON as u16,
-                            0,
                         ];
-                        break 'brk arr.as_ptr();
+                        break 'brk &fast_key[..];
                     }
                     buf_size = 1;
                     // Reuse buf2 for the env key because it's used to get the path.
@@ -3046,19 +3045,17 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                     buf_size += resolved_device_len;
                     memmove(&mut buf2[buf_offset..buf_size], &tmp_buf[0..resolved_device_len]);
                     if T::IS_U16 {
-                        // SAFETY: T == u16 when IS_U16; buf2: &mut [T] has the same
-                        // element layout as &mut [u16].
-                        break 'brk buf2.as_ptr() as *const u16;
-                    } else {
-                        buf_size = bun_str::strings::wtf8_to_wtf16_le(
-                            u16_buf.as_mut_slice(),
-                            // SAFETY: T == u8
-                            unsafe { core::mem::transmute::<&[T], &[u8]>(&buf2[0..buf_size]) },
-                        )
-                        .expect("unreachable");
-                        u16_buf.as_mut_slice()[buf_size] = 0;
-                        break 'brk u16_buf.as_ptr();
+                        // SAFETY: T == u16 when IS_U16; same layout as &[u16].
+                        break 'brk unsafe {
+                            core::slice::from_raw_parts(buf2.as_ptr().cast::<u16>(), buf_size)
+                        };
                     }
+                    // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
+                    let key8 = unsafe {
+                        core::slice::from_raw_parts(buf2.as_ptr().cast::<u8>(), buf_size)
+                    };
+                    let widened = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8);
+                    &*widened
                 };
                 // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
                 // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
@@ -3068,18 +3065,20 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
                     if T::IS_U16 {
                         buf_size = r.len();
-                        // SAFETY: T == u16
-                        memmove(
-                            unsafe { core::mem::transmute::<&mut [T], &mut [u16]>(&mut buf2[0..buf_size]) },
-                            r,
-                        );
+                        // SAFETY: T == u16; same layout as &mut [u16].
+                        let dst = unsafe {
+                            core::slice::from_raw_parts_mut(buf2.as_mut_ptr().cast::<u16>(), buf_size)
+                        };
+                        memmove(dst, &r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        buf_size = bun_str::strings::wtf16_le_to_wtf8(
-                            // SAFETY: T == u8
-                            unsafe { core::mem::transmute::<&mut [T], &mut [u8]>(buf2) },
-                            r,
-                        );
+                        // SAFETY: T == u8; same layout as &mut [u8].
+                        let dst = unsafe {
+                            core::slice::from_raw_parts_mut(buf2.as_mut_ptr().cast::<u8>(), buf2.len())
+                        };
+                        buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r)
+                            .map(|s| s.len())
+                            .unwrap_or(0);
                     }
                     env_path_len = Some(buf_size);
                 }

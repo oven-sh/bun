@@ -318,27 +318,33 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 }
 
 /// # Safety
-/// See `get_cache_directory_raw` — only `options`, `env`, and
-/// `cache_directory_path` are touched; caller must hold no overlapping borrow.
+/// See `get_cache_directory_raw` — only `options.enable`,
+/// `options.cache_directory` (read), `env`, and `cache_directory_path` are
+/// touched; caller must hold no overlapping borrow on those projections.
+/// Borrows into other `options` sub-fields (e.g. `options.registries` /
+/// `options.scope`) remain valid.
 #[cold]
 #[inline(never)]
 unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
     loop {
-        // SAFETY: disjoint-field projections through the caller-provided
-        // provenance root; see fn safety contract.
-        let options = unsafe { &mut (*this).options };
-        if options.enable.contains(Enable::CACHE) {
+        // SAFETY: field projections through the caller-provided provenance
+        // root; see fn safety contract. Project `enable` narrowly so callers
+        // may hold borrows into disjoint `options` sub-fields.
+        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
             // SAFETY: `env` is set by `init()` before any cache lookup; the
             // `NonNull<Loader>` borrows the process-global env map (singleton-leaked).
             let env = unsafe { (*this).env.expect("env initialised").as_mut() };
-            let cache_dir = fetch_cache_directory_path(env, Some(options));
+            // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
+            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
             // SAFETY: see fn safety contract.
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
-                    options.enable.set(Enable::CACHE, false);
+                    // SAFETY: narrow `&mut enable` projection; disjoint from
+                    // any `&options.{registries,scope}` the caller may hold.
+                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
                     // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
                     // SAFETY: see fn safety contract.
                     unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };

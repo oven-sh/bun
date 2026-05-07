@@ -959,6 +959,12 @@ impl UpdateInteractiveCommand {
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
+                // Snapshot for `OutdatedPackage.uses_default_registry` (see
+                // field PORT NOTE) — Zig defers this to render time via
+                // `pkg.manager`, which we cannot soundly alias.
+                let uses_default_registry = global_uses_default_registry
+                    && manager.options.scope_for_package_name(name_slice).url_hash
+                        == default_url_hash;
                 let mut expired = false;
                 // SAFETY: receiver `&mut (*pm_ptr).manifests` and the `pm`
                 // argument are projected from the same SharedReadWrite root;
@@ -1095,7 +1101,7 @@ impl UpdateInteractiveCommand {
                     dependency_type: dep_type,
                     workspace_name: Box::from(workspace_name),
                     behavior: dep.behavior,
-                    manager: pm_ptr as *const PackageManager,
+                    uses_default_registry,
                     is_catalog,
                     catalog_name,
                     use_latest: update_to_latest, // default to --latest flag value

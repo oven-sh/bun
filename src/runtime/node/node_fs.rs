@@ -6120,11 +6120,13 @@ impl NodeFS {
         }
     }
 
-    // TODO(b2-blocked): args::Watch = Watcher::Arguments — module gated.
-    
-    pub fn watch(&mut self, args: &args::Watch, _: Flavor) -> Maybe<ret::Watch> {
+    pub fn watch(&mut self, args: args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
-            Maybe::Ok(result) => Maybe::Ok(result.js_this),
+            // SAFETY: `create_fs_watcher` returns a freshly-heap-allocated
+            // `*mut FSWatcher` whose ownership is held by the JS wrapper
+            // (`js_this`); reading `js_this` here mirrors Zig's
+            // `result.js_this` field access on the by-value return.
+            Maybe::Ok(result) => Maybe::Ok(unsafe { (*result).js_this() }),
             Maybe::Err(err) => Maybe::Err(err),
         }
     }

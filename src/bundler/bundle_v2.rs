@@ -898,7 +898,7 @@ pub mod api {
                     }
                     let joined = &buf[0..joined_len];
                     if let Some((key, _)) = self.map.get_key_value(joined) {
-                        return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
+                        return Some(Self::result_for_key(dupe(key.as_ref())));
                     }
                 }
 

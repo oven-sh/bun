@@ -79,6 +79,14 @@ pub struct EntryPointResult {
 /// is gated below — this is the minimal surface dependents type-check against.
 pub struct InitOptions {
     pub args: alloc::vec::Vec<alloc::string::String>,
+    /// Spec VirtualMachine.zig:1208 `Options.log`. When `Some`, [`init`] adopts
+    /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
+    /// transpiler's log so macro load errors land in the bundle output).
+    pub log: Option<NonNull<logger::Log>>,
+    /// Spec VirtualMachine.zig:1210 `Options.env_loader`. Forwarded to
+    /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
+    /// reuses the caller's env loader.
+    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub graph: *mut c_void,
     pub smol: bool,
     pub eval_mode: bool,
@@ -101,6 +109,8 @@ impl Default for InitOptions {
     fn default() -> Self {
         Self {
             args: alloc::vec::Vec::new(),
+            log: None,
+            env_loader: None,
             graph: core::ptr::null_mut(),
             smol: false,
             eval_mode: false,

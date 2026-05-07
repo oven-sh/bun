@@ -995,8 +995,8 @@ pub fn build_with_vm(
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
         // defer params_buf.clearRetainingCapacity()
-        let _params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
-        let params_buf = &mut **_params_guard;
+        let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
+        let params_buf = &mut **params_guard;
 
         let mut pattern = PatternBuffer::EMPTY;
 

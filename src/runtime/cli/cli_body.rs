@@ -1243,16 +1243,6 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
                 const INTRO_TEXT: &str = "\
 <b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
   Upgrade Bun";
-                const OUTRO_TEXT: &str = "\
-<b>Examples:<r>
-  <d>Install the latest {} version<r>
-  <b><green>bun upgrade<r>
-
-  <d>{}<r>
-  <b><green>bun upgrade<r> <cyan>--{}<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
-";
 
                 let args: (&str, &str, &str) = if bun_core::Environment::IS_CANARY {
                     (
@@ -1271,10 +1261,19 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::pretty(format_args!("\n\n"));
                 Output::flush();
-                // TODO(port): Output::pretty positional substitution — OUTRO_TEXT
-                // contains `{}` slots; printed unsubstituted until pretty-fmt lands.
-                let _ = &args;
-                Output::pretty(format_args!("{}", OUTRO_TEXT));
+                Output::pretty(format_args!(
+                    "\
+<b>Examples:<r>
+  <d>Install the latest {} version<r>
+  <b><green>bun upgrade<r>
+
+  <d>{}<r>
+  <b><green>bun upgrade<r> <cyan>--{}<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
+",
+                    args.0, args.1, args.2,
+                ));
                 Output::flush();
             }
             Tag::ReplCommand => {

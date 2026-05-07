@@ -207,7 +207,13 @@ impl ThreadPool {
     // draft module is dropped.
     pub fn init<V2>(
         v2: &V2,
-        worker_pool: Option<&mut ThreadPoolLib::ThreadPool>,
+        // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
+        // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
+        // worker threads). Materializing `&mut` from that provenance is UB
+        // under Stacked Borrows even if the body never writes through it; the
+        // pool is stored as `*mut` in the struct anyway, so keep it raw
+        // end-to-end.
+        worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
         // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
         // (`v2.allocator().create`), so the `false` ownership flag was
@@ -215,7 +221,7 @@ impl ThreadPool {
         // heap), so `deinit()` must `Box::from_raw` it back; record ownership.
         let owned = worker_pool.is_none();
         let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
-            Some(p) => p as *mut _,
+            Some(p) => p.as_ptr(),
             None => {
                 let cpu_count = bun_core::get_thread_count();
                 // PERF(port): was `v2.allocator().create(ThreadPoolLib)` —

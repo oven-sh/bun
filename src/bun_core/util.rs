@@ -534,18 +534,58 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 #[cfg(windows)] pub const SEP: u8 = b'\\';
 #[cfg(not(windows))] pub const SEP: u8 = b'/';
 
-/// Zig: `[MAX_PATH_BYTES]u8` stack buffer. fmt.rs calls `PathBuffer::uninit()`.
-#[repr(C)]
+/// Zig: `[MAX_PATH_BYTES]u8` stack buffer (`var buf: bun.PathBuffer = undefined`).
+///
+/// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
+/// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
+/// `bun_core::getcwd`/`which` without a pointer cast.
+#[repr(transparent)]
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
+    pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
+    /// Zig `= undefined`. Returns a zero-initialised buffer (cheap, avoids
+    /// `MaybeUninit` ceremony at every call site; the bytes are immediately
+    /// overwritten by the syscall that fills it).
     #[inline]
-    pub fn uninit() -> core::mem::MaybeUninit<Self> {
-        core::mem::MaybeUninit::uninit()
+    pub fn uninit() -> Self {
+        // SAFETY: all-zero is a valid `[u8; N]`.
+        unsafe { core::mem::zeroed() }
     }
     #[inline] pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0 }
+    #[inline] pub fn as_slice(&self) -> &[u8] { &self.0 }
 }
-#[repr(C)]
+impl Default for PathBuffer {
+    #[inline] fn default() -> Self { Self::ZEROED }
+}
+impl core::ops::Deref for PathBuffer {
+    type Target = [u8];
+    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+}
+impl core::ops::DerefMut for PathBuffer {
+    #[inline] fn deref_mut(&mut self) -> &mut [u8] { &mut self.0 }
+}
+
+/// Zig: `[PATH_MAX_WIDE]u16`. Same newtype shape as [`PathBuffer`].
+#[repr(transparent)]
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
+impl WPathBuffer {
+    pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
+    #[inline]
+    pub fn uninit() -> Self {
+        // SAFETY: all-zero is a valid `[u16; N]`.
+        unsafe { core::mem::zeroed() }
+    }
+}
+impl Default for WPathBuffer {
+    #[inline] fn default() -> Self { Self::ZEROED }
+}
+impl core::ops::Deref for WPathBuffer {
+    type Target = [u16];
+    #[inline] fn deref(&self) -> &[u16] { &self.0 }
+}
+impl core::ops::DerefMut for WPathBuffer {
+    #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
+}
 #[cfg(windows)] pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))] pub type OSPathBuffer = PathBuffer;
 

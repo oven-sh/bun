@@ -1006,7 +1006,7 @@ impl Run {
 
         let mut printed_sourcemap_warning_and_version = false;
 
-        match vm.load_entry_point(self.entry_path) {
+        match vm.load_entry_point(&self.entry_path) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -2699,7 +2699,11 @@ impl RemoteImageDownload {
             let this = &mut *this;
             let async_http = &mut *async_http;
             if let Some(real) = async_http.real {
-                *real.as_ptr() = ::core::ptr::read(async_http);
+                // Zig `real.* = async_http.*;` is a raw bitwise overwrite with
+                // NO destructor on the old value. `ptr::write` preserves that —
+                // `*real.as_ptr() = …` would run Drop on the previous
+                // `this.async_http` (whose state the fresh copy still aliases).
+                real.as_ptr().write(::core::ptr::read(async_http));
                 (*real.as_ptr()).response_buffer = async_http.response_buffer;
             }
             // Channel payload is a placeholder tick — the main thread

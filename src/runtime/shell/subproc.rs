@@ -1796,30 +1796,55 @@ impl PipeReader {
         should_continue
     }
 
-    pub fn on_reader_done(&mut self) {
+    /// # Safety
+    /// `this` must point into a live `Arc<PipeReader>` allocation (the pointer
+    /// registered via `reader.set_parent`). Takes a raw pointer rather than
+    /// `&mut self` because `on_close_io` below drops the `Readable::Pipe`
+    /// `Arc` — holding a `&mut self` across that drop would dangle, and the
+    /// `Arc::deref` inside `on_close_io` would alias it.
+    pub unsafe fn on_reader_done(this: *mut Self) {
         log!(
             "onReaderDone(0x{:x}, {})",
-            self as *mut _ as usize,
-            out_kind_str(self.out_type)
+            this as usize,
+            // SAFETY: caller contract.
+            out_kind_str(unsafe { (*this).out_type })
         );
-        let owned = self.to_owned_slice();
-        self.state = PipeReaderState::Done(owned);
-        if !self.is_done() {
+        // SAFETY: caller contract; short-lived `&mut` ends before any re-entry.
+        let owned = unsafe { (*this).to_owned_slice() };
+        // SAFETY: caller contract.
+        unsafe { (*this).state = PipeReaderState::Done(owned) };
+        // SAFETY: caller contract.
+        if !unsafe { (*this).is_done() } {
             return;
         }
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
-        // TODO(port): explicit ref/deref pair — with Arc the caller holds the strong ref;
-        // intrusive refcount semantics differ. Revisit in Phase B.
-        let y = self.try_signal_done_to_cmd();
-        self.run_yield(y);
+        // Spec: `this.ref(); defer this.deref();` — keep the Arc allocation
+        // alive across `run_yield` (which may free the owning Cmd) and
+        // `on_close_io` (which drops the `Readable::Pipe` strong ref).
+        // SAFETY: `this` points into an `Arc<PipeReader>` allocation per caller
+        // contract; bumping/dropping the strong count is the Arc analogue of
+        // the intrusive ref/deref pair.
+        unsafe { Arc::increment_strong_count(this as *const Self) };
 
-        if let Some(process) = self.process {
+        // SAFETY: caller contract; protective ref above keeps `this` live.
+        let y = unsafe { (*this).try_signal_done_to_cmd() };
+        // SAFETY: as above.
+        unsafe { (*this).run_yield(y) };
+
+        // SAFETY: as above.
+        if let Some(process) = unsafe { (*this).process } {
             // self.process = None;
             // SAFETY: process backref is valid while PipeReader is alive.
-            let kind = self.kind(unsafe { &*process });
+            let kind = unsafe { (*this).kind(&*process) };
+            // SAFETY: process backref valid; this drops the `Readable::Pipe`
+            // Arc (Zig: explicit `this.deref()` after `onCloseIO`, since Zig's
+            // union overwrite doesn't run a destructor).
             unsafe { (*process).on_close_io(kind) };
-            // self.deref(); — handled by Arc drop in on_close_io.
         }
+
+        // SAFETY: matches the `increment_strong_count` above. May run `Drop`
+        // and free the allocation — `this` must not be touched afterwards.
+        unsafe { Arc::decrement_strong_count(this as *const Self) };
     }
 
     pub fn try_signal_done_to_cmd(&mut self) -> Yield {
@@ -1972,29 +1997,43 @@ impl PipeReader {
         }
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+    /// # Safety
+    /// See [`Self::on_reader_done`].
+    pub unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         log!(
             "PipeReader(0x{:x}) onReaderError {:?}",
-            self as *mut _ as usize,
+            this as usize,
             err
         );
+        // SAFETY: caller contract; short-lived `&mut` ends before any re-entry.
         if let PipeReaderState::Done(buf) =
-            core::mem::replace(&mut self.state, PipeReaderState::Err(None))
+            core::mem::replace(unsafe { &mut (*this).state }, PipeReaderState::Err(None))
         {
             drop(buf);
         }
-        self.state = PipeReaderState::Err(Some(err.to_system_error()));
+        // SAFETY: caller contract.
+        unsafe { (*this).state = PipeReaderState::Err(Some(err.to_system_error())) };
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
-        // TODO(port): intrusive ref/deref pair — see on_reader_done.
-        let y = self.try_signal_done_to_cmd();
-        self.run_yield(y);
-        if let Some(process) = self.process {
+        // Spec: `this.ref(); defer this.deref();` — see `on_reader_done`.
+        // SAFETY: `this` points into an `Arc<PipeReader>` allocation.
+        unsafe { Arc::increment_strong_count(this as *const Self) };
+
+        // SAFETY: caller contract; protective ref above keeps `this` live.
+        let y = unsafe { (*this).try_signal_done_to_cmd() };
+        // SAFETY: as above.
+        unsafe { (*this).run_yield(y) };
+
+        // SAFETY: as above.
+        if let Some(process) = unsafe { (*this).process } {
             // self.process = None;
             // SAFETY: backref valid while PipeReader alive.
-            let kind = self.kind(unsafe { &*process });
+            let kind = unsafe { (*this).kind(&*process) };
+            // SAFETY: process backref valid; drops the `Readable::Pipe` Arc.
             unsafe { (*process).on_close_io(kind) };
-            // self.deref();
         }
+
+        // SAFETY: matches the `increment_strong_count` above. May free `this`.
+        unsafe { Arc::decrement_strong_count(this as *const Self) };
     }
 
     pub fn close(&mut self) {
@@ -2105,11 +2144,11 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
     }
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: see trait contract.
-        unsafe { (*this).on_reader_done() }
+        unsafe { PipeReader::on_reader_done(this) }
     }
     unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         // SAFETY: see trait contract.
-        unsafe { (*this).on_reader_error(err) }
+        unsafe { PipeReader::on_reader_error(this, err) }
     }
     unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
         // SAFETY: see trait contract.

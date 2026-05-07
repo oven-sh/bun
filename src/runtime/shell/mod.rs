@@ -361,7 +361,16 @@ pub use shell_body::ShellErr;
 pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub use parsed_shell_script::ParsedShellScript;
-pub struct Subprocess(());
+
+/// Re-export of the JS-exposed `Bun.spawn` Subprocess class. The
+/// `generate-classes.ts` resolver walks `lib.rs` in declaration order and
+/// `mod shell` precedes `mod api`, so `generated_classes.rs` currently routes
+/// the `Subprocess` codegen thunks through `crate::shell::Subprocess`. Point
+/// it at the real implementation (lifetime erased to `'static` for the C-ABI
+/// `*mut Subprocess` thunk signatures — the JS wrapper outlives any borrow).
+/// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
+/// interpreter's internal process node.
+pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -145,7 +145,7 @@ impl TimeoutObject {
             Debugger::did_schedule_async_call(
                 global,
                 Debugger::AsyncCallType::DOMTimer,
-                ID { id, kind: kind.into() }.async_id(),
+                ID { id, kind: kind.big() }.async_id(),
                 kind != Kind::SetInterval,
             );
         }

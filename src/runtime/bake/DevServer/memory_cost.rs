@@ -217,18 +217,19 @@ pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
 }
 
 pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
-    // Zig: @TypeOf(map.entries).capacityInBytes(map.entries.capacity)
-    // i.e. the MultiArrayList backing storage byte capacity.
-    // `bun_collections::ArrayHashMap` exposes no capacity accessor; approximate
-    // via `len()` (lower bound: keys + values + 32-bit hash per entry).
-    // TODO(port): blocked_on: bun_collections::ArrayHashMap::capacity_in_bytes
-    map.len() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
+    // Zig: `@TypeOf(map.entries).capacityInBytes(map.entries.capacity)` — the
+    // SoA byte capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
+    // stores three separate `Vec`s (keys, values, 32-bit hashes) instead, so the
+    // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
+    map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bake/DevServer/memory_cost.zig (216 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      useAllFields exhaustiveness checks dropped (no Rust reflection); DeferredRequest.Node type path and ArrayHashMap::capacity_in_bytes need Phase B wiring.
+//   confidence: high
+//   notes:      `useAllFields` exhaustiveness checks dropped (no Rust field
+//               reflection); kept as comment lists. `entry.files` is `Vec`
+//               in the port (not `MultiArrayList`), so its byte cost is
+//               `cap * size_of::<Shared>()`.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1541,6 +1541,9 @@ pub mod testing_apis {
         Ok(JSValue::TRUE)
     }
 }
+// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
+pub use testing_apis as testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

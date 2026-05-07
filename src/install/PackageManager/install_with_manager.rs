@@ -452,16 +452,16 @@ pub fn install_with_manager(
                     // `@memset`s it (no drop), then extends `.items.len`. Mirror that ordering:
                     // write into `spare_capacity_mut()` (MaybeUninit) and only then `set_len`, so we
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
-                    debug_assert_eq!(manager.lockfile.buffers.dependencies.len(), off as usize);
-                    debug_assert_eq!(manager.lockfile.buffers.resolutions.len(), off as usize);
+                    debug_assert_eq!(unsafe { &(*to_lockfile).buffers.dependencies }.len(), off as usize);
+                    debug_assert_eq!(unsafe { &(*to_lockfile).buffers.resolutions }.len(), off as usize);
                     {
-                        let spare = manager.lockfile.buffers.dependencies.spare_capacity_mut();
+                        let spare = unsafe { &mut (*to_lockfile).buffers.dependencies }.spare_capacity_mut();
                         for slot in &mut spare[..len as usize] {
                             slot.write(Dependency::default());
                         }
                     }
                     {
-                        let spare = manager.lockfile.buffers.resolutions.spare_capacity_mut();
+                        let spare = unsafe { &mut (*to_lockfile).buffers.resolutions }.spare_capacity_mut();
                         for slot in &mut spare[..len as usize] {
                             slot.write(invalid_package_id);
                         }
@@ -469,46 +469,52 @@ pub fn install_with_manager(
                     // SAFETY: capacity reserved above and the `[off .. off+len)` tail was just
                     // initialized via `MaybeUninit::write`.
                     unsafe {
-                        manager.lockfile.buffers.dependencies.set_len((off + len) as usize);
-                        manager.lockfile.buffers.resolutions.set_len((off + len) as usize);
+                        (*to_lockfile).buffers.dependencies.set_len((off + len) as usize);
+                        (*to_lockfile).buffers.resolutions.set_len((off + len) as usize);
                     }
-                    let dependencies = &mut manager.lockfile.buffers.dependencies[off as usize..(off + len) as usize];
-                    let resolutions = &mut manager.lockfile.buffers.resolutions[off as usize..(off + len) as usize];
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
-                        dependencies[i] = new_dep.clone_in(manager, &lockfile.buffers.string_bytes, builder)?;
+                        // SAFETY: `clone_in` appends to `builder` (string_bytes) and reads
+                        // `*mgr` for the npm-alias registry; neither overlaps the
+                        // `buffers.dependencies`/`resolutions` slots we write here.
+                        let cloned =
+                            new_dep.clone_in(unsafe { &mut *mgr }, &lockfile.buffers.string_bytes, builder)?;
+                        unsafe { &mut (*to_lockfile).buffers.dependencies }[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
-                            resolutions[i] = old_resolutions[mapping[i] as usize];
+                            unsafe { &mut (*to_lockfile).buffers.resolutions }[off as usize + i] =
+                                old_resolutions[mapping[i] as usize];
                         }
                     }
 
-                    manager.lockfile.packages.items_scripts_mut()[0] =
+                    unsafe { &mut (*to_lockfile).packages }.items_scripts_mut()[0] =
                         maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
 
                     // Update workspace paths
-                    manager.lockfile.workspace_paths.reserve(lockfile.workspace_paths.len());
                     {
-                        manager.lockfile.workspace_paths.clear();
+                        let dst = unsafe { &mut (*to_lockfile).workspace_paths };
+                        dst.reserve(lockfile.workspace_paths.len());
+                        dst.clear();
                         let mut iter = lockfile.workspace_paths.iter();
                         while let Some((key, value)) = iter.next() {
                             // The string offsets will be wrong so fix them
                             let path = value.slice(&lockfile.buffers.string_bytes);
                             let str = builder.append::<SemverString>(path);
                             // PERF(port): was assume_capacity
-                            manager.lockfile.workspace_paths.insert(*key, str);
+                            dst.insert(*key, str);
                         }
                     }
 
                     // Update workspace versions
-                    manager.lockfile.workspace_versions.reserve(lockfile.workspace_versions.len());
                     {
-                        manager.lockfile.workspace_versions.clear();
+                        let dst = unsafe { &mut (*to_lockfile).workspace_versions };
+                        dst.reserve(lockfile.workspace_versions.len());
+                        dst.clear();
                         let mut iter = lockfile.workspace_versions.iter();
                         while let Some((key, value)) = iter.next() {
                             // Copy version string offsets
                             let version = value.append(&lockfile.buffers.string_bytes, builder);
                             // PERF(port): was assume_capacity
-                            manager.lockfile.workspace_versions.insert(*key, version);
+                            dst.insert(*key, version);
                         }
                     }
 
@@ -518,11 +524,9 @@ pub fn install_with_manager(
                         while let Some((key, value)) = iter.next() {
                             let pkg_name_and_version_hash = *key;
                             debug_assert!(value.patchfile_hash_is_null);
-                            let gop = manager
-                                .lockfile
-                                .patched_dependencies
+                            let gop = unsafe { &mut (*to_lockfile).patched_dependencies }
                                 .entry(pkg_name_and_version_hash);
-                            // TODO(port): ArrayHashMap getOrPut semantics — using entry API approximation
+                            // PORT NOTE: ArrayHashMap getOrPut semantics → entry API approximation
                             match gop {
                                 bun_collections::array_hash_map::MapEntry::Vacant(v) => {
                                     let mut new = crate::lockfile_real::PatchedDep {
@@ -537,7 +541,7 @@ pub fn install_with_manager(
                                 }
                                 bun_collections::array_hash_map::MapEntry::Occupied(mut o) => {
                                     if !strings::eql(
-                                        o.get().path.slice(&manager.lockfile.buffers.string_bytes),
+                                        o.get().path.slice(builder.string_bytes.as_slice()),
                                         value.path.slice(&lockfile.buffers.string_bytes),
                                     ) {
                                         o.get_mut().path = builder.append::<SemverString>(
@@ -550,28 +554,30 @@ pub fn install_with_manager(
                         }
 
                         let mut count: usize = 0;
-                        let mut iter = manager.lockfile.patched_dependencies.iter();
-                        while let Some((key, _)) = iter.next() {
+                        for (key, _) in unsafe { &(*to_lockfile).patched_dependencies }.iter() {
                             if !lockfile.patched_dependencies.contains_key(key) {
                                 count += 1;
                             }
                         }
                         if count > 0 {
-                            manager.patched_dependencies_to_remove.reserve(count);
-                            let mut iter = manager.lockfile.patched_dependencies.iter();
-                            while let Some((key, _)) = iter.next() {
+                            let to_remove_set =
+                                unsafe { &mut (*mgr).patched_dependencies_to_remove };
+                            to_remove_set.reserve(count);
+                            for (key, _) in unsafe { &(*to_lockfile).patched_dependencies }.iter() {
                                 if !lockfile.patched_dependencies.contains_key(key) {
-                                    manager.patched_dependencies_to_remove.insert(*key, ());
+                                    to_remove_set.insert(*key, ());
                                 }
                             }
-                            let to_remove: Vec<u64> = manager.patched_dependencies_to_remove.keys().to_vec();
+                            let to_remove: Vec<u64> = to_remove_set.keys().to_vec();
                             for hash in to_remove {
-                                let _ = manager.lockfile.patched_dependencies.ordered_remove(&hash);
+                                let _ = unsafe { &mut (*to_lockfile).patched_dependencies }
+                                    .ordered_remove(&hash);
                             }
                         }
                     }
 
                     builder.clamp();
+                    drop(builder_);
 
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
                     // which grows `buffers.dependencies` and may reallocate it.
@@ -584,7 +590,8 @@ pub fn install_with_manager(
                             let dependency = manager.lockfile.buffers.dependencies[dependency_i];
                             if all_name_hashes.contains(&dependency.name_hash) {
                                 manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-                                if let Err(err) = manager.enqueue_dependency_with_main(
+                                if let Err(err) = enqueue_dependency_with_main(
+                                    manager,
                                     dependency_i as u32,
                                     &dependency,
                                     invalid_package_id,
@@ -606,7 +613,8 @@ pub fn install_with_manager(
                             }
 
                             manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-                            if let Err(err) = manager.enqueue_dependency_with_main(
+                            if let Err(err) = enqueue_dependency_with_main(
+                                manager,
                                 dep_id,
                                 &dep,
                                 invalid_package_id,
@@ -629,10 +637,12 @@ pub fn install_with_manager(
                             if mapping[counter_i as usize] == invalid_package_id {
                                 let dependency_i = counter_i + off;
                                 let dependency = manager.lockfile.buffers.dependencies[dependency_i as usize];
-                                if let Err(err) = manager.enqueue_dependency_with_main(
+                                let resolution = manager.lockfile.buffers.resolutions[dependency_i as usize];
+                                if let Err(err) = enqueue_dependency_with_main(
+                                    manager,
                                     dependency_i,
                                     &dependency,
-                                    manager.lockfile.buffers.resolutions[dependency_i as usize],
+                                    resolution,
                                     false,
                                 ) {
                                     add_dependency_error(manager, &dependency, err);

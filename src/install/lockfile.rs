@@ -760,7 +760,7 @@ impl Lockfile {
             return Ok(Cleaned::Same(old));
         }
 
-        Lockfile::clean(old, manager, &mut [], exact_versions, log_level).map(Cleaned::New)
+        old.clean(manager, &mut [], exact_versions, log_level).map(Cleaned::New)
     }
 
     fn preprocess_update_requests(

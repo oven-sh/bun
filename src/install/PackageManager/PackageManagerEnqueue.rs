@@ -673,19 +673,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let version: dependency::Version = 'version: {
         if dependency.version.tag == dependency::version::Tag::Npm {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
-                let group = &dependency.version.value.npm.version;
+                // SAFETY: `tag == Npm` checked above; `npm` is the active arm.
+                let group = unsafe { &dependency.version.value.npm.version };
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
+                // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
                 let mut curr_list: Option<&Semver::semver_query::List> =
-                    Some(&aliased.value.npm.version.head);
+                    Some(unsafe { &aliased.value.npm.version.head });
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
                         if group.satisfies(query.range.left.version, buf, buf)
                             || group.satisfies(query.range.right.version, buf, buf)
                         {
-                            name = aliased.value.npm.name;
+                            // SAFETY: see above — npm arm.
+                            name = unsafe { aliased.value.npm.name };
                             name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                            break 'version *aliased;
+                            break 'version aliased.clone();
                         }
                         curr = query.next.as_deref();
                     }
@@ -701,7 +704,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         // if it's a workspaceOnly dependency
         if !dependency.behavior.is_workspace()
             && (dependency.version.tag != dependency::version::Tag::Npm
-                || !dependency.version.value.npm.is_alias)
+                // SAFETY: short-circuit — this arm only evaluated when `tag == Npm`.
+                || !unsafe { dependency.version.value.npm.is_alias })
         {
             if let Some(new) = this.lockfile.overrides.get(name_hash) {
                 bun_output::scoped_log!(
@@ -715,9 +719,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     update_name_and_name_hash_from_version_replacement(&this.lockfile, name, name_hash, new.clone());
 
                 if new.tag == dependency::version::Tag::Catalog {
-                    if let Some(catalog_dep) =
-                        this.lockfile.catalogs.get(&this.lockfile, new.value.catalog, name)
-                    {
+                    if let Some(catalog_dep) = this.lockfile.catalogs.get(
+                        &this.lockfile,
+                        // SAFETY: `new.tag == Catalog` checked above.
+                        unsafe { new.value.catalog },
+                        name,
+                    ) {
                         let v = catalog_dep.version.clone();
                         (name, name_hash) = update_name_and_name_hash_from_version_replacement(
                             &this.lockfile,
@@ -736,7 +743,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if dependency.version.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
                     &this.lockfile,
-                    dependency.version.value.catalog,
+                    // SAFETY: `tag == Catalog` checked above.
+                    unsafe { dependency.version.value.catalog },
                     name,
                 ) {
                     let v = catalog_dep.version.clone();
@@ -754,11 +762,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
         // explicit copy here due to `dependency.version` becoming undefined
         // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
-        break 'version dependency::Version {
-            literal: dependency.version.literal,
-            tag: dependency.version.tag,
-            value: dependency.version.value,
-        };
+        break 'version dependency.version.clone();
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
@@ -772,7 +776,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     name_hash,
                     name,
                     dependency,
-                    version,
+                    version.clone(),
                     dependency.behavior,
                     id,
                     resolution,
@@ -797,7 +801,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                     bstr::BStr::new(
-                                                        this.lockfile.str(&version.value.dist_tag.tag)
+                                                        this.lockfile.str(unsafe { &version.value.dist_tag.tag })
                                                     ),
                                                 ),
                                             )
@@ -839,7 +843,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     format_args!(
                                                         "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
                                                         bstr::BStr::new(this.lockfile.str(&name)),
-                                                        bstr::BStr::new(this.lockfile.str(&version.value.dist_tag.tag)),
+                                                        bstr::BStr::new(this.lockfile.str(unsafe { &version.value.dist_tag.tag })),
                                                         age_gate_ms / MS_PER_S,
                                                     ),
                                                 )
@@ -2117,7 +2121,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_id),
+                                package: this.lockfile.packages.get(existing_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2130,7 +2134,7 @@ fn get_or_put_resolved_package(
                             || (res_tag == ResolutionTag::Github
                                 && ver_tag == dependency::version::Tag::Github)
                         {
-                            let existing_package = this.lockfile.packages.get(existing_id);
+                            let existing_package = this.lockfile.packages.get(existing_id as usize);
                             unsafe { &mut *this.log }
                     .add_warning_fmt(
                                     None,
@@ -2150,7 +2154,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_id),
+                                package: this.lockfile.packages.get(existing_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2163,7 +2167,7 @@ fn get_or_put_resolved_package(
                             if resolution_satisfies_dependency(this, existing_resolution, version) {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
-                                    package: this.lockfile.packages.get(existing_id),
+                                    package: this.lockfile.packages.get(existing_id as usize),
                                     ..Default::default()
                                 }));
                             }
@@ -2181,7 +2185,7 @@ fn get_or_put_resolved_package(
                                 && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package_id = list[0];
-                            let existing_package = this.lockfile.packages.get(existing_package_id);
+                            let existing_package = this.lockfile.packages.get(existing_package_id as usize);
                             unsafe { &mut *this.log }
                     .add_warning_fmt(
                                     None,
@@ -2201,7 +2205,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, list[0]);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_package_id),
+                                package: this.lockfile.packages.get(existing_package_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2213,7 +2217,7 @@ fn get_or_put_resolved_package(
 
     if (resolution as usize) < this.lockfile.packages.len() {
         return Ok(Some(ResolvedPackageResult {
-            package: this.lockfile.packages.get(resolution),
+            package: this.lockfile.packages.get(resolution as usize),
             ..Default::default()
         }));
     }
@@ -2229,17 +2233,15 @@ fn get_or_put_resolved_package(
                     };
                     let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
+                    // SAFETY: `version.tag == Npm` checked above; `npm` is the active arm.
+                    let npm_group = unsafe { &version.value.npm }.version.clone();
                     if this.options.link_workspace_packages
                         && ((workspace_version.is_some()
-                            && version
-                                .value
-                                .npm
-                                .version
-                                .satisfies(workspace_version.unwrap(), buf, buf))
+                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
                             // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
                             // if the workspace doesn't have a version, it can still be used if
                             // dependency version is wildcard
-                            || (workspace_path.is_some() && version.value.npm.version.is_star()))
+                            || (workspace_path.is_some() && npm_group.is_star()))
                     {
                         let Some(root_package) = this.lockfile.root_package() else {
                             break 'resolve_from_workspace;
@@ -2262,7 +2264,7 @@ fn get_or_put_resolved_package(
                                 // make sure verifyResolutions sees this resolution as a valid package id
                                 success_fn(this, dependency_id, workspace_package_id);
                                 return Ok(Some(ResolvedPackageResult {
-                                    package: this.lockfile.packages.get(workspace_package_id),
+                                    package: this.lockfile.packages.get(workspace_package_id as usize),
                                     is_first_time: false,
                                     task: None,
                                 }));
@@ -2286,49 +2288,56 @@ fn get_or_put_resolved_package(
             };
 
             let version_result: Npm::FindVersionResult = match version.tag {
+                // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
-                    this.lockfile.str(&version.value.dist_tag.tag),
+                    this.lockfile.str(unsafe { &version.value.dist_tag.tag }),
                     this.options.minimum_release_age_ms,
-                    &this.options.minimum_release_age_excludes,
+                    this.options.minimum_release_age_excludes,
                 ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
-                    &version.value.npm.version,
+                    // SAFETY: `version.tag == Npm`.
+                    unsafe { &version.value.npm.version },
                     this.lockfile.buffers.string_bytes.as_slice(),
                     this.options.minimum_release_age_ms,
-                    &this.options.minimum_release_age_excludes,
+                    this.options.minimum_release_age_excludes,
                 ),
                 _ => unreachable!(),
             };
 
             let find_result_opt: Option<Npm::FindResult> = match version_result {
                 Npm::FindVersionResult::Found(result) => Some(result),
-                Npm::FindVersionResult::FoundWithFilter(filtered) => 'blk: {
+                Npm::FindVersionResult::FoundWithFilter { result, newest_filtered } => 'blk: {
                     let package_name = this.lockfile.str(&name);
                     if this.options.log_level.is_verbose() {
-                        if let Some(newest) = &filtered.newest_filtered {
+                        if let Some(newest) = &newest_filtered {
                             let min_age_seconds =
                                 this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
+                            let manifest_buf: &[u8] = &manifest.string_buf;
                             match version.tag {
                                 dependency::version::Tag::DistTag => {
-                                    let tag_str = this.lockfile.str(&version.value.dist_tag.tag);
+                                    // SAFETY: `version.tag == DistTag`.
+                                    let tag_str = this
+                                        .lockfile
+                                        .str(unsafe { &version.value.dist_tag.tag });
                                     Output::pretty_errorln(format_args!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         bstr::BStr::new(tag_str),
-                                        filtered.result.version.fmt(manifest.string_buf),
-                                        newest.fmt(manifest.string_buf),
+                                        result.version.fmt(manifest_buf),
+                                        newest.fmt(manifest_buf),
                                         min_age_seconds,
                                     ));
                                 }
                                 dependency::version::Tag::Npm => {
+                                    // SAFETY: `version.tag == Npm`.
                                     let version_str =
-                                        version.value.npm.version.fmt(manifest.string_buf);
+                                        unsafe { &version.value.npm.version }.fmt(manifest_buf);
                                     Output::pretty_errorln(format_args!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         version_str,
-                                        filtered.result.version.fmt(manifest.string_buf),
-                                        newest.fmt(manifest.string_buf),
+                                        result.version.fmt(manifest_buf),
+                                        newest.fmt(manifest_buf),
                                         min_age_seconds,
                                     ));
                                 }
@@ -2337,7 +2346,7 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    break 'blk Some(filtered.result);
+                    break 'blk Some(result);
                 }
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
@@ -2382,7 +2391,7 @@ fn get_or_put_resolved_package(
                                         // make sure verifyResolutions sees this resolution as a valid package id
                                         success_fn(this, dependency_id, workspace_package_id);
                                         return Ok(Some(ResolvedPackageResult {
-                                            package: this.lockfile.packages.get(workspace_package_id),
+                                            package: this.lockfile.packages.get(workspace_package_id as usize),
                                             is_first_time: false,
                                             task: None,
                                         }));
@@ -2420,7 +2429,7 @@ fn get_or_put_resolved_package(
         }
 
         dependency::version::Tag::Folder => {
-            let res: FolderResolution = 'res: {
+            let res: FolderResolutionValue = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
                     let folder_path = this.lockfile.str(&version.value.folder);
@@ -2474,9 +2483,9 @@ fn get_or_put_resolved_package(
                     package.name = builder.append::<SemverString>(name_slice);
                     package.name_hash = name_hash;
 
-                    package.resolution = Resolution::init(ResolutionValue {
-                        folder: builder.append::<SemverString>(folder_path),
-                    });
+                    package.resolution = Resolution::init(ResolutionTagged::Folder(
+                        builder.append::<SemverString>(folder_path),
+                    ));
 
                     package.scripts.filled = true;
                     package.meta.set_has_install_script(false);
@@ -2495,14 +2504,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))
@@ -2540,14 +2549,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))
@@ -2567,14 +2576,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id),
+                        package: this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))
@@ -2593,21 +2602,22 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
-        return dependency
-            .value
-            .npm
+        // SAFETY: tags checked above discriminate both unions.
+        return unsafe { &dependency.value.npm }
             .version
-            .satisfies(resolution.value.npm.version, buf, buf);
+            .satisfies(unsafe { resolution.value.npm }.version, buf, buf);
     }
 
     if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
-        return resolution.value.git.eql(&dependency.value.git, buf, buf);
+        // SAFETY: tags checked above discriminate both unions.
+        return unsafe { resolution.value.git.eql(&dependency.value.git, buf, buf) };
     }
 
     if resolution.tag == ResolutionTag::Github
         && dependency.tag == dependency::version::Tag::Github
     {
-        return resolution.value.github.eql(&dependency.value.github, buf, buf);
+        // SAFETY: tags checked above discriminate both unions.
+        return unsafe { resolution.value.github.eql(&dependency.value.github, buf, buf) };
     }
 
     false

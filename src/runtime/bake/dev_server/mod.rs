@@ -1096,7 +1096,6 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
                 Err(_) => bun_alloc::out_of_memory(),
             }
         },
-<<<<<<< Updated upstream
         finalize_bundle: |p, bv2, result| {
             // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
             // (DevServerHandle invariant). `result` is `*mut DevServerOutput<'_>`
@@ -1111,19 +1110,6 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
                 unsafe { &mut *result },
             )
             .map_err(Into::into)
-||||||| Stash base
-        finalize_bundle: |_p, _bv2, _result| {
-            todo!("blocked_on: dev_server_body::DevServer::finalize_bundle un-gate")
-=======
-        finalize_bundle: |p, bv2, result| {
-            // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
-            // (DevServerHandle invariant).
-            let dev = unsafe { &mut *p.cast::<DevServer>() };
-            // SAFETY: `bv2` borrows the three `Transpiler`s stored inline in
-            // `DevServer` (stable heap address); the `'static` is a stand-in for
-            // the DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
-            dev.finalize_bundle(unsafe { &mut *bv2.cast() }, result as *const ())
->>>>>>> Stashed changes
         },
         handle_parse_task_failure: |p, err, graph, abs_path, log, bv2| {
             // SAFETY: p is a live *mut DevServer; log/bv2 are valid for the call.
@@ -1244,7 +1230,6 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
-<<<<<<< Updated upstream
         let mut buf = bun_paths::path_buffer_pool::get();
         let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
@@ -1252,31 +1237,7 @@ impl DirectoryWatchStore {
             &[specifier],
         );
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
-||||||| Stash base
-    /// `DevServer.routeToBundleIndexSlow`. Full body in gated `../DevServer.rs`
-    /// draft (depends on `FrameworkRouter::match_slow` + `html_router`).
-    pub fn route_to_bundle_index_slow(&mut self, _pattern: &[u8]) -> Option<route_bundle::Index> {
-        todo!("blocked_on: dev_server::DevServer::route_to_bundle_index_slow body un-gate")
-    }
-=======
-    /// `DevServer.routeToBundleIndexSlow` — DevServer.zig:4021.
-    pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
-        let mut params: framework_router::MatchedParams = Default::default();
-        if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
-            return Some(bun_core::handle_oom(
-                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index)),
-            ));
-        }
-        if let Some(html) = self.html_router.get(pattern) {
-            return Some(bun_core::handle_oom(
-                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html)),
-            ));
-        }
-        None
-    }
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.
@@ -1295,126 +1256,6 @@ impl DirectoryWatchStore {
             Graph::Server | Graph::Ssr => unsafe { &mut (*dev).server_graph }
                 .insert_empty(import_source, FileKind::Unknown)?
                 .key,
-||||||| Stash base
-    /// `DevServer.emitVisualizerMessageIfNeeded`. Full body in gated
-    /// `../DevServer.rs` draft.
-    pub fn emit_visualizer_message_if_needed(&mut self) {
-        todo!("blocked_on: dev_server::DevServer::emit_visualizer_message_if_needed body un-gate")
-    }
-
-    /// `DevServer.emitMemoryVisualizerMessage`. Full body in gated
-    /// `../DevServer.rs` draft.
-    pub fn emit_memory_visualizer_message(&mut self) {
-        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message body un-gate")
-    }
-}
-
-// ─── Shims added for incremental_graph_body (Phase-D) ────────────────────────
-impl EntryPointList {
-    /// `EntryPointList.appendJs` — DevServer.zig.
-    pub fn append_js(&mut self, abs_path: &[u8], side: Graph) -> Result<(), bun_core::Error> {
-        let flag = match side {
-            Graph::Client => entry_point_list::Flags::CLIENT,
-            Graph::Server => entry_point_list::Flags::SERVER,
-            Graph::Ssr => entry_point_list::Flags::SSR,
-=======
-    /// `DevServer.emitVisualizerMessageIfNeeded` — DevServer.zig:3665.
-    pub fn emit_visualizer_message_if_needed(&mut self) {
-        #[cfg(not(feature = "bake_debugging_features"))]
-        return;
-        #[cfg(feature = "bake_debugging_features")]
-        {
-            // PORT NOTE: erase to raw ptr so the `defer` closure doesn't hold a
-            // unique borrow of `self` for the rest of the scope.
-            let self_ptr: *mut DevServer = self;
-            // SAFETY: `self_ptr` points into `*self`, which outlives `_g`.
-            let _g = scopeguard::guard((), move |_| unsafe {
-                (*self_ptr).emit_memory_visualizer_message_if_needed()
-            });
-            if self.emit_incremental_visualizer_events == 0 {
-                return;
-            }
-
-            // PERF(port): was stackFallback(65536) — profile in Phase B
-            let mut payload: Vec<u8> = Vec::with_capacity(65536);
-
-            if self.write_visualizer_message(&mut payload).is_err() {
-                return; // visualizer does not get an update if it OOMs
-            }
-
-            self.publish(HmrTopic::IncrementalVisualizer, &payload, bun_uws::Opcode::BINARY);
-        }
-    }
-
-    /// `DevServer.emitMemoryVisualizerMessage` — DevServer.zig:3695.
-    pub fn emit_memory_visualizer_message(&mut self) {
-        debug_assert!(cfg!(feature = "bake_debugging_features"));
-        debug_assert!(self.emit_memory_visualizer_events > 0);
-
-        // PERF(port): was stackFallback(65536) — profile in Phase B
-        let mut payload: Vec<u8> = Vec::with_capacity(65536);
-        payload.push(MessageId::MemoryVisualizer.char());
-        if memory_cost_body::write_memory_visualizer_message(self, &mut payload).is_err() {
-            return; // drop packet
-        }
-        self.publish(HmrTopic::MemoryVisualizer, &payload, bun_uws::Opcode::BINARY);
-    }
-
-    /// `DevServer.writeVisualizerMessage` — DevServer.zig:3710. Serializes the
-    /// incremental-graph state into the visualizer wire format.
-    #[cfg(feature = "bake_debugging_features")]
-    fn write_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {
-        payload.push(MessageId::Visualizer.char());
-
-        // PORT NOTE: Zig used `inline for` over a `[2]bake.Side` tuple — written
-        // out as a small macro to avoid duplicating ~20 lines per side while
-        // still monomorphizing on the const-generic graph type.
-        macro_rules! emit_files {
-            ($side:expr, $g:expr) => {{
-                let g = $g;
-                payload.extend_from_slice(&u32::try_from(g.bundled_files.count()).unwrap().to_le_bytes());
-                for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
-                    let mut buf = bun_paths::path_buffer_pool().get();
-                    let normalized_key = self.relative_path(&mut *buf, k);
-                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
-                    if k.is_empty() { continue; }
-                    payload.extend_from_slice(normalized_key);
-                    payload.push((g.stale_files.is_set(i) || v.failed) as u8);
-                    payload.push(($side == Side::Server && v.is_rsc) as u8);
-                    payload.push(($side == Side::Server && v.is_ssr) as u8);
-                    payload.push(match $side {
-                        Side::Server => v.is_route,
-                        Side::Client => v.html_route_bundle_index.is_some(),
-                    } as u8);
-                    payload.push(($side == Side::Client && v.is_special_framework_file) as u8);
-                    payload.push(match $side {
-                        Side::Server => v.is_client_component_boundary,
-                        Side::Client => v.is_hmr_root,
-                    } as u8);
-                }
-            }};
-        }
-        emit_files!(Side::Client, &self.client_graph);
-        emit_files!(Side::Server, &self.server_graph);
-
-        // TODO(port): edge serialization — `incremental_graph::IncrementalGraph`
-        // does not yet expose `edges_free_list`/iterable `edges` on the keystone
-        // shape. Emit zero-length edge sections so the wire shape stays valid.
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        Ok(())
-    }
-}
-
-// ─── Shims added for incremental_graph_body (Phase-D) ────────────────────────
-impl EntryPointList {
-    /// `EntryPointList.appendJs` — DevServer.zig.
-    pub fn append_js(&mut self, abs_path: &[u8], side: Graph) -> Result<(), bun_core::Error> {
-        let flag = match side {
-            Graph::Client => entry_point_list::Flags::CLIENT,
-            Graph::Server => entry_point_list::Flags::SERVER,
-            Graph::Ssr => entry_point_list::Flags::SSR,
->>>>>>> Stashed changes
         };
 
         match self.insert(dir, owned_file_path, specifier) {

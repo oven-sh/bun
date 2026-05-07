@@ -64,6 +64,25 @@ pub use tty::Winsize;
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
 
+/// Zig `bun.concat(u8, buf, &.{ a, b, ... })` — write `parts` consecutively
+/// into `buf` and return the prefix slice. Panics on overflow (matches Zig
+/// `@memcpy` length assert).
+#[inline]
+pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
+    let mut off = 0;
+    for p in parts {
+        buf[off..off + p.len()].copy_from_slice(p);
+        off += p.len();
+    }
+    &buf[..off]
+}
+
+/// Zig `bun.assertf(cond, fmt, args)` — debug-only formatted assert.
+#[macro_export]
+macro_rules! assertf {
+    ($cond:expr, $($arg:tt)*) => { ::core::debug_assert!($cond, $($arg)*) };
+}
+
 /// Zig: `bun.handleOom(expr)` — unwrap a `Result`, calling `outOfMemory()` on
 /// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
 /// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the

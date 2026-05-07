@@ -10,6 +10,17 @@ use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(not(windows))]
+#[allow(non_camel_case_types)]
+mod uv {
+    //! Forward-declares for libuv types referenced from cross-platform struct
+    //! shapes (`WindowsStdio`, `WindowsStdioResult`). The Zig source guards
+    //! every `uv.*` dereference behind `if (Environment.isWindows)`; on
+    //! non-Windows builds these are only ever `*mut`/`Box` handles that are
+    //! never dereferenced, so an opaque `c_void` forward-declare is the
+    //! correct extern-type representation (PORTING.md: "type used opaquely").
+    pub type Pipe = core::ffi::c_void;
+}
 
 // ─── §Dispatch: cross-tier exit handlers ─────────────────────────────────────
 // Zig: `TaggedPointerUnion` of 12 concrete *Handler types living in higher-tier
@@ -1493,65 +1504,6 @@ pub mod waiter_thread_posix {
 
 }
 
-
-mod waiter_thread_posix_body {
-    // Preserved for diff-pass: the old gated draft. Dead — body merged into
-    // `waiter_thread_posix` above.
-    use super::*;
-    pub struct WaiterThreadPosix(());
-    static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
-    impl WaiterThreadPosix {
-        #[inline]
-        pub fn should_use_waiter_thread() -> bool {
-            SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
-        }
-        /// Intentionally a **no-op** while `waiter_thread_posix_body` is gated.
-        ///
-        /// The Zig spec flips a global so that subsequent `watch()` calls take
-        /// the waiter-thread branch (process.zig:937-949). The body of that
-        /// branch — `append()`/`init()`/`reload_handlers()` — is still
-        /// ``-gated on `bun_threading::UnboundedQueue` +
-        /// `bun_event_loop::ConcurrentTask`. If we let the flag flip now,
-        /// `Process::watch()` would `self.ref_()` then call a stub `append()`,
-        /// silently leaking the refcount and never reaping the child. Keeping
-        /// the flag pinned to `false` forces the pidfd path (which is fully
-        /// implemented) to stay in force; `pifd_from_pid` callers see the
-        /// original `Err` and handle it.
-        // TODO(b2-blocked): restore `SHOULD_USE_WAITER_THREAD.store(true, Relaxed)`
-        // once `waiter_thread_posix_body` is un-gated and `append`/`reload_handlers`
-        // forward to it.
-        #[inline]
-        pub fn set_should_use_waiter_thread() {
-            let _ = &SHOULD_USE_WAITER_THREAD;
-        }
-        /// Zig (process.zig:976-991) installs a `SIGCHLD` handler iff the
-        /// waiter thread is enabled. With `set_should_use_waiter_thread()` a
-        /// no-op above, the flag is always `false`, so the spec-correct
-        /// behaviour here is "do nothing".
-        // TODO(b2-blocked): forward to `waiter_thread_posix_body::reload_handlers`.
-        pub fn reload_handlers() {
-            if !SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed) {
-                return;
-            }
-            unreachable!("WaiterThread::reload_handlers: waiter_thread_posix_body is gated");
-        }
-        /// Enqueue a `Process` for the waiter thread.
-        ///
-        /// Unreachable while `set_should_use_waiter_thread()` is a no-op:
-        /// every caller is guarded by `should_use_waiter_thread()`. Kept loud
-        /// so that if the guard is ever bypassed we crash instead of silently
-        /// dropping the registration (which would leak a `Process` ref and
-        /// leave a zombie child — see process.zig:937-949).
-        // TODO(b2-blocked): forward to `waiter_thread_posix_body::append` once un-gated.
-        pub fn append(_process: *mut Process) {
-            unreachable!(
-                "WaiterThread::append reached while waiter_thread_posix_body is gated; \
-                 set_should_use_waiter_thread() must remain a no-op until then"
-            );
-        }
-    }
-}
-
 #[cfg(not(unix))]
 pub mod WaiterThread {
     #[inline]
@@ -1667,13 +1619,12 @@ pub enum PosixStdio {
     Dup2(Dup2),
 }
 
+#[cfg(windows)]
 pub struct WindowsSpawnResult {
     // Raw intrusive pointer (mirrors Zig `?*Process`). `Process` is intrusively
     // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
-    // `@fieldParentPtr` from libuv callbacks; allocation is `Box::into_raw` and
-    // destruction is `Box::from_raw` (see `ThreadSafeRefCounted::destructor`).
-    // Wrapping a `Box`-allocated pointer in `std::sync::Arc::from_raw` is UB —
-    // `Arc` expects an `ArcInner` header before the data — so this stays raw.
+    // `uv_process_t.data` in the libuv callbacks; allocation is `Box::into_raw`
+    // and destruction is `Box::from_raw` (see `ThreadSafeRefCounted::destructor`).
     pub process_: Option<*mut Process>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
@@ -1683,6 +1634,7 @@ pub struct WindowsSpawnResult {
     pub sync: bool,
 }
 
+#[cfg(windows)]
 impl Default for WindowsSpawnResult {
     fn default() -> Self {
         Self {
@@ -1697,6 +1649,7 @@ impl Default for WindowsSpawnResult {
     }
 }
 
+#[cfg(windows)]
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
     Unavailable,
@@ -1704,9 +1657,7 @@ pub enum WindowsStdioResult {
     BufferFd(Fd),
 }
 
-// TODO(b2-blocked): Process is intrusively ref-counted; wire RefPtr<Process>
-// once bun_ptr exposes a smart-pointer wrapper. For now process_ is *mut.
-
+#[cfg(windows)]
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
         let process = self.process_.take().unwrap();
@@ -1729,6 +1680,7 @@ impl WindowsSpawnResult {
     }
 }
 
+#[cfg(windows)]
 pub struct WindowsSpawnOptions {
     pub stdin: WindowsStdio,
     pub stdout: WindowsStdio,
@@ -1750,18 +1702,17 @@ pub struct WindowsSpawnOptions {
     pub pty_slave_fd: (),
     /// Windows ConPTY handle. When set, the child is attached to the
     /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
-    #[cfg(windows)]
     pub pseudoconsole: Option<bun_sys::windows::HPCON>,
-    #[cfg(not(windows))]
-    pub pseudoconsole: Option<*mut c_void>,
 }
 
+#[cfg(windows)]
 pub struct WindowsOptions {
     pub verbatim_arguments: bool,
     pub hide_window: bool,
     pub loop_: EventLoopHandle,
 }
 
+#[cfg(windows)]
 impl Default for WindowsOptions {
     fn default() -> Self {
         Self {
@@ -1774,6 +1725,7 @@ impl Default for WindowsOptions {
     }
 }
 
+#[cfg(windows)]
 pub enum WindowsStdio {
     Path(Box<[u8]>),
     Inherit,
@@ -1789,8 +1741,7 @@ pub enum WindowsStdio {
     Dup2(Dup2),
 }
 
-// TODO(b2-blocked): bun_libuv_sys::Pipe::close_and_destroy — Windows-only.
-
+#[cfg(windows)]
 impl Drop for WindowsStdio {
     fn drop(&mut self) {
         // close_and_destroy consumes the pipe in Zig (frees the heap allocation).
@@ -1800,15 +1751,8 @@ impl Drop for WindowsStdio {
         match self {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
                 if !pipe.is_null() {
-                    #[cfg(windows)]
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
                     unsafe { (**pipe).close_and_destroy() };
-                    #[cfg(not(windows))]
-                    {
-                        // `uv::Pipe` is the c_void shim on non-Windows; this arm
-                        // is unreachable (WindowsStdio is never constructed there).
-                        let _ = pipe;
-                    }
                 }
             }
             _ => {}

@@ -473,6 +473,49 @@ pub fn set_current_action(action: Option<Action>) {
     CURRENT_ACTION.with(|c| c.set(action));
 }
 
+/// RAII guard returned by [`set_current_action_resolver`]. Restores the
+/// previous `CURRENT_ACTION` on drop (Zig: `defer current_action = old`).
+pub struct ActionGuard(Option<Action>);
+impl Drop for ActionGuard {
+    #[inline]
+    fn drop(&mut self) {
+        set_current_action(self.0);
+    }
+}
+
+/// Scoped `CURRENT_ACTION = .resolver{...}`. Zig (resolver.zig:672-679) sets
+/// this only under `Environment.show_crash_trace` because module resolution is
+/// extremely hot and has a low crash rate; the cfg-gate here mirrors that.
+///
+/// `source_dir`/`import_path` are caller-interned (DirnameStore / source text)
+/// and outlive the guard; the `&'static` lifetime erasure matches the existing
+/// `Action::Parse`/`Visit`/`Print` slice fields (see TODO(port) above).
+#[inline]
+pub fn set_current_action_resolver(
+    source_dir: &[u8],
+    import_path: &[u8],
+    kind: bun_options_types::ImportKind,
+) -> ActionGuard {
+    let prev = current_action();
+    #[cfg(feature = "show_crash_trace")]
+    {
+        // SAFETY: caller-interned slices outlive the guard; see fn docs.
+        let source_dir: &'static [u8] = unsafe { &*(source_dir as *const [u8]) };
+        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
+        set_current_action(Some(Action::Resolver(ResolverAction {
+            source_dir,
+            import_path,
+            kind,
+        })));
+    }
+    #[cfg(not(feature = "show_crash_trace"))]
+    {
+        let _ = (source_dir, import_path, kind);
+        set_current_action(Some(Action::Resolver(())));
+    }
+    ActionGuard(prev)
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn capture_libc_backtrace(begin_addr: usize, addrs: &mut [usize], stack_trace: &mut StackTrace<'_>) {
     unsafe extern "C" {

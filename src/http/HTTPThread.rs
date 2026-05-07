@@ -530,9 +530,7 @@ impl HttpThread {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
             let queued_shutdowns = {
-                self.queued_shutdowns_lock.lock();
-                let _guard = scopeguard::guard((), |_| self.queued_shutdowns_lock.unlock());
-                // TODO(port): bun.Mutex is a raw lock; Phase B: use RAII guard.
+                let _guard = self.queued_shutdowns_lock.lock_guard();
                 core::mem::take(&mut self.queued_shutdowns)
             };
 

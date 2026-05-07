@@ -40,6 +40,16 @@ impl Ctx {
     }
 }
 
+// Zig callsites pair `bun.perf.trace(...)` with `defer tracer.end()`. Per
+// PORTING.md `defer <side effect>` → RAII: `Ctx` ends itself on drop so callers
+// write `let _tracer = bun_perf::trace(...)` and forget about it.
+impl Drop for Ctx {
+    #[inline]
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
 static IS_ENABLED_ONCE: Once = Once::new();
 static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 

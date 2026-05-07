@@ -3599,7 +3599,6 @@ impl H2FrameParser {
 
         let buffered_data = self.read_buffer.list.len();
 
-        let mut header = FrameHeader { flags: 0, ..Default::default() };
         // we can have less than 9 bytes buffered
         if buffered_data > 0 {
             let total = buffered_data + bytes.len();
@@ -3610,9 +3609,15 @@ impl H2FrameParser {
                 unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(bytes.len());
                 return Ok(bytes.len());
             }
-            FrameHeader::from::<false>(&mut header, &self.read_buffer.list[0..buffered_data], 0);
+            // Zig writes the buffered prefix into the packed struct, then the
+            // tail at `offset = buffered_data`, then byte-swaps. Reassemble the
+            // 9 wire bytes on the stack and decode in one shot — same result,
+            // no shared scratch state.
             let needed = FrameHeader::BYTE_SIZE - buffered_data;
-            FrameHeader::from::<true>(&mut header, &bytes[0..needed], buffered_data);
+            let mut raw = [0u8; FrameHeader::BYTE_SIZE];
+            raw[..buffered_data].copy_from_slice(&self.read_buffer.list[..buffered_data]);
+            raw[buffered_data..].copy_from_slice(&bytes[..needed]);
+            let mut header = FrameHeader::decode(&raw);
             // ignore the reserved bit
             let id = UInt31WithReserved::from(header.stream_identifier);
             header.stream_identifier = id.uint31();
@@ -3635,7 +3640,7 @@ impl H2FrameParser {
             return Ok(bytes.len());
         }
 
-        FrameHeader::from::<true>(&mut header, &bytes[0..FrameHeader::BYTE_SIZE], 0);
+        let header = FrameHeader::decode(bytes[..FrameHeader::BYTE_SIZE].try_into().unwrap());
 
         bun_output::scoped_log!(
             H2FrameParser,

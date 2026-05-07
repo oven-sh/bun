@@ -63,11 +63,12 @@
 //! `bun_runtime` / `bun_standalone` types (`cli::Command` parse,
 //! `bun_js::applyStandaloneRuntimeFlags`, `StandaloneModuleGraph::find`,
 //! `api::cron::CronJob`). Those calls are routed through
-//! `virtual_machine::RuntimeHooks` slots added for this file
-//! (`parse_worker_exec_argv`, `apply_standalone_runtime_flags`,
-//! `standalone_graph_find`, `standalone_graph_base_path`,
-//! `cron_clear_all_for_vm`); `has_blob_url` was already present. The high tier
-//! installs the table at startup via `set_runtime_hooks`.
+//! `virtual_machine::RuntimeHooks` slots (`parse_worker_exec_argv`,
+//! `apply_standalone_runtime_flags`, `cron_clear_all_for_vm`, `has_blob_url`).
+//! `StandaloneModuleGraph` lookups go through the `bun_resolver::
+//! StandaloneModuleGraph` trait object stored on the VM (cycle-break MOVE_DOWN
+//! of the `find`/`base_public_path` surface). The high tier installs the hook
+//! table at startup via `set_runtime_hooks`.
 //! ──────────────────────────────────────────────────────────────────────────
 
 use core::cell::{Cell, UnsafeCell};

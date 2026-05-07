@@ -2002,7 +2002,8 @@ impl<'a> PackageInstaller<'a> {
                         postinstall_optimizer::PkgInfo {
                             name_hash: pkg_name_hash,
                             version: if resolution.tag == resolution::Tag::Npm {
-                                Some(resolution.value.npm.version)
+                                // SAFETY: tag == Npm checked above.
+                                Some(unsafe { resolution.value.npm }.version)
                             } else {
                                 None
                             },

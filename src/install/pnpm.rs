@@ -907,10 +907,10 @@ pub fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if let Some(os_expr) = package_obj.get(b"os") {
-                    pkg.meta.os = negatable_from_json::<npm::OperatingSystem>(&os_expr);
+                    pkg.meta.os = Negatable::<npm::OperatingSystem>::from_json(&os_expr)?;
                 }
                 if let Some(cpu_expr) = package_obj.get(b"cpu") {
-                    pkg.meta.arch = negatable_from_json::<npm::Architecture>(&cpu_expr);
+                    pkg.meta.arch = Negatable::<npm::Architecture>::from_json(&cpu_expr)?;
                 }
                 // TODO: libc
 

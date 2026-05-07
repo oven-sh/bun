@@ -3106,8 +3106,10 @@ pub mod formatter {
         Ok(None)
     }
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
+        /// C++ helper (`bindings.cpp`) — invokes a user-supplied
+        /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
+        /// inspect)` argument shape. Only called from `print_as`.
         fn JSC__JSValue__callCustomInspectFunction(
             global: *mut JSGlobalObject,
             function: JSValue,
@@ -3116,7 +3118,6 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
-        fn JSGlobalObject__throwStackOverflow(global: *const JSGlobalObject);
     }
 
     // ───────────────────────────────────────────────────────────────────────

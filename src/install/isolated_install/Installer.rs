@@ -78,7 +78,12 @@ pub struct Installer<'a> {
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
     pub install_node: Option<&'a mut ProgressNode>,
-    pub scripts_node: Option<&'a mut ProgressNode>,
+    /// Mirrors Zig's `?*Progress.Node`. Stored as `NonNull` (not `&mut`)
+    /// because `PackageManager.scripts_node` already holds a raw pointer to the
+    /// same stack local; materializing a second long-lived `&mut` here would
+    /// invalidate that pointer's provenance under Stacked Borrows. Currently
+    /// unread on the Rust side — kept for layout/port parity.
+    pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
     pub manager: &'a mut PackageManager,

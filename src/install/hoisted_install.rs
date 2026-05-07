@@ -157,6 +157,13 @@ pub fn install_hoisted_packages(
             this.progress.root.end();
             this.progress = Progress::default();
         }
+        // Defensive: the stored progress-node pointers target stack locals in
+        // this frame; clear them so `scripts_node_mut()` / `downloads_node_mut()`
+        // can't observe a dangling pointer after the install pass returns.
+        // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
+        let this = unsafe { &mut *mgr_ptr };
+        this.scripts_node = None;
+        this.downloads_node = None;
     });
 
     // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
@@ -554,7 +561,14 @@ pub fn install_hoisted_packages(
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);
         if log_level.show_progress() {
-            scripts_node.activate();
+            // Route through the stored `NonNull` (set above) instead of
+            // re-borrowing the `scripts_node` local directly: under Stacked
+            // Borrows a fresh `&mut local` here would invalidate the raw
+            // pointer that lifecycle-script callbacks dereference via
+            // `scripts_node_mut()` while we drain below.
+            if let Some(n) = this.scripts_node_mut() {
+                n.activate();
+            }
         }
 
         if !installer.options.do_.install_packages() {
@@ -587,7 +601,11 @@ pub fn install_hoisted_packages(
         }
 
         if log_level.show_progress() {
-            scripts_node.end();
+            // See `activate()` note above — reuse the stored `NonNull`'s
+            // provenance instead of re-borrowing the stack local.
+            if let Some(n) = this.scripts_node_mut() {
+                n.end();
+            }
         }
     }
 

@@ -909,6 +909,11 @@ impl Drop for WindowsNamedPipe {
 // binds.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
+    // Never registered as a `FilePoll` owner on POSIX (Windows-only at
+    // runtime); the impl exists purely so the `StreamingWriter<Self>` field
+    // type-checks. NULL keeps the dispatch table from being silently wrong if
+    // a poll is ever (incorrectly) created.
+    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::NULL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via `set_parent`; unique for the

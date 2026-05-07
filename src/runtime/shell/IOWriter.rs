@@ -957,6 +957,7 @@ enum WriteOutcome {
 
 #[cfg(not(windows))]
 impl bun_io::pipe_writer::PosixBufferedWriterParent for IOWriter {
+    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER;
     unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
         // holds `&mut writer` (a field of `*this`) but never materializes

@@ -92,6 +92,7 @@ pub type Poll<P> = IOWriter<P>;
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     for StaticPipeWriter<P>
 {
+    const POLL_OWNER_TAG: u8 = P::POLL_OWNER_TAG;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
         // never materializes `&mut StaticPipeWriter`, so this is the unique

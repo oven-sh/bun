@@ -186,6 +186,7 @@ pub type Poll = IOWriter;
 // FileSink state-machine handlers below.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
+    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::FILE_SINK;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the StreamingWriter

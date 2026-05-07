@@ -133,6 +133,7 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 impl<'a> crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
     for bun_install::SecurityScanSubprocess<'a>
 {
+    const POLL_OWNER_TAG: u8 = poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(
         this: *mut Self,
         _kind: crate::api::bun_subprocess::StdioKind,

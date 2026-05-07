@@ -99,7 +99,10 @@ pub fn compute_cross_chunk_dependencies(
                 Box<[Box<[u8]>]>
             ),
             resolved_exports: col!(meta, meta_len, JSMetaField::resolved_exports, ResolvedExports),
-            ctx: c as *const LinkerContext<'_>,
+            // SAFETY: lifetime-erase the `*const LinkerContext<'_>` so the
+            // struct's `'a` (which now ties only the local SoA-column borrows)
+            // is not forced to equal the LinkerContext's invariant `'_`.
+            ctx: (c as *const LinkerContext<'_>).cast::<LinkerContext<'static>>(),
             symbols: &mut c.graph.symbols as *mut js_ast::ast::symbol::Map,
         };
 

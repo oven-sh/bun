@@ -4194,31 +4194,33 @@ impl<'a> Resolver<'a> {
         self.dir_cache
     }
 
-    // TODO(b2-blocked): bun_install::PackageManager + bun_http::HTTPThread —
-    // re-gated; the resolver body only reaches this on the auto-install path
-    // (`load_node_modules` global-cache block, also re-gated below).
-    
-    pub fn get_package_manager(&mut self) -> &mut PackageManager {
+    /// Port of resolver.zig `getPackageManager`. Lazily constructs the
+    /// auto-install backend via the `bun_install_types::INIT_AUTO_INSTALLER`
+    /// hook (which `bun_install` registers at startup and which is itself
+    /// responsible for `HTTPThread::init`). Only reached from the auto-install
+    /// path (`load_node_modules` global-cache block) when
+    /// [`use_package_manager`] is `true`.
+    pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
         if let Some(pm) = self.package_manager {
-            // SAFETY: BACKREF — pm outlives resolver; lazily inited below.
-            return unsafe { &mut *pm.as_ptr() };
+            return pm.as_ptr();
         }
-        bun_http::HTTPThread::init(&Default::default());
-        let pm = PackageManager::init_with_runtime(
-            // SAFETY: BACKREF — `self.log` points at owner-allocated `Log` (see `log()` PORT NOTE);
-            // disjoint from `self`, narrow borrow for this call only.
-            unsafe { &mut *self.log() },
+        // `use_package_manager()` returned `true`, so the hook must be
+        // registered (it is set alongside `opts.global_cache` by bun_install).
+        let init = Install::INIT_AUTO_INSTALLER
+            .read()
+            .expect("auto-install enabled but bun_install did not register INIT_AUTO_INSTALLER");
+        let pm = init(
+            self.log(),
             self.opts.install,
-            // This cannot be the threadlocal allocator. It goes to the HTTP thread.
-            // (allocator param dropped)
-            Default::default(),
-            self.env_loader.unwrap(),
+            // SAFETY: env_loader is set whenever auto-install is enabled
+            // (Transpiler::init wires both); cast to opaque for the hook ABI.
+            self.env_loader.unwrap().cast(),
         );
-        // SAFETY: pm is a leaked/global allocation owned by PackageManager itself.
-        let pm_ref = unsafe { &mut *pm };
-        pm_ref.on_wake = self.on_wake_package_manager.clone();
-        self.package_manager = NonNull::new(pm);
-        pm_ref
+        // SAFETY: pm is a process-lifetime allocation owned by PackageManager
+        // itself (Zig: `bun.TrivialNew`); it outlives the resolver.
+        unsafe { pm.as_ptr().as_mut().unwrap() }.set_on_wake(self.on_wake_package_manager.clone());
+        self.package_manager = Some(pm);
+        pm.as_ptr()
     }
 
     #[inline]

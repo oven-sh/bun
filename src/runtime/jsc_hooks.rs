@@ -535,7 +535,7 @@ unsafe fn load_preloads_inner(
         if unsafe { (*promise).status() } == PromiseStatus::Rejected {
             return Ok(promise);
         }
-        // `_protect_guard` drops here → unprotect.
+        // `_protected` drops here → unprotect.
     }
 
     // Spec VirtualMachine.zig:2275-2278 — under --isolate each test file gets

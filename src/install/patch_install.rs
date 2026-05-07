@@ -18,7 +18,9 @@ use crate::{
     bun_hash_tag, lockfile::Lockfile, lockfile::Package, resolution::Resolution, DependencyID,
     PackageID, PackageManager,
 };
+use crate::lockfile::package::PackageListExt as _;
 use crate::package_install::PackageInstall;
+use crate::package_manager;
 
 // Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
 pub use crate::lockfile::PatchedDep;
@@ -38,9 +40,8 @@ pub const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).le
 pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
 pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-// TODO(port): `std.fs.Dir` has no direct mapping in PORTING.md. Using `bun_sys::Fd` as the
-// underlying handle; revisit if a dedicated `Dir` wrapper exists.
-type StdFsDir = Fd;
+// `std.fs.Dir` → `bun_sys::Dir` (thin `Fd` wrapper, see sys/lib.rs).
+type StdFsDir = sys::Dir;
 
 pub struct PatchTask<'a> {
     pub manager: &'a PackageManager,

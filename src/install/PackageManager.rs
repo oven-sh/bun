@@ -1975,23 +1975,30 @@ pub fn init(
         let uws_loop = manager.event_loop.r#loop();
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
-    // SAFETY: as above.
-    unsafe { &mut *manager_ptr }.lockfile = Box::new(Lockfile::default());
-    // PORT NOTE: Zig `try ctx.allocator.create(Lockfile)` allocates uninit; Rust needs Default.
+    // PORT NOTE: Zig `manager.lockfile = try ctx.allocator.create(Lockfile)` —
+    // folded into the struct literal above (`Box::new(Lockfile::default())`) so
+    // we never construct a zeroed `Lockfile` only to drop it.
 
     {
         // make sure folder packages can find the root package without creating a new one
-        // SAFETY: ROOT_PACKAGE_JSON_PATH set above
-        // Zig: `var normalized: AbsPath(.{ .sep = .posix, .unit = .u8 }) = .from(root_package_json_path)`.
-        // `bun_paths::AbsPath` has no `From<&ZStr>`; hash directly off the byte slice
-        // (FolderResolution::hash is `fn(&[u8]) -> u64`).
-        let normalized: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH }.as_ref();
+        // Zig: `var normalized: AbsPath(.{ .sep = .posix }) = .from(root_package_json_path)`
+        // (PackageManager.zig:888). `AbsPath(.{.sep=.posix}).from` posix-normalizes the
+        // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
+        // bytes by every resolver-side caller. On Windows `getFdPath` yields `\`, so
+        // hashing the raw bytes would seed a key the resolver never looks up — copy into
+        // a stack buffer and convert separators in place.
+        // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
+        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH }.as_ref();
+        let mut buf = PathBuffer::uninit();
+        buf[..raw.len()].copy_from_slice(raw);
+        let normalized = &mut buf[..raw.len()];
+        path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
             crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
         )?;
-        // normalized.deinit() → Drop
+        // normalized.deinit() → Drop (stack buffer)
     }
 
     // SAFETY: singleton fully initialized; main thread, no workers yet.

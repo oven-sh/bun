@@ -1864,7 +1864,8 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         response_ref.body_read_ref.r#ref(vm);
     }
     response_ref.poll_ref.r#ref(vm);
-    let js_this = NodeHTTPResponse::to_js_ptr(response, global_object);
+    // Inherent `to_js(*mut Self, &JSGlobalObject)` is added by the codegen.
+    let js_this = NodeHTTPResponse::to_js(response, global_object);
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this

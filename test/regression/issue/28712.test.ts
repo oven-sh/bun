@@ -185,6 +185,58 @@ test("nested pushStream() throws ERR_HTTP2_NESTED_PUSH", async () => {
   }
 });
 
+test("pushStream() rejects with ERR_HTTP2_PUSH_DISABLED after session.close()", async () => {
+  let client: ReturnType<typeof http2.connect> | undefined;
+  const { promise: done, resolve, reject } = Promise.withResolvers<string | undefined>();
+
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert });
+
+  function cleanup() {
+    try {
+      client?.close();
+    } catch {}
+    try {
+      server.close();
+    } catch {}
+  }
+
+  server.on("stream", (stream: any) => {
+    stream.on("error", () => {});
+    // Close the session gracefully — the parser stays alive while the
+    // current stream drains, but session.closed is now true. pushStream()
+    // should throw ERR_HTTP2_PUSH_DISABLED (matches the pushAllowed getter
+    // which already returns false in this state).
+    stream.session.close();
+    let code: string | undefined;
+    try {
+      stream.pushStream({ ":path": "/a.css" }, () => {});
+    } catch (e: any) {
+      code = e?.code;
+    }
+    stream.respond({ [http2.constants.HTTP2_HEADER_STATUS]: 200 });
+    stream.end("ok");
+    resolve(code);
+  });
+
+  server.on("error", () => {});
+  server.listen(0, () => {
+    const port = (server.address() as any).port;
+    client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    client.on("error", () => {});
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+  });
+
+  try {
+    const code = await done;
+    expect(code).toBe("ERR_HTTP2_PUSH_DISABLED");
+  } finally {
+    cleanup();
+  }
+});
+
 test("pushStream() inherits :authority from the client's request headers", async () => {
   let client: ReturnType<typeof http2.connect> | undefined;
   const { promise: done, resolve, reject } = Promise.withResolvers<string | undefined>();

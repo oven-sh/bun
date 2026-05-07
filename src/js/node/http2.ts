@@ -2531,6 +2531,16 @@ class ServerHttp2Stream extends Http2Stream {
     const session = this[bunHTTP2Session];
     assertSession(session);
 
+    // Match Node: reject if the session is closed/destroyed. The pushAllowed
+    // getter above already returns false in this state; without this the
+    // getter and the method disagreed (pushAllowed === false but
+    // pushStream() succeeded). After session.close() the parser is still
+    // alive while existing streams drain, so pushStream() would otherwise
+    // write a PUSH_PROMISE on a session flagged for shutdown.
+    if (session.closed || session.destroyed) {
+      throw $ERR_HTTP2_PUSH_DISABLED();
+    }
+
     // RFC 7540 Section 6.5.2: SETTINGS_ENABLE_PUSH defaults to 1.
     // Only reject if the peer has explicitly disabled push via SETTINGS.
     const remoteSettings = session.remoteSettings;

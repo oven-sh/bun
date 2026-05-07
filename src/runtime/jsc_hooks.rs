@@ -2691,6 +2691,35 @@ fn transpile_source_code_inner(
                                 (*std::ptr::from_ref::<bun_watcher::PackageJSON>(pj).cast::<bun_resolver::package_json::PackageJSON>())
                                     .module_type
                             })
+                            .or_else(|| {
+                                // The async path threads `lr.package_json` (from
+                                // `read_dir_info`) into the store; while that
+                                // path is gated, recover the same lookup here so
+                                // a `.cjs` under `"type":"module"` still tags as
+                                // `PackageJsonTypeModule` (mirrors the cache-hit
+                                // branch above).
+                                if !path.is_file() {
+                                    return None;
+                                }
+                                // SAFETY: per fn contract — `transpiler.resolver`
+                                // is a value field of the VM; `read_dir_info` is
+                                // re-entrant on the JS thread and returns a
+                                // stable cache slot.
+                                match unsafe {
+                                    (*jsc_vm).transpiler.resolver.read_dir_info(path.name.dir)
+                                } {
+                                    Ok(Some(dir_info)) => {
+                                        // SAFETY: `*mut DirInfo` is interned in
+                                        // the resolver's arena.
+                                        let dir_info = unsafe { &*dir_info };
+                                        dir_info
+                                            .package_json()
+                                            .or(dir_info.enclosing_package_json)
+                                            .map(|p| p.module_type)
+                                    }
+                                    _ => None,
+                                }
+                            })
                             .unwrap_or(module_type);
                         match module_type_ {
                             ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,

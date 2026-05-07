@@ -841,11 +841,11 @@ impl<'a> ParseArgsState<'a> {
                     );
                 }
                 Token::Positional { index, value } => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index));
+                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index as f64));
                     obj.put(global, ZigString::static_("value"), value.as_js_value(global)?);
                 }
                 Token::OptionTerminator { index } => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index));
+                    obj.put(global, ZigString::static_("index"), JSValue::js_number(*index as f64));
                 }
             }
             self.tokens.push(global, obj)?;

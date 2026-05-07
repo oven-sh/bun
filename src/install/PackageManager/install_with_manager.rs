@@ -841,8 +841,21 @@ pub fn install_with_manager(
 
     // append scripts to lockfile before generating new metahash
     manager.load_root_lifecycle_scripts(&root);
-    // TODO(port): retype root_lifecycle_scripts.package_name as Box<[u8]> so Drop frees it
-    // (Zig had `defer manager.allocator.free(scripts.package_name)` here.)
+    // Zig: `defer { if (root_lifecycle_scripts) |s| allocator.free(s.package_name) }`.
+    // `List.package_name` is `Box<[u8]>`, so dropping the whole `Option<List>`
+    // at scope exit frees it. Route through a raw provenance root because
+    // `manager: &mut` is reborrowed many times below; the guard fires once on
+    // the way out and is the only access at that point.
+    let _root_scripts_guard = {
+        let mgr: *mut PackageManager = manager;
+        scopeguard::guard((), move |_| {
+            // SAFETY: `mgr` was derived from the live exclusive `manager`
+            // borrow above; this guard runs once at scope exit (before
+            // `manager` is returned to the caller) and is the sole access
+            // to `*mgr` at that instant.
+            unsafe { (*mgr).root_lifecycle_scripts = None };
+        })
+    };
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
         root_scripts.append_to_lockfile(&mut manager.lockfile);
@@ -1020,7 +1033,10 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+        manager
+            .log_mut()
+            .print(Output::error_writer() as *mut _)
+            .map_err(|_| bun_core::err!("WriteFailed"))?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();

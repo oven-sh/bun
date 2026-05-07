@@ -129,10 +129,14 @@ impl RouteBundle {
     }
 }
 
-pub enum UnresolvedIndex<'a> {
+pub enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
-    /// BORROW_PARAM (LIFETIMES.tsv): `.initRef(html)` takes own ref when stored.
-    Html(&'a HTMLBundleRoute),
+    /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes
+    /// `dev_server_id` back through this pointer and `.initRef(html)` takes
+    /// its own ref when stored. Carried as a raw mutable pointer (not `&`/
+    /// `&mut`) so the writeback doesn't require a `&const → &mut` cast and
+    /// the borrow doesn't conflict with `&mut DevServer`.
+    Html(*mut HTMLBundleRoute),
 }
 
 pub struct RouteBundle {

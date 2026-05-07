@@ -50,9 +50,6 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
 #[path = "blob/Store.rs"]
 pub mod store;
 pub use store::{Store, StoreRef};
-// `Store` is referenced as both a module path (`store::Data::*`) and a type
-// name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
-pub use store as Store_;
 
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
@@ -5383,8 +5380,8 @@ impl Blob {
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
     /// return a Blob viewing it. Runtime `check_s3` matches the call shape used
-    /// by `server_body.rs` / `fetch.rs` (the `_jsc_gated` draft used a const
-    /// generic — collapsed here since it only guards a string prefix check).
+    /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
+    /// it only guards a string prefix check).
     pub fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,

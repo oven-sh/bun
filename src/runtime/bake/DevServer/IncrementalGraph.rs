@@ -15,7 +15,7 @@ use crate::bake::dev_server::{
 };
 use crate::bake::dev_server::incremental_graph as ig;
 use crate::bake::dev_server_body::CachedFileIndex;
-use super::serialized_failure_body::Owner as FailureOwner;
+use super::serialized_failure::Owner as FailureOwner;
 use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
@@ -1181,7 +1181,7 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_added
-                    .push(ig::FileIndex::init(file_index.get()));
+                    .push(ig::ServerFileIndex::init(file_index.get()));
             }
         } else {
             {
@@ -1203,7 +1203,7 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_added
-                    .push(ig::FileIndex::init(file_index.get()));
+                    .push(ig::ServerFileIndex::init(file_index.get()));
             } else if self.bundled_files.values()[gop_index].is_client_component_boundary {
                 let _key_owned = self.bundled_files.keys()[gop_index].clone();
                 let _client_graph = &mut self.owner().client_graph;
@@ -1215,7 +1215,7 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_removed
-                    .push(ig::FileIndex::init(file_index.get()));
+                    .push(ig::ServerFileIndex::init(file_index.get()));
             }
 
             let value = &mut self.bundled_files.values_mut()[gop_index];
@@ -1718,7 +1718,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     unsafe { &mut *(self as *mut Self as *mut IncrementalGraph<Server>) };
                 let file = g.get_file_by_index(file_index);
                 if file.is_route {
-                    let route_index = g.owner().route_lookup.get(&ig::FileIndex::init(file_index.get())).copied();
+                    let route_index = g.owner().route_lookup.get(&ig::ServerFileIndex::init(file_index.get())).copied();
                     let route_index = route_index.unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Route not in lookup index: {} {}",
@@ -1730,7 +1730,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     g.owner().incremental_result.framework_routes_affected.push(route_index);
                 }
                 if file.is_client_component_boundary {
-                    g.owner().incremental_result.client_components_affected.push(ig::FileIndex::init(file_index.get()));
+                    g.owner().incremental_result.client_components_affected.push(ig::ServerFileIndex::init(file_index.get()));
                 }
                 // Certain files do not propagate updates to dependencies.
                 if goal == TraceDependencyGoal::StopAtBoundary && file.stops_dependency_trace() {

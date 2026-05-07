@@ -677,7 +677,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         unsafe {
                             (*dev).incremental_result
                                 .client_components_added
-                                .push(FileIndex(file_index.get()));
+                                .push(ServerFileIndex::init(file_index.get()));
                         }
                     }
                 } else {
@@ -694,7 +694,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         unsafe {
                             (*dev).incremental_result
                                 .client_components_added
-                                .push(FileIndex(file_index.get()));
+                                .push(ServerFileIndex::init(file_index.get()));
                         }
                     } else if self.bundled_files.values()[file_index.get() as usize]
                         .is_client_component_boundary
@@ -719,7 +719,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         unsafe {
                             (*dev).incremental_result
                                 .client_components_removed
-                                .push(FileIndex(file_index.get()));
+                                .push(ServerFileIndex::init(file_index.get()));
                         }
                     }
 
@@ -1023,7 +1023,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let file = &self.bundled_files.values()[file_index.get() as usize];
                 if file.is_route {
                     // SAFETY: sibling-field access.
-                    let route_index = unsafe { (*dev).route_lookup.get(&FileIndex(file_index.get())) }
+                    let route_index = unsafe { (*dev).route_lookup.get(&ServerFileIndex::init(file_index.get())) }
                         .copied()
                         .unwrap_or_else(|| {
                             bun_core::Output::panic(format_args!(
@@ -1040,7 +1040,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     unsafe {
                         (*dev).incremental_result
                             .client_components_affected
-                            .push(FileIndex(file_index.get()));
+                            .push(ServerFileIndex::init(file_index.get()));
                     }
                 }
             }

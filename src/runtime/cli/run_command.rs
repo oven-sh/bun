@@ -863,11 +863,10 @@ impl RunCommand {
         let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(&entry_path);
         vm.main = entry_path;
 
-        // TODO(b2-blocked): full transpiler/resolver option mapping
-        // (`Run.boot` in src/bun.js.rs lines 110-170 — install/global_cache/
-        // minify/macros/serve_plugins) — needs `vm.transpiler` populated by
-        // `init_runtime_state`, which is still a no-op for those fields.
-        
+        // ctx → transpiler/resolver option mapping (bun.js.zig:110-170).
+        // TODO(port): `serve_plugins`/`bunfig_path`/`macros` map shapes still
+        // differ between `ContextData` and `BundleOptions`; wire those once the
+        // field-shape drift is resolved.
         {
             let b = &mut vm.transpiler;
             // PORT NOTE: `Transpiler<'static>` requires a `'static` borrow but
@@ -880,7 +879,10 @@ impl RunCommand {
                 .as_deref()
                 .map(|p| unsafe { &*(p as *const api::BunInstall) });
             b.resolver.opts.global_cache = ctx.debug.global_cache;
-            // … see src/bun.js.rs for the full list.
+            b.options.global_cache = ctx.debug.global_cache;
+            b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+            b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+            b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         }
 
         // ── enter `Run::start` under the JSC API lock ──────────────────────
@@ -923,17 +925,19 @@ impl RunCommand {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `Run` — port of `src/bun.js.zig` `Run::start`. Lives here (not the
-// higher-tier `bun.js.rs`) so the CLI dispatch path can drive the event
-// loop without a crate-cycle.
+// `Run` — port of `src/bun.js.zig` `Run`. The canonical (and only) Rust
+// definition lives here so the CLI dispatch path can drive the event loop
+// without a crate-cycle; `crate::run_main` re-exports it for callers that
+// expect the Zig `bun.js.Run` namespace.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Run {
+pub struct Run {
     vm: *mut VirtualMachine,
     entry_path: &'static [u8],
-    /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full
-    /// `Command::Context` is not stored — its only consumers in `start()`
-    /// beyond this flag are gated b2 features).
+    /// Snapshot of `ctx.runtime_options.eval.eval_and_print`. The full
+    /// `Command::Context` is not stored: its remaining `start()` consumers
+    /// (cpu/heap profiler, redis/sql preconnect) read VM-side fields that
+    /// `boot()` already copied over.
     eval_and_print: bool,
 }
 

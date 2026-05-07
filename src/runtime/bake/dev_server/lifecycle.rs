@@ -511,6 +511,9 @@ impl DevServer {
     ) -> Result<(), bun_alloc::AllocError> {
         let route_bundle_index =
             self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
+        // TODO(b2): port `RequestEnsureRouteBundledCtx` + `ensure_route_is_bundled`
+        // (gated in `../DevServer.rs`); the body below open-codes the per-state
+        // dispatch so the request path is real until those are un-gated.
         let rb = &self.route_bundles[route_bundle_index.get() as usize];
         // DevServer.zig:1091-1186 `ensureRouteIsBundled` — distinct handling
         // per state; transitions `server_state` so subsequent requests don't

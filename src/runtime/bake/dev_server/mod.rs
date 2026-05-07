@@ -38,7 +38,7 @@ use crate::server::{html_bundle::HTMLBundleRoute, AnyServer, SavedRequest, Stati
  #[path = "../DevServer/IncrementalGraph.rs"]    pub(crate) mod incremental_graph_body;
  #[path = "../DevServer/PackedMap.rs"]           pub(crate) mod packed_map_body;
  #[path = "../DevServer/RouteBundle.rs"]         pub(crate) mod route_bundle_body;
- #[path = "../DevServer/SerializedFailure.rs"]   pub(crate) mod serialized_failure_body;
+ // SerializedFailure body draft dissolved into `serialized_failure.rs`.
  #[path = "../DevServer/SourceMapStore.rs"]      pub(crate) mod source_map_store_body;
  #[path = "../DevServer/WatcherAtomics.rs"]      pub(crate) mod watcher_atomics_body;
  #[path = "../DevServer/memory_cost.rs"]         pub(crate) mod memory_cost_body;

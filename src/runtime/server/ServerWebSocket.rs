@@ -1,24 +1,33 @@
 use core::mem;
-use std::sync::Arc;
+use core::ptr::NonNull;
 
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
+use bun_uws_sys::web_socket::{WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::server::jsc::{self, BinaryType, JSGlobalObject, JSValue, JsRef, JsResult};
+use crate::server::jsc::{
+    self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
+    JSString, JSType, JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
+};
+use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::WebSocketServerContext as WebSocketServer;
 use crate::server::WebSocketServerHandler;
-use crate::webcore::AbortSignal;
+
+bun_core::declare_scope!(WebSocketServer, visible);
 
 // PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper
 // outlives any stack frame. LIFETIMES.tsv says BORROW_PARAM but the handler
 // lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
-// // SAFETY notes is the runtime shape; revisit when bun_jsc::JsClass codegen
-// lands and can assert the invariant.
-// TODO(b2-blocked): #[bun_jsc::JsClass] codegen.
+// SAFETY notes is the runtime shape.
+#[bun_jsc::JsClass]
 pub struct ServerWebSocket {
     handler: *const WebSocketServerHandler,
     this_value: JsRef,
     flags: Flags,
-    signal: Option<Arc<AbortSignal>>,
+    // PORT NOTE (§Pointers): `?*bun.webcore.AbortSignal` is an opaque C++ type
+    // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
+    // caller transfers a +1 ref; `finalize`/`on_close` unref it.
+    signal: Option<NonNull<AbortSignal>>,
 }
 
 // We pack the per-socket data into this struct below
@@ -29,8 +38,7 @@ pub struct Flags(u64);
 
 impl Default for Flags {
     fn default() -> Self {
-        // ssl=false, closed=false, opened=false, binary_type=.Buffer, packed_websocket_ptr=0
-        // TODO(b2-blocked): bun_jsc::BinaryType::Buffer discriminant — shim is opaque.
+        // ssl=false, closed=false, opened=false, binary_type=.Buffer (discriminant 0), packed_websocket_ptr=0
         Flags(0)
     }
 }
@@ -81,7 +89,6 @@ impl Flags {
         }
     }
     #[inline]
-     // TODO(b2-blocked): bun_jsc::BinaryType repr(u8) — shim is opaque(usize).
     pub fn binary_type(self) -> BinaryType {
         // SAFETY: stored value was written via set_binary_type from a valid BinaryType discriminant
         unsafe {
@@ -91,7 +98,6 @@ impl Flags {
         }
     }
     #[inline]
-     // TODO(b2-blocked): bun_jsc::BinaryType repr(u8).
     pub fn set_binary_type(&mut self, v: BinaryType) {
         self.0 = (self.0 & !Self::BINARY_TYPE_MASK)
             | (((v as u8 as u64) << Self::BINARY_TYPE_SHIFT) & Self::BINARY_TYPE_MASK);

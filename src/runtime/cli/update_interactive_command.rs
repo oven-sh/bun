@@ -83,17 +83,19 @@ struct OutdatedPackage {
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
-    /// Raw back-pointer to the process-singleton `PackageManager`.
+    /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
+    /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
     ///
-    /// PORT NOTE: Zig stores `*PackageManager` here and freely aliases it with
-    /// the caller's mutable handle. Storing `&PackageManager` would tie the
-    /// returned `Vec<OutdatedPackage>`'s lifetime to the `&mut PackageManager`
-    /// reborrow inside `get_outdated_packages`, blocking every later use of
-    /// `manager` in `update_interactive` (and is Stacked-Borrows UB while the
-    /// caller's `&mut` is live). The pointer is dereferenced only at render
-    /// time for the read-only `options.scope` / `scope_for_package_name`
-    /// projections, never across a write to `manager`.
-    manager: *const PackageManager,
+    /// PORT NOTE: Zig stores `*PackageManager` here and reads
+    /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
+    /// time. In Rust the caller's `&'static mut PackageManager` in
+    /// `update_interactive` is live across the prompt loop, so any
+    /// `&PackageManager` derived from a stored back-pointer would alias an
+    /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
+    /// `Options`-derived `u64` comparisons that cannot change between
+    /// construction and render, so snapshot the boolean at construction and
+    /// drop the back-pointer entirely.
+    uses_default_registry: bool,
     is_catalog: bool,
     catalog_name: Option<Box<[u8]>>,
 }
@@ -912,14 +914,16 @@ impl UpdateInteractiveCommand {
         // provenance. Shared reborrows of `manager.{lockfile,options}` from
         // the original `&mut` do not pop `pm_ptr`'s SharedReadWrite tag under
         // Stacked Borrows (reads do not invalidate SRW items). The returned
-        // `OutdatedPackage`s do *not* borrow from `manager` (they carry the
-        // singleton's raw address only), so the caller may keep using
-        // `manager` afterwards.
+        // `OutdatedPackage`s do *not* borrow from `manager`, so the caller
+        // may keep using `manager` afterwards.
         let pm_ptr: *mut PackageManager = manager;
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes.as_deref();
         let update_to_latest = manager.options.do_.update_to_latest();
+        let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;
+        let global_uses_default_registry =
+            manager.options.scope.url_hash == default_url_hash;
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
 

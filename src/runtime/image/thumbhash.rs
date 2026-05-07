@@ -191,11 +191,11 @@ impl From<DecodeError> for bun_core::Error {
     }
 }
 
-impl From<DecodeError> for super::codecs_body::Error {
+impl From<DecodeError> for super::codecs::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodeFailed => super::codecs_body::Error::DecodeFailed,
-            DecodeError::OutOfMemory => super::codecs_body::Error::OutOfMemory,
+            DecodeError::DecodeFailed => super::codecs::Error::DecodeFailed,
+            DecodeError::OutOfMemory => super::codecs::Error::OutOfMemory,
         }
     }
 }

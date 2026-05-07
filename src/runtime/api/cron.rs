@@ -946,105 +946,114 @@ impl CronRemoveJob {
         }
     }
 
-    fn maybe_finished(&mut self) {
-        if !self.has_called_process_exit || self.remaining_fds != 0 {
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: local reborrow (no FnEntry protector); not used after any
+        // call below that may free `this`.
+        let s = unsafe { &mut *this };
+        if !s.has_called_process_exit || s.remaining_fds != 0 {
             return;
         }
-        if let Some(proc) = self.process.take() {
+        if let Some(proc) = s.process.take() {
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
                 (*proc).deref();
             }
         }
-        if self.err_msg.is_some() {
-            return Self::finish(self);
+        if s.err_msg.is_some() {
+            return unsafe { Self::finish(this) };
         }
-        let Some(status) = self.exit_status.take() else { return };
+        let Some(status) = s.exit_status.take() else { return };
         match status {
             Status::Exited(exited) => {
-                let is_acceptable_nonzero = (self.state == RemoveState::ReadingCrontab
+                let is_acceptable_nonzero = (s.state == RemoveState::ReadingCrontab
                     && exited.code == 1)
-                    || self.state == RemoveState::BootingOut
+                    || s.state == RemoveState::BootingOut
                     // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
                     // removal of a non-existent job should resolve without error.
-                    || (cfg!(windows) && self.state == RemoveState::InstallingCrontab);
+                    || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     #[cfg(windows)]
                     let stderr_output: &[u8] = strings::trim(
-                        self.stderr_reader.final_buffer().as_slice(),
+                        s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     if !stderr_output.is_empty() {
-                        self.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
+                        s.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
                     } else {
-                        self.set_err(format_args!("Process exited with code {}", exited.code));
+                        s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
-                    return Self::finish(self);
+                    return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
-                if self.state != RemoveState::BootingOut {
-                    self.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    return Self::finish(self);
+                if s.state != RemoveState::BootingOut {
+                    s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    return unsafe { Self::finish(this) };
                 }
             }
             Status::Err(err) => {
-                self.set_err(format_args!(
+                s.set_err(format_args!(
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
-                return Self::finish(self);
+                return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
-        self.advance_state();
+        unsafe { Self::advance_state(this) };
     }
 
-    fn advance_state(&mut self) {
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn advance_state(this: *mut Self) {
+        // SAFETY: local reborrow; last use precedes any self-freeing call.
+        let s = unsafe { &mut *this };
         #[cfg(target_os = "macos")]
         {
-            match self.state {
+            match s.state {
                 RemoveState::BootingOut => {
                     let Some(home) = env_var::HOME.get() else {
-                        self.set_err(format_args!("HOME not set"));
-                        return Self::finish(self);
+                        s.set_err(format_args!("HOME not set"));
+                        return unsafe { Self::finish(this) };
                     };
                     if let Ok(plist_path) = alloc_print_z(format_args!(
                         "{}/Library/LaunchAgents/bun.cron.{}.plist",
                         bstr::BStr::new(home),
-                        bstr::BStr::new(self.title.as_bytes())
+                        bstr::BStr::new(s.title.as_bytes())
                     )) {
                         let _ = sys::unlink(&plist_path);
                     } else {
-                        self.set_err(format_args!("Out of memory"));
-                        return Self::finish(self);
+                        s.set_err(format_args!("Out of memory"));
+                        return unsafe { Self::finish(this) };
                     }
-                    Self::finish(self);
+                    unsafe { Self::finish(this) };
                 }
                 _ => {
-                    self.set_err(format_args!("Unexpected state"));
-                    Self::finish(self);
+                    s.set_err(format_args!("Unexpected state"));
+                    unsafe { Self::finish(this) };
                 }
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            match self.state {
-                RemoveState::ReadingCrontab => self.remove_crontab_entry(),
-                RemoveState::InstallingCrontab => Self::finish(self),
+            match s.state {
+                RemoveState::ReadingCrontab => unsafe { Self::remove_crontab_entry(this) },
+                RemoveState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
-                    self.set_err(format_args!("Unexpected state"));
-                    Self::finish(self);
+                    s.set_err(format_args!("Unexpected state"));
+                    unsafe { Self::finish(this) };
                 }
             }
         }
     }
 
-    fn finish(this: *mut Self) {
-        // SAFETY: caller holds the unique Box<Self>; consumed at the end.
+    /// Consumes and frees `this` (`Box::from_raw`).
+    unsafe fn finish(this: *mut Self) {
+        // SAFETY: caller holds the unique Box<Self>; consumed below. Local
+        // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
         this_ref.state = if this_ref.err_msg.is_some() {
             RemoveState::Failed
@@ -1065,93 +1074,105 @@ impl CronRemoveJob {
         } else {
             let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);
         }
-        ev.exit();
+        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
+        // INSIDE the enter/exit scope so Process detach/deref and reader
+        // teardown observe the entered event-loop state.
         // SAFETY: `this` was created via Box::into_raw in cron_remove.
         unsafe { drop(Box::from_raw(this)) };
+        ev.exit();
     }
 
-    fn spawn_cmd(
-        &mut self,
+    /// May free `this` (via spawn → synchronous exit → finish, or error path).
+    unsafe fn spawn_cmd(
+        this: *mut Self,
         argv: &mut [*const c_char],
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
-        spawn_cmd_generic(self, argv, stdin_opt, stdout_opt);
+        unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
-    fn start_linux(&mut self) {
-        self.state = RemoveState::ReadingCrontab;
-        self.stdout_reader = OutputReader::init::<CronRemoveJob>();
-        let self_ptr = self as *mut Self as *mut _;
-        self.stdout_reader.set_parent(self_ptr);
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_linux(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RemoveState::ReadingCrontab;
+        s.stdout_reader = OutputReader::init::<CronRemoveJob>();
+        s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Self::finish(self);
+            s.set_err(format_args!("crontab not found in PATH"));
+            return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
-    fn remove_crontab_entry(&mut self) {
-        let existing_content = self.stdout_reader.final_buffer().as_slice();
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn remove_crontab_entry(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        let existing_content = s.stdout_reader.final_buffer().as_slice();
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, self.title.as_bytes(), &mut result).is_err() {
-            self.set_err(format_args!("Out of memory"));
-            return Self::finish(self);
+        if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
+            s.set_err(format_args!("Out of memory"));
+            return unsafe { Self::finish(this) };
         }
 
         let tmp_path = match make_temp_path("bun-cron-rm-") {
             Ok(p) => p,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        self.tmp_path = Some(tmp_path);
+        s.tmp_path = Some(tmp_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.as_ref().unwrap(),
+            s.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
             Ok(f) => f,
             Err(_) => {
-                self.set_err(format_args!("Failed to create temp file"));
-                return Self::finish(self);
+                s.set_err(format_args!("Failed to create temp file"));
+                return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             file.close();
-            self.set_err(format_args!("Failed to write temp file"));
-            return Self::finish(self);
+            s.set_err(format_args!("Failed to write temp file"));
+            return unsafe { Self::finish(this) };
         }
         file.close();
 
-        self.state = RemoveState::InstallingCrontab;
-        self.stdout_reader = OutputReader::init::<CronRemoveJob>();
+        s.state = RemoveState::InstallingCrontab;
+        s.stdout_reader = OutputReader::init::<CronRemoveJob>();
         let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Self::finish(self);
+            s.set_err(format_args!("crontab not found in PATH"));
+            return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
-    fn start_mac(&mut self) {
-        self.state = RemoveState::BootingOut;
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_mac(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RemoveState::BootingOut;
         let uid_str = match alloc_print_z(format_args!(
             "gui/{}/bun.cron.{}",
             get_uid(),
-            bstr::BStr::new(self.title.as_bytes())
+            bstr::BStr::new(s.title.as_bytes())
         )) {
-            Ok(s) => s,
+            Ok(v) => v,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let mut argv: [*const c_char; 4] = [
@@ -1160,7 +1181,7 @@ impl CronRemoveJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
 }
@@ -1200,31 +1221,38 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             err_msg: None,
             tmp_path: None,
         }));
-        // SAFETY: just allocated; unique.
-        let job_ref = unsafe { &mut *job };
-
-        let promise_value = job_ref.promise.value();
-        job_ref.poll.ref_(vm_ctx());
+        // SAFETY: just allocated; unique. Short-lived borrow ends before
+        // `start_*` (which may free `job`).
+        let promise_value = {
+            let job_ref = unsafe { &mut *job };
+            job_ref.poll.ref_(vm_ctx());
+            job_ref.promise.value()
+        };
+        // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+        // synchronous failure or hands it to the event loop on success.
         #[cfg(target_os = "macos")]
-        job_ref.start_mac();
+        unsafe { CronRemoveJob::start_mac(job) };
         #[cfg(windows)]
-        job_ref.start_windows();
+        unsafe { CronRemoveJob::start_windows(job) };
         #[cfg(all(not(target_os = "macos"), not(windows)))]
-        job_ref.start_linux();
+        unsafe { CronRemoveJob::start_linux(job) };
         Ok(promise_value)
 }
 
 impl CronRemoveJob {
-    fn start_windows(&mut self) {
-        self.state = RemoveState::InstallingCrontab;
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_windows(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RemoveState::InstallingCrontab;
         let task_name = match alloc_print_z(format_args!(
             "bun-cron-{}",
-            bstr::BStr::new(self.title.as_bytes())
+            bstr::BStr::new(s.title.as_bytes())
         )) {
-            Ok(s) => s,
+            Ok(v) => v,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let mut argv: [*const c_char; 6] = [
@@ -1235,7 +1263,7 @@ impl CronRemoveJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
 }

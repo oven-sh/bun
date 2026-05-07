@@ -860,10 +860,10 @@ impl FSWatcher {
         true
     }
 
-    #[bun_jsc::host_call]
-    pub extern "C" fn has_pending_activity(this: *mut Self) -> bool {
-        // SAFETY: called from GC thread; only touches the atomic field.
-        unsafe { (*this).pending_activity_count.load(Ordering::Acquire) > 0 }
+    /// Called from the GC thread via the codegen `FSWatcher__hasPendingActivity`
+    /// thunk; only touches the atomic field so `&self` is sound across threads.
+    pub fn has_pending_activity(&self) -> bool {
+        self.pending_activity_count.load(Ordering::Acquire) > 0
     }
 
     pub fn unref_task(&mut self) {

@@ -512,55 +512,9 @@ impl All {
 // Ported from TimeoutObject.zig / ImmediateObject.zig / DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
-impl TimeoutObject {
-    pub fn init(
-        global_this: &JSGlobalObject,
-        id: i32,
-        kind: Kind,
-        interval: u32, // Zig: u31
-        callback: JSValue,
-        arguments: JSValue,
-    ) -> JSValue {
-        // internals are initialized by init()
-        // `bun.new(Self, .{...})` ⇒ heap-allocate; ownership transfers to the JS
-        // wrapper (`m_ctx`) below and is released by `deref → deinit → Box::from_raw`.
-        let timeout: *mut Self = Box::into_raw(Box::new(Self {
-            ref_count: core::cell::Cell::new(1),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TimeoutObject),
-            // Zig wrote `.internals = undefined`; every field is overwritten by
-            // `internals.init()` below before any read.
-            internals: TimerObjectInternals::default(),
-        }));
-        let js_value = JSTimeout::to_js(timeout.cast(), global_this);
-        let _keep = EnsureStillAlive(js_value);
-        // SAFETY: `timeout` was just allocated above and is exclusively owned here;
-        // `internals.init()` writes every field via `*self = Self { … }`.
-        unsafe {
-            (*timeout)
-                .internals
-                .init(js_value, global_this, id, kind, interval, callback, arguments);
-        }
-
-        // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
-        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
-            Debugger::did_schedule_async_call(
-                global_this,
-                Debugger::AsyncCallType::DOMTimer,
-                ID { id, kind: kind.into() }.async_id(),
-                kind != Kind::SetInterval,
-            );
-        }
-
-        js_value
-    }
-
-    /// `jsc.Codegen.JSTimeout.fromJS` — unwrap the `m_ctx` payload pointer if
-    /// `value` is (a subclass of) the JS `Timeout` wrapper.
-    #[inline]
-    pub fn from_js(value: JSValue) -> Option<*mut Self> {
-        JSTimeout::from_js(value).map(|p| p.cast::<Self>())
-    }
-}
+// `TimeoutObject::{init, from_js}` now live in `super::timeout_object`
+// (canonical port of `TimeoutObject.zig`); the inherent `init` constructor
+// and the `JsClass`-derived `from_js` are re-exported via `super::TimeoutObject`.
 
 impl ImmediateObject {
     pub fn init(

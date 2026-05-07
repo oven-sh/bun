@@ -442,11 +442,18 @@ impl ShellCpTask {
     /// async cp completes (success or first error). Records the error (if any)
     /// and re-queues this `ShellCpTask` onto the JS thread so the interpreter
     /// can drain `verbose_output` / surface the error.
-    pub fn cp_on_finish(&mut self, result: bun_sys::Maybe<()>) {
+    ///
+    /// # Safety
+    /// `this` is the live `Box::into_raw`'d task originally passed to
+    /// `ShellTask::schedule`; not touched again on this thread after return.
+    pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         if let Err(e) = result {
-            self.err = Some(ShellErr::new_sys(e));
+            // SAFETY: caller contract — `this` is live and exclusively owned
+            // by this thread until `on_finish` enqueues it.
+            unsafe { (*this).err = Some(ShellErr::new_sys(e)) };
         }
-        self.task.on_finish();
+        // SAFETY: same allocation handed to `schedule`.
+        unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
     }
 
     /// Spec: cp.zig `runFromThreadPoolImpl`.
@@ -458,7 +465,7 @@ impl ShellCpTask {
         // (~150 lines) classifies src/tgt as file/dir, resolves the
         // applicable POSIX synopsis, then schedules the node:fs cp.
         let _ = (&this.src, &this.tgt, &this.cwd_path, this.operands, this.opts);
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &mut Interpreter) {
@@ -466,6 +473,10 @@ impl ShellCpTask {
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
     }
+}
+
+impl bun_event_loop::Taskable for ShellCpTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {

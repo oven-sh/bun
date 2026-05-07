@@ -503,6 +503,13 @@ impl ShellMvBatchedTask {
     }
 }
 
+impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+}
+impl bun_event_loop::Taskable for ShellMvBatchedTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+}
+
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }

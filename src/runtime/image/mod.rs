@@ -8,18 +8,14 @@
 
 // ─── codec dispatch surface ──────────────────────────────────────────────────
 //
-// `codecs.rs` is mounted as `codecs_body` (its historical Phase-A name) and
-// re-exported as `codecs` so per-format files (`codec_*.rs`) and `Image.rs`
-// — which import via `super::codecs` and `super::codecs_body` respectively —
-// resolve to the *same* set of `Decoded`/`Encoded`/`Error`/`DecodeHint`/
-// `EncodeOptions` types. The earlier inline stand-in `mod codecs { … }` is
-// gone now that the real body compiles; keeping both produced two distinct
-// `codecs::Error` types and a wall of "similar names but distinct types"
-// mismatches at every dispatch boundary.
+// `codecs.rs` owns the shared `Decoded`/`Encoded`/`Error`/`DecodeHint`/
+// `EncodeOptions` shapes plus the format-agnostic dispatch (`decode`, `encode`,
+// `resize`, `Filter`, `Format`). Per-format files (`codec_*.rs`), the platform
+// backends, and `Image.rs` all import via `super::codecs` so there is exactly
+// one `codecs::Error` type at every boundary.
 
 #[path = "codecs.rs"]
-pub mod codecs_body;
-pub use codecs_body as codecs;
+pub mod codecs;
 
 #[path = "codec_jpeg.rs"]
 pub mod codec_jpeg;

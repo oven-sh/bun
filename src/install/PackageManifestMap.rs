@@ -253,9 +253,11 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        // SAFETY: scalar read of a field disjoint from `self`.
+                        // SAFETY: scalar reads of fields disjoint from `self`.
+                        // Re-project `options` (`get_cache_directory_raw` may
+                        // have flipped `enable.CACHE` on the cold path).
                         let timestamp = unsafe { (*pm).timestamp_for_manifest_cache_control };
-                        if options.enable.manifest_cache_control()
+                        if unsafe { (*pm).options.enable.manifest_cache_control() }
                             && manifest.pkg.public_max_age > timestamp
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));

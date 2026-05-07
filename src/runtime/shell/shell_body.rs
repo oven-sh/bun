@@ -180,16 +180,6 @@ impl fmt::Display for ShellErr {
 // on ordinary drop, and `.sys` is released exactly once on whichever consume
 // path runs.
 
-/// Local shim: `bun.String.indexOfAsciiChar` lives in the gated draft module.
-fn bunstr_index_of_ascii_char(s: &BunString, chr: u8) -> Option<usize> {
-    debug_assert!(chr < 128);
-    if s.is_utf16() {
-        s.utf16().iter().position(|&c| c == u16::from(chr))
-    } else {
-        strings::index_of_char(s.byte_slice(), chr)
-    }
-}
-
 // ───────────────────────────── Result ─────────────────────────────
 
 pub enum ShellResult<T> {
@@ -919,7 +909,7 @@ pub fn handle_template_value(
                 let bunstr = OwnedString::new(maybe_str.to_bun_string(global)?);
 
                 // Check for null bytes in shell argument (security: prevent null byte injection)
-                if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
+                if bunstr.index_of_ascii_char(0).is_some() {
                     return Err(global
                         .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
                             "The shell argument must be a string without null bytes. Received \"{}\"",
@@ -995,7 +985,7 @@ impl<'a> ShellSrcBuilder<'a> {
         let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
 
         // Check for null bytes in shell argument (security: prevent null byte injection)
-        if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
+        if bunstr.index_of_ascii_char(0).is_some() {
             return Err(self
                 .global_this
                 .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(

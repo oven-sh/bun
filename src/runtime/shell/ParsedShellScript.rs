@@ -295,7 +295,7 @@ fn create_parsed_shell_script_impl(
         }
     };
 
-    shargs.script_ast = script_ast;
+    shargs.set_script_ast(script_ast);
 
     let mut parsed_shell_script = Box::new(ParsedShellScript {
         args: Some(shargs),

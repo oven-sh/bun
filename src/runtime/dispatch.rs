@@ -20,6 +20,12 @@
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
 //!   3. a match arm here.
 
+// Flat re-export landing pad for `generated_js2native.rs` thunks whose source
+// `.zig` file lives outside `src/runtime/`. Kept in a sibling file so this
+// hot-path module stays focused on the task/timer/poll match loops.
+#[path = "dispatch_js2native.rs"]
+pub mod js2native;
+
 use core::sync::atomic::Ordering;
 
 use bun_event_loop::{task_tag, Task, TaskTag};

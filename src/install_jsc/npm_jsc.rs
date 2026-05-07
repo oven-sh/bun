@@ -69,6 +69,13 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     ))
 }
 
+/// Free-fn alias of [`ManifestBindings::generate`] so `bun_runtime::dispatch::js2native`
+/// can `pub use` it (associated fns aren't importable items).
+#[inline]
+pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
+    ManifestBindings::generate(global)
+}
+
 /// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
 pub struct ManifestBindings;
 

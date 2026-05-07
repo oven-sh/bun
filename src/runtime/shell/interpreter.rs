@@ -370,6 +370,30 @@ impl ShellArgs {
         &self.__arena
     }
 
+    /// Store the parsed AST root alongside its owning arena. This is the single
+    /// self-referential lifetime-erasure point: `script` borrows `self.__arena`
+    /// for `'a`, but `ShellArgs` is heap-allocated and the arena is never moved
+    /// or dropped while the interpreter (and thus every state node holding
+    /// `*const ast::*`) is live. Widening `'a` → `'static` here is therefore
+    /// sound — every later dereference happens through raw pointers under
+    /// `unsafe`, which is where the real invariant is checked.
+    ///
+    /// `Interpreter::parse` returns the lifetime-tied `Script<'a>` so callers
+    /// that *don't* store (e.g. `TestingAPIs::shell_parse`) get the correct
+    /// borrow scope; only callers that move the arena into long-lived storage
+    /// route through this helper.
+    #[inline]
+    pub fn set_script_ast(&mut self, script: bun_shell_parser::ast::Script<'_>) {
+        // SAFETY: `ast::Script` is `bun_shell_parser::ast::Script<'static>` —
+        // identical type, only the lifetime parameter differs. `self.__arena`
+        // owns every node `script` references and is dropped only when this
+        // `ShellArgs` is, so the widened references remain valid for the
+        // interpreter's lifetime.
+        self.script_ast = unsafe {
+            core::mem::transmute::<bun_shell_parser::ast::Script<'_>, ast::Script>(script)
+        };
+    }
+
     /// Spec: interpreter.zig `ShellArgs.memoryCost`.
     /// PORT NOTE: Zig walks `script_ast.memoryCost()`; the Rust port reports
     /// the arena's `allocated_bytes()` instead (a superset — tokens + strpool
@@ -400,7 +424,7 @@ impl Interpreter {
         jsstrings_to_escape: &'a mut [bun_str::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
-    ) -> Result<ast::Script, bun_core::Error> {
+    ) -> Result<bun_shell_parser::ast::Script<'a>, bun_core::Error> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
         let jsobjs_len = jsobjs.len() as u32;
         let lex_result = if bun_core::strings::is_all_ascii(src) {
@@ -426,17 +450,7 @@ impl Interpreter {
             >(jsobjs)
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
-        let script = out_parser.as_mut().unwrap().parse()?;
-        // SAFETY: `ast::Script` is `bun_shell_parser::ast::Script<'static>` —
-        // identical type, only the lifetime parameter differs. State nodes
-        // hold `*const ast::*` raw pointers into `arena` (which the
-        // interpreter owns for its whole lifetime), so widening `'a` →
-        // `'static` here is sound: every dereference is guarded by `unsafe`
-        // and the arena outlives every state node. This is pure lifetime
-        // erasure, not a layout reinterpretation.
-        Ok(unsafe {
-            core::mem::transmute::<bun_shell_parser::ast::Script<'a>, ast::Script>(script)
-        })
+        out_parser.as_mut().unwrap().parse()
     }
 
     /// Spec: interpreter.zig `ThisInterpreter.init` + `initImpl`.
@@ -695,7 +709,7 @@ impl Interpreter {
                 }
             }
         };
-        shargs.script_ast = script;
+        shargs.set_script_ast(script);
 
         // ── init ───────────────────────────────────────────────────────────
         let evtloop = EventLoopHandle::init_mini(mini as *mut _);

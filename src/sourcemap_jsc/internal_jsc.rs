@@ -64,6 +64,22 @@ impl TestingAPIs {
     }
 }
 
+/// Free-fn aliases of the [`TestingAPIs`] associated fns so
+/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
+/// aren't importable items).
+#[inline]
+pub fn testing_from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::from_vlq(global, frame)
+}
+#[inline]
+pub fn testing_to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::to_vlq(global, frame)
+}
+#[inline]
+pub fn testing_find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::find(global, frame)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sourcemap_jsc/internal_jsc.zig (59 lines)

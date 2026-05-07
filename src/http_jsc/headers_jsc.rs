@@ -100,6 +100,18 @@ impl H3TestingAPIs {
     }
 }
 
+/// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
+/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
+/// can `pub use` them (associated fns aren't importable items).
+#[inline]
+pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    H2TestingAPIs::live_counts(global, frame)
+}
+#[inline]
+pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    H3TestingAPIs::quic_live_counts(global, frame)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http_jsc/headers_jsc.zig (45 lines)

@@ -3,6 +3,21 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
+/// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
+/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
+/// aren't importable items).
+#[inline]
+pub fn ini_testing_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    IniTestingAPIs::parse(global, frame)
+}
+#[inline]
+pub fn ini_testing_load_npmrc_from_js(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    IniTestingAPIs::load_npmrc_from_js(global, frame)
+}
+
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {

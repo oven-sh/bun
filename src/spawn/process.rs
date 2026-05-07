@@ -636,6 +636,15 @@ impl Process {
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
+            // Spec process.zig:550 — `.waiter_thread, .fd => kill(); else => {}`.
+            // Detached is a deliberate no-op: spawnSync's `read_all()` runs
+            // before `watch_or_reap()` installs the poller, but Zig relies on
+            // the first `recv_non_block` returning EAGAIN (yes hasn't written
+            // yet) so the maxBuffer overflow fires from the event-loop poll
+            // tick *after* the Fd poller is armed. Do not widen this match to
+            // mask spawn-maxbuf.test.ts — the async-path hang there has a
+            // different root cause (poller is already Fd when `on_max_buffer`
+            // fires, so this arm is unreachable on that path).
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
                     // SAFETY: libc kill

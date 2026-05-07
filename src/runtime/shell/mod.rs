@@ -252,7 +252,7 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
 pub mod ast {
     use bun_shell_parser::parse::ast as p;
     pub use bun_shell_parser::parse::SmolList;
-    pub use p::{BinaryOp, IoKind, JSBuf, RedirectFlags};
+    pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
 
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;

@@ -2429,6 +2429,50 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
+            // Fast path: bulk-consume runs of non-special bytes in Normal state.
+            // Zig's `switch (char)` compiles to a jump table even in debug; the
+            // Rust guard-arm chain below does not, so a 1 MiB literal word (see
+            // shell-leak-args.test.ts) walks ~20 guard comparisons per byte and
+            // overruns the test timeout. This block mirrors what the slow path
+            // would do for any byte NOT in SPECIAL_CHARS_TABLE: append to
+            // strpool and advance, with no state change.
+            if ENCODING == StringEncoding::Ascii && self.chars.state == CharState::Normal {
+                let scan: Option<(&'bump [u8], usize, usize)> = match &self.chars.src {
+                    Src::Ascii(a) => {
+                        let bytes = a.bytes;
+                        let start = a.i;
+                        let mut i = start;
+                        while i < bytes.len() && !SPECIAL_CHARS_TABLE.is_set(bytes[i] as usize) {
+                            i += 1;
+                        }
+                        if i > start { Some((bytes, start, i)) } else { None }
+                    }
+                    Src::Unicode(_) => None,
+                };
+                if let Some((bytes, start, i)) = scan {
+                    let run = &bytes[start..i];
+                    self.strpool.extend_from_slice(run);
+                    self.j += (i - start) as u32;
+                    if let Src::Ascii(a) = &mut self.chars.src {
+                        a.i = i;
+                    }
+                    // Keep prev/current consistent with what per-char eat()
+                    // would have left behind (read by `#` whitespace check
+                    // and is_immediately_escaped_quote).
+                    let last = InputChar { char: u32::from(run[run.len() - 1] & 0x7F), escaped: false };
+                    if run.len() >= 2 {
+                        self.chars.prev = Some(InputChar {
+                            char: u32::from(run[run.len() - 2] & 0x7F),
+                            escaped: false,
+                        });
+                    } else {
+                        self.chars.prev = self.chars.current;
+                    }
+                    self.chars.current = Some(last);
+                    continue;
+                }
+            }
+
             let input = match self.eat() {
                 Some(i) => i,
                 None => {

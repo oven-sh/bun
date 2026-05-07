@@ -394,11 +394,10 @@ impl<'a> JSBundleCompletionTask<'a> {
         let mut full_outfile_path: Box<[u8]> = if !this.config.outdir.slice().is_empty() {
             let outdir_slice = this.config.outdir.slice();
             let top_level_dir = FileSystem::instance().top_level_dir;
-            let joined = bun_paths::join_abs_string_buf(
+            let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                 top_level_dir,
                 &mut *outbuf,
                 &[outdir_slice, compile_options.outfile.slice()],
-                bun_paths::Style::Auto,
             );
             // owned below
             Box::from(joined)
@@ -407,11 +406,10 @@ impl<'a> JSBundleCompletionTask<'a> {
         } else {
             // For relative paths, ensure we make them absolute relative to the current working directory
             let top_level_dir = FileSystem::instance().top_level_dir;
-            let joined = bun_paths::join_abs_string_buf(
+            let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                 top_level_dir,
                 &mut *outbuf,
                 &[compile_options.outfile.slice()],
-                bun_paths::Style::Auto,
             );
             Box::from(joined)
         };
@@ -782,20 +780,18 @@ impl<'a> JSBundleCompletionTask<'a> {
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !this.config.outdir.is_empty() {
                         if bun_paths::is_absolute(this.config.outdir.list.as_slice()) {
-                            Box::from(bun_paths::join_abs_string(
+                            Box::from(bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
                                 this.config.outdir.slice(),
                                 &[&output_file.dest_path],
-                                bun_paths::Style::Auto,
                             ))
                         } else {
-                            Box::from(bun_paths::join_abs_string(
+                            Box::from(bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
                                 FileSystem::instance().top_level_dir,
                                 &[
                                     this.config.dir.slice(),
                                     this.config.outdir.slice(),
                                     &output_file.dest_path,
                                 ],
-                                bun_paths::Style::Auto,
                             ))
                         }
                     } else {

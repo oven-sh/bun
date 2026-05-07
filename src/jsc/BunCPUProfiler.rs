@@ -123,7 +123,7 @@ fn write_profile_to_file(
     let output_path_os = path_buf.slice_z();
 
     // Write the profile to disk using bun.sys.File.writeFile
-    let result = bun_sys::File::write_file(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result = bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
@@ -132,7 +132,7 @@ fn write_profile_to_file(
                 let _ = Fd::cwd().make_path(config.dir);
                 // Retry write
                 let retry_result =
-                    bun_sys::File::write_file(Fd::cwd(), output_path_os, profile_slice.slice());
+                    bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
                 if retry_result.is_err() {
                     return Err(ProfilerError::WriteFailed);
                 }

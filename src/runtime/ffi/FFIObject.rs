@@ -738,18 +738,22 @@ fn eat_zig_string(
 }
 
 /// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI — runtime half of
-/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern "C" fn` per call site so
-/// the address is usable in the static `FIELDS` table (Rust forbids fn-pointer
-/// const generics, so this is a `macro_rules!` rather than a generic fn).
+/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern jsc.conv fn` per call site
+/// so the address is usable in the static `FIELDS` table (Rust forbids
+/// fn-pointer const generics, so this is a `macro_rules!` rather than a
+/// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
+/// Windows-x64 and `extern "C"` elsewhere — matching the `JSHostFn` typedef.
 macro_rules! wrap_host_fn {
     ($body:path) => {{
-        unsafe extern "C" fn thunk(
-            global: *mut JSGlobalObject,
-            callframe: *mut CallFrame,
-        ) -> JSValue {
-            // SAFETY: JSC guarantees both pointers are live for the host call.
-            let (global, callframe) = unsafe { (&*global, &*callframe) };
-            jsc::to_js_host_fn_result(global, $body(global, callframe))
+        bun_jsc::jsc_host_abi! {
+            unsafe fn thunk(
+                global: *mut JSGlobalObject,
+                callframe: *mut CallFrame,
+            ) -> JSValue {
+                // SAFETY: JSC guarantees both pointers are live for the host call.
+                let (global, callframe) = unsafe { (&*global, &*callframe) };
+                jsc::to_js_host_fn_result(global, $body(global, callframe))
+            }
         }
         thunk as jsc::JSHostFn
     }};

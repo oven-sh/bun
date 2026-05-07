@@ -17,6 +17,8 @@ use crate::node::types::PathLikeExt as _;
 use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
@@ -955,7 +957,7 @@ pub struct CopyFileWindows<'a> {
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
     // Phase B: likely *const jsc::EventLoop.
-    pub event_loop: &'a jsc::EventLoop,
+    pub event_loop: &'a jsc::event_loop::EventLoop,
 
     pub size: SizeType,
 
@@ -1206,7 +1208,7 @@ impl<'a> CopyFileWindows<'a> {
     pub fn init(
         destination_file_store: StoreRef,
         source_file_store: StoreRef,
-        event_loop: &'a jsc::EventLoop,
+        event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
@@ -1325,7 +1327,10 @@ impl<'a> CopyFileWindows<'a> {
 
     fn copyfile(&mut self) {
         // This is for making it easier for us to test this code path
-        if bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get() {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
+            .get()
+            .unwrap_or(false)
+        {
             self.prepare_read_write_loop();
             return;
         }
@@ -1631,7 +1636,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = unsafe { (*req).result };
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum() {
+    if let Some(errno) = rc.err_enum_e() {
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
             // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
             unsafe { (*req).deinit() };
@@ -1665,7 +1670,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     }
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `statbuf` for a successful uv_fs_copyfile.
-    let size = unsafe { (*req).statbuf.size };
+    let size = unsafe { (*req).statbuf.size() };
     this.on_complete(size);
 }
 
@@ -1685,7 +1690,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
     let rc = unsafe { (*req).result };
-    if let Some(errno) = rc.err_enum() {
+    if let Some(errno) = rc.err_enum_e() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
@@ -1712,7 +1717,7 @@ extern "C" fn on_mkdirp_complete_concurrent(
         bun_sys::Result::Ok(()) => None,
     };
     this.event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::new::<CopyFileWindows, _>(CopyFileWindows::on_mkdirp_complete, this),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, CopyFileWindows::on_mkdirp_complete),
     ));
 }
 

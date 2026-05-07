@@ -15,6 +15,17 @@ use crate::{host_fn, zig_string, JSGlobalObject, JSHostFn, JSValue};
 pub mod bindgen_test {
     use super::*;
 
+    // PORT NOTE: `jsc.conv` (= JSC_CALLCONV) is `"sysv64"` on Windows-x64 and
+    // `"C"` elsewhere. Rust forbids macros in ABI position, so the codegen
+    // emits both blocks and cfg-selects (kept in sync with `JsHostFn`).
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "bindgen_Bindgen_test_jsAdd"]
+        fn jsAdd(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;
+        #[link_name = "bindgen_Bindgen_test_jsRequiredAndOptionalArg"]
+        fn jsRequiredAndOptionalArg(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "bindgen_Bindgen_test_jsAdd"]
         fn jsAdd(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;

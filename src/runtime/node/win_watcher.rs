@@ -14,10 +14,17 @@ use bun_paths::PathBuffer;
 use bun_str::{self as strings, String as BunString, ZStr};
 use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
+use bun_sys::ReturnCodeExt as _;
 
 use super::path_watcher::EventType;
-// TODO(port): confirm exact module path for the node fs.Watcher (Zig: `bun.jsc.Node.fs.Watcher`).
-use crate::node::node_fs_watcher::{FSWatcher, Event, on_path_update as on_path_update_fn, on_update_end as on_update_end_fn};
+// Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
+// the callbacks are *associated functions* on `FSWatcher`, not free fns.
+// lower_snake names mirror the Zig `onPathUpdateFn`/`onUpdateEndFn` decls.
+use crate::node::node_fs_watcher::{FSWatcher, Event};
+#[allow(non_upper_case_globals)]
+const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
+#[allow(non_upper_case_globals)]
+const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
 // TODO(port): confirm crate for `bun.Watcher` → assuming `bun_watcher`.
 use bun_watcher::Watcher;
 
@@ -40,12 +47,12 @@ pub struct PathWatcherManager {
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
     // process-global, so we spell the borrow as `'static`.
     // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.
-    vm: &'static jsc::VirtualMachine,
+    vm: &'static jsc::VirtualMachineRef,
     deinit_on_last_watcher: bool,
 }
 
 impl PathWatcherManager {
-    pub fn init(vm: &'static jsc::VirtualMachine) -> *mut PathWatcherManager {
+    pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         Box::into_raw(Box::new(PathWatcherManager {
             watchers: ArrayHashMap::default(),
             vm,
@@ -198,8 +205,8 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(ctx, Event::Error(err), false);
-                on_update_end_fn(ctx);
+                on_path_update_fn(Some(ctx), Event::Error(err), false);
+                on_update_end_fn(Some(ctx));
             }
 
             this.emit_in_progress = false;
@@ -256,12 +263,12 @@ impl PathWatcher {
                     // TODO(port): exact `Event`/`EventType::to_event` shape — Zig builds a tagged
                     // payload `{ .string | .bytes_to_free }` then calls `event_type.toEvent(...)`.
                 };
-                on_path_update_fn(ctx.cast(), event_type.to_event(payload), is_file);
+                on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
                 #[cfg(debug_assertions)]
                 {
                     debug_count += 1;
                 }
-                on_update_end_fn(ctx.cast());
+                on_update_end_fn(Some(ctx.cast()));
             }
         }
 
@@ -432,7 +439,7 @@ impl PathWatcher {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn watch(
-    vm: &'static jsc::VirtualMachine,
+    vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
     // PORT NOTE: Zig takes `comptime callback` / `comptime updateEnd` and `@compileError`s if they

@@ -71,8 +71,12 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut c_void);
 /// instances. // PERF(port): was inline switch on @TypeOf.
 pub struct EventLoopCtxVTable {
     pub platform_event_loop: unsafe fn(*mut ()) -> *mut Loop,
-    pub file_polls: unsafe fn(*mut ()) -> *mut Store,
-    pub alloc_file_poll: unsafe fn(*mut ()) -> *mut FilePoll,
+    // `crate::Store`/`crate::FilePoll` resolve to the *platform* variant
+    // (posix on unix, windows_event_loop's on Windows). This module owns the
+    // shared scaffolding, so it must name the crate-level re-export rather
+    // than its local `Store`/`FilePoll` (which on Windows is the wrong type).
+    pub file_polls: unsafe fn(*mut ()) -> *mut crate::Store,
+    pub alloc_file_poll: unsafe fn(*mut ()) -> *mut crate::FilePoll,
     pub is_js: unsafe fn(*mut ()) -> bool,
     pub increment_pending_unref_counter: unsafe fn(*mut ()),
     pub ref_concurrently: unsafe fn(*mut ()),
@@ -100,12 +104,12 @@ impl EventLoopCtx {
     /// SAFETY: same aliasing hazard as [`platform_event_loop`] — caller must
     /// not hold another live `&mut Store` across this borrow.
     #[inline]
-    pub unsafe fn file_polls(&self) -> &mut Store {
+    pub unsafe fn file_polls(&self) -> &mut crate::Store {
         // SAFETY: vtable contract.
         unsafe { &mut *(self.vtable.file_polls)(self.owner) }
     }
     #[inline]
-    pub fn alloc_file_poll(&self) -> *mut FilePoll {
+    pub fn alloc_file_poll(&self) -> *mut crate::FilePoll {
         unsafe { (self.vtable.alloc_file_poll)(self.owner) }
     }
     #[inline]
@@ -392,7 +396,7 @@ unsafe extern "Rust" {
     /// Hot-path dispatch for `FilePoll::on_update`. Defined `#[no_mangle]` in
     /// `bun_runtime::dispatch` (link-time resolved). Runtime owns the per-tag
     /// `match` (direct calls per arm — LLVM inlines like Zig).
-    fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64);
+    fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
 }
 
 #[repr(u8)]
@@ -403,6 +407,11 @@ pub enum AllocatorType {
     Mini,
 }
 
+// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
+// generation_number, allocator_type). On Windows the variants live in
+// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
+// `crate::FilePoll`/`crate::Store` so the right one is picked.
+#[cfg(not(windows))]
 pub struct FilePoll {
     pub fd: Fd,
     pub flags: FlagsSet,
@@ -419,6 +428,7 @@ pub struct FilePoll {
     pub allocator_type: AllocatorType,
 }
 
+#[cfg(not(windows))]
 impl Default for FilePoll {
     fn default() -> Self {
         Self {
@@ -432,6 +442,7 @@ impl Default for FilePoll {
     }
 }
 
+#[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -1287,6 +1298,7 @@ impl FilePoll {
     }
 }
 
+#[cfg(not(windows))]
 impl fmt::Display for FilePoll {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -1433,17 +1445,21 @@ impl fmt::Display for FlagsFormatter {
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): Zig uses `if (bun.heap_breakdown.enabled) 0 else 128` for the hive size.
+#[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
+#[cfg(not(windows))]
 type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called
+#[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
     pending_free_head: *mut FilePoll,
     pending_free_tail: *mut FilePoll,
 }
 
+#[cfg(not(windows))]
 impl Store {
     pub fn init() -> Store {
         Store {
@@ -1543,7 +1559,7 @@ impl Pollable {
     pub const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    pub fn init(ptr: *const FilePoll) -> Self {
+    pub fn init(ptr: *const crate::FilePoll) -> Self {
         Self { repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG) }
     }
 
@@ -1558,8 +1574,8 @@ impl Pollable {
     }
 
     #[inline]
-    pub fn as_file_poll(self) -> *mut FilePoll {
-        self.repr.get::<FilePoll>()
+    pub fn as_file_poll(self) -> *mut crate::FilePoll {
+        self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
@@ -1630,8 +1646,9 @@ pub type Waker = KEventWaker;
 // FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub type Waker = LinuxWaker;
-#[cfg(any(windows, target_arch = "wasm32"))]
-compile_error!("unreachable");
+// Windows/wasm define `Waker` in their own event-loop modules; this module is
+// still compiled there for the *shared* scaffolding (`EventLoopCtx`, `Flags`,
+// `Owner`, …), so no `compile_error!` — just leave the alias undefined.
 
 pub struct LinuxWaker {
     pub fd: Fd,

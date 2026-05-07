@@ -2,8 +2,12 @@ use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::Loop;
-// TODO(port): confirm canonical home for sockaddr_storage (libc vs bun_sys)
+// `sockaddr_storage` is not in `libc` on Windows; route through the leaf
+// ws2_32 shim there. Both definitions are 128-byte 8-aligned POD.
+#[cfg(not(windows))]
 use libc::sockaddr_storage;
+#[cfg(windows)]
+use bun_windows_sys::ws2_32::sockaddr_storage;
 
 /// Opaque uSockets UDP socket handle (`us_udp_socket_t`).
 #[repr(C)]

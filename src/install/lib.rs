@@ -363,14 +363,21 @@ pub(crate) mod install {
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
-#[cfg(windows)]
+// `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls) —
+// in Zig it is a separate `exe` artifact whose output is `@embedFile`d above;
+// it is never linked into the library. The Rust port lives alongside for
+// reference but is built as its own binary target, not as a `mod` of this lib
+// (it has no `std`, pulls private ntdll surface, and would drag a second
+// `#[global_allocator]` into the crate graph).
+#[cfg(any())]
 #[path = "windows-shim/bun_shim_impl.rs"]
 mod _bun_shim_impl;
 pub mod windows_shim {
     pub use crate::_bin_linking_shim as bin_linking_shim;
-    pub use bin_linking_shim::BinLinkingShim;
-    #[cfg(windows)]
-    pub use crate::_bun_shim_impl as bun_shim_impl;
+    pub use bin_linking_shim::{
+        embedded_executable_data, loose_decode, BinLinkingShim, Decoded, Flags, Shebang,
+        EMBEDDED_EXECUTABLE_DATA,
+    };
 }
 
 #[path = "resolvers/folder_resolver.rs"]
@@ -776,66 +783,74 @@ impl RunCommand {
         #[cfg(windows)]
         {
             use bun_str::strings;
+            use bun_sys::windows as win;
 
-            let mut target_path_buffer: bun_paths::WPathBuffer =
-                [0u16; bun_paths::PATH_MAX_WIDE];
-            let prefix: &[u16] = strings::w("\\??\\");
+            let mut target_path_buffer = bun_paths::WPathBuffer::default();
+            let prefix: &[u16] = strings::w!("\\??\\");
 
+            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
+            // trailing NUL) into the offset slice; we reserve `prefix.len()` at
+            // the front for the NT object prefix.
             let len = unsafe {
-                bun_windows::GetTempPathW(
+                win::GetTempPathW(
                     (target_path_buffer.len() - prefix.len()) as u32,
                     target_path_buffer.as_mut_ptr().add(prefix.len()),
                 )
             } as usize;
             if len == 0 {
-                bun_output::scoped_log!(
-                    RUN,
-                    "Failed to create temporary node dir: {:?}",
-                    unsafe { bun_windows::GetLastError() }
-                );
+                // Zig: `Output.debug(...)` — non-fatal; fall through and leave
+                // PATH unmodified. (No `RUN` scope is declared in this crate.)
                 return Ok(());
             }
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            let dir_name: &[u16] = if cfg!(debug_assertions) {
-                strings::w("bun-node-debug")
+            // Zig: `comptime bun.strings.w("bun-node-" ++ git_sha_short)` —
+            // the dir name is ASCII-only, so widen the const `&str` byte-by-
+            // byte into a small stack buffer at runtime (Rust macros require a
+            // single string *literal* token, which `concatcp!` doesn't yield).
+            let dir_name_str: &str = if cfg!(debug_assertions) {
+                "bun-node-debug"
             } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                strings::w("bun-node")
+                "bun-node"
             } else {
-                strings::w(const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT))
+                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
             };
+            let mut dir_name_buf = [0u16; 64];
+            for (i, b) in dir_name_str.bytes().enumerate() {
+                debug_assert!(b < 0x80, "dir_name is ASCII-only");
+                dir_name_buf[i] = b as u16;
+            }
+            let dir_name: &[u16] = &dir_name_buf[..dir_name_str.len()];
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
-            let image_path = bun_windows::exe_path_w();
-            for name in [strings::w("\\node.exe\0"), strings::w("\\bun.exe\0")] {
+            let image_path = win::exe_path_w();
+            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                let file_slice = &target_path_buffer[..dir_slice_len + name.len() - 1];
+                // PORT NOTE: borrowck — Zig held a slice of `target_path_buffer`
+                // across mutations of the same buffer (the dir-NUL/backslash
+                // toggle below). Use the raw base pointer for FFI so no shared
+                // borrow is live across the writes.
+                let file_ptr: *const u16 = target_path_buffer.as_ptr();
 
-                if unsafe {
-                    bun_windows::CreateHardLinkW(
-                        file_slice.as_ptr(),
-                        image_path.as_ptr(),
-                        core::ptr::null_mut(),
-                    )
-                } == 0
-                {
-                    match unsafe { bun_windows::GetLastError() } {
-                        bun_windows::ERROR_ALREADY_EXISTS => {}
+                if win::CreateHardLinkW(file_ptr, image_path.as_ptr(), None) == 0 {
+                    match win::Win32Error::get() {
+                        win::Win32Error::ALREADY_EXISTS => {}
                         _ => {
                             target_path_buffer[dir_slice_len] = 0;
-                            let _ = bun_sys::mkdir_w(&target_path_buffer[..dir_slice_len], 0);
+                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
+                            // `dir_slice_len` was just set to NUL.
+                            let dir_w = unsafe {
+                                bun_core::WStr::from_raw(
+                                    target_path_buffer.as_ptr(),
+                                    dir_slice_len,
+                                )
+                            };
+                            let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
 
-                            if unsafe {
-                                bun_windows::CreateHardLinkW(
-                                    file_slice.as_ptr(),
-                                    image_path.as_ptr(),
-                                    core::ptr::null_mut(),
-                                )
-                            } == 0
-                            {
+                            if win::CreateHardLinkW(file_ptr, image_path.as_ptr(), None) == 0 {
                                 return Ok(());
                             }
                         }
@@ -853,7 +868,7 @@ impl RunCommand {
             strings::to_utf8_append_to_list(
                 path,
                 &target_path_buffer[prefix.len()..dir_slice_len],
-            )?;
+            );
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())

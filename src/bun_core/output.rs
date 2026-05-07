@@ -549,8 +549,9 @@ impl Source {
 #[cfg(windows)]
 pub mod windows_stdio {
     use super::*;
-    // MOVE_DOWN: bun_sys::windows → windows_sys (T0).
-    use windows_sys as w;
+    // MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
+    use crate::windows_sys as w;
+    use crate::windows_sys::kernel32 as c;
 
 
     /// At program start, we snapshot the console modes of standard in, out, and err

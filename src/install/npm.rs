@@ -979,14 +979,17 @@ pub mod package_manifest {
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
             let mut realpath_buf = bun_paths::PathBuffer::uninit();
+            // SAFETY: `crate::package_manager::get()` returns the live
+            // singleton; `get_temporary_directory` only mutates its
+            // lazy-init state and is called from the install thread.
             #[cfg(windows)]
-            let tmpdir_stub = PackageManager::get().get_temporary_directory();
+            let tmpdir_stub =
+                unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
-            let path_to_use_for_opening_file = bun_paths::join_abs_string_buf_z(
-                &tmpdir_stub.path,
-                &mut realpath_buf,
-                &[tmp_path.as_bytes()],
-                bun_paths::Style::Auto,
+            let path_to_use_for_opening_file = bun_paths::resolve_path::join_abs_string_buf_z::<
+                bun_paths::platform::Auto,
+            >(
+                &tmpdir_stub.path, &mut realpath_buf[..], &[tmp_path.as_bytes()]
             );
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
@@ -1057,15 +1060,14 @@ pub mod package_manifest {
                 let guard = CloseOnDrop::file(&file);
 
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
-                let cache_path_abs = bun_paths::join_abs_string_buf_z(
-                    cache_dir_abs,
-                    &mut realpath2_buf,
-                    &[cache_dir_abs, outpath.as_bytes()],
-                    bun_paths::Style::Auto,
+                let cache_path_abs = bun_paths::resolve_path::join_abs_string_buf_z::<
+                    bun_paths::platform::Auto,
+                >(
+                    cache_dir_abs, &mut realpath2_buf[..], &[cache_dir_abs, outpath.as_bytes()]
                 );
                 let _ = guard.into_inner();
                 file.close();
-                bun_sys::renameat(Fd::cwd(), path_to_use_for_opening_file, Fd::cwd(), cache_path_abs).unwrap()?;
+                bun_sys::renameat(Fd::cwd(), path_to_use_for_opening_file, Fd::cwd(), cache_path_abs)?;
                 return Ok(());
             }
 

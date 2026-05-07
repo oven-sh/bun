@@ -30,6 +30,10 @@ use bun_event_loop::{task_tag, Task, TaskTag};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 
+// `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
+// `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
+// where libuv drives I/O readiness directly).
+#[cfg(not(windows))]
 use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
 
 use bun_event_loop::EventLoopTimer::{
@@ -640,6 +644,7 @@ pub fn tick_queue_with_count(
 /// # Safety
 /// `poll` must point at a live [`FilePoll`] for the duration of the call
 /// (guaranteed by `FilePoll::on_update`, the only caller).
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.

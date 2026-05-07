@@ -73,7 +73,7 @@ pub struct IoCounters {
 
 #[cfg(windows)]
 unsafe extern "system" {
-    fn GetProcessIoCounters(handle: bun_sys::windows::HANDLE, counters: *mut IoCounters) -> c_int;
+    fn GetProcessIoCounters(handle: bun_sys::windows::HANDLE, counters: *mut IoCounters) -> core::ffi::c_int;
 }
 
 #[cfg(windows)]
@@ -122,7 +122,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
+    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
 
     usage_info
 }

@@ -2506,12 +2506,13 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // TODO(port): std.posix.getcwd → bun_sys::getcwd
-                    let cwd = bun_sys::getcwd(buf)?;
-                    debug_assert!(cwd.as_ptr() == buf.as_ptr());
-                    let source_root = windows_filesystem_root(cwd);
-                    debug_assert!(source_root.as_ptr() == source_root.as_ptr());
-                    let sr_len = source_root.len();
+                    // PORT NOTE: reshaped for borrowck — `getcwd` writes into
+                    // `buf` and returns a borrow of it; capture the lengths we
+                    // need, drop the borrow, then re-slice `buf`.
+                    let sr_len = {
+                        let cwd = bun_core::getcwd(buf)?;
+                        windows_filesystem_root(cwd.as_bytes()).len()
+                    };
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2541,11 +2542,11 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    let cwd = bun_sys::getcwd(buf)?;
-                    debug_assert!(cwd.as_ptr() == buf.as_ptr());
-                    let source_root = windows_filesystem_root(cwd);
-                    debug_assert!(source_root.as_ptr() == source_root.as_ptr());
-                    let sr_len = source_root.len();
+                    // PORT NOTE: reshaped for borrowck — see resolve_cwd above.
+                    let sr_len = {
+                        let cwd = bun_core::getcwd(buf)?;
+                        windows_filesystem_root(cwd.as_bytes()).len()
+                    };
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;

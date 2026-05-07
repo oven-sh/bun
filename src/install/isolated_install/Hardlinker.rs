@@ -2,23 +2,27 @@ use bun_alloc::AllocError;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
 // `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(.{ .sep = .auto, .unit = .os })`
-// take a comptime config struct in Zig. The Rust `Path` const-generics default
-// to `U = u8, sep = ANY`; the `.unit = .os` distinction only matters on
-// Windows (handled in the `#[cfg(windows)]` arm).
-use bun_paths::{AbsPath, OSPathSlice, Path};
+// take a comptime config struct in Zig. `.unit = .os` means u8 on POSIX, u16
+// on Windows — encoded here via the `OSPathChar` type alias so the struct's
+// `slice()`/`slice_z()` produce the platform-native width without per-field
+// `#[cfg]` divergence.
+use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
+
+type OsAbsPath = AbsPath<OSPathChar>;
+type OsPath = Path<OSPathChar>;
 
 pub struct Hardlinker {
     pub src_dir: Fd,
-    pub src: AbsPath,
-    pub dest: Path,
+    pub src: OsAbsPath,
+    pub dest: OsPath,
     pub walker: Walker,
 }
 
 impl Hardlinker {
     pub fn init(
         folder_dir: Fd,
-        src: AbsPath,
-        dest: Path,
+        src: OsAbsPath,
+        dest: OsPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
@@ -53,13 +57,20 @@ impl Hardlinker {
 
         #[cfg(windows)]
         {
-            let mut cwd_buf = bun_paths::w_path_buffer_pool().get();
-            let Ok(dest_cwd) = Fd::cwd().get_fd_path_w(&mut cwd_buf) else {
-                return Ok(sys::Result::Err(sys::Error::from_code(
-                    sys::E::EACCES,
-                    sys::Tag::link,
-                )));
+            let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
+            // PORT NOTE: Zig spelt `FD.cwd().getFdPathW(buf)`; the Rust `Fd`
+            // newtype lives in `bun_core` and has no sys-layer methods, so call
+            // the free fn.
+            let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
+                Ok(s) => &*s,
+                Err(_) => {
+                    return Ok(sys::Result::Err(sys::Error::from_code(
+                        sys::E::ACCES,
+                        sys::Tag::link,
+                    )));
+                }
             };
+            let dest_cwd_len = dest_cwd.len();
 
             loop {
                 let entry = match self.walker.next() {
@@ -83,36 +94,44 @@ impl Hardlinker {
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = Fd::cwd().make_path(self.dest.slice());
+                            let _ = sys::make_path::make_path::<u16>(
+                                sys::Dir::from_fd(Fd::cwd()),
+                                self.dest.slice(),
+                            );
                         }
                         EntryKind::File => {
-                            let mut destfile_path_buf = bun_paths::w_path_buffer_pool().get();
-                            let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool().get();
+                            let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
+                            let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
                             // `dest` may already be absolute (global virtual store
                             // entries live under the cache, not cwd); only prefix the
                             // working-directory path when it's project-relative.
-                            let dest_parts: &[&[u16]] = if self.dest.len() > 0
-                                && bun_paths::Platform::Windows
-                                    .is_absolute_t::<u16>(self.dest.slice())
+                            // PORT NOTE: borrowck — Zig held both `dest_cwd` and
+                            // `self.dest.slice()` simultaneously; here `dest_cwd`
+                            // borrows `cwd_buf` and `self.dest.slice()` borrows
+                            // `self`, which is fine, but stash the dest slice once
+                            // so the borrow doesn't span the buffer-mut below.
+                            let dest_slice: &[u16] = self.dest.slice();
+                            let dest_parts: &[&[u16]] = if !dest_slice.is_empty()
+                                && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
                             {
-                                &[self.dest.slice()]
+                                &[dest_slice]
                             } else {
-                                &[dest_cwd, self.dest.slice()]
+                                &[&cwd_buf[..dest_cwd_len], dest_slice]
                             };
+                            let joined = bun_paths::resolve_path::join_string_buf_w_same::<
+                                bun_paths::platform::Windows,
+                            >(
+                                &mut destfile_path_buf[..], dest_parts
+                            );
                             let destfile_path = bun_str::strings::add_nt_path_prefix_if_needed(
-                                &mut destfile_path_buf2,
-                                bun_paths::join_string_buf_wz(
-                                    &mut destfile_path_buf,
-                                    dest_parts,
-                                    bun_paths::Platform::Windows,
-                                ),
+                                &mut destfile_path_buf2[..],
+                                joined,
                             );
 
                             // Zig allocated `srcfile_path_buf` here but never used it;
                             // dropped in the port (dead code in the original).
-                            let _srcfile_path_buf = bun_paths::w_path_buffer_pool().get();
 
-                            match sys::link::<u16>(self.src.slice_z(), destfile_path) {
+                            match sys::link_w(self.src.slice_z(), destfile_path) {
                                 sys::Result::Ok(()) => {}
                                 sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                     sys::E::EEXIST => {
@@ -124,7 +143,7 @@ impl Hardlinker {
                                                     Default::default()
                                                 ),
                                                 bun_core::fmt::fmt_os_path(
-                                                    destfile_path,
+                                                    destfile_path.as_slice(),
                                                     Default::default()
                                                 ),
                                             );
@@ -132,11 +151,11 @@ impl Hardlinker {
 
                                         'try_delete: {
                                             let mut delete_tree_buf =
-                                                bun_paths::path_buffer_pool().get();
+                                                bun_paths::path_buffer_pool::get();
 
                                             let Ok(delete_tree_path) =
                                                 bun_str::strings::convert_utf16_to_utf8_in_buffer(
-                                                    &mut delete_tree_buf,
+                                                    &mut delete_tree_buf[..],
                                                     self.dest.slice(),
                                                 )
                                             else {
@@ -144,7 +163,7 @@ impl Hardlinker {
                                             };
                                             let _ = Fd::cwd().delete_tree(delete_tree_path);
                                         }
-                                        match sys::link::<u16>(self.src.slice_z(), destfile_path) {
+                                        match sys::link_w(self.src.slice_z(), destfile_path) {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(link_err2) => {
                                                 break 'body Some(link_err2);
@@ -160,7 +179,7 @@ impl Hardlinker {
                                                     Default::default()
                                                 ),
                                                 bun_core::fmt::fmt_os_path(
-                                                    destfile_path,
+                                                    destfile_path.as_slice(),
                                                     Default::default()
                                                 ),
                                             );
@@ -169,9 +188,12 @@ impl Hardlinker {
                                             break 'body Some(link_err1);
                                         };
 
-                                        let _ = Fd::cwd().make_path(dest_parent);
+                                        let _ = sys::make_path::make_path::<u16>(
+                                            sys::Dir::from_fd(Fd::cwd()),
+                                            dest_parent,
+                                        );
 
-                                        match sys::link::<u16>(self.src.slice_z(), destfile_path) {
+                                        match sys::link_w(self.src.slice_z(), destfile_path) {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(link_err2) => {
                                                 break 'body Some(link_err2);

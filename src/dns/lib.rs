@@ -11,6 +11,24 @@ use bun_string::String as BunString;
 // identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
 
+// `libc` does not expose winsock types/constants on Windows; route every
+// `libc::AF_*` / `addrinfo` / `sockaddr_*` reference through this shim so
+// the body of this crate stays cfg-free.
+#[cfg(not(windows))]
+mod sock {
+    pub use libc::{
+        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+    };
+}
+#[cfg(windows)]
+mod sock {
+    pub use bun_windows_sys::ws2_32::{
+        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+    };
+}
+
 // TODO(port): move to dns_sys / verify libc crate exposes these on all targets
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
@@ -100,7 +118,7 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn to_libc(&self) -> Option<libc::addrinfo> {
+    pub fn to_libc(&self) -> Option<sock::addrinfo> {
         if self.family == Family::Unspecified
             && self.socktype == SocketType::Unspecified
             && self.protocol == Protocol::Unspecified
@@ -109,8 +127,8 @@ impl Options {
             return None;
         }
 
-        // SAFETY: all-zero is a valid libc::addrinfo (C POD struct)
-        let mut hints: libc::addrinfo = unsafe { core::mem::zeroed() };
+        // SAFETY: all-zero is a valid sock::addrinfo (C POD struct)
+        let mut hints: sock::addrinfo = unsafe { core::mem::zeroed() };
 
         hints.ai_family = self.family.to_libc();
         hints.ai_socktype = self.socktype.to_libc();
@@ -184,9 +202,9 @@ impl Family {
     pub fn to_libc(self) -> i32 {
         match self {
             Family::Unspecified => 0,
-            Family::Inet => libc::AF_INET,
-            Family::Inet6 => libc::AF_INET6,
-            Family::Unix => libc::AF_UNIX,
+            Family::Inet => sock::AF_INET,
+            Family::Inet6 => sock::AF_INET6,
+            Family::Unix => sock::AF_UNIX,
         }
     }
 }
@@ -210,8 +228,8 @@ impl SocketType {
     pub fn to_libc(self) -> i32 {
         match self {
             SocketType::Unspecified => 0,
-            SocketType::Stream => libc::SOCK_STREAM,
-            SocketType::Dgram => libc::SOCK_DGRAM,
+            SocketType::Stream => sock::SOCK_STREAM,
+            SocketType::Dgram => sock::SOCK_DGRAM,
         }
     }
 }
@@ -251,8 +269,8 @@ impl Protocol {
     pub fn to_libc(self) -> i32 {
         match self {
             Protocol::Unspecified => 0,
-            Protocol::Tcp => libc::IPPROTO_TCP,
-            Protocol::Udp => libc::IPPROTO_UDP,
+            Protocol::Tcp => sock::IPPROTO_TCP,
+            Protocol::Udp => sock::IPPROTO_UDP,
         }
     }
 }
@@ -323,7 +341,7 @@ pub struct GetAddrInfoResult {
 pub type ResultList = Vec<GetAddrInfoResult>;
 
 pub enum ResultAny {
-    Addrinfo(*mut libc::addrinfo),
+    Addrinfo(*mut sock::addrinfo),
     List(ResultList),
 }
 
@@ -333,7 +351,7 @@ impl Drop for ResultAny {
             ResultAny::Addrinfo(addrinfo) => {
                 if !addrinfo.is_null() {
                     // SAFETY: addrinfo was allocated by C getaddrinfo (see LIFETIMES.tsv)
-                    unsafe { libc::freeaddrinfo(*addrinfo) };
+                    unsafe { sock::freeaddrinfo(*addrinfo) };
                 }
             }
             ResultAny::List(_list) => {
@@ -344,10 +362,10 @@ impl Drop for ResultAny {
 }
 
 impl GetAddrInfoResult {
-    pub fn to_list(addrinfo: &libc::addrinfo) -> Result<ResultList, AllocError> {
+    pub fn to_list(addrinfo: &sock::addrinfo) -> Result<ResultList, AllocError> {
         let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
 
-        let mut addr: *const libc::addrinfo = addrinfo;
+        let mut addr: *const sock::addrinfo = addrinfo;
         while !addr.is_null() {
             // SAFETY: addr is non-null, points into the getaddrinfo result chain
             let a = unsafe { &*addr };
@@ -361,14 +379,18 @@ impl GetAddrInfoResult {
         Ok(list)
     }
 
-    pub fn from_addr_info(addrinfo: &libc::addrinfo) -> Option<GetAddrInfoResult> {
+    pub fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
         let sockaddr = addrinfo.ai_addr;
         if sockaddr.is_null() {
             return None;
         }
         Some(GetAddrInfoResult {
-            // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
-            address: unsafe { Address::init_posix(sockaddr) },
+            // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
+            // getaddrinfo's contract. `.cast()` erases the nominal-type
+            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
+            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
+            // ws2def.h `SOCKADDR`.
+            address: unsafe { Address::init_posix(sockaddr.cast()) },
             // no TTL in POSIX getaddrinfo()
             ttl: 0,
         })
@@ -379,18 +401,18 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
     // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_sockaddr()
     // rather than .in/.in6/.un union views, so each arm casts the raw sockaddr.
     match address.family() {
-        libc::AF_INET => {
+        sock::AF_INET => {
             // SAFETY: family() == AF_INET, storage holds a sockaddr_in.
-            let v4 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in>() };
+            let v4 = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_in>() };
             let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
             Ok(BunString::create_format(format_args!(
                 "{}.{}.{}.{}",
                 bytes[0], bytes[1], bytes[2], bytes[3]
             )))
         }
-        libc::AF_INET6 => {
+        sock::AF_INET6 => {
             // SAFETY: family() == AF_INET6, storage holds a sockaddr_in6.
-            let v6 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in6>() };
+            let v6 = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_in6>() };
             // PERF(port): was stack-fallback alloc — profile in Phase B
             // PORT NOTE: Zig formatted via std.net.Address Display ("[addr]:port")
             // then sliced the brackets/port off ("TODO: this is a hack"). Here we
@@ -400,7 +422,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
             let p = unsafe {
                 bun_cares_sys::c_ares::ares_inet_ntop(
-                    libc::AF_INET6,
+                    sock::AF_INET6,
                     (&raw const v6.sin6_addr).cast(),
                     buf.as_mut_ptr(),
                     buf.len() as bun_cares_sys::c_ares::ares_socklen_t,
@@ -413,7 +435,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             Ok(BunString::clone_latin1(&buf[..len]))
         }
         #[cfg(unix)]
-        libc::AF_UNIX => {
+        sock::AF_UNIX => {
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
             let un = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_un>() };
             // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
@@ -429,9 +451,9 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
     }
 }
 
-pub fn addr_info_count(addrinfo: &libc::addrinfo) -> u32 {
+pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
     let mut count: u32 = 1;
-    let mut current: *mut libc::addrinfo = addrinfo.ai_next;
+    let mut current: *mut sock::addrinfo = addrinfo.ai_next;
     while !current.is_null() {
         // SAFETY: current is non-null, points into the getaddrinfo result chain
         let cur = unsafe { &*current };

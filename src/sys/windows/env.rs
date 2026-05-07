@@ -10,10 +10,10 @@ pub static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> =
     bun_core::RacyCell::new(None);
 /// `convert_env_to_wtf8` will set this to the original value of `std.os.environ`.
 // SAFETY: written exactly once at program startup before any threads are
-// spawned. Stored as a raw fat pointer (no `&mut` aliasing assertion); null
-// data-pointer means "unset".
-pub static ORIG_ENVIRON: bun_core::RacyCell<*mut [*mut c_char]> =
-    bun_core::RacyCell::new(core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0));
+// spawned. Stored as a raw (ptr, len) pair (no `&mut` aliasing assertion);
+// `None` means "unset".
+pub static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
+    bun_core::RacyCell::new(None);
 
 #[cfg(feature = "ci_assert")]
 static ENV_CONVERTED: core::sync::atomic::AtomicBool =
@@ -67,8 +67,10 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
         let wtf16_slice = unsafe { core::slice::from_raw_parts(wtf16_buf, len) };
-        break 'blk strings::to_utf8_alloc(wtf16_slice)?;
-        // TODO(port): Zig called `bun.strings.toUTF8AllocWithType`; confirm Rust fn name/signature in bun_str.
+        // Zig: `bun.strings.toUTF8AllocWithType(allocator, []u16, slice) catch oom()`.
+        // Rust `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
+        // and returns `Vec<u8>` directly — no `?` here.
+        break 'blk bun_core::strings::to_utf8_alloc(wtf16_slice);
     };
     let mut wtf8_buf = wtf8_buf.into_boxed_slice();
     let mut len: usize = 0;
@@ -92,13 +94,12 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let envp_slice = Box::leak(envp.into_boxed_slice());
     let envp_nonnull_len = envp_slice.len() - 1;
-    let envp_nonnull_slice = &mut envp_slice[0..envp_nonnull_len];
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
         WTF8_ENV_BUF.write(Some(Box::leak(wtf8_buf)));
         // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
-        *ORIG_ENVIRON.get() = bun_core::os::take_environ() as *mut [*mut c_char];
-        bun_core::os::set_environ(envp_nonnull_slice);
+        ORIG_ENVIRON.write(Some(bun_core::os::take_environ()));
+        bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
 
     #[cfg(feature = "ci_assert")]

@@ -40,7 +40,7 @@ fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(unix)]
     { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
     #[cfg(windows)]
-    { Timespec { sec: s.st_mtim.tv_sec as i64, nsec: s.st_mtim.tv_nsec as i64 } }
+    { Timespec { sec: s.mtim.sec as i64, nsec: s.mtim.nsec as i64 } }
 }
 
 impl StatHash {

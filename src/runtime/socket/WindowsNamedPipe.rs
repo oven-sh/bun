@@ -26,9 +26,13 @@ use bun_boringssl_sys as boringssl;
 use bun_collections::VecExt;
 use bun_core::timespec;
 use bun_io::{StreamingWriter, WriteStatus};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
@@ -432,6 +436,18 @@ impl WindowsNamedPipe {
         (self.handlers.deref_ctx)(self.handlers.ctx);
     }
 
+    /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
+    /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
+    /// `connect()`) and forwards to the safe `&mut self` body.
+    #[cfg(windows)]
+    unsafe extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
+        // SAFETY: `req` is the `&mut self.connect_req` we passed to
+        // `Pipe::connect`; `req->data` was set to `self as *mut Self` and the
+        // owning struct is kept alive by the `r#ref()` taken before the call.
+        let this = unsafe { (*req).data.cast::<Self>() };
+        unsafe { (*this).on_connect(status) };
+    }
+
     #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
         // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
@@ -507,19 +523,15 @@ impl WindowsNamedPipe {
         }
         #[cfg(windows)]
         {
-            let init_result = self
-                .pipe
+            self.pipe
                 .as_mut()
                 .unwrap()
-                .init(self.vm.uv_loop(), false);
-            if init_result.is_err() {
-                return init_result;
-            }
+                .init(self.vm.uv_loop(), false)
+                .to_result(bun_sys::Tag::pipe)?;
 
-            let open_result = server.accept(self.pipe.as_mut().unwrap());
-            if open_result.is_err() {
-                return open_result;
-            }
+            server
+                .accept(self.pipe.as_mut().unwrap())
+                .to_result(bun_sys::Tag::accept)?;
         }
 
         self.flags.set_disconnected(false);
@@ -552,19 +564,17 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        let init_result = self
-            .pipe
+        self.pipe
             .as_mut()
             .unwrap()
-            .init(self.vm.uv_loop(), false);
-        if init_result.is_err() {
-            return init_result;
-        }
+            .init(self.vm.uv_loop(), false)
+            .to_result(bun_sys::Tag::pipe)?;
 
-        let open_result = self.pipe.as_mut().unwrap().open(fd);
-        if open_result.is_err() {
-            return open_result;
-        }
+        self.pipe
+            .as_mut()
+            .unwrap()
+            .open(fd.uv())
+            .to_result(bun_sys::Tag::open)?;
 
         self.r#ref();
         Self::on_connect(self, uv::ReturnCode::ZERO);
@@ -588,27 +598,43 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        let init_result = self
-            .pipe
+        self.pipe
             .as_mut()
             .unwrap()
-            .init(self.vm.uv_loop(), false);
-        if init_result.is_err() {
-            return init_result;
-        }
+            .init(self.vm.uv_loop(), false)
+            .to_result(bun_sys::Tag::pipe)?;
 
-        self.connect_req.data = core::ptr::from_mut(self).cast::<c_void>();
-        let result = self.pipe.as_mut().unwrap().connect(
-            &mut self.connect_req,
-            path,
-            self,
-            Self::on_connect,
-        );
-        if result.as_err().is_some() {
-            return result;
+        // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
+        // context, and `&mut self.pipe` simultaneously (Zig: all `*T` alias freely).
+        // Derive `ctx` first via `addr_of_mut!` (no intermediate `&mut Self` retag),
+        // then project `req`/`pipe` *from `ctx`* so all three share one provenance
+        // root — taking `&mut self.connect_req` followed by `self as *mut Self`
+        // would pop `req`'s tag under Stacked Borrows. libuv only *stores* `ctx`
+        // here (no deref), so the brief field-level Unique borrows below don't
+        // invalidate the bytes the callback later reads.
+        let ctx: *mut Self = core::ptr::addr_of_mut!(*self);
+        // SAFETY: `ctx` is `self`; field projections are in-bounds and disjoint.
+        let req: *mut uv::uv_connect_t = unsafe { core::ptr::addr_of_mut!((*ctx).connect_req) };
+        unsafe { (*req).data = ctx.cast::<c_void>() };
+        // `pipe` lives in a separate heap allocation (`Box<uv::Pipe>`), so its
+        // bytes are outside `*self` and unaffected by the `req` projection.
+        let pipe: *mut uv::Pipe =
+            unsafe { (*ctx).pipe.as_mut().unwrap().as_mut() as *mut uv::Pipe };
+        // SAFETY: `req`/`pipe` are live disjoint fields of `*self`; libuv stashes
+        // `req`/`ctx` until the connect callback fires (this struct outlives that).
+        if let Some(err) = unsafe { &mut *pipe }
+            .connect(
+                unsafe { &mut *req },
+                path,
+                ctx.cast::<c_void>(),
+                Self::uv_on_connect,
+            )
+            .to_error(bun_sys::Tag::connect)
+        {
+            return Err(err);
         }
         self.r#ref();
-        result
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -902,6 +928,44 @@ impl WindowsNamedPipe {
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
         self.release_resources();
+    }
+}
+
+#[cfg(windows)]
+impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+        // SAFETY: BACKREF set via `set_parent`; shared-only read of `vm`.
+        unsafe { (*this).vm.uv_loop() }
+    }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_. Forwards to the embedding socket's refcount.
+        unsafe { &mut *this }.r#ref()
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_. May free the owning context.
+        unsafe { &mut *this }.deref()
+    }
+}
+
+#[cfg(windows)]
+impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
+    const HAS_ON_WRITABLE: bool = true;
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via `set_parent`; unique for the callback's
+        // duration (StreamingWriter never holds `&mut Parent`).
+        WindowsNamedPipe::on_write(unsafe { &mut *this }, amount, status)
+    }
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_error(unsafe { &mut *this }, err)
+    }
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_writable(unsafe { &mut *this })
+    }
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        WindowsNamedPipe::on_close(unsafe { &mut *this })
     }
 }
 

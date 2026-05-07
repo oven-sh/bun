@@ -96,10 +96,15 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
         })
     }
 
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is `*mut bun_uws::Loop`;
-        // cast through c_void to the sys-level handle.
-        unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_uws_sys::Loop>() }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is the
+        // platform's uws wrapper; on POSIX `bun_aio::Loop` *is* that wrapper
+        // (identity cast); on Windows project the embedded `uv_loop_t*`.
+        #[cfg(not(windows))]
+        { unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_aio::Loop>() } }
+        #[cfg(windows)]
+        // SAFETY: `loop_` is the live `us_loop`; `uv_loop` set once at init.
+        { unsafe { (*(*(*this).event_loop_ptr()).loop_).uv_loop } }
     }
 }
 
@@ -1133,7 +1138,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init(event_loop),
+                    loop_: EventLoopHandle::init_mini(event_loop),
+                    ..Default::default()
                 },
                 stream: true,
                 ..Default::default()

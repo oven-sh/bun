@@ -15,10 +15,13 @@ use bun_windows_sys as windows;
 use bun_windows_sys::externs as externs;
 
 use crate as bun_sys;
-use crate::{E, Fd, SystemErrno};
+use crate::{E, Fd, FdExt, MaybeExt, SystemErrno};
+use crate::bun_str;
 
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::kernel32::GetLastError;
+pub use bun_windows_sys::ws2_32;
+pub use bun_windows_sys::externs::SetFilePointerEx;
 
 /// `std.os.windows.kernel32` — re-exports the tier-0 `bun_windows_sys::kernel32`
 /// surface and layers the additional externs higher-tier crates reach for
@@ -27,9 +30,10 @@ pub use bun_windows_sys::kernel32::GetLastError;
 pub mod kernel32 {
     use core::ffi::c_void;
     use super::{
-        BOOL, DWORD, HANDLE, LPCWSTR, LPVOID, LPWSTR, PWSTR, ULONG_PTR,
+        BOOL, DWORD, HANDLE, LPCWSTR, LPVOID, LPWSTR, PWSTR, ULONG, ULONG_PTR,
         OVERLAPPED, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE,
         FileNotifyChangeFilter, STARTUPINFOW, PROCESS_INFORMATION,
+        SRWLOCK, CONDITION_VARIABLE,
     };
     pub use bun_windows_sys::kernel32::*;
     pub use bun_windows_sys::externs::SetEndOfFile;
@@ -83,10 +87,19 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
-        // ── SRW locks (`bun_threading::Mutex` windows arm) ──
-        pub fn AcquireSRWLockExclusive(SRWLock: *mut c_void);
-        pub fn ReleaseSRWLockExclusive(SRWLock: *mut c_void);
-        pub fn TryAcquireSRWLockExclusive(SRWLock: *mut c_void) -> u8;
+        // ── SRW locks / condition variables (`bun_threading` windows arm) ──
+        pub fn AcquireSRWLockExclusive(SRWLock: *mut SRWLOCK);
+        pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
+        // Returns BOOLEAN (u8), not BOOL — compare against 0, not FALSE.
+        pub fn TryAcquireSRWLockExclusive(SRWLock: *mut SRWLOCK) -> u8;
+        pub fn SleepConditionVariableSRW(
+            ConditionVariable: *mut CONDITION_VARIABLE,
+            SRWLock: *mut SRWLOCK,
+            dwMilliseconds: DWORD,
+            Flags: ULONG,
+        ) -> BOOL;
+        pub fn WakeConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
+        pub fn WakeAllConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
 
         // ── vectored exception handling (`bun_crash_handler`) ──
         pub fn AddVectoredExceptionHandler(
@@ -115,6 +128,7 @@ pub use bun_windows_sys::WCHAR;
 pub use bun_windows_sys::LPCSTR;
 pub use bun_windows_sys::PWSTR;
 pub use bun_windows_sys::FALSE;
+pub use bun_windows_sys::FILE_OPEN;
 pub use bun_windows_sys::TRUE;
 pub use bun_windows_sys::COORD;
 pub use bun_windows_sys::INVALID_HANDLE_VALUE;
@@ -138,6 +152,7 @@ pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
+pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
 pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SHARE_DELETE;
@@ -158,17 +173,65 @@ pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_WRITE_THROUGH;
 pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
+pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
+pub use bun_windows_sys::FILE_BASIC_INFORMATION;
+pub use bun_windows_sys::STANDARD_RIGHTS_READ;
+pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
+pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
+pub use bun_windows_sys::{
+    CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+};
+pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
+pub use bun_windows_sys::{
+    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
+    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_DIRECTORY,
+    SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
+};
 pub use bun_windows_sys::user32;
 pub use bun_windows_sys::advapi32;
+// Stdio handle helpers (live in `bun_core::windows_sys` so the no-dep core can
+// resolve PEB stdio at startup; re-export here for the `sys::windows::*` path).
+pub use bun_core::windows_sys::{GetStdHandle, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+
+/// `std.os.windows.fromSysTime` — convert a 64-bit Windows `FILETIME`
+/// (100-ns intervals since 1601-01-01 UTC, as projected in
+/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
+/// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
+/// `bun_core::time::nano_timestamp()` reports.
+///
+/// Spec (vendor/zig std/os/windows.zig `fromSysTime`):
+/// `(hns + epoch.windows * (ns_per_s/100)) * 100` where `epoch.windows` is
+/// `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
+/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
+#[inline]
+pub const fn from_sys_time(nt_time: i64) -> i128 {
+    /// `std.time.epoch.windows * (std.time.ns_per_s / 100)` — the
+    /// 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
+    const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
+    (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
+}
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
 pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16, b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16];
 pub const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+
+/// `std.mem.len` for `[*:0]const u16` — count code units up to (excluding) the
+/// terminating NUL. Windows-only helper for places that received an LPCWSTR
+/// from a C API and need the length to slice it.
+///
+/// SAFETY: `p` must be non-null and point to a NUL-terminated UTF-16 string.
+#[inline]
+pub unsafe fn wcslen(p: *const u16) -> usize {
+    let mut n = 0usize;
+    // SAFETY: caller guarantees NUL-termination
+    while unsafe { *p.add(n) } != 0 { n += 1; }
+    n
+}
 
 pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
@@ -193,6 +256,25 @@ pub type ULONG_PTR = usize;
 pub type HRESULT = i32;
 /// `WaitForSingleObject` infinite timeout sentinel.
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
+
+// ── SRWLOCK / CONDITION_VARIABLE (`bun_threading` windows arm) ────────────
+// Win32 defines both as `struct { PVOID Ptr; }`; static-init is all-zero
+// (`SRWLOCK_INIT` / `CONDITION_VARIABLE_INIT`).
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct SRWLOCK { pub ptr: *mut c_void }
+pub const SRWLOCK_INIT: SRWLOCK = SRWLOCK { ptr: ptr::null_mut() };
+impl Default for SRWLOCK { fn default() -> Self { SRWLOCK_INIT } }
+
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct CONDITION_VARIABLE { pub ptr: *mut c_void }
+pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE { ptr: ptr::null_mut() };
+impl Default for CONDITION_VARIABLE { fn default() -> Self { CONDITION_VARIABLE_INIT } }
+
+// `ntdll` is re-exported from `bun_windows_sys` above; the futex primitives
+// (`RtlWaitOnAddress` / `RtlWakeAddress*`) live there so this crate doesn't
+// shadow the canonical module.
 /// `S_OK` — success `HRESULT`.
 pub const S_OK: HRESULT = 0;
 /// Extract the Win32 facility code from an `HRESULT` (`winerror.h` macro).
@@ -318,7 +400,7 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
     // SAFETY: hFile is a valid HANDLE owned by caller
     let rc = unsafe { GetFileType_raw(hFile) };
     if cfg!(feature = "debug_logs") {
-        bun_sys::syslog!("GetFileType({}) = {}", Fd::from_native(hFile), rc);
+        bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
     }
     rc
 }
@@ -3185,13 +3267,16 @@ impl Win32Error {
             return Ok(());
         }
         if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error());
+            return Err(err.to_error().into());
         }
         Ok(())
     }
 
     pub fn to_system_errno(self) -> Option<SystemErrno> {
-        SystemErrno::init(self)
+        // `bun_errno::Win32Error` and this newtype share the same `(pub u16)` repr;
+        // route through the errno-crate type since `SystemErrnoInit` is only
+        // implemented there.
+        SystemErrno::init_win32_error(bun_errno::Win32Error(self.0))
     }
 
     pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
@@ -3202,13 +3287,108 @@ impl Win32Error {
 
 pub use bun_libuv_sys as libuv;
 
+/// Port of Zig `bun.windows.libuv.translateUVErrorToE` (libuv.zig:2776). Lives
+/// here (not in `bun_libuv_sys`) because the table needs `bun_errno::E`, which
+/// would create a layering cycle from the leaf binding crate.
+pub fn translate_uv_error_to_e(code_in: c_int) -> E {
+    use bun_libuv_sys::*;
+    match code_in {
+        UV_EPERM => E::PERM,
+        UV_ENOENT => E::NOENT,
+        UV_ESRCH => E::SRCH,
+        UV_EINTR => E::INTR,
+        UV_EIO => E::IO,
+        UV_ENXIO => E::NXIO,
+        UV_E2BIG => E::_2BIG,
+        UV_ENOEXEC => E::NOEXEC,
+        UV_EBADF => E::BADF,
+        UV_EAGAIN => E::AGAIN,
+        UV_ENOMEM => E::NOMEM,
+        UV_EACCES => E::ACCES,
+        UV_EFAULT => E::FAULT,
+        UV_EBUSY => E::BUSY,
+        UV_EEXIST => E::EXIST,
+        UV_EXDEV => E::XDEV,
+        UV_ENODEV => E::NODEV,
+        UV_ENOTDIR => E::NOTDIR,
+        UV_EISDIR => E::ISDIR,
+        UV_EINVAL => E::INVAL,
+        UV_ENFILE => E::NFILE,
+        UV_EMFILE => E::MFILE,
+        UV_ENOTTY => E::NOTTY,
+        UV_EFTYPE => E::FTYPE,
+        UV_ETXTBSY => E::TXTBSY,
+        UV_EFBIG => E::FBIG,
+        UV_ENOSPC => E::NOSPC,
+        UV_ESPIPE => E::SPIPE,
+        UV_EROFS => E::ROFS,
+        UV_EMLINK => E::MLINK,
+        UV_EPIPE => E::PIPE,
+        UV_ERANGE => E::RANGE,
+        UV_ENAMETOOLONG => E::NAMETOOLONG,
+        UV_ENOSYS => E::NOSYS,
+        UV_ENOTEMPTY => E::NOTEMPTY,
+        UV_ELOOP => E::LOOP,
+        UV_EUNATCH => E::UNATCH,
+        UV_ENODATA => E::NODATA,
+        UV_ENONET => E::NONET,
+        UV_EPROTO => E::PROTO,
+        UV_EOVERFLOW => E::OVERFLOW,
+        UV_EILSEQ => E::ILSEQ,
+        UV_ENOTSOCK => E::NOTSOCK,
+        UV_EDESTADDRREQ => E::DESTADDRREQ,
+        UV_EMSGSIZE => E::MSGSIZE,
+        UV_EPROTOTYPE => E::PROTOTYPE,
+        UV_ENOPROTOOPT => E::NOPROTOOPT,
+        UV_EPROTONOSUPPORT => E::PROTONOSUPPORT,
+        UV_ESOCKTNOSUPPORT => E::SOCKTNOSUPPORT,
+        UV_ENOTSUP => E::NOTSUP,
+        UV_EAFNOSUPPORT => E::AFNOSUPPORT,
+        UV_EADDRINUSE => E::ADDRINUSE,
+        UV_EADDRNOTAVAIL => E::ADDRNOTAVAIL,
+        UV_ENETDOWN => E::NETDOWN,
+        UV_ENETUNREACH => E::NETUNREACH,
+        UV_ECONNABORTED => E::CONNABORTED,
+        UV_ECONNRESET => E::CONNRESET,
+        UV_ENOBUFS => E::NOBUFS,
+        UV_EISCONN => E::ISCONN,
+        UV_ENOTCONN => E::NOTCONN,
+        UV_ESHUTDOWN => E::SHUTDOWN,
+        UV_ETIMEDOUT => E::TIMEDOUT,
+        UV_ECONNREFUSED => E::CONNREFUSED,
+        UV_EHOSTDOWN => E::HOSTDOWN,
+        UV_EHOSTUNREACH => E::HOSTUNREACH,
+        UV_EALREADY => E::ALREADY,
+        UV_EREMOTEIO => E::REMOTEIO,
+        UV_ECANCELED => E::CANCELED,
+        UV_ECHARSET => E::CHARSET,
+        UV_EOF => E::EOF,
+        UV_UNKNOWN => E::UNKNOWN,
+        // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
+        // libuv codes not explicitly mapped above (e.g. Windows-specific -4000s)
+        // are tried as `E` discriminants, falling back to UNKNOWN.
+        // Zig spec: `std.meta.intToEnum(bun.sys.E, -%code) catch .UNKNOWN` —
+        // a CHECKED tag lookup. `E` is sparse (dense 0..=137, then isolated
+        // UV_* in 3000–4095), so `from_raw` (transmute) on an unmapped value
+        // would be UB; use the checked `try_from_raw`.
+        other => u16::try_from(other.wrapping_neg())
+            .ok()
+            .and_then(E::try_from_raw)
+            .unwrap_or(E::UNKNOWN),
+    }
+}
+
 pub use bun_windows_sys::externs::GetProcAddress;
 
 pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_str::ZStr) -> Option<*mut c_void> {
-    let mut wbuf: [u16; 2048] = [0; 2048];
-    // SAFETY: wbuf is large enough; toWPath NUL-terminates
-    let wpath = bun_str::strings::to_w_path(&mut wbuf, utf8.as_bytes());
-    unsafe { GetProcAddress(ptr, wpath.as_ptr()) }
+    let module = ptr.unwrap_or(core::ptr::null_mut());
+    // Win32 `GetProcAddress` takes `LPCSTR` (narrow ANSI, NUL-terminated). The
+    // symbol name is already a NUL-terminated byte string — pass it through
+    // directly. (Widening to UTF-16 would terminate after the first WCHAR's
+    // 0x00 high byte and resolve nothing.)
+    // SAFETY: `utf8` is NUL-terminated; `module` may be null (yields null sym).
+    let sym = unsafe { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
+    if sym.is_null() { None } else { Some(sym) }
 }
 
 pub use bun_windows_sys::externs::LoadLibraryA;
@@ -3239,13 +3419,13 @@ pub fn CreateHardLinkW(
     #[cfg(debug_assertions)]
     {
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let new_w = unsafe { bun_str::WStr::from_ptr_nul(new_file_name) };
+        let new_w = unsafe { core::slice::from_raw_parts(new_file_name, wcslen(new_file_name)) };
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let existing_w = unsafe { bun_str::WStr::from_ptr_nul(existing_file_name) };
+        let existing_w = unsafe { core::slice::from_raw_parts(existing_file_name, wcslen(existing_file_name)) };
         bun_sys::syslog!(
             "CreateHardLinkW({}, {}) = {}",
-            bun_core::fmt::fmt_os_path(new_w, Default::default()),
-            bun_core::fmt::fmt_os_path(existing_w, Default::default()),
+            bun_core::fmt::utf16(new_w),
+            bun_core::fmt::utf16(existing_w),
             if rc == 0 { Win32Error::get().0 } else { 0 },
         );
     }
@@ -3264,8 +3444,33 @@ pub fn get_last_errno() -> E {
 }
 
 pub fn get_last_error() -> bun_core::Error {
-    bun_core::errno_to_zig_err(get_last_errno())
+    bun_core::errno_to_zig_err(get_last_errno() as i32)
 }
+
+/// Zig: `std.os.windows.kernel32.GetLastError()` as `Win32Error` — raw
+/// `DWORD` error truncated to the documented 16-bit code space. Callers that
+/// want the POSIX-style `bun_core::Error` should use [`get_last_error`].
+#[inline]
+pub fn get_last_win32_error() -> Win32Error {
+    // SAFETY: GetLastError has no preconditions.
+    Win32Error(unsafe { kernel32::GetLastError() } as u16)
+}
+
+/// Zig: `@tagName(bun.windows.getLastError())` — for `Output.debug` only.
+#[inline]
+pub fn get_last_error_tag() -> impl core::fmt::Display {
+    // `Win32Error` derives `Debug`; route through that for a printable token.
+    struct D(Win32Error);
+    impl core::fmt::Display for D {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    D(get_last_win32_error())
+}
+
+/// `bun.windows.Error` — Zig alias for `Win32Error`.
+pub type Error = Win32Error;
 
 pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     use bun_windows_sys::ntstatus::*;
@@ -3286,23 +3491,20 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
         DELETE_PENDING => E::BUSY,
         SHARING_VIOLATION => {
             #[cfg(debug_assertions)]
-            bun_core::Output::debug_warn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", &[]);
+            bun_core::Output::debug_warn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE");
             E::BUSY
         }
         OBJECT_NAME_INVALID => {
             #[cfg(debug_assertions)]
-            {
-                bun_core::Output::debug_warn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", &[]);
-                crate::dump_stack_trace(None, 10, false);
-            }
+            bun_core::Output::debug_warn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.");
             E::INVAL
         }
         t => {
             #[cfg(debug_assertions)]
-            {
-                bun_core::Output::warn!("Called translateNTStatusToErrno with {} which does not have a mapping to errno.", <&'static str>::from(t));
-                crate::dump_stack_trace(None, 10, false);
-            }
+            bun_core::Output::debug_warn(format_args!(
+                "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
+                t
+            ));
             let _ = t;
             E::UNKNOWN
         }
@@ -3313,6 +3515,36 @@ pub use bun_windows_sys::externs::GetHostNameW;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
+
+/// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
+/// the underlying call has no preconditions and never fails.
+#[inline]
+pub fn GetCurrentProcessId() -> DWORD {
+    unsafe extern "system" {
+        fn GetCurrentProcessId() -> DWORD;
+    }
+    // SAFETY: no preconditions; reads thread-local kernel state.
+    unsafe { GetCurrentProcessId() }
+}
+
+/// `CONTEXT` (winnt.h) — full processor context captured by
+/// `RtlCaptureContext`. Declared as an arch-sized opaque aligned blob so this
+/// crate doesn't need to mirror the (large, arch-specific) field layout; the
+/// only consumer (`btjs::ThreadContext`) treats it as opaque storage and
+/// passes `*mut CONTEXT` straight back to ntdll.
+#[repr(C, align(16))]
+pub struct CONTEXT {
+    // x64: 1232 bytes; ARM64: 912 bytes. Use the larger so the buffer is
+    // always sufficient regardless of `target_arch`.
+    _opaque: [u8; 1232],
+}
+pub mod ntdll_context {
+    unsafe extern "system" {
+        /// `RtlCaptureContext` (winnt.h / ntdll.dll). Writes the calling
+        /// thread's register state into `*ContextRecord`.
+        pub fn RtlCaptureContext(ContextRecord: *mut super::CONTEXT);
+    }
+}
 
 pub use bun_windows_sys::externs::CreateJobObjectA;
 
@@ -3386,21 +3618,25 @@ pub use bun_windows_sys::externs::OpenProcess;
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
 pub fn exe_path_w() -> &'static bun_str::WStr {
-    // SAFETY: PEB ImagePathName is valid for the lifetime of the process
+    // SAFETY: PEB ImagePathName is valid for the lifetime of the process.
+    // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
+    // not `bun_windows_sys`.
     unsafe {
-        let image_path = &(*win32::peb()).ProcessParameters.ImagePathName;
+        let image_path = &bun_core::windows_sys::peb().ProcessParameters.ImagePathName;
         let len = (image_path.Length as usize) / 2;
         bun_str::WStr::from_raw(image_path.Buffer, len)
     }
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union KEY_EVENT_RECORD_uChar {
     pub UnicodeChar: WCHAR,
     pub AsciiChar: CHAR,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct KEY_EVENT_RECORD {
     pub bKeyDown: BOOL,
     pub wRepeatCount: WORD,
@@ -3411,6 +3647,7 @@ pub struct KEY_EVENT_RECORD {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MOUSE_EVENT_RECORD {
     pub dwMousePosition: COORD,
     pub dwButtonState: COORD,
@@ -3419,16 +3656,19 @@ pub struct MOUSE_EVENT_RECORD {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct WINDOW_BUFFER_SIZE_EVENT {
     pub dwSize: COORD,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MENU_EVENT_RECORD {
     pub dwCommandId: UINT,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct FOCUS_EVENT_RECORD {
     pub bSetFocus: BOOL,
 }
@@ -3470,7 +3710,7 @@ pub fn user_unique_id() -> u32 {
         return 0;
     }
     let name = &buf[0..size as usize];
-    bun_output::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
+    bun_core::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
     // SAFETY: u16 slice -> byte slice
     let bytes = unsafe { core::slice::from_raw_parts(name.as_ptr().cast::<u8>(), name.len() * 2) };
     bun_wyhash::hash32(bytes)
@@ -3576,9 +3816,9 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
         W::WSA_QOS_ESHAPERATEOBJ => "WSA_QOS_ESHAPERATEOBJ",
         W::WSA_QOS_RESERVED_PETYPE => "WSA_QOS_RESERVED_PETYPE",
         t => {
-            if (t as u16) != 0 {
+            if t.0 != 0 {
                 #[cfg(debug_assertions)]
-                bun_core::Output::debug_warn!("Unknown WinSockError: {}", t as u16);
+                bun_core::Output::debug_warn(format_args!("Unknown WinSockError: {}", t.0));
             }
             return Ok(());
         }
@@ -3586,9 +3826,10 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
     Err(bun_core::Error::intern(tag))
 }
 
-pub fn WSAGetLastError() -> Option<SystemErrno> {
+pub fn WSAGetLastError() -> Option<E> {
     // SAFETY: ws2_32 is loaded
     SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).expect("int cast"))
+        .map(SystemErrno::to_e)
 }
 
 // BOOL CreateDirectoryExW(
@@ -3639,7 +3880,7 @@ pub fn GetFinalPathNameByHandle(
 
     bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {}", hFile, bun_core::fmt::utf16(ret));
 
-    if bun_str::strings::has_prefix_comptime_type_u16(ret, &LONG_PATH_PREFIX) {
+    if bun_str::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = &mut ret[4..];
         if bun_str::strings::has_prefix_comptime_utf16(ret, b"UNC\\") {
@@ -3660,7 +3901,9 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     let rc = unsafe {
         externs::GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            addr as *const u16,
+            // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
+            // the module" — typed as LPCWSTR but really an opaque pointer.
+            addr as *mut c_void,
             &mut module,
         )
     };
@@ -3797,7 +4040,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     if need_fallback {
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        let mut file_dispo = windows::FILE_DISPOSITION_INFORMATION { DeleteFile: TRUE };
+        let mut file_dispo = windows::FILE_DISPOSITION_INFORMATION { DeleteFile: TRUE as BOOLEAN };
 
         // SAFETY: tmp_handle and io are valid
         rc = unsafe {
@@ -3819,11 +4062,66 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 pub const MS_VC_EXCEPTION: u32 = 0x406d1388;
+
+// `STATUS_*` values surfaced as `ExceptionCode` (winnt.h).
+pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
+pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
+pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
+pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+
+/// `EXCEPTION_RECORD` (winnt.h).
+#[repr(C)]
+pub struct EXCEPTION_RECORD {
+    pub ExceptionCode: u32,
+    pub ExceptionFlags: u32,
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    pub ExceptionAddress: *mut core::ffi::c_void,
+    pub NumberParameters: u32,
+    pub ExceptionInformation: [usize; 15],
+}
+/// `EXCEPTION_POINTERS` (winnt.h) — passed to vectored handlers.
+#[repr(C)]
+pub struct EXCEPTION_POINTERS {
+    pub ExceptionRecord: *mut EXCEPTION_RECORD,
+    /// `PCONTEXT` — opaque here (arch-specific 1232-byte blob on x64).
+    pub ContextRecord: *mut core::ffi::c_void,
+}
+
+/// Zig `windows_c.zig::detectRuntimeVersion` — best-effort `major.build`
+/// string from `RtlGetVersion`. Zig writes into a static buffer (zero-alloc);
+/// mirror that with a `OnceLock<String>` so the per-call allocation goes away
+/// after the first call.
+pub fn detect_runtime_version() -> &'static str {
+    #[repr(C)]
+    struct OSVERSIONINFOW {
+        dwOSVersionInfoSize: u32,
+        dwMajorVersion: u32,
+        dwMinorVersion: u32,
+        dwBuildNumber: u32,
+        dwPlatformId: u32,
+        szCSDVersion: [u16; 128],
+    }
+    unsafe extern "system" {
+        fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
+    }
+    static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        // SAFETY: out-param fully written by RtlGetVersion when it returns 0.
+        let mut info: OSVERSIONINFOW = unsafe { core::mem::zeroed() };
+        info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
+        // SAFETY: `info` is a valid out-pointer.
+        if unsafe { RtlGetVersion(&mut info) } != 0 {
+            return std::string::String::from("unknown");
+        }
+        std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
+    })
+}
 
 #[repr(C)]
 pub struct STARTUPINFOEXW {
-    pub StartupInfo: win32::STARTUPINFOW,
+    pub StartupInfo: STARTUPINFOW,
     pub lpAttributeList: *mut u8,
 }
 
@@ -3865,13 +4163,19 @@ pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> R
     if unsafe { externs::SetFilePointerEx(fd.handle.cast(), PE_HEADER_OFFSET_LOCATION, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
-    // TODO(port): fd.reader().readInt(u32, .little)
-    let offset: u32 = fd.reader().read_int_le::<u32>()?;
+    // Zig: `fd.reader().readInt(u32, .little)` — read exactly 4 bytes.
+    let mut off_bytes = [0u8; 4];
+    let n = fd.read(&mut off_bytes).map_err(bun_core::Error::from)?;
+    if n != 4 { return Err(bun_core::err!("EndOfStream")); }
+    let offset: u32 = u32::from_le_bytes(off_bytes);
     // SAFETY: fd.handle is a valid Windows HANDLE
     if unsafe { externs::SetFilePointerEx(fd.handle.cast(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
-    fd.writer().write_int_le::<u16>(subsystem as u16)?;
+    // Zig: `fd.writer().writeInt(u16, ..., .little)` — write exactly 2 bytes.
+    let sub_bytes = (subsystem as u16).to_le_bytes();
+    let n = fd.write(&sub_bytes).map_err(bun_core::Error::from)?;
+    if n != 2 { return Err(bun_core::err!("ShortWrite")); }
     Ok(())
 }
 
@@ -3890,6 +4194,12 @@ pub mod rescle {
             description: *const u16,   // description (nullable)
             copyright: *const u16,     // copyright (nullable)
         ) -> c_int;
+    }
+
+    impl From<RescleError> for bun_core::Error {
+        fn from(e: RescleError) -> Self {
+            bun_core::Error::from_name(<&'static str>::from(&e))
+        }
     }
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -3961,7 +4271,7 @@ pub mod rescle {
         // Icon is a path, so use toWPathNormalized with proper buffer handling
         let mut icon_buf = bun_paths::WPathBuffer::uninit();
         let icon_w: Option<&bun_str::WStr> = if let Some(i) = icon {
-            let path_w = bun_str::strings::to_w_path_normalized(&mut icon_buf, i);
+            let path_w = bun_str::strings::paths::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
             let len = path_w.len();
             let buf_u16 = icon_buf.as_mut_slice();
@@ -4019,6 +4329,40 @@ pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::CreateDirectoryW;
 pub use bun_windows_sys::externs::SetEndOfFile;
 pub use bun_windows_sys::externs::GetProcessTimes;
+
+/// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PROCESS_MEMORY_COUNTERS {
+    pub cb: DWORD,
+    pub PageFaultCount: DWORD,
+    pub PeakWorkingSetSize: usize,
+    pub WorkingSetSize: usize,
+    pub QuotaPeakPagedPoolUsage: usize,
+    pub QuotaPagedPoolUsage: usize,
+    pub QuotaPeakNonPagedPoolUsage: usize,
+    pub QuotaNonPagedPoolUsage: usize,
+    pub PagefileUsage: usize,
+    pub PeakPagefileUsage: usize,
+}
+
+/// `std.os.windows.GetProcessMemoryInfo` — psapi `K32GetProcessMemoryInfo`
+/// (kernel32 hosts the K32* shims since Windows 7, no separate psapi.lib).
+pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, Win32Error> {
+    unsafe extern "system" {
+        fn K32GetProcessMemoryInfo(
+            hProcess: HANDLE,
+            ppsmemCounters: *mut PROCESS_MEMORY_COUNTERS,
+            cb: DWORD,
+        ) -> BOOL;
+    }
+    let mut out = PROCESS_MEMORY_COUNTERS { cb: size_of::<PROCESS_MEMORY_COUNTERS>() as DWORD, ..Default::default() };
+    // SAFETY: out is a valid out-param sized by `cb`.
+    if unsafe { K32GetProcessMemoryInfo(process, &mut out, out.cb) } == 0 {
+        return Err(Win32Error::get());
+    }
+    Ok(out)
+}
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
@@ -4096,7 +4440,7 @@ pub fn is_watcher_child() -> bool {
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
     // SAFETY: all-zero is a valid PROCESS_INFORMATION
-    let mut procinfo: win32::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
+    let mut procinfo: PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
     // SAFETY: FFI call has no input invariants; mutates process-global stdio inheritance flags
     unsafe { externs::windows_enable_stdio_inheritance() };
     // SAFETY: null args allowed
@@ -4104,10 +4448,10 @@ pub fn become_watcher_manager() -> ! {
     if job.is_null() {
         // SAFETY: GetLastError has no preconditions
         let err = unsafe { kernel32::GetLastError() };
-        bun_core::Output::panic!(
+        bun_core::Output::panic(format_args!(
             "Could not create watcher Job Object: {}",
-            <&'static str>::from(err)
-        );
+            err
+        ));
     }
     // SAFETY: all-zero is valid for this C struct
     let mut jeli: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { core::mem::zeroed() };
@@ -4128,10 +4472,10 @@ pub fn become_watcher_manager() -> ! {
     {
         // SAFETY: GetLastError has no preconditions
         let err = unsafe { kernel32::GetLastError() };
-        bun_core::Output::panic!(
+        bun_core::Output::panic(format_args!(
             "Could not configure watcher Job Object: {}",
-            <&'static str>::from(err)
-        );
+            err
+        ));
     }
 
     loop {
@@ -4140,13 +4484,13 @@ pub fn become_watcher_manager() -> ! {
             if err == bun_core::err!("Win32Error") {
                 // SAFETY: GetLastError has no preconditions
                 let last = unsafe { GetLastError() };
-                bun_core::Output::panic!("Failed to spawn process: {}\n", <&'static str>::from(last));
+                bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", last));
             }
-            bun_core::Output::panic!("Failed to spawn process: {}\n", err.name());
+            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
         }
         // SAFETY: hProcess valid
         if let Err(err) = unsafe { win32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) } {
-            bun_core::Output::panic!("Failed to wait for child process: {}\n", err.name());
+            bun_core::Output::panic(format_args!("Failed to wait for child process: {}\n", err.0));
         }
         let mut exit_code: DWORD = 0;
         // SAFETY: hProcess valid, exit_code is out-param
@@ -4155,7 +4499,7 @@ pub fn become_watcher_manager() -> ! {
             let err = unsafe { GetLastError() };
             // SAFETY: hProcess owned by this fn; closing on error path
             unsafe { let _ = externs::NtClose(procinfo.hProcess); }
-            bun_core::Output::panic!("Failed to get exit code of child process: {}\n", <&'static str>::from(err));
+            bun_core::Output::panic(format_args!("Failed to get exit code of child process: {}\n", err));
         }
         // SAFETY: hProcess owned by this fn
         unsafe { let _ = externs::NtClose(procinfo.hProcess); }
@@ -4170,7 +4514,7 @@ pub fn become_watcher_manager() -> ! {
 }
 
 pub fn spawn_watcher_child(
-    procinfo: &mut win32::PROCESS_INFORMATION,
+    procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
 ) -> Result<(), bun_core::Error> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
@@ -4199,7 +4543,10 @@ pub fn spawn_watcher_child(
         return Err(bun_core::err!("Win32Error"));
     }
 
-    let flags = win32::CreateProcessFlags { create_unicode_environment: true, extended_startupinfo_present: true, ..Default::default() };
+    // Zig used a packed bitflag struct (`win32.CreateProcessFlags`); the Rust
+    // win32 layer exposes these as DWORD constants — assemble the raw mask.
+    const CREATE_UNICODE_ENVIRONMENT: DWORD = 0x00000400;
+    let flags: DWORD = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
     let image_path = exe_path_w();
     let mut wbuf = bun_paths::WPathBuffer::uninit();
@@ -4248,7 +4595,7 @@ pub fn spawn_watcher_child(
     envbuf[size + WATCHER_CHILD_ENV.len() + 3] = 0;
 
     let mut startupinfo = STARTUPINFOEXW {
-        StartupInfo: win32::STARTUPINFOW {
+        StartupInfo: STARTUPINFOW {
             cb: size_of::<STARTUPINFOEXW>() as u32,
             lpReserved: ptr::null_mut(),
             lpDesktop: ptr::null_mut(),
@@ -4272,7 +4619,7 @@ pub fn spawn_watcher_child(
         lpAttributeList: p.as_mut_ptr(),
     };
     // SAFETY: procinfo is POD
-    unsafe { ptr::write_bytes(core::ptr::from_mut(procinfo).cast::<u8>(), 0, size_of::<win32::PROCESS_INFORMATION>()); }
+    unsafe { ptr::write_bytes(core::ptr::from_mut(procinfo).cast::<u8>(), 0, size_of::<PROCESS_INFORMATION>()); }
     // SAFETY: all pointers valid; envbuf double-NUL terminated
     let rc = unsafe {
         kernel32::CreateProcessW(
@@ -4284,7 +4631,7 @@ pub fn spawn_watcher_child(
             flags,
             envbuf.as_mut_ptr().cast::<c_void>(),
             ptr::null(),
-            core::ptr::from_mut(&mut startupinfo).cast::<win32::STARTUPINFOW>(),
+            core::ptr::from_mut(&mut startupinfo).cast::<STARTUPINFOW>(),
             procinfo,
         )
     };
@@ -4310,17 +4657,23 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_str::String) -> *mut c_vo
     #[cfg(not(windows))]
     { compile_error!("unreachable"); }
 
+    use bun_str::strings::EncodingNonAscii;
     let mut buf = bun_paths::WPathBuffer::uninit();
     let data: &[u16] = match str_.encoding() {
-        bun_str::Encoding::Utf8 => bun_str::strings::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8()),
-        bun_str::Encoding::Utf16 => {
+        EncodingNonAscii::Utf8 => bun_str::strings::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8()),
+        EncodingNonAscii::Utf16 => {
             let src = str_.utf16();
             buf.as_mut_slice()[0..src.len()].copy_from_slice(src);
             &buf.as_slice()[0..src.len()]
         }
-        bun_str::Encoding::Latin1 => {
-            bun_str::strings::copy_u8_into_u16(buf.as_mut_slice(), str_.latin1());
-            &buf.as_slice()[0..str_.length()]
+        EncodingNonAscii::Latin1 => {
+            // Zig: bun.strings.copyU8IntoU16 — straight zero-extend per byte.
+            let src = str_.latin1();
+            let dst = &mut buf.as_mut_slice()[..src.len()];
+            // zip avoids the per-iteration bounds check an indexed loop would
+            // emit, letting the optimizer vectorize the widen.
+            for (d, &b) in dst.iter_mut().zip(src) { *d = b as u16; }
+            &buf.as_slice()[0..src.len()]
         }
     };
     let len = data.len();
@@ -4356,7 +4709,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
         )
     };
 
-    bun_sys::syslog!("deleteOpenedFile({}) = {}", fd, <&'static str>::from(rc));
+    bun_sys::syslog!("deleteOpenedFile({}) = {}", fd, format_args!("{:?}", rc));
 
     if rc == win32::ntstatus::SUCCESS {
         bun_sys::Result::success()
@@ -4446,12 +4799,12 @@ pub fn move_opened_file_at(
         "moveOpenedFileAt({} ->> {} '{}', {}) = {}",
         src_fd, new_dir_fd, bun_core::fmt::utf16(new_file_name),
         if replace_if_exists { "replace_if_exists" } else { "no flag" },
-        <&'static str>::from(rc)
+        format_args!("{:?}", rc)
     );
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {
-        bun_core::Output::debug_warn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", &[]);
+        bun_core::Output::debug_warn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE");
     }
 
     if rc == win32::ntstatus::SUCCESS {
@@ -4480,7 +4833,7 @@ pub fn move_opened_file_at_loose(
 
     if let Some(last_slash) = new_path.iter().rposition(|&c| c == b'\\' as u16) {
         let dirname = &new_path[0..last_slash];
-        let fd = match bun_sys::open_dir_at_windows(new_dir_fd, dirname, bun_sys::OpenDirOptions { can_rename_or_delete: true, iterable: false, ..Default::default() }) {
+        let fd = match bun_sys::open_dir_at_windows(new_dir_fd, dirname, bun_sys::WindowsOpenDirOptions { can_rename_or_delete: true, iterable: false, ..Default::default() }) {
             bun_sys::Result::Err(e) => return bun_sys::Result::Err(e),
             bun_sys::Result::Ok(fd) => fd,
         };
@@ -4508,10 +4861,11 @@ pub fn rename_at_w(
         match bun_sys::open_file_at_windows(
             old_dir_fd,
             old_path_w,
-            bun_sys::OpenFileOptions {
+            bun_sys::NtCreateFileOptions {
                 access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE | win32::FILE_TRAVERSE,
                 disposition: win32::FILE_OPEN,
                 options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
+                ..Default::default()
             },
         ) {
             bun_sys::Result::Err(_) => {
@@ -4519,10 +4873,11 @@ pub fn rename_at_w(
                 match bun_sys::open_file_at_windows(
                     old_dir_fd,
                     old_path_w,
-                    bun_sys::OpenFileOptions {
+                    bun_sys::NtCreateFileOptions {
                         access_mask: win32::SYNCHRONIZE | win32::GENERIC_WRITE | win32::DELETE,
                         disposition: win32::FILE_OPEN,
                         options: win32::FILE_SYNCHRONOUS_IO_NONALERT | win32::FILE_OPEN_REPARSE_POINT,
+                        ..Default::default()
                     },
                 ) {
                     bun_sys::Result::Err(err2) => return bun_sys::Result::Err(err2),
@@ -4624,10 +4979,9 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
 // The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
 // has been removed; its items belong in `bun_libuv_sys`.
 
-bun_output::declare_scope!(windowsUserUniqueId, visible);
+bun_core::declare_scope!(windowsUserUniqueId, visible);
 
-// SetFilePointerEx referenced via externs above
-use bun_windows_sys::externs::SetFilePointerEx;
+// SetFilePointerEx referenced via the `pub use` at the top of this module.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

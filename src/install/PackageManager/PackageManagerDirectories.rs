@@ -778,11 +778,10 @@ pub fn path_for_cached_npm_path<'a>(
         let mut path_buf = PathBuffer::uninit();
         // SAFETY: cache_path_buf[cache_path_len] == 0 written by buf_print_z above
         let cache_path = unsafe { ZStr::from_raw(cache_path_buf.as_ptr(), cache_path_len) };
-        let joined = path::join_abs_string_buf_z(
+        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
             &this.cache_directory_path,
             &mut path_buf,
             &[cache_path.as_bytes()],
-            path::Platform::Windows,
         );
         return match sys::readlink(joined, &mut buf.0[..]) {
             Ok(n) => Ok(&mut buf.0[..n]),
@@ -994,9 +993,9 @@ pub fn save_lockfile(
                 match sys::unlinkat(
                     Fd::cwd(),
                     if delete_format == LockfileFormat::Text {
-                        bun_paths::os_path_literal!("bun.lock")
+                        bun_paths::path_literal!("bun.lock")
                     } else {
-                        bun_paths::os_path_literal!("bun.lockb")
+                        bun_paths::path_literal!("bun.lockb")
                     },
                 ) {
                     Ok(()) => {}
@@ -1050,7 +1049,7 @@ pub fn save_lockfile(
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::os_path_literal!("bun.lockb"));
+        let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
     }
 
     if cfg!(debug_assertions) {

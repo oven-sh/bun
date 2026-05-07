@@ -46,6 +46,26 @@ pub struct COORD {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct SMALL_RECT {
+    pub Left: i16,
+    pub Top: i16,
+    pub Right: i16,
+    pub Bottom: i16,
+}
+
+/// `CONSOLE_SCREEN_BUFFER_INFO` (`wincon.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct CONSOLE_SCREEN_BUFFER_INFO {
+    pub dwSize: COORD,
+    pub dwCursorPosition: COORD,
+    pub wAttributes: u16,
+    pub srWindow: SMALL_RECT,
+    pub dwMaximumWindowSize: COORD,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct FILETIME {
     pub dwLowDateTime: DWORD,
     pub dwHighDateTime: DWORD,
@@ -181,6 +201,19 @@ pub const TRUNCATE_EXISTING: DWORD = 5;
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
+pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
+
+// `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
+pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
+pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
+pub const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
+pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
+pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
+pub const PIPE_WAIT: DWORD = 0x0000_0000;
+
+/// `CreateSymbolicLinkW` dwFlags (`winbase.h`).
+pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
+pub const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: DWORD = 0x2;
 
 /// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`.
 #[repr(C)]
@@ -232,6 +265,67 @@ pub struct FILE_END_OF_FILE_INFORMATION {
     pub EndOfFile: LARGE_INTEGER,
 }
 
+/// Zig spells it `FileInformationClass` (camel) at use sites; alias.
+pub type FileInformationClass = FILE_INFORMATION_CLASS;
+
+/// `FILE_DISPOSITION_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_DISPOSITION_INFORMATION {
+    pub DeleteFile: BOOLEAN,
+}
+
+/// `FILE_DISPOSITION_INFORMATION_EX` (`ntifs.h`, ≥ win10 rs1).
+#[repr(C)]
+pub struct FILE_DISPOSITION_INFORMATION_EX {
+    pub Flags: ULONG,
+}
+
+/// `FILE_RENAME_INFORMATION` ex variant (`ntifs.h`). `FileName` is a
+/// variable-length tail; declared `[u16; 1]` to match the C flex-array idiom.
+#[repr(C)]
+pub struct FILE_RENAME_INFORMATION_EX {
+    pub Flags: ULONG,
+    pub RootDirectory: HANDLE,
+    pub FileNameLength: ULONG,
+    pub FileName: [u16; 1],
+}
+
+// `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
+pub const FILE_DISPOSITION_DELETE: ULONG = 0x0000_0001;
+pub const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x0000_0002;
+pub const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x0000_0010;
+
+// `FILE_RENAME_INFORMATION_EX.Flags` bits (winnt.h).
+pub const FILE_RENAME_REPLACE_IF_EXISTS: ULONG = 0x0000_0001;
+pub const FILE_RENAME_POSIX_SEMANTICS: ULONG = 0x0000_0002;
+pub const FILE_RENAME_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x0000_0040;
+
+// `GetFinalPathNameByHandleW` flag bits (fileapi.h).
+pub const FILE_NAME_NORMALIZED: DWORD = 0x0;
+pub const FILE_NAME_OPENED: DWORD = 0x8;
+pub const VOLUME_NAME_DOS: DWORD = 0x0;
+pub const VOLUME_NAME_GUID: DWORD = 0x1;
+pub const VOLUME_NAME_NT: DWORD = 0x2;
+pub const VOLUME_NAME_NONE: DWORD = 0x4;
+
+/// Zig `std.os.windows.GetFinalPathNameByHandleOptions.VolumeName`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum VolumeName {
+    #[default]
+    Dos,
+    Nt,
+}
+
+/// Zig `std.os.windows.GetFinalPathNameByHandleOptions`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct GetFinalPathNameByHandleFormat {
+    pub volume_name: VolumeName,
+}
+
+impl FILE_INFORMATION_CLASS {
+    pub const FileRenameInformationEx: Self = Self(65);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset). Zig: `pub const ntdll = std.os.windows.ntdll`
 // ──────────────────────────────────────────────────────────────────────────
@@ -277,7 +371,29 @@ pub mod ntdll {
             Length: ULONG,
             FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
+        /// `NtQueryInformationFile` (`ntifs.h`) — generic counterpart to
+        /// `NtSetInformationFile`; populates `FileInformation` per `class`.
+        pub fn NtQueryInformationFile(
+            FileHandle: HANDLE,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FileInformation: *mut c_void,
+            Length: ULONG,
+            FileInformationClass: FILE_INFORMATION_CLASS,
+        ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
+
+        // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
+        // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
+        // because ntdll is autoloaded into every process; the Rtl* wrappers
+        // forward to the same kernel objects.
+        pub fn RtlWaitOnAddress(
+            Address: *const c_void,
+            CompareAddress: *const c_void,
+            AddressSize: usize,
+            Timeout: *const LARGE_INTEGER,
+        ) -> NTSTATUS;
+        pub fn RtlWakeAddressSingle(Address: *const c_void);
+        pub fn RtlWakeAddressAll(Address: *const c_void);
     }
     pub use super::RtlNtStatusToDosError;
 }
@@ -288,24 +404,87 @@ pub mod user32 {}
 /// `std.os.windows.advapi32` (subset placeholder; Phase B fills as needed).
 pub mod advapi32 {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// libuv re-export (tier-0 sibling). Zig: `pub const libuv = @import("../../libuv_sys/libuv.zig")`
-// ──────────────────────────────────────────────────────────────────────────
-pub use bun_libuv_sys as libuv;
+// `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
+// module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
+// must not depend on `bun_libuv_sys` (would invert the tier ordering).
 
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset). Zig: `pub const kernel32 = windows.kernel32`
 // ──────────────────────────────────────────────────────────────────────────
 pub mod kernel32 {
-    use super::DWORD;
+    use super::*;
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
         pub fn GetLastError() -> DWORD;
         pub fn ExitProcess(exit_code: u32) -> !;
+        pub fn GetCurrentProcess() -> HANDLE;
+        pub fn DuplicateHandle(
+            hSourceProcessHandle: HANDLE,
+            hSourceHandle: HANDLE,
+            hTargetProcessHandle: HANDLE,
+            lpTargetHandle: *mut HANDLE,
+            dwDesiredAccess: DWORD,
+            bInheritHandle: BOOL,
+            dwOptions: DWORD,
+        ) -> BOOL;
+        pub fn GetFileSizeEx(hFile: HANDLE, lpFileSize: *mut LARGE_INTEGER) -> BOOL;
+        pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+        pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
+        /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
+        pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `SetConsoleCtrlHandler` — install/uninstall a console ctrl handler.
+        pub fn SetConsoleCtrlHandler(
+            HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
+            Add: BOOL,
+        ) -> BOOL;
     }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// `GetConsoleScreenBufferInfo` (`wincon.h`).
+        pub fn GetConsoleScreenBufferInfo(
+            hConsoleOutput: HANDLE,
+            lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
+        ) -> BOOL;
+        /// `CreateNamedPipeW` (`winbase.h`).
+        pub fn CreateNamedPipeW(
+            lpName: LPCWSTR,
+            dwOpenMode: DWORD,
+            dwPipeMode: DWORD,
+            nMaxInstances: DWORD,
+            nOutBufferSize: DWORD,
+            nInBufferSize: DWORD,
+            nDefaultTimeOut: DWORD,
+            lpSecurityAttributes: *mut c_void,
+        ) -> HANDLE;
+    }
+    // Re-export externs declared at the crate root so `kernel32::Foo` resolves
+    // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.
+    pub use super::{
+        GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SetCurrentDirectoryW,
+        SetFilePointerEx, CreateFileW, SYSTEM_INFO,
+    };
 }
-pub use kernel32::GetLastError;
+pub use kernel32::{GetLastError, GetCurrentProcess, GetExitCodeProcess};
+
+// `std.os.windows.WaitForSingleObject` — Zig's wrapper returns `error.WaitFailed`
+// on `WAIT_FAILED`; provide that shape so `if let Err(..)` callers compile.
+pub const INFINITE: DWORD = 0xFFFF_FFFF;
+pub const WAIT_OBJECT_0: DWORD = 0;
+pub const WAIT_TIMEOUT: DWORD = 258;
+pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
+pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    #[link_name = "WaitForSingleObject"]
+    fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+}
+/// SAFETY: `handle` must be a valid waitable kernel object.
+pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
+    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
+    if rc == WAIT_FAILED { Err(Win32Error::get()) } else { Ok(rc) }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // NTSTATUS — Zig `std.os.windows.NTSTATUS` is `enum(u32) { ..., _ }`.
@@ -335,6 +514,9 @@ impl NTSTATUS {
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
+    /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
+    /// `RtlWaitOnAddress` when the wait timed out.
+    pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self { NTSTATUS(raw) }
@@ -354,12 +536,232 @@ unsafe extern "system" {
     pub fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
 }
 
-#[link(name = "ws2_32")]
-unsafe extern "system" {
-    /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
-    /// because `SystemErrno` is a higher-tier type.
-    pub fn WSAGetLastError() -> c_int;
+/// `std.os.windows.ws2_32` — Winsock2 surface (subset).
+pub mod ws2_32 {
+    use super::*;
+
+    pub const AF_UNSPEC: c_int = 0;
+    pub const AF_UNIX: c_int = 1;
+    pub const AF_INET: c_int = 2;
+    pub const AF_INET6: c_int = 23;
+    pub const SOCK_STREAM: c_int = 1;
+    pub const SOCK_DGRAM: c_int = 2;
+    pub const IPPROTO_TCP: c_int = 6;
+    pub const IPPROTO_UDP: c_int = 17;
+
+    /// `ADDRINFOA` (`ws2def.h`). Field names match POSIX `addrinfo` so
+    /// cross-platform `bun_dns` code can dot-access without cfg arms.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct addrinfo {
+        pub ai_flags: c_int,
+        pub ai_family: c_int,
+        pub ai_socktype: c_int,
+        pub ai_protocol: c_int,
+        pub ai_addrlen: usize,          // size_t
+        pub ai_canonname: *mut c_char,
+        pub ai_addr: *mut sockaddr,
+        pub ai_next: *mut addrinfo,
+    }
+
+    #[link(name = "ws2_32")]
+    unsafe extern "system" {
+        pub fn getaddrinfo(
+            node: *const c_char,
+            service: *const c_char,
+            hints: *const addrinfo,
+            res: *mut *mut addrinfo,
+        ) -> c_int;
+        pub fn freeaddrinfo(ai: *mut addrinfo);
+        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
+        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
+    }
+
+    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
+    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
+    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
+    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
+    /// and never project fields beyond `wVersion`.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSADATA {
+        pub wVersion: u16,
+        pub wHighVersion: u16,
+        pub iMaxSockets: u16,
+        pub iMaxUdpDg: u16,
+        pub lpVendorInfo: *mut u8,
+        pub szDescription: [u8; 257],
+        pub szSystemStatus: [u8; 129],
+    }
+    const _: () = assert!(core::mem::size_of::<WSADATA>() == 408);
+
+    /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_storage {
+        pub ss_family: u16,
+        __ss_pad1: [u8; 6],
+        __ss_align: i64,
+        __ss_pad2: [u8; 112],
+    }
+    const _: () = assert!(core::mem::size_of::<sockaddr_storage>() == 128);
+    const _: () = assert!(core::mem::align_of::<sockaddr_storage>() == 8);
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr {
+        pub sa_family: u16,
+        pub sa_data: [u8; 14],
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub sin_family: u16,
+        pub sin_port: u16,
+        pub sin_addr: in_addr,
+        pub sin_zero: [u8; 8],
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct in_addr {
+        pub s_addr: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub sin6_family: u16,
+        pub sin6_port: u16,
+        pub sin6_flowinfo: u32,
+        pub sin6_addr: in6_addr,
+        pub sin6_scope_id: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct in6_addr {
+        pub s6_addr: [u8; 16],
+    }
+
+    /// `std.os.windows.ws2_32.WinsockError` — `WSAE*` codes (`WSABASEERR` = 10000).
+    /// Newtype so `bun_sys::windows::winsock_error_to_zig_err` can `match` on
+    /// associated consts. Values from `winsock2.h` / Zig `lib/std/os/windows/ws2_32.zig`.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub struct WinsockError(pub u16);
+    impl WinsockError {
+        #[inline] pub const fn raw(self) -> u16 { self.0 }
+        pub const WSA_INVALID_HANDLE: Self = Self(6);
+        pub const WSA_NOT_ENOUGH_MEMORY: Self = Self(8);
+        pub const WSA_INVALID_PARAMETER: Self = Self(87);
+        pub const WSA_OPERATION_ABORTED: Self = Self(995);
+        pub const WSA_IO_INCOMPLETE: Self = Self(996);
+        pub const WSA_IO_PENDING: Self = Self(997);
+        pub const WSAEINTR: Self = Self(10004);
+        pub const WSAEBADF: Self = Self(10009);
+        pub const WSAEACCES: Self = Self(10013);
+        pub const WSAEFAULT: Self = Self(10014);
+        pub const WSAEINVAL: Self = Self(10022);
+        pub const WSAEMFILE: Self = Self(10024);
+        pub const WSAEWOULDBLOCK: Self = Self(10035);
+        pub const WSAEINPROGRESS: Self = Self(10036);
+        pub const WSAEALREADY: Self = Self(10037);
+        pub const WSAENOTSOCK: Self = Self(10038);
+        pub const WSAEDESTADDRREQ: Self = Self(10039);
+        pub const WSAEMSGSIZE: Self = Self(10040);
+        pub const WSAEPROTOTYPE: Self = Self(10041);
+        pub const WSAENOPROTOOPT: Self = Self(10042);
+        pub const WSAEPROTONOSUPPORT: Self = Self(10043);
+        pub const WSAESOCKTNOSUPPORT: Self = Self(10044);
+        pub const WSAEOPNOTSUPP: Self = Self(10045);
+        pub const WSAEPFNOSUPPORT: Self = Self(10046);
+        pub const WSAEAFNOSUPPORT: Self = Self(10047);
+        pub const WSAEADDRINUSE: Self = Self(10048);
+        pub const WSAEADDRNOTAVAIL: Self = Self(10049);
+        pub const WSAENETDOWN: Self = Self(10050);
+        pub const WSAENETUNREACH: Self = Self(10051);
+        pub const WSAENETRESET: Self = Self(10052);
+        pub const WSAECONNABORTED: Self = Self(10053);
+        pub const WSAECONNRESET: Self = Self(10054);
+        pub const WSAENOBUFS: Self = Self(10055);
+        pub const WSAEISCONN: Self = Self(10056);
+        pub const WSAENOTCONN: Self = Self(10057);
+        pub const WSAESHUTDOWN: Self = Self(10058);
+        pub const WSAETOOMANYREFS: Self = Self(10059);
+        pub const WSAETIMEDOUT: Self = Self(10060);
+        pub const WSAECONNREFUSED: Self = Self(10061);
+        pub const WSAELOOP: Self = Self(10062);
+        pub const WSAENAMETOOLONG: Self = Self(10063);
+        pub const WSAEHOSTDOWN: Self = Self(10064);
+        pub const WSAEHOSTUNREACH: Self = Self(10065);
+        pub const WSAENOTEMPTY: Self = Self(10066);
+        pub const WSAEPROCLIM: Self = Self(10067);
+        pub const WSAEUSERS: Self = Self(10068);
+        pub const WSAEDQUOT: Self = Self(10069);
+        pub const WSAESTALE: Self = Self(10070);
+        pub const WSAEREMOTE: Self = Self(10071);
+        pub const WSASYSNOTREADY: Self = Self(10091);
+        pub const WSAVERNOTSUPPORTED: Self = Self(10092);
+        pub const WSANOTINITIALISED: Self = Self(10093);
+        pub const WSAEDISCON: Self = Self(10101);
+        pub const WSAENOMORE: Self = Self(10102);
+        pub const WSAECANCELLED: Self = Self(10103);
+        pub const WSAEINVALIDPROCTABLE: Self = Self(10104);
+        pub const WSAEINVALIDPROVIDER: Self = Self(10105);
+        pub const WSAEPROVIDERFAILEDINIT: Self = Self(10106);
+        pub const WSASYSCALLFAILURE: Self = Self(10107);
+        pub const WSASERVICE_NOT_FOUND: Self = Self(10108);
+        pub const WSATYPE_NOT_FOUND: Self = Self(10109);
+        pub const WSA_E_NO_MORE: Self = Self(10110);
+        pub const WSA_E_CANCELLED: Self = Self(10111);
+        pub const WSAEREFUSED: Self = Self(10112);
+        pub const WSAHOST_NOT_FOUND: Self = Self(11001);
+        pub const WSATRY_AGAIN: Self = Self(11002);
+        pub const WSANO_RECOVERY: Self = Self(11003);
+        pub const WSANO_DATA: Self = Self(11004);
+        pub const WSA_QOS_RECEIVERS: Self = Self(11005);
+        pub const WSA_QOS_SENDERS: Self = Self(11006);
+        pub const WSA_QOS_NO_SENDERS: Self = Self(11007);
+        pub const WSA_QOS_NO_RECEIVERS: Self = Self(11008);
+        pub const WSA_QOS_REQUEST_CONFIRMED: Self = Self(11009);
+        pub const WSA_QOS_ADMISSION_FAILURE: Self = Self(11010);
+        pub const WSA_QOS_POLICY_FAILURE: Self = Self(11011);
+        pub const WSA_QOS_BAD_STYLE: Self = Self(11012);
+        pub const WSA_QOS_BAD_OBJECT: Self = Self(11013);
+        pub const WSA_QOS_TRAFFIC_CTRL_ERROR: Self = Self(11014);
+        pub const WSA_QOS_GENERIC_ERROR: Self = Self(11015);
+        pub const WSA_QOS_ESERVICETYPE: Self = Self(11016);
+        pub const WSA_QOS_EFLOWSPEC: Self = Self(11017);
+        pub const WSA_QOS_EPROVSPECBUF: Self = Self(11018);
+        pub const WSA_QOS_EFILTERSTYLE: Self = Self(11019);
+        pub const WSA_QOS_EFILTERTYPE: Self = Self(11020);
+        pub const WSA_QOS_EFILTERCOUNT: Self = Self(11021);
+        pub const WSA_QOS_EOBJLENGTH: Self = Self(11022);
+        pub const WSA_QOS_EFLOWCOUNT: Self = Self(11023);
+        pub const WSA_QOS_EUNKOWNPSOBJ: Self = Self(11024);
+        pub const WSA_QOS_EPOLICYOBJ: Self = Self(11025);
+        pub const WSA_QOS_EFLOWDESC: Self = Self(11026);
+        pub const WSA_QOS_EPSFLOWSPEC: Self = Self(11027);
+        pub const WSA_QOS_EPSFILTERSPEC: Self = Self(11028);
+        pub const WSA_QOS_ESDMODEOBJ: Self = Self(11029);
+        pub const WSA_QOS_ESHAPERATEOBJ: Self = Self(11030);
+        pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
+    }
+
+    #[link(name = "ws2_32")]
+    unsafe extern "system" {
+        /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
+        /// because `SystemErrno` is a higher-tier type.
+        pub fn WSAGetLastError() -> c_int;
+        pub fn WSASetLastError(err: c_int);
+        pub fn closesocket(s: usize) -> c_int;
+        pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
+        pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
+    }
 }
+pub use ws2_32::WSAGetLastError;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — Zig `enum(u16) { ..., _ }`. Ported as a transparent newtype
@@ -619,11 +1021,14 @@ unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
 }
 
-// PORT NOTE: the Zig declared these without an explicit library/callconv (defaults to .c).
-unsafe extern "C" {
+// PORT NOTE: the Zig declared these without an explicit library/callconv (defaults to .c on x64).
+// `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
+// callconv is correct on all targets. `GetProcAddress` takes `LPCSTR` (narrow), not wide.
+#[link(name = "kernel32")]
+unsafe extern "system" {
     pub fn GetProcAddress(
         ptr: *mut c_void,
-        name: *const u16,
+        name: *const c_char,
     ) -> *mut c_void;
 
     pub fn LoadLibraryA(
@@ -679,6 +1084,11 @@ unsafe extern "system" {
         cbJobObjectInformationLength: DWORD,
     ) -> BOOL;
 
+    pub fn CreateJobObjectW(
+        lpJobAttributes: *mut c_void, // *mut SECURITY_ATTRIBUTES
+        lpName: LPCWSTR,
+    ) -> HANDLE;
+
     pub fn OpenProcess(
         dwDesiredAccess: DWORD,
         bInheritHandle: BOOL,
@@ -692,6 +1102,56 @@ unsafe extern "C" {
         pcbBuffer: LPDWORD,
     ) -> BOOL;
 }
+
+// ── Job Object structures (`winnt.h`) ─────────────────────────────────────
+/// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
+pub const JobObjectExtendedLimitInformation: DWORD = 9;
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — kill all job processes when the
+/// last job handle closes.
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    pub PerProcessUserTimeLimit: LARGE_INTEGER,
+    pub PerJobUserTimeLimit: LARGE_INTEGER,
+    pub LimitFlags: DWORD,
+    pub MinimumWorkingSetSize: usize,
+    pub MaximumWorkingSetSize: usize,
+    pub ActiveProcessLimit: DWORD,
+    pub Affinity: usize,
+    pub PriorityClass: DWORD,
+    pub SchedulingClass: DWORD,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct IO_COUNTERS {
+    pub ReadOperationCount: u64,
+    pub WriteOperationCount: u64,
+    pub OtherOperationCount: u64,
+    pub ReadTransferCount: u64,
+    pub WriteTransferCount: u64,
+    pub OtherTransferCount: u64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    pub BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    pub IoInfo: IO_COUNTERS,
+    pub ProcessMemoryLimit: usize,
+    pub JobMemoryLimit: usize,
+    pub PeakProcessMemoryUsed: usize,
+    pub PeakJobMemoryUsed: usize,
+}
+
+// ── Console ctrl-handler dwCtrlType values (`wincon.h`) ───────────────────
+pub const CTRL_C_EVENT: DWORD = 0;
+pub const CTRL_BREAK_EVENT: DWORD = 1;
+pub const CTRL_CLOSE_EVENT: DWORD = 2;
+pub const CTRL_LOGOFF_EVENT: DWORD = 5;
+pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
 #[link(name = "kernel32")]
 unsafe extern "system" {

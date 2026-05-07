@@ -50,7 +50,7 @@ mod zig_std_debug {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
             unsafe {
                 core::ptr::write(context, core::mem::zeroed());
-                bun_sys::windows::ntdll::RtlCaptureContext(context);
+                bun_sys::windows::ntdll_context::RtlCaptureContext(context);
             }
             return true;
         }
@@ -562,6 +562,26 @@ mod zig_std_debug {
 
     impl Module {
         /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(windows)]
+        pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
+            // TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
+            // resolves symbols on Windows via the loaded PE's PDB
+            // (`dbghelp.dll` `SymFromAddr`). That path is not yet ported, so
+            // every Windows backtrace currently prints bare addresses even
+            // when a PDB is shipped. This is NOT equivalent to the Zig spec
+            // for symbol-bearing builds; return the default-initialized
+            // `Symbol` (`name = "???"`) so the caller still prints the
+            // address line, but the dbghelp lookup must be implemented
+            // before Windows crash reports are usable.
+            let _ = (address, self.base_address);
+            Ok(SymbolInfo {
+                name: b"???".to_vec().into_boxed_slice(),
+                compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
+                source_location: None,
+            })
+        }
+        /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(not(windows))]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.

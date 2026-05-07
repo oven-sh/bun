@@ -1013,7 +1013,10 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
     );
     #[cfg(windows)]
-    let num_polls: i32 = i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles).expect("int cast");
+    // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
+    let num_polls: i32 =
+        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
+            .expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };

@@ -36,7 +36,7 @@ pub use self::unicode::{
 // which is field-compatible with `bun_core::strings::EncodeIntoResult`.
 pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
-    copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8,
+    copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8, copy_u8_into_u16,
     copy_utf16_into_utf8_impl, element_length_cp1252_into_utf16, element_length_utf8_into_utf16,
     replace_latin1_with_utf8, to_utf16_alloc_maybe_buffered, to_utf8_list_with_type_bun,
     u16_is_lead, u16_is_trail, wtf8_sequence, BOM,
@@ -1524,7 +1524,16 @@ pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
     debug_assert!(!a.is_empty());
 
     // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+    #[cfg(not(windows))]
     unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
+    // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "C" {
+            fn _strnicmp(a: *const core::ffi::c_char, b: *const core::ffi::c_char, n: usize) -> core::ffi::c_int;
+        }
+        _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
+    }
 }
 
 pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
@@ -3338,6 +3347,24 @@ pub use paths::without_leading_path_separator;
 // Zig: `pub const fromWPath = paths_.fromWPath;` (immutable.zig:2356) — re-export
 // so callers can use `strings::from_wpath` directly, matching the Zig namespace.
 pub use paths::from_w_path as from_wpath;
+// Zig flattens the `paths_` submodule into `bun.strings.*` so callers write
+// `bun.strings.toWPathNormalized(..)` / `bun.strings.toNTPath(..)` directly.
+// Re-export the Windows path-shape helpers used by `#[cfg(windows)]` install
+// paths so the Rust namespace matches.
+pub use paths::{
+    add_nt_path_prefix, add_nt_path_prefix_if_needed, starts_with_windows_drive_letter,
+    to_kernel32_path, to_nt_path, to_w_path, to_w_path_normalize_auto_extend,
+    to_w_path_normalized, to_w_path_normalized as to_wpath_normalized,
+};
+// Zig: `pub const convertUTF16ToUTF8InBuffer = unicode.convertUTF16ToUTF8InBuffer;`
+// (immutable.zig). Re-export the bun_core implementation so callers can spell
+// `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
+pub use bun_core::strings::convert_utf16_to_utf8_in_buffer;
+// Zig: `pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;`
+// — re-export the NUL-terminated variant so callers can spell
+// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
+// to widen output paths for `File::write_file_os_path`).
+pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
 /// followed by at least one more byte (Zig: `s.len > 2`).

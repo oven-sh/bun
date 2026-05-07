@@ -322,7 +322,11 @@ impl us_socket_t {
     }
     #[cfg(windows)]
     pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        compile_error!("TODO: implement write_fd on Windows");
+        // Zig: `if (Environment.isWindows) @compileError(...)` — that fires only
+        // on call (lazy semantics). Rust evaluates `compile_error!` at item
+        // definition, so this would brick the windows build even with no callers.
+        // Mirror Zig intent with a runtime trap; no current Windows call site.
+        unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
@@ -355,7 +359,12 @@ impl us_socket_t {
 
     pub fn get_fd(&self) -> Fd {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        Fd::from_native(unsafe { c::us_socket_get_fd(self) })
+        let raw = unsafe { c::us_socket_get_fd(self) };
+        // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
+        // Windows. Tag kind=system explicitly — `from_native` would store raw
+        // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
+        #[cfg(not(windows))] { Fd::from_native(raw) }
     }
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {

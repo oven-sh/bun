@@ -923,17 +923,59 @@ mod WellKnownAddress {
 
 #[cfg(windows)]
 pub mod inet {
+    #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
-    pub use ws2::IN4ADDR_LOOPBACK;
-    pub use ws2::INET6_ADDRSTRLEN;
+    // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
+    // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
+    // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
+    // build resolves without widening the leaf crate.
+    /// `ws2ipdef.h`: `#define IN4ADDR_LOOPBACK 0x0100007f` — the raw
+    /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
+    /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
+    /// `0x0100_007f` on little-endian Windows, matching the header literal).
+    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
+    pub const INET6_ADDRSTRLEN: usize = 65;
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub type sa_family_t = ws2::ADDRESS_FAMILY;
-    pub type in_port_t = bun_sys::windows::USHORT;
+    /// `ws2def.h`: `typedef USHORT ADDRESS_FAMILY;`
+    pub type sa_family_t = u16;
+    pub type in_port_t = u16;
     pub type socklen_t = super::ares::socklen_t;
-    pub type sockaddr_in = bun_sys::posix::sockaddr_in;
-    pub type sockaddr_in6 = bun_sys::posix::sockaddr_in6;
+
+    // Zig `std.posix.sockaddr.in`/`.in6` shape (un-prefixed field names).
+    // Layout-identical to ws2def.h `SOCKADDR_IN`/`SOCKADDR_IN6` (no leading
+    // `len` byte on Windows; `ADDRESS_FAMILY = USHORT`). Kept distinct from
+    // `bun_sys::posix::sockaddr_in` (which uses C `sin_*` names) so the
+    // SocketAddress body — written against Zig field names — stays
+    // target-agnostic.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub addr: u32,
+        pub zero: [u8; 8],
+    }
+    impl sockaddr_in {
+        pub const ZEROED: Self = Self { family: 0, port: 0, addr: 0, zero: [0; 8] };
+    }
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct sockaddr_in6 {
+        pub family: sa_family_t,
+        pub port: in_port_t,
+        pub flowinfo: u32,
+        pub addr: [u8; 16],
+        pub scope_id: u32,
+    }
+    impl sockaddr_in6 {
+        pub const ZEROED: Self =
+            Self { family: 0, port: 0, flowinfo: 0, addr: [0; 16], scope_id: 0 };
+    }
+    const _: () = assert!(core::mem::size_of::<sockaddr_in>() == core::mem::size_of::<ws2::sockaddr_in>());
+    const _: () = assert!(core::mem::size_of::<sockaddr_in6>() == core::mem::size_of::<ws2::sockaddr_in6>());
 }
 
 #[cfg(not(windows))]

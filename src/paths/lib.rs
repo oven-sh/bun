@@ -117,14 +117,40 @@ macro_rules! path_literal {
 
 /// `bun.OSPathLiteral` — like `path_literal!` but yields the platform path-char
 /// width (`u8` on POSIX, `u16` on Windows). Port of `bun.zig:OSPathLiteral`.
+///
+/// Evaluates to `&'static OSPathSliceZ` (i.e. `&ZStr` on POSIX, `&WStr` on
+/// Windows). Both deref to `&[OSPathChar]`, so call sites that want a bare
+/// slice (e.g. `skip_dirnames: &[&OSPathSlice]`) get it via auto-deref.
 #[macro_export]
 macro_rules! os_path_literal {
     ($lit:literal) => {{
         #[cfg(not(windows))]
         { $crate::path_literal!($lit) }
-        // TODO(port-windows): comptime UTF-16 path literal with sep rewrite.
         #[cfg(windows)]
-        { ::bun_core::wstr!($lit) }
+        {
+            // Const-eval ASCII→UTF-16LE widening with `/`→`\` rewrite, then
+            // wrap as `&'static WStr` (NUL-terminated). The literal is always
+            // a hard-coded path component so the ASCII restriction holds.
+            const __B: &[u8] = $lit.as_bytes();
+            const __N: usize = __B.len();
+            const __W: [u16; __N + 1] = {
+                let mut out = [0u16; __N + 1];
+                let mut i = 0;
+                while i < __N {
+                    debug_assert!(__B[i].is_ascii(), "os_path_literal!() must be ASCII");
+                    out[i] = if __B[i] == b'/' { b'\\' as u16 } else { __B[i] as u16 };
+                    i += 1;
+                }
+                out
+            };
+            // Explicit `&__W` borrow so rvalue static promotion is guaranteed
+            // (mirrors `wstr!`): relying on the implicit autoref inside
+            // `__W.as_ptr()` to promote is not spec-guaranteed in all
+            // contexts, and a non-promoted `__W` would dangle immediately.
+            const __WREF: &[u16; __N + 1] = &__W;
+            // SAFETY: __WREF[__N] == 0 (NUL terminator); len excludes it.
+            unsafe { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
+        }
     }};
 }
 
@@ -216,6 +242,9 @@ pub fn stem(p: &[u8]) -> &[u8] {
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_core::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE};
+/// Zig spells the wide-path capacity `bun.MAX_WPATH` (`libuv.zig` uses the same
+/// alias); keep both names so ported call sites resolve without churn.
+pub const MAX_WPATH: usize = PATH_MAX_WIDE;
 
 #[cfg(windows)]
 pub type OSPathChar = u16;
@@ -246,6 +275,30 @@ pub mod path_buffer_pool;
 // Zig "valid until next call" semantics).
 pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
+// Crate-root re-exports for the path-mutation helpers callers spell as
+// `bun.path.*` in Zig (e.g. `bun.path.dangerouslyConvertPathToPosixInPlace`,
+// `bun.path.pathToPosixBuf`). Zig flattens `resolve_path` into the `bun.path`
+// namespace; mirror that here so `#[cfg(windows)]` install paths can call
+// `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
+pub use resolve_path::{
+    dangerously_convert_path_to_posix_in_place,
+    join_abs_string_buf,
+    dirname_w,
+    is_drive_letter,
+    is_drive_letter_t,
+    is_sep_any,
+    is_sep_any_t,
+    join_abs_string_buf_z,
+    join_string_buf_wz,
+    path_to_posix_buf,
+    relative_to_common_path_buf,
+    windows_volume_name_len,
+};
+// `bun.os_path_buffer_pool.get()` in Zig is a namespace call, not a value.
+// Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
+// resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
+// POSIX).
+pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"] pub mod path;
 pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
 

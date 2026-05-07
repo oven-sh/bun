@@ -32,7 +32,7 @@ const RETRY_ERRNO: Int = E::EAGAIN as Int;
 
 const TODO_ERRNO: Int = Int::MAX - 1;
 
-pub(crate) type Int = u16;
+pub type Int = u16;
 
 /// TODO: convert to function
 // TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
@@ -75,7 +75,67 @@ impl Default for Error {
 // Zig `pub fn deinit` / `deinitWithAllocator` → dropped; Box<[u8]> frees on Drop. Only valid to
 // rely on this for owned (cloned) Errors — same caveat as the Zig comment.
 
+/// Anything that names an OS errno value. Replaces Zig's `anytype errno` in
+/// `Error.fromCode`/`Error.new`.
+pub trait IntoErrnoInt {
+    fn into_errno_int(self) -> Int;
+}
+impl IntoErrnoInt for E {
+    #[inline] fn into_errno_int(self) -> Int { self as Int }
+}
+// On POSIX `E` is a `type` alias for `SystemErrno` (same type → duplicate impl);
+// on Windows they are distinct enums, so the second impl is required.
+#[cfg(windows)]
+impl IntoErrnoInt for SystemErrno {
+    #[inline] fn into_errno_int(self) -> Int { self as Int }
+}
+impl IntoErrnoInt for u16 {
+    #[inline] fn into_errno_int(self) -> Int { self }
+}
+impl IntoErrnoInt for i32 {
+    #[inline] fn into_errno_int(self) -> Int { self.unsigned_abs() as Int }
+}
+
 impl Error {
+    /// `Error::new(errno, tag)` — Windows-only call sites in `sys/lib.rs` and
+    /// `sys_uv.rs` were ported from `Maybe(T).errEnum`/`.errno`, which in Zig
+    /// accept `anytype` for the code. Dispatch via `IntoErrnoInt` so a single
+    /// constructor covers `E`, `SystemErrno`, raw `u16` (libuv `ReturnCode::errno`)
+    /// and `i32`.
+    #[inline]
+    pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
+        Error {
+            errno: errno.into_errno_int(),
+            syscall: syscall_tag,
+            ..Default::default()
+        }
+    }
+
+    /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
+    /// Sets `from_libuv` so later display goes through the uv→errno mapper.
+    #[cfg(windows)]
+    #[inline]
+    pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
+        rc.errno().map(|e| Error {
+            errno: e,
+            syscall: syscall_tag,
+            from_libuv: true,
+            ..Default::default()
+        })
+    }
+
+    /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
+    #[cfg(windows)]
+    #[inline]
+    pub fn from_uv_rc64(rc: crate::windows::libuv::ReturnCodeI64, syscall_tag: Tag) -> Option<Error> {
+        rc.errno().map(|e| Error {
+            errno: e,
+            syscall: syscall_tag,
+            from_libuv: true,
+            ..Default::default()
+        })
+    }
+
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
         Error {
             errno: errno as Int,
@@ -102,7 +162,16 @@ impl Error {
         // Zig `@enumFromInt` is unchecked, but in Rust transmuting an out-of-range discriminant
         // (e.g. TODO_ERRNO = u16::MAX-1) into a #[repr(u16)] enum is immediate UB. Use the checked
         // constructor and fall back to SUCCESS for unmapped values.
-        SystemErrno::init(self.errno as i64).unwrap_or(SystemErrno::SUCCESS)
+        #[cfg(windows)]
+        {
+            // On Windows `E` and `SystemErrno` share the same #[repr(u16)] discriminant
+            // table; `to_e()` is the identity transmute.
+            SystemErrno::init(self.errno as i64).map(SystemErrno::to_e).unwrap_or(E::SUCCESS)
+        }
+        #[cfg(not(windows))]
+        {
+            SystemErrno::init(self.errno as i64).unwrap_or(SystemErrno::SUCCESS)
+        }
     }
 
     #[inline]
@@ -166,6 +235,24 @@ impl Error {
         }
     }
 
+    /// Rust-only (no Zig `withDest`). Unlike `with_path`/`with_path_dest` (which
+    /// match Zig and reset `fd`/`from_libuv`), this only overlays `dest` and
+    /// preserves every other field — chained on a libuv-sourced error
+    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
+    /// so `name()`/`msg()` still route through the uv→errno mapper.
+    #[inline]
+    pub fn with_dest(&self, dest: &[u8]) -> Error {
+        Error {
+            errno: self.errno,
+            syscall: self.syscall,
+            fd: self.fd,
+            #[cfg(windows)]
+            from_libuv: self.from_libuv,
+            path: self.path.clone(),
+            dest: Box::from(dest),
+        }
+    }
+
     #[inline]
     pub fn with_path_dest(&self, path: &[u8], dest: &[u8]) -> Error {
         Error {
@@ -202,7 +289,7 @@ impl Error {
             // enum is UB, so fold both steps into a single fallible lookup.
             let system_errno: Option<SystemErrno> = if self.from_libuv {
                 let translated =
-                    crate::windows::libuv::translate_uv_error_to_e(-c_int::from(self.errno));
+                    crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
                 SystemErrno::init(translated as Int as i64)
             } else {
                 SystemErrno::init(self.errno as i64)
@@ -247,7 +334,7 @@ impl Error {
             let system_errno: SystemErrno = 'brk: {
                 if self.from_libuv {
                     let translated =
-                        crate::windows::libuv::translate_uv_error_to_e(c_int::from(self.errno) * -1);
+                        crate::windows::translate_uv_error_to_e(c_int::from(self.errno) * -1);
                     break 'brk SystemErrno::init(translated as Int as i64)?;
                 }
                 SystemErrno::init(self.errno as i64)?
@@ -446,5 +533,65 @@ impl bun_core::output::ErrName for &Error {
     fn name(&self) -> &[u8] { Error::name(self) }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `ReturnCodeExt` — Zig's `ReturnCode::toError(.tag) ?Error` lives here (not
+// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(windows)]
+pub trait ReturnCodeExt: Sized {
+    /// `Some(err)` (with `from_libuv = true`) when negative; `None` on success.
+    fn to_error(self, syscall_tag: Tag) -> Option<Error>;
+    /// `Maybe(void)`-shape adapter: `Ok(())` on success, `Err` on negative rc.
+    /// Mirrors Zig's libuv wrappers (`Pipe.init` etc.) that hand back
+    /// `bun.sys.Maybe(void)` directly — `bun_libuv_sys` returns the raw
+    /// `ReturnCode` for layering, this trait promotes it.
+    #[inline]
+    fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
+        match self.to_error(syscall_tag) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    /// Alias for [`to_error`]; spelling used by call sites that mirror Zig's
+    /// `Maybe(void).asErr()`.
+    #[inline]
+    fn as_err(self, syscall_tag: Tag) -> Option<Error> { self.to_error(syscall_tag) }
+    /// Zig: `rc.errEnum()` — translate the negative libuv errno to `bun.sys.E`.
+    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
+    /// (layering: it can't name `E`); this overlay is what call sites that
+    /// mirror Zig's `req.result.errEnum()` actually want.
+    fn err_enum_e(self) -> Option<crate::E>;
+}
+#[cfg(windows)]
+impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
+    #[inline]
+    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
+        Error::from_uv_rc(self, syscall_tag)
+    }
+    #[inline]
+    fn err_enum_e(self) -> Option<crate::E> {
+        if self.int() < 0 {
+            Some(crate::windows::translate_uv_error_to_e(self.int()))
+        } else {
+            None
+        }
+    }
+}
+#[cfg(windows)]
+impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
+    #[inline]
+    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
+        Error::from_uv_rc64(self, syscall_tag)
+    }
+    #[inline]
+    fn err_enum_e(self) -> Option<crate::E> {
+        if self.int() < 0 {
+            Some(crate::windows::translate_uv_error_to_e(self.int() as core::ffi::c_int))
+        } else {
+            None
+        }
     }
 }

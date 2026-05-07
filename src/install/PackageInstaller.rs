@@ -282,17 +282,18 @@ impl NodeModulesFolder {
 
         #[cfg(not(unix))]
         {
-            return Ok(bun_sys::open_dir_at_windows_a(
-                Fd::from_std_dir(root),
-                self.path.as_slice(),
-                bun_sys::windows::OpenDirOptions {
-                    can_rename_or_delete: false,
-                    read_only: false,
-                    ..Default::default()
-                },
-            )
-            .unwrap()?
-            .std_dir());
+            return Ok(Dir::from_fd(
+                bun_sys::open_dir_at_windows_a(
+                    root.fd(),
+                    self.path.as_slice(),
+                    bun_sys::WindowsOpenDirOptions {
+                        can_rename_or_delete: false,
+                        read_only: false,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| e.to_zig_err())?,
+            ));
         }
     }
 
@@ -310,17 +311,19 @@ impl NodeModulesFolder {
 
             #[cfg(not(unix))]
             {
-                break 'brk bun_sys::open_dir_at_windows_a(
-                    Fd::from_std_dir(root),
-                    self.path.as_slice(),
-                    bun_sys::windows::OpenDirOptions {
-                        can_rename_or_delete: false,
-                        op: bun_sys::windows::OpenDirOp::OpenOrCreate,
-                        read_only: false,
-                    },
-                )
-                .unwrap()?
-                .std_dir();
+                break 'brk Dir::from_fd(
+                    bun_sys::open_dir_at_windows_a(
+                        root.fd(),
+                        self.path.as_slice(),
+                        bun_sys::WindowsOpenDirOptions {
+                            can_rename_or_delete: false,
+                            op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
+                            read_only: false,
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| e.to_zig_err())?,
+                );
             }
         };
         Ok(out)

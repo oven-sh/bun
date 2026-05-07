@@ -32,7 +32,9 @@ use crate::Futex;
 
 #[derive(Default)]
 pub struct Mutex {
-    impl_: Impl,
+    // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
+    // `SleepConditionVariableSRW` (mirrors Zig's same-module field access).
+    pub(crate) impl_: Impl,
 }
 
 impl Mutex {
@@ -132,8 +134,8 @@ fn current_thread_id() -> ThreadId {
 #[derive(Default)]
 pub struct DebugImpl {
     /// 0 means it's not locked.
-    locking_thread: AtomicU64,
-    impl_: ReleaseImpl,
+    pub(crate) locking_thread: AtomicU64,
+    pub(crate) impl_: ReleaseImpl,
 }
 
 impl DebugImpl {
@@ -175,7 +177,7 @@ impl DebugImpl {
 #[cfg(windows)]
 #[derive(Default)]
 pub struct WindowsImpl {
-    srwlock: core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
+    pub(crate) srwlock: core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
 }
 
 #[cfg(windows)]
@@ -192,8 +194,9 @@ impl WindowsImpl {
     fn try_lock(&self) -> bool {
         // SAFETY: SRWLOCK is internally synchronized; pointer is valid for the call.
         unsafe {
-            bun_sys::windows::kernel32::TryAcquireSRWLockExclusive(self.srwlock.get())
-                != bun_sys::windows::FALSE
+            // Returns BOOLEAN (u8), not BOOL — compare against 0, not the
+            // i32 `FALSE` constant.
+            bun_sys::windows::kernel32::TryAcquireSRWLockExclusive(self.srwlock.get()) != 0
         }
     }
 

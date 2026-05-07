@@ -15,6 +15,8 @@ use crate::bun_json::JsonExprView;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
+#[cfg(windows)]
+use crate::windows_shim::Shebang as WinShimShebang;
 
 bun_output::declare_scope!(BinLinker, hidden);
 
@@ -906,9 +908,10 @@ impl<'a> Linker<'a> {
         }
         #[cfg(windows)]
         {
-            let target = match sys::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0).unwrap() {
+            let target = match sys::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(err) => {
+                    let err: bun_core::Error = err.into();
                     if err != bun_core::err!("EISDIR") {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
@@ -1097,7 +1100,7 @@ impl<'a> Linker<'a> {
         global: bool,
     ) {
         let mut shim_buf = [0u8; 65536];
-        let mut read_in_buf = [0u8; WinBinLinkingShim::Shebang::MAX_SHEBANG_INPUT_LENGTH];
+        let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
         let mut dest_buf = WPathBuffer::uninit();
         let mut target_buf = WPathBuffer::uninit();
 
@@ -1118,33 +1121,34 @@ impl<'a> Linker<'a> {
                 abs_bunx_file,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o664,
-            )
-            .unwrap()
-            {
+            ) {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
+                    let err: bun_core::Error = err.into();
                     if err != bun_core::err!("ENOENT") || global {
                         self.err = Some(err);
                         return;
                     }
 
-                    let node_modules_path_save = self.node_modules_path.save();
-                    self.node_modules_path.append(b".bin");
+                    // PORT NOTE: borrowck — Zig's `save()`/`defer restore()` returns a
+                    // `ResetScope` holding `&mut Path`, which would keep
+                    // `node_modules_path` exclusively borrowed across `append()`.
+                    // Snapshot the length and restore via `set_length` after.
+                    let node_modules_path_save = self.node_modules_path.len();
+                    let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
                     let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
-                    node_modules_path_save.restore();
+                    self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::File::openat_os_path(
                         Fd::invalid(),
                         abs_bunx_file,
                         sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                         0o664,
-                    )
-                    .unwrap()
-                    {
+                    ) {
                         Ok(f) => break 'bunx_file f,
                         Err(real_err) => {
-                            self.err = Some(real_err);
+                            self.err = Some(real_err.into());
                             return;
                         }
                     }
@@ -1179,7 +1183,7 @@ impl<'a> Linker<'a> {
             };
 
             if let Some(chunk) = first_content_chunk {
-                match WinBinLinkingShim::Shebang::parse(chunk, rel_target_w) {
+                match WinShimShebang::parse(chunk, rel_target_w) {
                     Ok(s) => break 'shebang s,
                     Err(_) => {
                         self.err = Some(bun_core::err!("InvalidBinCount"));
@@ -1187,7 +1191,7 @@ impl<'a> Linker<'a> {
                     }
                 }
             } else {
-                break 'shebang WinBinLinkingShim::Shebang::parse_from_bin_path(rel_target_w);
+                break 'shebang WinShimShebang::parse_from_bin_path(rel_target_w);
             }
         };
 
@@ -1208,7 +1212,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        if let Err(err) = bunx_file.writer().write_all(metadata) {
+        if let Err(err) = bunx_file.write_all(metadata) {
             self.err = Some(err.into());
             return;
         }
@@ -1220,13 +1224,12 @@ impl<'a> Linker<'a> {
             bun_str::WStr::from_raw(dest_buf.as_ptr(), abs_dest_w_len + b".exe".len())
         };
 
-        if let Err(err) = sys::File::write_file(
+        if let Err(err) = sys::File::write_file_os_path(
             Fd::invalid(),
             abs_exe_file,
-            WinBinLinkingShim::EMBEDDED_EXECUTABLE_DATA,
-        )
-        .unwrap()
-        {
+            crate::windows_shim::embedded_executable_data(),
+        ) {
+            let err: bun_core::Error = err.into();
             if err == bun_core::err!("EBUSY") {
                 // exe is most likely running. bunx file has already been updated, ignore error
                 return;

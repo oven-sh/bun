@@ -1257,7 +1257,9 @@ pub mod fs {
             iterator: I,
         ) -> core::result::Result<(), bun_core::Error> {
             use bun_sys::FileKind as DK;
-            let name_slice = entry.name.slice();
+            // OS-native `slice()` is `&[u16]` on Windows; the entry-store key
+            // is UTF-8, so use the eagerly-transcoded `slice_u8()`.
+            let name_slice = entry.name.slice_u8();
             let found_kind: Option<EntryKind> = match entry.kind {
                 DK::Directory => Some(EntryKind::Dir),
                 DK::File => Some(EntryKind::File),
@@ -2269,7 +2271,9 @@ pub mod fs {
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
             #[cfg(target_os = "macos")]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(windows)]
+            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
+            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
             let seconds = mtime / NS_PER_S;
 
@@ -7583,12 +7587,16 @@ impl<'a> Resolver<'a> {
                     };
                     #[cfg(windows)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
-                        bun_sys::open_dir_at_windows_a(FD::INVALID, sentinel, bun_sys::OpenDirAtWindowsOptions {
-                            iterable: true,
-                            no_follow: !FOLLOW_SYMLINKS,
-                            read_only: true,
-                        })
-                        .unwrap()
+                        bun_sys::open_dir_at_windows_a(
+                            FD::INVALID,
+                            sentinel.as_bytes(),
+                            bun_sys::WindowsOpenDirOptions {
+                                iterable: true,
+                                no_follow: !FOLLOW_SYMLINKS,
+                                read_only: true,
+                                ..Default::default()
+                            },
+                        )
                         .map_err(Into::into)
                     };
 

@@ -233,9 +233,9 @@ impl ExtractTarball {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = self.temp_dir;
-        #[cfg(windows)]
-        let mut tmpname_buf = WPathBuffer::uninit();
-        #[cfg(not(windows))]
+        // Zig: `var tmpname_buf: [bun.MAX_PATH_BYTES]u8` — UTF-8 on every
+        // platform; the Windows tmpdir path is converted to wide at the
+        // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
 
@@ -545,16 +545,15 @@ impl ExtractTarball {
 
                 loop {
                     let dir_to_move = match sys::open_dir_at_windows_a(
-                        Fd::from_std_dir(self.temp_dir),
+                        self.temp_dir.fd(),
                         tmpname.as_bytes(),
-                        sys::OpenDirOptions {
+                        sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
                             iterable: false,
                             read_only: true,
+                            ..Default::default()
                         },
-                    )
-                    .unwrap()
-                    {
+                    ) {
                         Ok(d) => d,
                         Err(err) => {
                             // i guess we just
@@ -576,7 +575,7 @@ impl ExtractTarball {
 
                     match bun_sys::windows::move_opened_file_at(
                         dir_to_move,
-                        Fd::from_std_dir(cache_dir),
+                        Fd::from_std_dir(&cache_dir),
                         path_to_use,
                         true,
                     ) {
@@ -588,7 +587,7 @@ impl ExtractTarball {
                                     | sys::Errno::BUSY
                                     | sys::Errno::EXIST => {
                                         // before we attempt to delete the destination, let's close the source dir.
-                                        dir_to_move.close();
+                                        let _ = sys::close(dir_to_move);
 
                                         // We tried to move the folder over
                                         // but it didn't work!
@@ -608,11 +607,12 @@ impl ExtractTarball {
                                                 tmpname.len() + 3,
                                             )
                                         };
-                                        match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
+                                        match sys::renameat_concurrently_a(
+                                            Fd::from_std_dir(&cache_dir),
                                             folder_name,
-                                            Fd::from_std_dir(tmpdir),
+                                            Fd::from_std_dir(&tmpdir),
                                             tempdest.as_bytes(),
+                                            Default::default(),
                                         ) {
                                             bun_sys::Result::Err(_) => {}
                                             bun_sys::Result::Ok(_) => {
@@ -625,7 +625,7 @@ impl ExtractTarball {
                                     _ => {}
                                 }
                             }
-                            dir_to_move.close();
+                            let _ = sys::close(dir_to_move);
                             log.add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
@@ -641,7 +641,7 @@ impl ExtractTarball {
                             return Err(bun_core::err!("InstallFailed"));
                         }
                         bun_sys::Result::Ok(_) => {
-                            dir_to_move.close();
+                            let _ = sys::close(dir_to_move);
                         }
                     }
 
@@ -829,20 +829,18 @@ impl ExtractTarball {
                             }
 
                             let mut dest_buf = PathBuffer::uninit();
-                            let dest_path = path::join_abs_string_buf_z(
+                            let dest_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
                                 // only set once, should be fine to read not on main thread
                                 package_manager.cache_directory_path.as_bytes(),
                                 &mut dest_buf,
                                 &[name, dest_name],
-                                path::Style::Windows,
                             );
 
                             if sys::sys_uv::symlink_uv(
-                                final_path.as_bytes(),
-                                dest_path.as_bytes(),
+                                final_path,
+                                dest_path,
                                 bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
                             )
-                            .unwrap()
                             .is_err()
                             {
                                 break 'create_index;

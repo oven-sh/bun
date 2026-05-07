@@ -4,6 +4,8 @@ use core::mem::size_of;
 use bun_aio::Loop as AsyncLoop;
 use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriter, WriteStatus};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_sys;
 
@@ -122,9 +124,11 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
 
 #[cfg(windows)]
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_windows::libuv::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_sys::windows::libuv::Loop {
         // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
-        unsafe { (*this).loop_() }
+        // `platform_event_loop()` returns the live `uws::WindowsLoop*`; its
+        // embedded `uv_loop` is what `bun_io` expects.
+        unsafe { (*(*this).event_loop.platform_event_loop()).uv_loop }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump.
@@ -224,7 +228,27 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let this_ref = unsafe { &mut *this };
         #[cfg(windows)]
         {
-            this_ref.writer.set_pipe(this_ref.stdio_result.buffer);
+            // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
+            // `StdioResult` is the `WindowsStdioResult` union and Zig reads the
+            // `.buffer` field unchecked (caller invariant). Enforce that
+            // invariant here: any other arm is a logic bug, not a silent no-op.
+            // Ownership of the boxed `uv::Pipe` transfers into the writer's
+            // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
+            // and `Box::into_raw` it (set_pipe re-wraps via `Box::from_raw`).
+            use crate::process::WindowsStdioResult;
+            match core::mem::replace(
+                &mut this_ref.stdio_result,
+                WindowsStdioResult::Unavailable,
+            ) {
+                WindowsStdioResult::Buffer(pipe) => {
+                    // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
+                    // takes ownership via `Box::from_raw`.
+                    unsafe { this_ref.writer.set_pipe(Box::into_raw(pipe)) };
+                }
+                WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
+                    unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
+                }
+            }
         }
         this_ref.writer.set_parent(this);
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.
@@ -316,7 +340,19 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop.platform_event_loop()
+        #[cfg(not(windows))]
+        {
+            self.event_loop.platform_event_loop()
+        }
+        #[cfg(windows)]
+        {
+            // `platform_event_loop()` returns the uws `WindowsLoop` wrapper;
+            // `AsyncLoop` (= `bun_aio::Loop`) is the inner `uv_loop_t` on
+            // Windows (Zig: `vm.event_loop_handle.?` is `*uv.Loop`).
+            // SAFETY: the wrapper is live for the VM lifetime; `.uv_loop` is
+            // set by `us_create_loop` and stable thereafter.
+            unsafe { (*self.event_loop.platform_event_loop()).uv_loop }
+        }
     }
 
     pub fn watch(&mut self) {

@@ -596,7 +596,7 @@ impl<'a> Coordinator<'a> {
 
     #[cfg(windows)]
     pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
-        use bun_sys::{c, windows};
+        use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
         unsafe {
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
@@ -604,13 +604,13 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             // SAFETY: all-zero is a valid JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
-            let mut jeli: c::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = core::mem::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = c::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if c::SetInformationJobObject(
+            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = core::mem::zeroed();
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if windows::SetInformationJobObject(
                 job,
-                c::JobObjectExtendedLimitInformation,
-                (&mut jeli as *mut c::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                core::mem::size_of::<c::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                windows::JobObjectExtendedLimitInformation,
+                (&mut jeli as *mut windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             ) == 0
             {
                 windows::CloseHandle(job);

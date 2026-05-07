@@ -24,7 +24,6 @@ bun_paths.workspace = true
 bun_string.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
-
 thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -32,3 +31,7 @@ thiserror.workspace = true
 # `std.os.linux`: hot-path open/read/write/close/fstat/etc go straight to the
 # kernel via inline asm, skipping glibc's PLT + errno-TLS + cancellation check.
 rustix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true
+bun_output.workspace = true

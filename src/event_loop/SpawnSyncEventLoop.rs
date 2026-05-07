@@ -22,6 +22,10 @@ use bun_uws as uws;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
+#[cfg(windows)]
+// `ref_`/`unref`/`close` are `UvHandle` default trait methods; bring it into
+// scope so method resolution finds them on `Timer`.
+use bun_sys::windows::libuv::UvHandle as _;
 
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
@@ -253,15 +257,9 @@ impl Drop for SpawnSyncEventLoop {
                 unsafe {
                     (*timer.as_ptr()).stop();
                     (*timer.as_ptr()).unref();
-                    libuv::uv_close(
-                        timer.as_ptr().cast(),
-                        // SAFETY: on_close_uv_timer has a compatible signature with uv_close_cb
-                        // (takes *mut uv_handle_t; libuv guarantees the same pointer is passed back).
-                        Some(core::mem::transmute::<
-                            extern "C" fn(*mut libuv::Timer),
-                            libuv::uv_close_cb,
-                        >(on_close_uv_timer)),
-                    );
+                    // `UvHandle::close` already does the `*mut Timer` →
+                    // `*mut uv_handle_t` cb transmute internally.
+                    (*timer.as_ptr()).close(on_close_uv_timer);
                 }
             }
         }
@@ -373,7 +371,7 @@ impl SpawnSyncEventLoop {
         // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
         // (not from this function's reborrow, which would be invalidated on return).
         unsafe {
-            (*timer.as_ptr()).start(ts.ms_unsigned(), 0, on_uv_timer);
+            (*timer.as_ptr()).start(ts.ms_unsigned(), 0, Some(on_uv_timer));
             (*timer.as_ptr()).ref_();
         }
         self.uv_timer = Some(timer);

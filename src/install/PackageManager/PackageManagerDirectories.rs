@@ -7,6 +7,7 @@ use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, ZBox};
 use bun_dotenv::Loader as DotEnvLoader;
 use crate::bun_fs::FileSystem;
 use bun_install::lockfile::{self, Lockfile, LoadResult, Format as LockfileFormat};
+use crate::lockfile_real::package::{PackageListExt, PackageSliceExt};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Npm, PackageID, Repository, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};

@@ -944,31 +944,33 @@ impl Task {
 
                             // SAFETY: read-only access to `PackageManager`; see top-of-fn note.
                             let manager = unsafe { &*manager_ptr };
+                            // SAFETY: `tag` discriminates the active `Resolution.value` variant
+                            // for each arm below.
                             match tag {
                                 ResolutionTag::Npm => directories::cached_npm_package_folder_name(
                                     manager,
                                     pkg_name.slice(string_buf),
-                                    pkg_res.value.npm.version,
+                                    unsafe { pkg_res.value.npm }.version,
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::Git => directories::cached_git_folder_name(
                                     manager,
-                                    &pkg_res.value.git,
+                                    unsafe { &pkg_res.value.git },
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::Github => directories::cached_github_folder_name(
                                     manager,
-                                    &pkg_res.value.github,
+                                    unsafe { &pkg_res.value.github },
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
                                     manager,
-                                    pkg_res.value.local_tarball,
+                                    unsafe { pkg_res.value.local_tarball },
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
                                     manager,
-                                    pkg_res.value.remote_tarball,
+                                    unsafe { pkg_res.value.remote_tarball },
                                     patch_info.contents_hash(),
                                 ),
 
@@ -997,9 +999,6 @@ impl Task {
                     // violation here because no long-lived `&mut PackageManager` exists.
                     let (cache_dir, cache_dir_path) =
                         directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
-
-                    let mut dest_subpath = OsAutoPath::init();
-                    installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
 
@@ -1075,20 +1074,27 @@ impl Task {
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
 
-                    let mut cached_package_dir: Option<Fd> = None;
-                    let _cached_package_dir_guard =
-                        scopeguard::guard((), |_| {
-                            if let Some(dir) = cached_package_dir {
-                                dir.close();
+                    // PORT NOTE: reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
+                    // becomes a guard that *owns* the `Option<Fd>` so the loop body can reassign
+                    // through `*cached_package_dir` without an outstanding closure borrow.
+                    let mut cached_package_dir =
+                        scopeguard::guard(None::<Fd>, |dir| {
+                            if let Some(d) = dir {
+                                d.close();
                             }
                         });
-                    // TODO(port): errdefer — scopeguard captures &mut cached_package_dir; reshaped for borrowck
 
                     // .monotonic access of `supported_backend` is okay because it's an
                     // optimization. It's okay if another thread doesn't see an update to this
                     // value "in time".
                     let mut backend = unsafe { core::mem::transmute::<u8, InstallMethod>(installer.supported_backend.load(Ordering::Relaxed)) };
                     'backend: loop {
+                        // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
+                        // before the labeled-switch and passes it by-value (struct copy)
+                        // into each backend's helper. Rust moves it, so rebuild per
+                        // iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
+                        let mut dest_subpath = OsAutoPath::init();
+                        installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
                         match backend {
                             InstallMethod::Clonefile => {
                                 #[cfg(not(target_os = "macos"))]
@@ -1150,7 +1156,7 @@ impl Task {
                             }
 
                             InstallMethod::Hardlink => {
-                                cached_package_dir = match bun_sys::open_dir_for_iteration(
+                                *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
                                 ) {
@@ -1206,7 +1212,7 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
-                                cached_package_dir = match bun_sys::open_dir_for_iteration(
+                                *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
                                 ) {

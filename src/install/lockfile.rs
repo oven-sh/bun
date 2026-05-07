@@ -1606,8 +1606,13 @@ impl<'a> Printer<'a> {
         let mut lockfile_path: &ZStr = ZStr::EMPTY;
 
         if !bun_paths::is_absolute(path) {
-            let cwd = bun_sys::getcwd(&mut lockfile_path_buf1)?;
+            // Zig `bun.getcwd` returns the slice; the Rust `bun_sys::getcwd`
+            // returns the length written into the caller-owned buffer.
+            let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
             let parts = [path];
+            // PORT NOTE: reshaped for borrowck — copy `cwd` out of `buf1` so the
+            // join can write into `buf2` while `cwd` borrows `buf1` only.
+            let cwd = &lockfile_path_buf1[..cwd_len];
             let lockfile_path__len =
                 resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut lockfile_path_buf2.0, &parts).len();
             lockfile_path_buf2[lockfile_path__len] = 0;
@@ -1623,10 +1628,11 @@ impl<'a> Printer<'a> {
         }
 
         if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
-            let _ = sys::chdir(
-                b"",
-                bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes()),
-            );
+            // Zig `bun.sys.chdir("", dirname)` — first arg is error-context
+            // path; the Rust `bun_sys::chdir` takes the destination only.
+            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
+            let dir_z = bun_paths::z(dir, &mut lockfile_path_buf2);
+            let _ = sys::chdir(dir_z);
         }
 
         // Zig: `_ = try FileSystem.init(null);` — bootstraps the resolver FS
@@ -1658,8 +1664,10 @@ impl<'a> Printer<'a> {
                     )),
                 }
                 if log.errors > 0 {
-                    let mut ew = Output::error_writer();
-                    log.print(&mut ew).map_err(|_| err!("WriteFailed"))?;
+                    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
+                    // not `&mut &mut Writer` — pass the raw vtable pointer.
+                    let ew: *mut bun_core::io::Writer = Output::error_writer();
+                    log.print(ew).map_err(|_| err!("WriteFailed"))?;
                 }
                 Global::crash();
             }

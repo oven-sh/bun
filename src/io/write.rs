@@ -194,6 +194,21 @@ impl Write for Vec<u8> {
     }
 }
 
+/// `bun_core::io::Writer` is the type-erased vtable header behind
+/// `Output::writer()` / `Output::error_writer()`. Bridge it into `bun_io::Write`
+/// so generic printers (`W: bun_io::Write`) accept the process stdout/stderr
+/// sinks the same way Zig's `std.Io.Writer.Generic` did.
+impl Write for bun_core::io::Writer {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        bun_core::io::Writer::write_all(self, buf)
+    }
+    #[inline]
+    fn flush(&mut self) -> Result<()> {
+        bun_core::io::Writer::flush(self)
+    }
+}
+
 /// Growable string sink. Zig: `MutableString.writer()`.
 impl Write for bun_string::MutableString {
     #[inline]

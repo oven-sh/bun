@@ -1391,7 +1391,7 @@ pub fn parse_into_binary_lockfile(
     root: JSON::Expr,
     source: &logger::Source,
     log: &mut logger::Log,
-    manager: Option<&mut PackageManager>,
+    mut manager: Option<&mut PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
@@ -1440,8 +1440,6 @@ pub fn parse_into_binary_lockfile(
         };
     }
 
-    let mut string_buf = lockfile.string_buf();
-
     if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
         let mut trusted_dependencies = TrustedDependenciesSet::default();
         if !trusted_dependencies_expr.is_array() {
@@ -1484,7 +1482,7 @@ pub fn parse_into_binary_lockfile(
             let key_hash = key.as_string_hash(StringBuilder::string_hash)?.unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
-                PatchedDep { path: string_buf.append(value.as_utf8_string_literal().unwrap())?, ..Default::default() },
+                PatchedDep { path: sbuf!(lockfile).append(value.as_utf8_string_literal().unwrap())?, ..Default::default() },
             );
         }
     }
@@ -1506,7 +1504,7 @@ pub fn parse_into_binary_lockfile(
 
             let name_str = key.as_utf8_string_literal().unwrap();
             let name_hash = StringBuilder::string_hash(name_str);
-            let name = string_buf.append_with_hash(name_str, name_hash)?;
+            let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
             // TODO(dylan-conway) also accept object when supported
             if !value.is_string() {
@@ -1516,7 +1514,7 @@ pub fn parse_into_binary_lockfile(
 
             let version_str = value.as_utf8_string_literal().unwrap();
             let version_hash = StringBuilder::string_hash(version_str);
-            let version = string_buf.append_with_hash(version_str, version_hash)?;
+            let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
             let dep = Dependency {
@@ -1560,7 +1558,7 @@ pub fn parse_into_binary_lockfile(
 
             let dep_name_str = key.as_utf8_string_literal().unwrap();
             let dep_name_hash = StringBuilder::string_hash(dep_name_str);
-            let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
+            let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
             if !value.is_string() {
                 log.add_error(Some(source), value.loc, b"Expected a string")?;
@@ -1569,7 +1567,7 @@ pub fn parse_into_binary_lockfile(
 
             let version_str = value.as_utf8_string_literal().unwrap();
             let version_hash = StringBuilder::string_hash(version_str);
-            let version = string_buf.append_with_hash(version_str, version_hash)?;
+            let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
             let dep = Dependency {
@@ -1628,7 +1626,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
-            let catalog_name = string_buf.append(catalog_name_str)?;
+            let catalog_name = sbuf!(lockfile).append(catalog_name_str)?;
 
             let group = lockfile.catalogs.get_or_put_group(lockfile, catalog_name)?;
 
@@ -1643,7 +1641,7 @@ pub fn parse_into_binary_lockfile(
 
                 let dep_name_str = key.as_utf8_string_literal().unwrap();
                 let dep_name_hash = StringBuilder::string_hash(dep_name_str);
-                let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
+                let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
                 if !value.is_string() {
                     log.add_error(Some(source), value.loc, b"Expected a string")?;
@@ -1652,7 +1650,7 @@ pub fn parse_into_binary_lockfile(
 
                 let version_str = value.as_utf8_string_literal().unwrap();
                 let version_hash = StringBuilder::string_hash(version_str);
-                let version = string_buf.append_with_hash(version_str, version_hash)?;
+                let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
                 let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
                 let dep = Dependency {
@@ -1732,7 +1730,7 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
-        lockfile.workspace_paths.insert(name_hash, string_buf.append(path)?);
+        lockfile.workspace_paths.insert(name_hash, sbuf!(lockfile).append(path)?);
 
         // versions are optional
         if let Some(version_expr) = value.get(b"version") {
@@ -1741,7 +1739,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
-            let version_str = string_buf.append(version_expr.as_utf8_string_literal().unwrap())?;
+            let version_str = sbuf!(lockfile).append(version_expr.as_utf8_string_literal().unwrap())?;
 
             let parsed = Semver::Version::parse(version_str.sliced(lockfile.buffers.string_bytes.as_slice()));
             if !parsed.valid {
@@ -1778,7 +1776,7 @@ pub fn parse_into_binary_lockfile(
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
             &root_pkg_exr,
-            &mut string_buf,
+            &mut sbuf!(lockfile),
             log,
             source,
             &mut optional_peers_buf,
@@ -1791,7 +1789,7 @@ pub fn parse_into_binary_lockfile(
 
         if let Some(name) = maybe_name {
             let name_hash = StringBuilder::string_hash(name);
-            root_pkg.name = string_buf.append_with_hash(name, name_hash)?;
+            root_pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
             root_pkg.name_hash = name_hash;
         }
 
@@ -1822,19 +1820,19 @@ pub fn parse_into_binary_lockfile(
                 let mut pkg = Package::default();
 
                 pkg.resolution = Resolution::init(
-                    crate::resolution::TaggedValue::Workspace(string_buf.append(path)?),
+                    crate::resolution::TaggedValue::Workspace(sbuf!(lockfile).append(path)?),
                 );
 
                 let name = value.get(b"name").unwrap().as_utf8_string_literal().unwrap();
                 let name_hash = StringBuilder::string_hash(name);
 
-                pkg.name = string_buf.append_with_hash(name, name_hash)?;
+                pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
 
                 let (off, len) = parse_append_dependencies::<false, false>(
                     lockfile,
                     &value,
-                    &mut string_buf,
+                    &mut sbuf!(lockfile),
                     log,
                     source,
                     &mut optional_peers_buf,
@@ -1847,9 +1845,9 @@ pub fn parse_into_binary_lockfile(
                 pkg.resolutions = PackageIDSlice::new(off, len);
 
                 if let Some(bin_expr) = value.get(b"bin") {
-                    pkg.bin = Bin::parse_append(&bin_expr, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                    pkg.bin = Bin::parse_append(&bin_expr, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
                 } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                    pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut string_buf)?;
+                    pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
                 }
 
                 // there should be no duplicates
@@ -1967,9 +1965,9 @@ pub fn parse_into_binary_lockfile(
             };
 
             let name_hash = StringBuilder::string_hash(name_str);
-            let name = string_buf.append(name_str)?;
+            let name = sbuf!(lockfile).append(name_str)?;
 
-            let mut res = match Resolution::from_text_lockfile(res_str, &mut string_buf) {
+            let mut res = match Resolution::from_text_lockfile(res_str, &mut sbuf!(lockfile)) {
                 Ok(r) => r,
                 Err(crate::resolution::FromTextLockfileError::OutOfMemory) => {
                     return Err(ParseError::OutOfMemory);
@@ -2012,9 +2010,9 @@ pub fn parse_into_binary_lockfile(
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
-                    res.value.npm.url = string_buf.append(&url)?;
+                    res.value.npm.url = sbuf!(lockfile).append(&url)?;
                 } else {
-                    res.value.npm.url = string_buf.append(registry_str)?;
+                    res.value.npm.url = sbuf!(lockfile).append(registry_str)?;
                 }
             }
 
@@ -2106,7 +2104,7 @@ pub fn parse_into_binary_lockfile(
                         let (off, len) = parse_append_dependencies::<true, false>(
                             lockfile,
                             deps_os_cpu_libc_bin_bundle_obj,
-                            &mut string_buf,
+                            &mut sbuf!(lockfile),
                             log,
                             source,
                             &mut optional_peers_buf,
@@ -2119,9 +2117,9 @@ pub fn parse_into_binary_lockfile(
                         pkg.resolutions = PackageIDSlice::new(off, len);
 
                         if let Some(bin) = deps_os_cpu_libc_bin_bundle_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(&bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
                         } else if let Some(bin_dir) = deps_os_cpu_libc_bin_bundle_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut string_buf)?;
+                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
 
                         if res.tag != ResolutionTag::Workspace {
@@ -2150,9 +2148,9 @@ pub fn parse_into_binary_lockfile(
                         }
 
                         if let Some(bin) = bin_obj.get(b"bin") {
-                            pkg.bin = Bin::parse_append(&bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(lockfile), &mut lockfile.buffers.extern_strings)?;
                         } else if let Some(bin_dir) = bin_obj.get(b"binDir") {
-                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut string_buf)?;
+                            pkg.bin = Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
                     }
                     _ => {}
@@ -2200,7 +2198,7 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    let resolved = string_buf.append(bun_tag_str)?;
+                    let resolved = sbuf!(lockfile).append(bun_tag_str)?;
                     if tag == ResolutionTag::Git {
                         res.value.git.resolved = resolved;
                     } else {
@@ -2468,10 +2466,15 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
+// PORT NOTE: Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
+// In Rust the `Buf` borrows the same `lockfile.buffers.string_bytes` /
+// `string_pool` fields, so the two parameters alias. The `buf` parameter is
+// dropped and each append constructs a fresh `sbuf!(lockfile)` so the borrow
+// checker can see the disjoint field accesses against `buffers.dependencies`
+// and `workspace_paths`.
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,
-    buf: &mut StringBuf,
     log: &mut logger::Log,
     source: &logger::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
@@ -2525,15 +2528,15 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 };
 
                 let name_hash = StringBuilder::string_hash(name_str);
-                let name = buf.append_external_with_hash(name_str, name_hash)?;
+                let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
                 let Some(version_str) = value.as_utf8_string_literal() else {
                     log.add_error(Some(source), value.loc, b"Expected a string")?;
                     return Err(ParseError::InvalidDependencyVersion);
                 };
 
-                let version = buf.append(version_str)?;
-                let version_sliced = version.sliced(buf.bytes.as_slice());
+                let version = sbuf!(lockfile).append(version_str)?;
+                let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
                 let mut dep = Dependency {
                     name: name.value,
@@ -2587,7 +2590,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let key = prop.key.unwrap();
                 let value = prop.value.unwrap();
                 let path = key.as_utf8_string_literal().unwrap();
-                if !strings::eql_long(path, workspace_path.slice(buf.bytes.as_slice()), true) {
+                if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
                     continue;
                 }
 
@@ -2596,13 +2599,13 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let name_hash = StringBuilder::string_hash(name);
 
                 let dep = Dependency {
-                    name: buf.append_with_hash(name, name_hash)?,
+                    name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
                     name_hash,
                     behavior: Behavior::WORKSPACE,
                     version: DependencyVersion {
                         tag: DependencyVersionTag::Workspace,
                         value: DependencyVersionValue {
-                            workspace: buf.append(path)?,
+                            workspace: sbuf!(lockfile).append(path)?,
                         },
                         literal: String::default(),
                     },
@@ -2620,7 +2623,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     let end = lockfile.buffers.dependencies.len();
 
     {
-        let bytes = buf.bytes.as_slice();
+        let bytes = lockfile.buffers.string_bytes.as_slice();
         lockfile.buffers.dependencies[off..].sort_by(|a, b| {
             if Dependency::is_less_than(bytes, a, b) { core::cmp::Ordering::Less }
             else if Dependency::is_less_than(bytes, b, a) { core::cmp::Ordering::Greater }

@@ -495,7 +495,8 @@ impl ExtractTarball {
                     package_manager,
                     &mut bufs.folder_name_buf,
                     name,
-                    self.resolution.value.npm.version,
+                    // SAFETY: tag == Npm guarantees the `npm` union variant is active.
+                    unsafe { self.resolution.value.npm }.version,
                     None,
                 )
                 .as_bytes(),

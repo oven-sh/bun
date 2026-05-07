@@ -153,7 +153,7 @@ impl JSGlobalObject {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
         };
-        err.put(self, ZigString::static_str("name"), name_value);
+        err.put(self, b"name", name_value);
         self.throw_value(err)
     }
 
@@ -668,8 +668,7 @@ impl JSGlobalObject {
         // `@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)` is the literal string.
         err.put(
             self,
-            ZigString::static_str("code"),
-            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
+            b"code",            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
         );
         err
     }
@@ -686,14 +685,13 @@ impl JSGlobalObject {
         }
         err.put(
             self,
-            ZigString::static_str("code"),
-            ZigString::init(opts.code.as_bytes()).to_js(self),
+            b"code",            ZigString::init(opts.code.as_bytes()).to_js(self),
         );
         if let Some(name) = opts.name {
-            err.put(self, ZigString::static_str("name"), ZigString::init(name).to_js(self));
+            err.put(self, b"name", ZigString::init(name).to_js(self));
         }
         if let Some(errno) = opts.errno {
-            err.put(self, ZigString::static_str("errno"), JSValue::js_number_from_int32(errno));
+            err.put(self, b"errno", JSValue::js_number_from_int32(errno));
         }
         self.throw_value(err)
     }
@@ -1346,7 +1344,7 @@ impl JSGlobalObject {
         use std::io::Write;
         write!(&mut buf, "{}", args).expect("unreachable");
         let mut zig_str = ZigString::init(&buf);
-        zig_str.detect_encoding();
+        let zig_str = zig_str.with_encoding();
         // it alwayas clones
         zig_str.to_error_instance(self)
     }

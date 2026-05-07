@@ -2806,6 +2806,12 @@ impl OutOfRangeValue for i64 {
     }
     fn type_name() -> &'static str { "i64" }
 }
+impl OutOfRangeValue for i32 {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {}", self)
+    }
+    fn type_name() -> &'static str { "i32" }
+}
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))

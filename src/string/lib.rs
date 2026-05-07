@@ -865,8 +865,9 @@ impl String {
             if let ZigStringSlice::Static(ptr, len) = slice {
                 self.ref_();
                 self.ref_();
+                let string_impl = unsafe { self.value.wtf };
                 return SliceWithUnderlyingString {
-                    utf8: ZigStringSlice::WTF { string_impl: self.value.wtf, ptr, len },
+                    utf8: ZigStringSlice::WTF { string_impl, ptr, len },
                     underlying: *self,
                     #[cfg(debug_assertions)]
                     did_report_extra_memory_debug: false,
@@ -920,7 +921,7 @@ impl String {
     pub fn to_thread_safe_ensure_ref(&mut self) {
         if self.tag == Tag::WTFStringImpl {
             unsafe { BunString__toThreadSafe(self) };
-            unsafe { (*self.value.wtf).ref_() };
+            unsafe { (*self.value.wtf).r#ref() };
         }
     }
 

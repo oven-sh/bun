@@ -292,9 +292,26 @@ impl<'a> Loader<'a> {
         is_http: bool,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
-    ) -> Option<URL<'_>> {
+    ) -> Option<URL<'a>> {
         // TODO: When Web Worker support is added, make sure to intern these strings
-        let mut http_proxy: Option<URL> = None;
+        //
+        // Lifetime: the returned `URL` borrows env-var values that are
+        // `Box<[u8]>`-owned by `*self.map: Map`, which is borrowed for `'a`
+        // (`map: &'a mut Map`). The boxed allocations are address-stable
+        // across rehashes and Bun never removes/overwrites the proxy env vars
+        // after they are read here, so the slices are valid for `'a`. This is
+        // the same contract Zig `getHttpProxy` (env_loader.zig:174) relies on
+        // by returning `[]const u8` borrowing the loader's map. Encapsulating
+        // the extension here keeps every caller (PackageManager, fetch,
+        // upgrade, create) free of `transmute` (PORTING.md §Forbidden).
+        //
+        // SAFETY: see above — `s` points into a `Box<[u8]>` owned by
+        // `*self.map`, which outlives `'a`.
+        let extend = |s: &[u8]| -> &'a [u8] {
+            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+        };
+
+        let mut http_proxy: Option<URL<'a>> = None;
 
         // Treat empty-string lowercase as "absent" so it falls through to uppercase.
         // CI environments often set `http_proxy=""` as a default; a runtime
@@ -310,7 +327,7 @@ impl<'a> Loader<'a> {
             };
             if let Some(p) = proxy {
                 if !p.is_empty() && p != b"\"\"" && p != b"''" {
-                    http_proxy = Some(URL::parse(p));
+                    http_proxy = Some(URL::parse(extend(p)));
                 }
             }
         } else {
@@ -324,7 +341,7 @@ impl<'a> Loader<'a> {
             };
             if let Some(p) = proxy {
                 if !p.is_empty() && p != b"\"\"" && p != b"''" {
-                    http_proxy = Some(URL::parse(p));
+                    http_proxy = Some(URL::parse(extend(p)));
                 }
             }
         }

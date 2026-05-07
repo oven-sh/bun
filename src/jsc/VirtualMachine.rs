@@ -3080,6 +3080,9 @@ impl VirtualMachine {
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
+        // PORT NOTE: reshaped for borrowck — capture the VM raw pointer before
+        // `self.ref_strings.entry(hash)` exclusively borrows `self`.
+        let vm_ctx = NonNull::new((self as *mut VirtualMachine).cast());
         // PORT NOTE: Zig `lock(); defer unlock()` — RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();

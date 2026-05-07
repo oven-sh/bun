@@ -952,10 +952,26 @@ impl JSValue {
         const I52_MAX: i64 = (1i64 << 51) - 1;
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
-    pub fn put(self, global: &JSGlobalObject, key: &[u8], value: JSValue) {
-        let zs = bun_string::ZigString::init(key);
-        // SAFETY: `global` is live; `zs` borrowed for the call.
-        unsafe { JSC__JSValue__put(self, global, &zs, value) }
+    /// `JSValue.put` (JSValue.zig:366) — `key: anytype` dispatches on type at
+    /// comptime to `putZigString`/`putBunString`. Rust ports the dispatch via
+    /// the [`PutKey`] trait so callers may pass `&[u8]`, `ZigString`,
+    /// `&ZigString`, `bun.String`, or `&bun.String` exactly as in Zig.
+    pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
+        key.put(self, global, value)
+    }
+    /// `JSValue.putBunString` (JSValue.zig:353).
+    pub fn put_bun_string(self, global: &JSGlobalObject, key: &bun_string::String, value: JSValue) {
+        // SAFETY: `global` is live; `key` borrowed for the call.
+        unsafe { JSC__JSValue__putBunString(self, global, key, value) }
+    }
+    /// `JSValue.putMayBeIndex` (JSValue.zig:389) — same as [`put`] but accepts
+    /// both non-numeric and numeric keys. Prefer [`put`] when the key is
+    /// guaranteed non-numeric.
+    pub fn put_may_be_index(self, global: &JSGlobalObject, key: &bun_string::String, value: JSValue) -> JsResult<()> {
+        // SAFETY: `global` is live; `key` borrowed for the call; FFI may throw.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__putMayBeIndex(self, global, key, value)
+        })
     }
     pub fn put_to_property_key(target: JSValue, global: &JSGlobalObject, key: JSValue, value: JSValue) -> JsResult<()> {
         // SAFETY: `global` is live; key/value are valid encoded JSValues per caller invariant.

@@ -1240,31 +1240,35 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 }
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
+    // `opts.abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by contract —
+    // populated in `init()` from a `ZBox` via `into_vec_with_nul()`, so the
+    // stored slice length INCLUDES the trailing NUL. Re-derive the `&ZStr`
+    // (NUL-stripped) once and use it for both the path resolver and the error
+    // message so we don't print a literal `\0`.
+    // SAFETY: trailing-NUL invariant established by `init()` for any non-empty
+    // value; for empty (`b""`) `from_raw(_, 0)` is the canonical empty `ZStr`.
+    let abs_ca_z = unsafe {
+        ZStr::from_raw(
+            opts.abs_ca_file_name.as_ptr(),
+            opts.abs_ca_file_name.len().saturating_sub(1),
+        )
+    };
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by contract —
-            // populated below from a `ZBox` via `.as_bytes_with_nul()` so the trailing NUL
-            // is guaranteed.
-            let abs_ca_z = unsafe {
-                ZStr::from_raw(
-                    opts.abs_ca_file_name.as_ptr(),
-                    opts.abs_ca_file_name.len().saturating_sub(1),
-                )
-            };
             let normalized =
                 normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
                     "could not find CA file: '{s}'",
-                    &[&bstr::BStr::new(opts.abs_ca_file_name)],
+                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
                 );
             } else {
                 Output::err(
                     "HTTPThread",
                     "invalid CA file: '{s}'",
-                    &[&bstr::BStr::new(opts.abs_ca_file_name)],
+                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
                 );
             }
         }
@@ -1272,7 +1276,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
             Output::err(
                 "HTTPThread",
                 "invalid CA file: '{s}'",
-                &[&bstr::BStr::new(opts.abs_ca_file_name)],
+                &[&bstr::BStr::new(abs_ca_z.as_bytes())],
             );
         }
         http::InitError::InvalidCA => {

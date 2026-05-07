@@ -151,6 +151,9 @@ pub mod fs {
         }
     }
 
+    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
+    // `fs::Path` mirrors until they unify.
+    #[repr(C)]
     #[derive(Clone, Default)]
     pub struct Path {
         /// Display path — relative to cwd in the bundler; forward-slash on Windows.

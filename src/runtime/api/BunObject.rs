@@ -1652,7 +1652,7 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];
     if !size.is_uint32_as_any_int() {
-        return Err(global_this.throw_invalid_arguments("Expected a positive number"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a positive number")));
     }
     Ok(JSValue::create_uninitialized_uint8_array(
         global_this,

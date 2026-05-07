@@ -1074,12 +1074,6 @@ impl<V: Default, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
     }
 }
 
-impl<V: Clone, C: Default> StringArrayHashMap<V, C> {
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self { inner: self.inner.clone()?, ctx: C::default() })
-    }
-}
-
 impl<V, C> ArrayHashMapExt for StringArrayHashMap<V, C> {
     type Key = Box<[u8]>;
     type Value = V;

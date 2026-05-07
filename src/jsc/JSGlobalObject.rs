@@ -143,7 +143,7 @@ impl JSGlobalObject {
     }
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {
-        let err = self.create_error_instance("{}", format_args!("{}", bstr::BStr::new(msg)));
+        let err = self.create_error_instance(format_args!("{}", bstr::BStr::new(msg)));
         if err.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;

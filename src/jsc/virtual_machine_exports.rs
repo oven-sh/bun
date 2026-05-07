@@ -101,8 +101,9 @@ pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bo
 pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
     // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
     // it will do nothing if IPC is not enabled.
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let _ = unsafe { (*global.bun_vm()).get_ipc_instance() };
+    // SAFETY: bun_vm_ptr() yields the live per-thread VM; `get_ipc_instance`
+    // writes `self.ipc` on first call.
+    let _ = unsafe { (*global.bun_vm_ptr()).get_ipc_instance() };
 }
 
 /// This function is called on the main thread

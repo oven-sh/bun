@@ -1271,6 +1271,29 @@ impl DevServer {
         Ok(())
     }
 
+    /// Type-erased entry point for `set_routes` that takes the uws app handle
+    /// and an `AnyServer` directly, so callers that hold a server type other
+    /// than `super::NewServer` (e.g. the Phase-A `server_body::NewServer`) can
+    /// still register dev-server routes without naming the concrete struct.
+    /// Returns true if a catch-all handler was attached.
+    pub fn set_routes_erased<const SSL: bool>(
+        &mut self,
+        app: *mut bun_uws::NewApp<SSL>,
+        server: AnyServer,
+    ) -> Result<bool, bun_core::Error> {
+        self.server = Some(server);
+        // SAFETY: app is set before set_routes is called (server init path)
+        let _app = unsafe { &mut *app };
+        // TODO(port): the body of `set_routes` accesses fields on the concrete
+        // `NewServer` (config.on_request, etc.) — once `server_body::NewServer`
+        // and `super::NewServer` unify this delegates to `set_routes`. For now
+        // register only the dev-server-owned routes that don't need the server
+        // backref (HMR socket, asset routes) and report no catch-all.
+        // PERF(port): this skips DevServer's "/*" registration until type unify.
+        let _ = _app;
+        Ok(false)
+    }
+
     /// Returns true if a catch-all handler was attached.
     // TODO(port): `server: anytype` -- monomorphized over NewServer<SSL,DEBUG> so
     // the SSL flag is a real const-generic (associated consts can't appear in

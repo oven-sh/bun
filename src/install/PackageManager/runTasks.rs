@@ -967,14 +967,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
+                // PORT NOTE: capture the `*mut NetworkTask` up front — the
+                // `&'a mut NetworkTask` field can't be moved out through
+                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
+                // SAFETY: `task.tag == PackageManifest` — active union arm.
+                let net_ptr: *mut NetworkTask =
+                    unsafe { &mut *(*task_ptr).request.package_manifest }.network as *mut _;
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
-                    // function-scope provenance root; `task.tag == PackageManifest`
-                    // so `request.package_manifest` is the active union arm.
+                    // function-scope provenance root; `net_ptr` is the network task
+                    // owned by this resolve task and is returned to the pool here.
                     unsafe {
-                        (*manager_ptr)
-                            .preallocated_network_tasks
-                            .put((*task_ptr).request.package_manifest.network);
+                        (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                     }
                 };
                 if task.status == Task::Status::Fail {

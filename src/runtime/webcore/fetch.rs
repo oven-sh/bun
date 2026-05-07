@@ -41,9 +41,6 @@ pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.zig
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): module wiring — fetch.rs + fetch/ subdir (Rust 2018 path).
-// `fetch/FetchTasklet.rs` is itself a heavy gated draft.
-
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 

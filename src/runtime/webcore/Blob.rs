@@ -3287,7 +3287,7 @@ impl BlobExt for Blob {
     ) -> Blob {
         // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
         if check_s3 {
-            if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
+            if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
                 if p.slice().starts_with(b"s3://") {
                     // SAFETY: bun_vm() is live for the duration of a host call.
                     let vm = unsafe { &mut *global_this.bun_vm() };
@@ -4572,7 +4572,7 @@ pub fn write_file_internal(
         // `Request`. Both expose `get_body_value()` /
         // `get_body_readable_stream()`; collapse into one helper that takes the
         // body-value pointer and a `get_stream` closure.
-        let body_dispatch = |body_value: *mut webcore::body::Value,
+        let mut body_dispatch = |body_value: *mut webcore::body::Value,
                              get_stream: &mut dyn FnMut(
             &JSGlobalObject,
         )

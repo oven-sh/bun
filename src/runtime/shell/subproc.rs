@@ -642,10 +642,29 @@ impl ShellSubprocess {
         subproc.proc().set_exit_handler(subprocess as *mut (), &SHELL_EXIT_VTABLE);
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        if let Writable::Pipe(_pipe) = &mut subproc.stdin {
-            // TODO(port): self-referential signal init — `Signal::init` needs a
-            // `SignalHandler` impl for `Writable` and a raw-ptr API. Shell never
-            // creates `.pipe` stdin (see `Writable::init`), so this is dead.
+        // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
+        // Wire the FileSink's close-signal back to the enclosing `Writable` so
+        // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
+        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
+        // stable address, so the self-referential raw pointer is sound for the
+        // life of the subprocess. Only reachable on Windows (POSIX
+        // `Writable::init` never returns `Pipe` for shell stdio).
+        {
+            // SAFETY: `subprocess` was fully initialised by `ptr::write` above.
+            let stdin_ptr: *mut Writable =
+                unsafe { core::ptr::addr_of_mut!((*subprocess).stdin) };
+            // SAFETY: unique access; no other `&`/`&mut` to `stdin` is live.
+            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
+                // SAFETY: `Arc<FileSink>` is single-thread (mirrors Zig's
+                // intrusive `*FileSink`); the FileSink allocation is disjoint
+                // from `*stdin_ptr`. `stdin_ptr` outlives the sink — the
+                // Subprocess owns both and `Writable::on_close` is the only
+                // path that drops the Arc.
+                unsafe {
+                    (*(Arc::as_ptr(pipe) as *mut FileSink)).signal =
+                        webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
+                }
+            }
         }
 
         match subproc.proc().watch() {

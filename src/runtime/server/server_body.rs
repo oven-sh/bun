@@ -1023,7 +1023,8 @@ impl ServePlugins {
         for route in html_bundle_routes {
             // SAFETY: route was ref'd when stored
             let route_ref = unsafe { &mut *route };
-            route_ref.on_plugins_resolved(Some(plugin_ref)); // bun.handleOom — aborts on OOM
+            // Spec server.zig:457 — `bun.handleOom(route.onPluginsResolved(plugin))`
+            bun_core::handle_oom(route_ref.on_plugins_resolved(Some(NonNull::from(plugin_ref))));
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }

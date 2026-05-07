@@ -277,8 +277,7 @@ pub mod lockfile {
 
 /// `UpdateRequest` — mounted directly (sibling of `package_manager_real`) so
 /// `bunx_command` / `outdated_command` can name `bun_install::update_request`.
-#[path = "PackageManager/UpdateRequest.rs"]
-pub mod update_request;
+pub use package_manager_real::update_request;
 pub use update_request::UpdateRequest;
 
 /// `package_manager` — re-export of the file-backed `package_manager_real`

@@ -1911,9 +1911,11 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     // SAFETY: FFI into BoringSSL; ERR_get_error reads the thread-local queue.
     let err_code = unsafe { bun_boringssl_sys::ERR_get_error() };
     if err_code != 0 {
-        // SAFETY: ERR_clear_error has no preconditions.
-        scopeguard::defer! { unsafe { bun_boringssl_sys::ERR_clear_error() }; }
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
+        // PORT NOTE: Zig had `defer ERR_clear_error()`; no early return
+        // between there and here, so a tail call is equivalent.
+        // SAFETY: ERR_clear_error has no preconditions.
+        unsafe { bun_boringssl_sys::ERR_clear_error() };
         return true;
     }
     false

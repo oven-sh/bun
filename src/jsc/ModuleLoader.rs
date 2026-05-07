@@ -68,6 +68,32 @@ impl ModuleLoader {
     }
 }
 
+/// RAII shape of Zig's `defer jsc_vm.module_loader.resetArena(jsc_vm)` — calls
+/// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a raw
+/// pointer (not `&mut`) so the body of the guarded scope may also reach into
+/// the VM via raw pointers without aliasing the guard.
+#[must_use = "dropping immediately resets the arena before transpilation"]
+pub struct ArenaResetGuard(*mut VirtualMachine);
+
+impl ArenaResetGuard {
+    /// # Safety
+    /// `vm` must be the live per-thread VM for the guard's entire lifetime,
+    /// and the guard must drop on that same thread.
+    #[inline]
+    pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
+        Self(vm)
+    }
+}
+
+impl Drop for ArenaResetGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: per `new`'s contract — `self.0` is the live per-thread VM
+        // and this drop runs on the same thread before the VM is destroyed.
+        unsafe { ModuleLoader::reset_arena(&mut *self.0) };
+    }
+}
+
 /// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FetchFlags {

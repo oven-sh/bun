@@ -374,22 +374,21 @@ impl CatalogMap {
         new_catalog.default.ensure_total_capacity(self.default.count())?;
 
         let old_buf = old.buffers.string_bytes.as_slice();
-        // `builder.allocate()` ran before this call (see lockfile.rs
-        // `clean_with_logger`), so `string_bytes` will not reallocate during
-        // `append`; capture as raw `*const [u8]` so the shared `new_ctx` view
-        // doesn't conflict with the `&mut builder` calls below.
-        // SAFETY: stable address (no realloc — `allocate()` reserved upfront);
-        // only read for hashing/eq, never written through this pointer.
-        let new_buf_ptr: *const [u8] = builder.string_bytes.as_slice();
-        let new_buf: &[u8] = unsafe { &*new_buf_ptr };
-        let new_ctx = ctx(new_buf);
 
+        // Zig re-reads `new.buffers.string_bytes.items` at every
+        // `putAssumeCapacityContext` call. Mirror that here: per insert,
+        // finish the `&mut builder` appends FIRST, then snapshot the buffer
+        // for the hash/eql closures. Snapshotting once up-front would freeze
+        // the slice length pre-append and OOB-panic on any non-inline key.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
+            let new_key = builder.append::<String>(dep_name.slice(old_buf));
+            let new_val = dep.clone_in(pm, old_buf, builder)?;
+            let buf = builder.string_bytes.as_slice();
             new_catalog.default.put_assume_capacity_context(
-                builder.append::<String>(dep_name.slice(old_buf)),
-                dep.clone_in(pm, old_buf, builder)?,
-                |k| ArrayHashAdapter::hash(&new_ctx, k),
-                |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
+                new_key,
+                new_val,
+                |k| ArrayHashAdapter::hash(&ctx(buf), k),
+                |a, b, i| ArrayHashAdapter::eql(&ctx(buf), a, b, i),
             );
         }
 
@@ -400,19 +399,24 @@ impl CatalogMap {
             new_group.ensure_total_capacity(deps.count())?;
 
             for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
+                let new_key = builder.append::<String>(dep_name.slice(old_buf));
+                let new_val = dep.clone_in(pm, old_buf, builder)?;
+                let buf = builder.string_bytes.as_slice();
                 new_group.put_assume_capacity_context(
-                    builder.append::<String>(dep_name.slice(old_buf)),
-                    dep.clone_in(pm, old_buf, builder)?,
-                    |k| ArrayHashAdapter::hash(&new_ctx, k),
-                    |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
+                    new_key,
+                    new_val,
+                    |k| ArrayHashAdapter::hash(&ctx(buf), k),
+                    |a, b, i| ArrayHashAdapter::eql(&ctx(buf), a, b, i),
                 );
             }
 
+            let new_name = builder.append::<String>(catalog_name.slice(old_buf));
+            let buf = builder.string_bytes.as_slice();
             new_catalog.groups.put_assume_capacity_context(
-                builder.append::<String>(catalog_name.slice(old_buf)),
+                new_name,
                 new_group,
-                |k| ArrayHashAdapter::hash(&new_ctx, k),
-                |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
+                |k| ArrayHashAdapter::hash(&ctx(buf), k),
+                |a, b, i| ArrayHashAdapter::eql(&ctx(buf), a, b, i),
             );
         }
 

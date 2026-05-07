@@ -2013,22 +2013,19 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             denormalized_key
         };
         let _key = bun_wyhash::hash(key);
-        self.mutex.lock();
-        let index = match self.index.get(&_key).copied() {
-            Some(i) => i,
-            None => {
-                self.mutex.unlock();
-                return None;
+        let index = {
+            let _guard = self.mutex.lock();
+            match self.index.get(&_key).copied() {
+                Some(i) => i,
+                None => return None,
             }
         };
-        self.mutex.unlock();
         self.at_index(index)
     }
 
     pub fn mark_not_found(&mut self, result: Result) {
-        self.mutex.lock();
+        let _guard = self.mutex.lock();
         self.index.insert(result.hash, NOT_FOUND);
-        self.mutex.unlock();
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
@@ -2086,16 +2083,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
-        self.mutex.lock();
+        let _guard = self.mutex.lock();
         let key = if REMOVE_TRAILING_SLASHES {
             crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
         let _key = bun_wyhash::hash(key);
-        let removed = self.index.remove(&_key).is_some();
-        self.mutex.unlock();
-        removed
+        self.index.remove(&_key).is_some()
         // (Zig has commented-out per-slot deinit code here; intentionally not ported.)
     }
 

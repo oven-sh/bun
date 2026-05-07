@@ -540,11 +540,10 @@ impl StatWatcher {
     }
 
     pub fn initial_stat_error_on_main_thread(this: *mut StatWatcher) {
+        // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
+        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // SAFETY: this is alive — ref'd in InitialStatTask::create_and_schedule
         let this_ref = unsafe { &mut *this };
-        // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
-        let _deref_on_exit = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
-        // PORT NOTE: reshaped for borrowck
         if this_ref.closed {
             return;
         }
@@ -618,11 +617,10 @@ impl StatWatcher {
 
     /// After a restat found the file changed, this calls the listener function.
     pub fn swap_and_call_listener_on_main_thread(this: *mut StatWatcher) {
+        // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
+        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // SAFETY: this is alive — ref'd in restat()
         let this_ref = unsafe { &mut *this };
-        // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
-        let _deref_on_exit = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
-        // PORT NOTE: reshaped for borrowck
         let Some(js_this) = this_ref.this_value.try_get() else {
             return;
         };

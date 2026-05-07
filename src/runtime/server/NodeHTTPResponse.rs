@@ -547,23 +547,23 @@ impl NodeHTTPResponse {
         self.upgrade_context.preserve_web_socket_headers_if_needed();
     }
 
-    pub fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_ended(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::ENDED))
     }
 
-    pub fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_finished(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    pub fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_flags(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_number_from_int32(self.flags.bits() as i32)
     }
 
-    pub fn get_aborted(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_aborted(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::SOCKET_CLOSED))
     }
 
-    pub fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_has_body(&mut self, _global: &JSGlobalObject) -> JSValue {
         let mut result: i32 = 0;
         match self.body_read_state {
             BodyReadState::None => {}

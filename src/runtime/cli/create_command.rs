@@ -1849,15 +1849,15 @@ fn file_copier_copy(
                     }
                 }
             };
-            let _close_out = scopeguard::guard((), |_| { let _ = bun_sys::close(outfile); });
-            // PORT NOTE: capture `node_` as a raw pointer so the scopeguard closure
+            let _close_out = bun_sys::CloseOnDrop::new(outfile);
+            // PORT NOTE: capture `node_` as a raw pointer so the defer body
             // doesn't hold a unique borrow across the error-path `node_.end()` below.
             let node_ptr: *mut ProgressNode = node_;
             // SAFETY: `node_` outlives this loop body; single-threaded progress access.
-            let _complete = scopeguard::guard((), move |_| unsafe { (*node_ptr).complete_one() });
+            scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
 
             let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
-            let _close_in = scopeguard::guard((), |_| { let _ = bun_sys::close(infile); });
+            let _close_in = bun_sys::CloseOnDrop::new(infile);
 
             // Assumption: you only really care about making sure something that was executable is still executable
             match bun_sys::fstat(infile) {
@@ -2698,7 +2698,6 @@ impl GitHandler {
 
     fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
         Output::Source::configure_named_thread(bun_core::zstr!("git"));
-        let _flush = scopeguard::guard((), |_| Output::flush());
         let outcome = if verbose {
             Self::run::<true>(destination, path).unwrap_or(false)
         } else {
@@ -2707,6 +2706,7 @@ impl GitHandler {
 
         SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
         Futex::wake(&SUCCESS, 1);
+        Output::flush();
     }
 
     pub fn wait() -> bool {

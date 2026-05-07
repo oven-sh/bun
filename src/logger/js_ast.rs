@@ -1122,6 +1122,24 @@ std::thread_local! {
         core::cell::RefCell::new(Bump::new());
 }
 
+/// Copy `bytes` into the thread-local `DATA_STORE` arena so the slice shares
+/// the same lifetime as the `StoreRef`-backed `Expr` nodes that will reference
+/// it (bulk-freed on `Expr::data_store_reset`). Mirrors Zig call sites that
+/// write `Expr.init(E.String, .{ .data = try allocator.dupe(u8, …) }, …)` with
+/// the long-lived default allocator: callers that build an `EString` from a
+/// scratch buffer must intern the bytes here, not into a function-local
+/// `bumpalo::Bump`, or the resulting `EString.data` dangles once that bump
+/// drops. The lifetime is erased per the Phase-A `Str` convention used by
+/// `EString::init` — this is arena ownership, not a leak.
+pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
+    DATA_STORE.with(|s| {
+        let copied: &[u8] = s.borrow().alloc_slice_copy(bytes);
+        // SAFETY: `copied` lives in `DATA_STORE` until `data_store_reset`;
+        // erase to match `EString::init`'s `&'static [u8]` field.
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
+    })
+}
+
 macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {$(
         impl IntoExprData for E::$ty {

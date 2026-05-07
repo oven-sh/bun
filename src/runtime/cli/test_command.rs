@@ -1375,7 +1375,8 @@ impl CommandLineReporter {
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
     ) -> Result<(), bun_core::Error> {
-        let mut trace = if REPORTERS_TEXT && REPORTERS_LCOV {
+        // `perf::Ctx` ends its span on Drop — Zig's `defer trace.end()` is the binding itself.
+        let _trace = if REPORTERS_TEXT && REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
         } else if REPORTERS_TEXT {
             bun::perf::trace("TestCommand.printCodeCoverageText")
@@ -1385,7 +1386,6 @@ impl CommandLineReporter {
             // TODO(port): @compileError("No reporters enabled") — Phase B can enforce via const assert
             unreachable!("No reporters enabled")
         };
-        let _trace_end = scopeguard::guard((), |_| { trace.end(); });
 
         if !REPORTERS_TEXT && !REPORTERS_LCOV {
             unreachable!("No reporters enabled");
@@ -2587,7 +2587,7 @@ impl TestCommand {
     ) -> Result<(), bun_core::Error> {
         // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
         let vm_log = vm.log;
-        let _defer = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             js_ast::Expr::data_store_reset();
             js_ast::Stmt::data_store_reset();
 
@@ -2602,7 +2602,7 @@ impl TestCommand {
             }
 
             Output::flush();
-        });
+        }
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;

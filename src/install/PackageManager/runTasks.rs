@@ -581,11 +581,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // provenance root.
                             // SAFETY: see `_drain_guard` provenance note.
                             let mgr = unsafe { &mut *manager_ptr };
+                            // PORT NOTE: reshaped for borrowck — compute the
+                            // `&mut`-taking directory accessors first so the
+                            // immutable `scope_for_package_name` borrow does
+                            // not overlap them.
+                            let tmp_fd = directories::get_temporary_directory(mgr).handle.fd;
+                            let cache_fd = directories::get_cache_directory(mgr).fd;
                             npm::package_manifest::Serializer::save_async(
                                 entry_manifest,
                                 mgr.scope_for_package_name(name),
-                                directories::get_temporary_directory(mgr).handle.fd,
-                                directories::get_cache_directory(mgr).fd,
+                                tmp_fd,
+                                cache_fd,
                             );
                         }
 
@@ -618,11 +624,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable");
-                manager.task_batch.push(ThreadPoolBatch::from(
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr),
-                ));
+                // PORT NOTE: reshaped for borrowck — split the nested `&mut
+                // manager` borrows (`task_batch.push` vs. `enqueue_*`).
+                let queued =
+                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr);
+                manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
+                // PORT NOTE: reshaped for borrowck — `extract` borrows
+                // `task.callback`; the body also calls `&mut self` methods on
+                // `task` (`reset_streaming_for_retry`,
+                // `discard_unused_streaming_state`) which only touch disjoint
+                // fields. Detach via raw pointer (mirroring the
+                // `PackageManifest` arm above) so those calls don't overlap.
+                let extract_ptr: *mut ExtractTarball = extract;
+                // SAFETY: `extract` lives in `task.callback`, which outlives
+                // this match arm; the methods called on `task` below never
+                // touch `task.callback` (see `NetworkTask::reset_streaming_*`
+                // / `discard_unused_streaming_state`).
+                let extract = unsafe { &mut *extract_ptr };
                 // Streaming extraction never pushes its NetworkTask to
                 // `async_network_task_queue` once committed — the
                 // extract Task published by `TarballStream.finish()`

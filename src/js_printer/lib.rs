@@ -6780,9 +6780,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     source: &'a logger::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
-    let prev_action = bun_crash_handler::current_action();
-    let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
-    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
+    let _restore = bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
     // PORT NOTE: Zig declared `renamer`/`no_op_renamer` undefined and assigned per
     // branch. `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut

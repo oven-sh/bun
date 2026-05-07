@@ -43,7 +43,7 @@ impl FileJsc for File {
             }
 
             // The real name goes here:
-            store.data.bytes.stored_name = bun_paths::PathString::init(&self.name);
+            store.data.bytes.stored_name = bstring::PathString::init(&self.name);
 
             // The pretty name goes here:
             if self

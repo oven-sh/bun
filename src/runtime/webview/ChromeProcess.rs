@@ -75,7 +75,7 @@ pub extern "C" fn Bun__Chrome__kill() {
 /// named pipes or libuv. For now -1 and C++ throws not-implemented.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Chrome__ensure(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     user_data_dir: *const c_char, // ?[*:0]const u8
     path: *const c_char,          // ?[*:0]const u8
     extra_argv: *const *const c_char, // ?[*]const [*:0]const u8
@@ -101,8 +101,7 @@ pub extern "C" fn Bun__Chrome__ensure(
             // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
-        // SAFETY: global is a valid &JSGlobalObject for the duration of this call.
-        let vm = unsafe { (*global).bun_vm() };
+        let vm = global.bun_vm();
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let user_data_dir = if user_data_dir.is_null() { None } else { Some(unsafe { CStr::from_ptr(user_data_dir) }) };
         // SAFETY: caller passes valid NUL-terminated strings when non-null.

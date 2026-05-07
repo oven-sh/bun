@@ -24,9 +24,9 @@ pub struct StatType<const BIG: bool> {
 type StatTimespec = Timespec;
 
 impl<const BIG: bool> StatType<BIG> {
-    // Zig: `pub const new = bun.TrivialNew(@This());`
-    // TODO(port): TrivialNew/TrivialDeinit — Box::new / Drop are the defaults; revisit if a
-    // pool/slab allocator is required here.
+    // Zig: `pub const new = bun.TrivialNew(@This());` / `bun.TrivialDeinit(@This())`.
+    // In Rust the default `Box::new` / `Drop` give identical semantics (mimalloc-backed
+    // via the global allocator), so no explicit `new`/`deinit` methods are needed.
 
     #[inline]
     pub fn init(stat_: &PosixStat) -> Self {
@@ -35,13 +35,11 @@ impl<const BIG: bool> StatType<BIG> {
 
     #[inline]
     fn to_nanoseconds(ts: StatTimespec) -> u64 {
+        // PORT NOTE: Zig rebuilt a `bun.timespec` with `@intCast` on each field; since
+        // `StatTimespec == bun.timespec` those casts are identity — call methods on `ts`
+        // directly.
         if ts.sec < 0 {
-            // PORT NOTE: Zig rebuilt a `bun.timespec` with `@intCast` on each field; since
-            // `StatTimespec == bun.timespec` those casts are identity — call methods on `ts`
-            // directly.
-            // PORT NOTE: `Timespec::ns_signed` not yet exported; compute inline.
-            let ns_signed: i128 = (ts.sec as i128) * 1_000_000_000 + (ts.nsec as i128);
-            return u64::try_from(ns_signed.max(0)).unwrap();
+            return ts.ns_signed().max(0) as u64;
         }
         ts.ns()
     }
@@ -117,9 +115,6 @@ impl<const BIG: bool> StatType<BIG> {
             let ctime_ms: i64 = Self::to_time_ms_i64(c_time);
             let birthtime_ms: i64 = Self::to_time_ms_i64(b_time);
 
-            // TODO(port): `bun.jsc.fromJSHostCall(global, @src(), fn, args)` — wraps a C++
-            // call that may throw and converts the pending exception into `JsResult`.
-            // Phase B: route through `bun_jsc::from_js_host_call` once its signature lands.
             return bun_jsc::from_js_host_call(global, || {
                 // SAFETY: FFI call; all integer args are by-value, `global` is a valid borrow.
                 unsafe {
@@ -176,7 +171,6 @@ impl<const BIG: bool> StatType<BIG> {
     }
 }
 
-// TODO(port): move to runtime_sys (or bun_jsc_sys) once the *_sys crate exists.
 unsafe extern "C" {
     fn Bun__JSBigIntStatsObjectConstructor(global: *const JSGlobalObject) -> JSValue;
     fn Bun__JSStatsObjectConstructor(global: *const JSGlobalObject) -> JSValue;
@@ -233,9 +227,7 @@ pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = unsafe { core::mem::zeroed::<PosixStat>() };
-    // PORT NOTE: `JSValue::to_uint64_no_truncate` not yet ported; `to_int64` is
-    // close enough for the test-only path (negative values clamp to 0 below).
-    stat_.ino = ino_arg.to_int64().max(0) as u64;
+    stat_.ino = ino_arg.to_uint64_no_truncate();
     Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
 }
 

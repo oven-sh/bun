@@ -1587,6 +1587,41 @@ impl StringJsc for bun_string::String {
     }
 }
 
+/// Extension trait providing JSC-aware methods on
+/// `bun_string::SliceWithUnderlyingString` (lower-tier, no JSC dep).
+/// Mirrors the JSC-touching methods on Zig's `SliceWithUnderlyingString`
+/// (`toJS`, `transferToJS`, `reportExtraMemory`); the free-function bodies
+/// live in [`bun_string_jsc`].
+pub trait SliceWithUnderlyingStringJsc {
+    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn report_extra_memory(&mut self, vm: &VM);
+}
+impl SliceWithUnderlyingStringJsc for bun_string::SliceWithUnderlyingString {
+    #[inline]
+    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::slice_with_underlying_string_to_js(self, global)
+    }
+    #[inline]
+    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::slice_with_underlying_string_transfer_to_js(self, global)
+    }
+    /// `SliceWithUnderlyingString.reportExtraMemory` (string.zig:1041) —
+    /// account `utf8`'s backing allocation against the GC heap unless it is
+    /// already JSC-owned (WTF-backed) or borrowed.
+    fn report_extra_memory(&mut self, vm: &VM) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!self.did_report_extra_memory_debug);
+            self.did_report_extra_memory_debug = true;
+        }
+        // Don't report it if the memory is actually owned by JSC.
+        if self.utf8.is_allocated() && !self.utf8.is_wtf_allocated() {
+            vm.report_extra_memory(self.utf8.length());
+        }
+    }
+}
+
 /// Extension trait providing JSC-aware methods on `bun_string::ZigString`.
 ///
 /// `bun_string::ZigString` is a lower-tier (no JSC dep) `#[repr(C)]` struct;

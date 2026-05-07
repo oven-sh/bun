@@ -1,9 +1,8 @@
 use core::ffi::c_int;
 use core::fmt;
 
-// TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::StringJsc as _;
+use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _};
 use bun_paths::{self as path_handler, PathBuffer, WPathBuffer, OSPathBuffer, OSPathSliceZ, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZStr, WStr, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
@@ -14,9 +13,6 @@ use bun_wyhash::hash;
 use crate::webcore::{Blob, Request, Response};
 use crate::node::util::validators;
 
-// LAYERING: `SliceWithUnderlyingString` is the canonical `bun_string`
-// type; the previous local stub existed only because it wasn't yet
-// re-exported from the active `bun_str`.
 pub use bun_str::SliceWithUnderlyingString;
 
 pub use jsc::MarkedArrayBuffer as Buffer;
@@ -24,93 +20,18 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
 
-/// Extension trait providing the `SliceWithUnderlyingString`-returning slicers
-/// on `bun_str::String` (Zig: `String.toThreadSafeSlice` / `String.toSlice`).
-/// Upstream `bun_str` does not yet expose these; this local shim builds the
-/// stub `SliceWithUnderlyingString` from an owned UTF-8 copy.
-// TODO(b2-blocked): swap to inherent methods once `bun_str::SliceWithUnderlyingString` lands.
-pub trait BunStringSliceExt {
-    fn to_thread_safe_slice(&self) -> JsResult<SliceWithUnderlyingString>;
-    fn to_slice_with_underlying(&self) -> SliceWithUnderlyingString;
-}
-impl BunStringSliceExt for bun_str::String {
-    fn to_thread_safe_slice(&self) -> JsResult<SliceWithUnderlyingString> {
-        Ok(SliceWithUnderlyingString {
-            utf8: ZigStringSlice::init_owned(self.to_owned_slice()),
-            underlying: bun_str::String::default(),
-        })
-    }
-    fn to_slice_with_underlying(&self) -> SliceWithUnderlyingString {
-        SliceWithUnderlyingString {
-            utf8: ZigStringSlice::init_owned(self.to_owned_slice()),
-            underlying: bun_str::String::default(),
-        }
-    }
-}
+// LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
+// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
+// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
+// `crate::node::types::FdJsc` import paths keep resolving.
+pub use bun_sys_jsc::FdJsc;
 
-/// Extension trait giving `bun_sys::SystemError` a JSC bridge. The canonical
-/// `to_error_instance` lives on `bun_jsc::SystemError` (the `#[repr(C)]` extern
-/// struct with ABI-load-bearing field order); `bun_sys::SystemError` has the
-/// same fields in a different order. Adapt at the call site by reshaping into
-/// the extern layout and calling through the C++ bridge.
-trait SystemErrorJscExt {
-    fn to_error_instance(self, ctx: &JSGlobalObject) -> JSValue;
-}
-impl SystemErrorJscExt for bun_sys::SystemError {
-    fn to_error_instance(self, ctx: &JSGlobalObject) -> JSValue {
-        // PORT NOTE: in Zig `jsc.SystemError` *is* `bun.sys.SystemError` and
-        // `toErrorInstance` consumes the strings (it derefs them after the FFI
-        // call). Reshape by moving fields into the extern layout; ownership of
-        // each `bun.String` transfers to the C++ side.
-        let extern_err = jsc::SystemError {
-            errno: self.errno,
-            code: self.code,
-            message: self.message,
-            path: self.path,
-            syscall: self.syscall,
-            hostname: self.hostname,
-            fd: self.fd,
-            dest: self.dest,
-        };
-        extern_err.to_error_instance(ctx)
-    }
-}
+// LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
+// struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
+// `system_error.to_error_instance(ctx)` resolves via the canonical impl.
+pub use bun_sys_jsc::SystemErrorJsc;
 
-// `Fd::from_js_validated` lives in `bun_sys_jsc::FdJsc`, which is not a
-// dependency of this crate. Provide a thin extension trait so call sites
-// (`Fd::from_js_validated(value, ctx)`) keep their shape.
-// TODO(b2-blocked): swap to `use bun_sys_jsc::FdJsc;` once it is a dep.
-pub trait FdJsc: Sized {
-    fn from_js(value: JSValue) -> Option<Self>;
-    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
-    fn to_js(self, global: &JSGlobalObject) -> JSValue;
-}
-impl FdJsc for Fd {
-    #[inline]
-    fn from_js(value: JSValue) -> Option<Fd> {
-        if !value.is_any_int() { return None; }
-        let fd64 = value.to_int64();
-        if fd64 < 0 || fd64 > i64::from(i32::MAX) { return None; }
-        Some(Fd::from_uv(fd64 as i32))
-    }
-    fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Fd>> {
-        let _ = global;
-        // TODO(b2-blocked): full range/type validation lives in bun_sys_jsc.
-        Ok(Self::from_js(value))
-    }
-    #[inline]
-    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number_from_int32(self.uv())
-    }
-}
-
-// `bun_sys::PlatformIoVec` not yet exported (B-2 stub crate).
-// TODO(b2-blocked): swap to `pub use bun_sys::PlatformIoVec;`.
-#[cfg(unix)]
-pub type PlatformIoVec = libc::iovec;
-#[cfg(not(unix))]
-#[repr(C)]
-pub struct PlatformIoVec { pub buf: *mut u8, pub len: u32 }
+pub use bun_sys::PlatformIoVec;
 
 // ──────────────────────────────────────────────────────────────────────────
 

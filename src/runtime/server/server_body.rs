@@ -697,7 +697,7 @@ impl AnyRoute {
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
                     let mut buf = bun_paths::PathBuffer::default();
-                    let zpath = bun_paths::z(store_path, &mut buf);
+                    let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -1350,8 +1350,8 @@ impl<const SSL: bool, const DEBUG: bool> super::ServerLike for NewServer<SSL, DE
     const SSL_ENABLED: bool = SSL;
     const DEBUG_MODE: bool = DEBUG;
     fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
-    fn vm(&self) -> &jsc::VirtualMachine { self.vm }
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine { jsc::VirtualMachine::get() }
+    fn vm(&self) -> &jsc::virtual_machine::VirtualMachine { self.vm }
+    fn vm_mut(&self) -> *mut jsc::virtual_machine::VirtualMachine { jsc::virtual_machine::VirtualMachine::get() }
     fn config(&self) -> &ServerConfig { &self.config }
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
     fn dev_server(&self) -> Option<&DevServer> { self.dev_server.as_deref() }
@@ -1374,7 +1374,7 @@ impl<const SSL: bool, const DEBUG: bool> super::ServerLike for NewServer<SSL, DE
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
-impl<const SSL: bool, const DEBUG: bool> uws_sys::WebSocketUpgradeServer<SSL>
+impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
 {
     fn on_websocket_upgrade(

@@ -2647,6 +2647,13 @@ impl Timespec {
         s_ns.checked_add(self.nsec.max(0) as u64).unwrap_or(u64::MAX)
     }
 
+    /// Signed nanoseconds (wrapping). Port of `bun.timespec.nsSigned`.
+    #[inline] pub fn ns_signed(&self) -> i64 {
+        let ns_per_sec = self.sec.wrapping_mul(Self::NS_PER_S);
+        let ns_from_nsec = self.nsec.div_euclid(Self::NS_PER_MS);
+        ns_per_sec.wrapping_add(ns_from_nsec)
+    }
+
     /// Milliseconds (signed, wrapping).
     #[inline] pub fn ms(&self) -> i64 {
         self.sec.wrapping_mul(1000).wrapping_add(self.nsec.div_euclid(Self::NS_PER_MS))

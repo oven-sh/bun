@@ -89,6 +89,7 @@ bun_bunfig.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_sys_jsc.workspace = true
+bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
 bun_threading.workspace = true
 bun_transpiler.workspace = true

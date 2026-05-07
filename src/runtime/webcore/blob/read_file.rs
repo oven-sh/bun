@@ -857,18 +857,66 @@ pub struct ReadFileUV<'a> {
     pub is_regular_file: bool,
 
     pub req: libuv::fs_t,
+    /// Stash for the open completion callback across the libuv async hop
+    /// (Zig captured it at comptime in `FileOpener.getFdByOpening`).
+    open_callback: fn(&mut Self, Fd),
+}
+
+// Zig: `pub const getFd = FileOpener(@This()).getFd;` /
+//      `pub const doClose = FileCloser(@This()).doClose;`
+#[cfg(windows)]
+impl<'a> FileOpener for ReadFileUV<'a> {
+    fn opened_fd(&self) -> Fd { self.opened_fd }
+    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
+    fn set_errno(&mut self, e: bun_core::Error) { self.errno = Some(e); }
+    fn set_system_error(&mut self, e: jsc::SystemError) { self.system_error = Some(e); }
+    fn pathlike(&self) -> &PathOrFileDescriptor { &self.file_store.pathlike }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { self.loop_ }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { &mut self.req }
+    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd)) { self.open_callback = cb; }
+    fn open_callback(&self) -> fn(&mut Self, Fd) { self.open_callback }
+}
+
+#[cfg(windows)]
+impl<'a> FileCloser for ReadFileUV<'a> {
+    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    fn opened_fd(&self) -> Fd { self.opened_fd }
+    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { self.loop_ }
+
+    // Zig `FileCloser` gates the `close_after_io` / `io_request` / `io_poll` /
+    // `state` / `task` accesses on `@hasField(This, "io_request")`, which is
+    // **false** for `ReadFileUV` (its libuv request field is `req`, not
+    // `io_request`). So `do_close` falls straight to the close-fd branch and
+    // none of the methods below are ever reached — these mark genuinely dead
+    // code paths, not unported stubs.
+    fn close_after_io(&self) -> bool { false }
+    fn set_close_after_io(&mut self, _: bool) {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    fn state(&self) -> &AtomicU8 {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    fn io_request(&mut self) -> Option<&mut bun_io::Request> { None }
+    fn io_poll(&mut self) -> &mut bun_io::Poll {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    fn update(&mut self) {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
+    unsafe fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
 }
 
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
-    // TODO(port): FileOpener/FileCloser trait impls (see ReadFile note above).
-    pub fn get_fd(&mut self, then: fn(&mut Self, Fd)) {
-        FileOpener::<Self>::get_fd(self, then)
-    }
-    pub fn do_close(&mut self, is_allowed_to_close: bool) -> bool {
-        FileCloser::<Self>::do_close(self, is_allowed_to_close)
-    }
-
     pub fn start<H>(
         event_loop: &'a EventLoop,
         store: StoreRef,
@@ -880,8 +928,8 @@ impl<'a> ReadFileUV<'a> {
         H: ReadFileUvHandler,
     {
         log!("ReadFileUV.start");
-        let file_store = store.data.file.clone();
-        let mut this = Box::new(ReadFileUV {
+        let file_store = store.data.as_file().clone();
+        let this = Box::new(ReadFileUV {
             loop_: event_loop.virtual_machine().uv_loop(),
             event_loop,
             file_store,
@@ -904,6 +952,7 @@ impl<'a> ReadFileUV<'a> {
             is_regular_file: false,
             // SAFETY: all-zero is a valid libuv fs_t (matches std.mem.zeroes).
             req: unsafe { core::mem::zeroed() },
+            open_callback: Self::on_file_open,
         });
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_concurrently();
@@ -1020,10 +1069,8 @@ impl<'a> ReadFileUV<'a> {
         let stat = unsafe { (*req).statbuf };
 
         // keep in sync with resolveSizeAndLastModified
-        if this.store.data.is_file() {
-            // TODO(port): Arc<Store> interior mutability — Zig mutates through *Store.
-            this.store.data.file().last_modified =
-                jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
+        if let Data::File(file) = this.store.data_mut() {
+            file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode).unwrap()) {
@@ -1033,7 +1080,7 @@ impl<'a> ReadFileUV<'a> {
                 path: if this.file_store.pathlike.is_path() {
                     BunString::clone_utf8(this.file_store.pathlike.path().slice())
                 } else {
-                    BunString::empty()
+                    BunString::EMPTY
                 },
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
@@ -1043,7 +1090,7 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
         this.total_size =
-            SizeType::try_from(stat.size.max(0).min(Blob::MAX_SIZE as i64)).unwrap();
+            SizeType::try_from(stat.size.max(0).min(MAX_SIZE as i64)).unwrap();
         this.is_regular_file = bun_sys::is_regular_file(stat.mode);
 
         log!("is_regular_file: {}", this.is_regular_file);

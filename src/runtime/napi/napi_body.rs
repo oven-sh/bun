@@ -351,6 +351,32 @@ impl NapiHandleScope {
     }
 }
 
+/// RAII guard for [`NapiHandleScope::open`] / [`NapiHandleScope::close`].
+/// The Rust spelling of Zig's `var hs = NapiHandleScope.open(env, false);
+/// defer if (hs) |s| NapiHandleScope.close(s, env);`.
+pub struct NapiHandleScopeGuard<'a> {
+    scope: *mut NapiHandleScope,
+    env: &'a NapiEnv,
+}
+
+impl NapiHandleScope {
+    /// Open a non-escapable handle scope and return an RAII guard that closes
+    /// it on `Drop`. If opening returns null (inside a finalizer), the guard's
+    /// `Drop` is a no-op.
+    #[must_use]
+    pub fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
+        NapiHandleScopeGuard { scope: Self::open(env, false), env }
+    }
+}
+
+impl Drop for NapiHandleScopeGuard<'_> {
+    fn drop(&mut self) {
+        if !self.scope.is_null() {
+            NapiHandleScope::close(self.scope, self.env);
+        }
+    }
+}
+
 pub type napi_handle_scope = *mut NapiHandleScope;
 pub type napi_escapable_handle_scope = *mut NapiHandleScope;
 pub type napi_callback_info = *mut CallFrame;
@@ -1637,7 +1663,9 @@ impl napi_async_work {
         // PORT NOTE: Zig copied the struct; KeepAlive is not `Copy` in Rust, so
         // move it out (the original slot may be freed under us by `complete`).
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
-        let _guard = scopeguard::guard((), |_| poll_ref.unref(vm_ctx()));
+        // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
+        // generically; this is a genuine one-off cleanup.
+        scopeguard::defer! { poll_ref.unref(vm_ctx()); }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
@@ -1646,13 +1674,8 @@ impl napi_async_work {
 
         let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
-        let handle_scope = NapiHandleScope::open(unsafe { &*env }, false);
-        let _hs_guard = scopeguard::guard((), |_| {
-            if !handle_scope.is_null() {
-                // SAFETY: env is held alive by NapiEnvRef; handle_scope is the current scope opened above.
-                NapiHandleScope::close(handle_scope, unsafe { &*env });
-            }
-        });
+        let env_ref = unsafe { &*env };
+        let _hs = NapiHandleScope::open_scoped(env_ref);
 
         let status: NapiStatus = if self.status.load(Ordering::SeqCst) == AsyncWorkStatus::Cancelled as u32 {
             NapiStatus::cancelled

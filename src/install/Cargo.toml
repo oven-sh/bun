@@ -48,6 +48,7 @@ bun_patch.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
 bun_picohttp.workspace = true
+bun_ptr.workspace = true
 bun_resolver.workspace = true
 bun_semver.workspace = true
 bun_sha_hmac.workspace = true

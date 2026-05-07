@@ -5113,11 +5113,11 @@ impl<'a> Resolver<'a> {
                         }
 
                         // PORT NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                        // the `move` closure captures only Copy values — keeps `self` and
+                        // the closure captures only Copy values — keeps `self` and
                         // `query.entry` reborrowable across the guard's lifetime.
                         let need_close = self.fs_ref().fs.need_to_close_files();
                         let entry_ptr: *mut Fs::file_system::Entry = query.entry;
-                        let _close_guard = scopeguard::guard((), move |_| {
+                        scopeguard::defer! {
                             if need_close {
                                 // SAFETY: ARENA — Entry lives in the BSSMap singleton; guard
                                 // runs before the slot is reused (resolver mutex held).
@@ -5129,7 +5129,7 @@ impl<'a> Resolver<'a> {
                                     unsafe { e.cache_mut() }.fd = FD::INVALID;
                                 }
                             }
-                        });
+                        }
 
                         let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -5871,10 +5871,8 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-
-        let _decrease = scopeguard::guard((), |_| {
-            // TODO(port): defer { debug.decreaseIndent() } — borrowck reshape; done at returns
-        });
+        // PORT NOTE: Zig `defer { debug.decreaseIndent() }` — reshaped for borrowck;
+        // `decrease_indent()` is called explicitly at every return point below.
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
@@ -7111,8 +7109,9 @@ impl<'a> Resolver<'a> {
         raw_input_path: &[u8],
     ) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
         // TODO(port): narrow error set
-        self.mutex.lock();
-        let _unlock = scopeguard::guard((), |_| self.mutex.unlock());
+        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
+        // doesn't keep `self` borrowed across the body.
+        let _unlock = self.mutex.lock_guard();
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -7206,9 +7205,8 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
-        rfs!().entries_mutex.lock();
         // SAFETY: `rfs` points at process-global storage; outlives this guard.
-        let _entries_unlock = scopeguard::guard((), move |_| unsafe { (*rfs).entries_mutex.unlock() });
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());

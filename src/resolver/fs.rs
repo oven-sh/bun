@@ -213,8 +213,7 @@ macro_rules! string_store_impl {
                 $backing()
             }
             pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-                $mutex.lock();
-                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` is held, so this is the only live `&mut` to the
                 // process-lifetime singleton; `append` further serializes mutation
                 // through its (now-redundant) internal mutex.
@@ -226,16 +225,14 @@ macro_rules! string_store_impl {
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
-                $mutex.lock();
-                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` held — no concurrent `&mut` to the singleton.
                 unsafe { (*Self::backing()).exists(value) }
             }
         }
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                $mutex.lock();
-                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
                 let r = unsafe { (*<$t>::backing()).append(s)? };
                 // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.

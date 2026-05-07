@@ -452,7 +452,6 @@ impl UpdateInteractiveCommand {
 
             // Use the PackageJSONEditor to update catalogs
             edit_catalog_definitions(
-                manager,
                 &mut updates_for_workspace[..],
                 &mut package_json.root,
             )?;
@@ -2280,8 +2279,10 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// Edit catalog definitions in package.json
+// PORT NOTE: Zig threads `manager` only for `manager.allocator`; the Rust port
+// uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
+// parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
 pub fn edit_catalog_definitions(
-    _manager: &mut PackageManager,
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> Result<(), bun_core::Error> {

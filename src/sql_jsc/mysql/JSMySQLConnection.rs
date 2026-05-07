@@ -104,6 +104,21 @@ fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue])
     unsafe { JSC__JSGlobalObject__queueMicrotaskJob(global, function, first, second) }
 }
 
+/// RAII owner for one intrusive refcount on a `JSMySQLConnection`. Dropping
+/// calls [`JSMySQLConnection::deref`], which may free `*self.0` — so callers
+/// must not hold a live `&`/`&mut JSMySQLConnection` across the guard's drop
+/// point. Construct via [`JSMySQLConnection::ref_guard`] (which also bumps the
+/// count) or directly when adopting a ref taken elsewhere (e.g. the socket ref
+/// from `on_open`).
+struct DerefOnDrop(*mut JSMySQLConnection);
+impl Drop for DerefOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // pointer with at least one outstanding ref owned by this guard.
+        unsafe { JSMySQLConnection::deref(self.0) }
+    }
+}
+
 // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
 // → intrusive Cell<u32> refcount; destroy callback = `deinit`.
 // TODO(port): switch to `bun_ptr::RefCounted`/`RefCount<Self>` once the
@@ -357,22 +372,19 @@ impl JSMySQLConnection {
     }
 
     pub fn close(&mut self) {
-        self.ref_();
+        // Zig `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
+        // through a raw pointer so no `&mut Self` is live across the potential
+        // free in `deref()`. Guard drop order is LIFO: `_ref` (deref) drops
+        // last, after `update_reference_type()` has run.
+        let p: *mut Self = self;
+        // SAFETY: `p` is derived from a live `&mut self`.
+        let _ref = unsafe { Self::ref_guard(p) };
+        scopeguard::defer! {
+            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
+            unsafe { (*p).update_reference_type() };
+        }
         self.stop_timers();
         self.unregister_auto_flusher();
-        // Zig `defer { updateReferenceType(); deref(); }`. The guard re-enters
-        // through a raw pointer so the closure does not hold a second `&mut`
-        // alias of `self`, and so that no `&mut Self` is live across the
-        // potential free in `deref()`. LIFO order matches Zig: deref last.
-        let p: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `p` is derived from a live `&mut self`; the matching
-            // `ref_()` above guarantees `*p` survives until this `deref()`.
-            unsafe {
-                (*p).update_reference_type();
-                Self::deref(p);
-            }
-        });
         if self.vm().is_shutting_down() {
             self.connection.close();
         } else {
@@ -386,15 +398,12 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return self.close();
         }
-        self.ref_();
-        // Zig `defer this.deref();` — raw-pointer guard so no `&mut` alias is
-        // captured and no reference is live across the potential free.
-        let p: *mut Self = self;
-        // SAFETY: `p` from live `&mut self`; paired with `ref_()` above.
-        let _ref_guard = scopeguard::guard((), move |_| unsafe { Self::deref(p) });
-        let event_loop = self.vm().event_loop();
-        event_loop.enter();
-        let _loop_guard = scopeguard::guard((), |_| event_loop.exit());
+        // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
+        // `&mut` alias is captured and no reference is live across the
+        // potential free.
+        // SAFETY: `&mut self` is live.
+        let _ref = unsafe { Self::ref_guard(self) };
+        let _loop_guard = self.vm().event_loop().entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection.flush_queue() {
             self.fail(b"Authentication failed", AnyMySQLErrorT::AuthenticationFailed);

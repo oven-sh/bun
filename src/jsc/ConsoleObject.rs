@@ -298,6 +298,72 @@ thread_local! {
     static STDOUT_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
 }
 
+/// RAII guard for the per-stream reentrant console lock. Acquires on
+/// construction (incrementing the thread-local count and locking the global
+/// mutex on first entry), releases on `Drop` (decrementing and unlocking on
+/// last exit). Replaces the Zig `defer { ... unlock() }` pair.
+struct ConsoleStreamLock {
+    use_stderr: bool,
+}
+
+impl ConsoleStreamLock {
+    fn acquire(use_stderr: bool) -> Self {
+        if use_stderr {
+            STDERR_LOCK_COUNT.with(|c| {
+                if c.get() == 0 {
+                    STDERR_MUTEX.lock();
+                }
+                c.set(c.get() + 1);
+            });
+        } else {
+            STDOUT_LOCK_COUNT.with(|c| {
+                if c.get() == 0 {
+                    STDOUT_MUTEX.lock();
+                }
+                c.set(c.get() + 1);
+            });
+        }
+        Self { use_stderr }
+    }
+}
+
+impl Drop for ConsoleStreamLock {
+    fn drop(&mut self) {
+        if self.use_stderr {
+            STDERR_LOCK_COUNT.with(|c| {
+                c.set(c.get() - 1);
+                if c.get() == 0 {
+                    STDERR_MUTEX.unlock();
+                }
+            });
+        } else {
+            STDOUT_LOCK_COUNT.with(|c| {
+                c.set(c.get() - 1);
+                if c.get() == 0 {
+                    STDOUT_MUTEX.unlock();
+                }
+            });
+        }
+    }
+}
+
+/// RAII: flush the wrapped writer on drop. Holds a raw pointer so the body can
+/// keep a unique `&mut` borrow of the same writer; the guard only dereferences
+/// at scope exit when no other borrow is live (mirrors Zig `defer writer.flush()`).
+struct FlushOnDrop {
+    writer: *mut dyn bun_io::Write,
+    enabled: bool,
+}
+
+impl Drop for FlushOnDrop {
+    fn drop(&mut self) {
+        if self.enabled {
+            // SAFETY: `writer` outlives this guard; no borrow is live at drop.
+            let _ = unsafe { (*self.writer).flush() };
+        }
+    }
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -332,15 +398,16 @@ fn message_with_type_and_level_(
     // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
     // Capture the raw pointer (Copy) so no `&mut ConsoleObject` is held across
     // the body; dereference only at scope-exit.
-    let indent_guard = scopeguard::guard((), move |_| unsafe {
-        (*console).default_indent = (*console)
-            .default_indent
-            .saturating_add((message_type == MessageType::StartGroup) as u16);
-    });
+    scopeguard::defer! {
+        unsafe {
+            (*console).default_indent = (*console)
+                .default_indent
+                .saturating_add((message_type == MessageType::StartGroup) as u16);
+        }
+    }
 
     if message_type == MessageType::StartGroup && len == 0 {
         // undefined is printed if passed explicitly.
-        drop(indent_guard);
         return Ok(());
     }
 
@@ -348,7 +415,6 @@ fn message_with_type_and_level_(
         unsafe {
             (*console).default_indent = (*console).default_indent.saturating_sub(1);
         }
-        drop(indent_guard);
         return Ok(());
     }
 
@@ -356,43 +422,10 @@ fn message_with_type_and_level_(
     // time. We do this the slightly annoying way to avoid assigning a pointer.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
-    if use_stderr {
-        STDERR_LOCK_COUNT.with(|c| {
-            if c.get() == 0 {
-                STDERR_MUTEX.lock();
-            }
-            c.set(c.get() + 1);
-        });
-    } else {
-        STDOUT_LOCK_COUNT.with(|c| {
-            if c.get() == 0 {
-                STDOUT_MUTEX.lock();
-            }
-            c.set(c.get() + 1);
-        });
-    }
-
-    let _unlock = scopeguard::guard((), move |_| {
-        if use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDERR_MUTEX.unlock();
-                }
-            });
-        } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDOUT_MUTEX.unlock();
-                }
-            });
-        }
-    });
+    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
         Output::reset_terminal();
-        drop(indent_guard);
         return Ok(());
     }
 
@@ -404,7 +437,6 @@ fn message_with_type_and_level_(
         };
         let _ = unsafe { (*console).error_writer() }.write_all(text.as_bytes());
         let _ = unsafe { (*console).error_writer() }.flush();
-        drop(indent_guard);
         return Ok(());
     }
 

@@ -262,7 +262,8 @@ impl Scripts {
     // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: &Expr) {
+    // PORT NOTE: `json` is `Copy` (matches Zig by-value `Expr`).
+    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -280,7 +281,7 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: &Expr) {
+    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
@@ -351,26 +352,26 @@ impl Scripts {
         // TODO(port): narrow error set
         // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
         // parser uses a bump arena. Scoped here since the AST is consumed
-        // immediately into the string builder.
+        // immediately into the string builder. `json_buf` is hoisted so the
+        // source bytes outlive the parsed `Expr` (which may borrow them).
         let bump = bun_alloc::Arena::new();
+        let json_buf;
         let json: Expr = {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
             save.append(b"package.json");
 
-            let json_src = {
-                let buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
-                logger::Source::init_path_string(save.slice(), buf)
-            };
+            json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
+            let json_src = logger::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
-            bun_json::parse_package_json_utf8(&json_src, log, &bump)?.into()
+            bun_json::parse_package_json_utf8(&json_src, log, &bump)?
         };
 
-        Scripts::parse_count(string_builder, &json);
+        Scripts::parse_count(string_builder, json);
         string_builder.allocate()?;
-        self.parse_alloc(string_builder, &json);
+        self.parse_alloc(string_builder, json);
         self.filled = true;
         Ok(())
     }

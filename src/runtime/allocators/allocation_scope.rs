@@ -136,10 +136,12 @@ struct History {
 // `History.deinit(allocator)` in Zig only frees the two maps via `parent`. In Rust the maps own
 // their storage (global mimalloc) and drop automatically — no explicit Drop body needed.
 
+/// RAII view of a locked [`State`]. Holds the [`GuardedLock`] over `History`, so dropping a
+/// `LockedState` releases the mutex — callers never pair `lock()` with an explicit unlock.
 struct LockedState<'a> {
     /// Should be the same as `State.parent`.
     parent: StdAllocator,
-    history: &'a mut History,
+    history: GuardedLock<'a, History, Mutex>,
 }
 
 impl<'a> LockedState<'a> {
@@ -150,14 +152,14 @@ impl<'a> LockedState<'a> {
         // PORT NOTE: reshaped for borrowck — copy `parent` out so the errdefer guard doesn't hold
         // `&self` across the `&mut self` call to `track_allocation`.
         let parent = self.parent;
-        let guard = scopeguard::guard((), |_| {
+        // errdefer: free the fresh allocation if tracking fails; disarmed via `into_inner` on success.
+        let result = scopeguard::guard(result, move |result| {
             // SAFETY: `result` was just returned by `raw_alloc` for `len` bytes at `alignment`.
             unsafe { parent.raw_free(core::slice::from_raw_parts_mut(result, len), alignment, ret_addr) };
         });
         // SAFETY: `result` points to `len` valid bytes just allocated.
-        self.track_allocation(unsafe { core::slice::from_raw_parts(result, len) }, ret_addr, Extra::NONE)?;
-        scopeguard::ScopeGuard::into_inner(guard);
-        Ok(result)
+        self.track_allocation(unsafe { core::slice::from_raw_parts(*result, len) }, ret_addr, Extra::NONE)?;
+        Ok(scopeguard::ScopeGuard::into_inner(result))
     }
 
     fn free(&mut self, buf: &mut [u8], alignment: Alignment, ret_addr: usize) {
@@ -259,15 +261,9 @@ impl State {
         LockedState { parent: self.parent, history: self.history.lock() }
     }
 
-    fn unlock(&self) {
-        self.history.unlock();
-    }
-
     fn track_external_allocation(&self, ptr: &[u8], ret_addr: Option<usize>, extra: Extra) {
-        let mut locked = self.lock();
-        let _g = scopeguard::guard((), |_| self.unlock());
         // Zig: `catch |err| bun.handleOom(err)` — abort-on-OOM is the Rust default.
-        let _ = locked.track_allocation(ptr, ret_addr.unwrap_or_else(return_address), extra);
+        let _ = self.lock().track_allocation(ptr, ret_addr.unwrap_or_else(return_address), extra);
     }
 
     // TODO(port): Zig `slice: anytype` accepted `[]u8` and `[:sentinel]u8`, widening sentinel slices
@@ -278,14 +274,11 @@ impl State {
         if ptr.is_empty() {
             return Ok(());
         }
-        let mut locked = self.lock();
-        let _g = scopeguard::guard((), |_| self.unlock());
-        locked.track_free(ptr, ret_addr.unwrap_or_else(return_address))
+        self.lock().track_free(ptr, ret_addr.unwrap_or_else(return_address))
     }
 
     fn set_pointer_extra(&self, ptr: *mut c_void, extra: Extra) {
         let mut locked = self.lock();
-        let _g = scopeguard::guard((), |_| self.unlock());
         let allocation = locked
             .history
             .allocations
@@ -414,7 +407,6 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
         #[cfg(feature = "alloc_scopes")]
         {
             let state = self.state.lock();
-            let _g = scopeguard::guard((), |_| self.state.unlock());
             Stats {
                 total_memory_allocated: state.history.total_memory_allocated,
                 num_allocations: state.history.allocations.len(),
@@ -426,9 +418,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
         #[cfg(feature = "alloc_scopes")]
         {
             // TODO(port): see LockedState::assert_owned note re: anytype slice handling.
-            let state = self.state.lock();
-            let _g = scopeguard::guard((), |_| self.state.unlock());
-            state.assert_owned(ptr as *const u8);
+            self.state.lock().assert_owned(ptr as *const u8);
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;
@@ -437,9 +427,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     pub fn assert_unowned<T: ?Sized>(&self, ptr: *const T) {
         #[cfg(feature = "alloc_scopes")]
         {
-            let state = self.state.lock();
-            let _g = scopeguard::guard((), |_| self.state.unlock());
-            state.assert_unowned(ptr as *const u8);
+            self.state.lock().assert_unowned(ptr as *const u8);
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;
@@ -677,17 +665,13 @@ unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ret_a
     // SAFETY: `ctx` is the `*State` we stored in `Borrowed::allocator()`; vtable is only ever
     // paired with that pointer.
     let raw_state: &State = unsafe { &*(ctx as *const State) };
-    let mut state = raw_state.lock();
-    let _g = scopeguard::guard((), |_| raw_state.unlock());
-    state.alloc(len, alignment, ret_addr).unwrap_or(core::ptr::null_mut())
+    raw_state.lock().alloc(len, alignment, ret_addr).unwrap_or(core::ptr::null_mut())
 }
 
 unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ret_addr: usize) {
     // SAFETY: see `vtable_alloc`.
     let raw_state: &State = unsafe { &*(ctx as *const State) };
-    let mut state = raw_state.lock();
-    let _g = scopeguard::guard((), |_| raw_state.unlock());
-    state.free(buf, alignment, ret_addr);
+    raw_state.lock().free(buf, alignment, ret_addr);
 }
 
 #[inline]

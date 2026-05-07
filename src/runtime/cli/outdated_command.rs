@@ -286,7 +286,9 @@ impl OutdatedCommand {
                             let res_path: &[u8] = match res.tag {
                                 resolution::Tag::Workspace => {
                                     // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
-                                    unsafe { res.value.workspace }.slice(string_buf)
+                                    // Borrow the field in-place so the returned slice (which may
+                                    // point into the inline small-string storage) stays valid.
+                                    unsafe { &res.value.workspace }.slice(string_buf)
                                 }
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),

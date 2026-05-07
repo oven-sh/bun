@@ -764,12 +764,15 @@ impl ShellCpTask {
                 // construction); accessed read-only here for the
                 // global-object handle and event-loop pointer — same as Zig's
                 // `event_loop.js.getVmImpl()` from the work-pool thread.
-                let vm = unsafe { &mut *vm_ptr };
-                let global = vm.global();
+                // PORT NOTE: reshaped for borrowck — read the raw `global`
+                // field instead of `vm.global()` so the `&mut VirtualMachine`
+                // passed below doesn't overlap a `&JSGlobalObject` borrow.
+                let global = unsafe { &*(*vm_ptr).global };
                 let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
                     global,
                     args,
-                    vm,
+                    // SAFETY: see above — `vm_ptr` is live for the call.
+                    unsafe { &mut *vm_ptr },
                     self as *mut ShellCpTask,
                     false,
                 );

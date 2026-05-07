@@ -451,8 +451,8 @@ impl From<bake_body::BuiltInModule> for BuiltInModule {
 impl From<bake_body::Framework> for Framework {
     fn from(src: bake_body::Framework) -> Self {
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-        for (k, v) in src.built_in_modules.into_iter() {
-            bun_core::handle_oom(built_in_modules.put(k, BuiltInModule::from(v)));
+        for (k, v) in src.built_in_modules.iter() {
+            bun_core::handle_oom(built_in_modules.put(*k, BuiltInModule::from(*v)));
         }
         Self {
             is_built_in_react: src.is_built_in_react,

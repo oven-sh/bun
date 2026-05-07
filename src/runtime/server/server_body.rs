@@ -3459,7 +3459,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self::on_user_route_request_for::<ServerRequestContext<SSL, DEBUG>>(user_route, req, resp);
     }
 
-    fn on_user_route_request_for<Ctx: RequestCtx>(
+    fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>>(
         user_route: &mut UserRoute<SSL, DEBUG>,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
@@ -3556,7 +3556,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.on_request_for::<ServerRequestContext<SSL, DEBUG>>(req, resp);
     }
 
-    fn on_request_for<Ctx: RequestCtx>(
+    fn on_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
@@ -3710,7 +3710,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.prepare_js_request_context_for::<ServerRequestContext<SSL, DEBUG>>(req, resp, should_deinit_context, create_js_request, method)
     }
 
-    fn prepare_js_request_context_for<Ctx: RequestCtx>(
+    fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,

@@ -1,21 +1,15 @@
-#![allow(unused_imports, dead_code)]
 use core::ffi::c_void;
-use std::sync::LazyLock;
 
-use bun_clap as clap;
-use bun_core::{self as bun, err, Error, Global, Output};
-use bun_install::package_manager::{PackageManager, Subcommand};
-use crate::cli::concat_params;
-// PORT NOTE: `bun_install::package_manager` is a stub that only re-exports `PackageManager` +
-// `Subcommand`; the real `CommandLineArguments` lives under the file-backed
-// `package_manager_real::command_line_arguments` module, which is currently gated out
-// below are stubbed with `todo!` until that module is un-gated.
-// use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
+use bun_core::{err, Error, Global, Output};
+use bun_install::package_manager_real::{
+    self as pm, install_with_manager, update_package_json_and_install_with_manager,
+    CommandLineArguments, PackageManager, Subcommand, ROOT_PACKAGE_JSON_PATH,
+};
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 
 use crate::build_command::BuildCommand;
-use crate::command::ContextData;
-use crate::{Cli, Command};
+use crate::command::{self, ContextData};
+use crate::Cli;
 
 pub struct InstallCommand;
 
@@ -39,241 +33,172 @@ impl InstallCommand {
 
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
     // TODO(port): narrow error set
-    let _ = ctx;
+    let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
-    // PORT NOTE: `CommandLineArguments::parse` (which would normally handle `--help`
-    // before any install work) lives behind the reconciler-6 gate. Until that un-gates,
-    // handle `--help` / `-h` here directly so `bun install --help` prints real help text
-    // instead of panicking. The remaining install path stays blocked on the gate.
-    for a in bun::argv().iter().skip(2) {
-        if a == b"--help" || a == b"-h" {
-            print_help();
-            Global::exit(0);
+    // The way this works:
+    // 1. Run the bundler on source files
+    // 2. Rewrite positional arguments to act identically to the developer
+    //    typing in the dependency names
+    // 3. Run the install command
+    if cli.analyze {
+        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
+        // `ctx` is stored as a raw `*mut ContextData` (Zig `Command.Context` is
+        // `*ContextData` — a freely-aliasing pointer); the `on_fetch` callback
+        // re-enters the install path while `BuildCommand::exec` still holds the
+        // global `Context`, so a Rust `&mut` here would be aliased UB.
+        struct Analyzer {
+            ctx: *mut ContextData,
+            cli: *mut CommandLineArguments,
         }
-        if a == b"--" {
-            break;
+        impl Analyzer {
+            fn on_analyze(
+                this: &mut Self,
+                result: &mut DependenciesScannerResult,
+            ) -> Result<(), Error> {
+                // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
+                //
+                // Process-lifetime storage for the rewritten positionals.
+                // Zig: `bun.default_allocator.alloc(string, keys.len + 1)` with
+                // no matching free — `Global::exit(0)` follows immediately.
+                // `OnceLock` (not `Box::leak`) per PORTING.md §Forbidden.
+                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> =
+                    std::sync::OnceLock::new();
+                static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
+                    std::sync::OnceLock::new();
+
+                let owned = OWNED_KEYS.get_or_init(|| {
+                    result
+                        .dependencies
+                        .keys()
+                        .iter()
+                        .map(|k| Box::<[u8]>::from(&**k))
+                        .collect()
+                });
+                let positionals = POSITIONALS.get_or_init(|| {
+                    let mut v: Vec<&'static [u8]> = Vec::with_capacity(owned.len() + 1);
+                    v.push(b"install");
+                    for k in owned {
+                        v.push(&**k);
+                    }
+                    v
+                });
+
+                // SAFETY: `this.cli` / `this.ctx` were set from live stack
+                // locals in `install()` whose scope encloses the entire
+                // `BuildCommand::exec` call (and hence this callback). The
+                // bundler does not touch the global `ContextData` between
+                // dependency-scan completion and `on_fetch` invocation, so
+                // forming a fresh `&mut` here is exclusive for the duration of
+                // `install_with_cli`.
+                let cli = unsafe { &mut *this.cli };
+                cli.positionals = positionals.as_slice();
+                let ctx = unsafe { &mut *this.ctx };
+
+                install_with_cli(ctx, cli.clone())?;
+
+                Global::exit(0);
+            }
         }
+
+        // Type-erased trampoline matching `DependenciesScanner.on_fetch` (Zig used
+        // `@ptrCast` on the method fn pointer; Rust routes through a thin shim).
+        fn on_fetch_trampoline(
+            ctx: *mut (),
+            result: &mut DependenciesScannerResult,
+        ) -> Result<(), Error> {
+            // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below
+            // and outlives the `BuildCommand::exec` call.
+            let analyzer = unsafe { &mut *(ctx as *mut Analyzer) };
+            Analyzer::on_analyze(analyzer, result)
+        }
+
+        let mut analyzer = Analyzer {
+            ctx: ctx as *mut ContextData,
+            cli: &mut cli as *mut CommandLineArguments,
+        };
+
+        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
+        // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
+        // owned buffer (small one-shot list — no perf concern).
+        let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
+            .iter()
+            .map(|s| Box::<[u8]>::from(*s))
+            .collect();
+
+        let mut fetcher = DependenciesScanner {
+            ctx: &mut analyzer as *mut Analyzer as *mut (),
+            entry_points,
+            on_fetch: on_fetch_trampoline,
+        };
+
+        BuildCommand::exec(command::get(), Some(&mut fetcher))?;
+        return Ok(());
     }
 
-    // Real install path is still blocked on `CommandLineArguments` / `PackageManager::init`.
-    // Degrade gracefully (clean error + exit) instead of `todo!()` panic so unrelated CLI
-    // probes (e.g. help scanners) don't abort the process with a backtrace.
-    Output::pretty(format_args!(
-        "<r><red>error<r>: <b>bun install<r> is not yet available in this build (package manager port pending)\n"
-    ));
-    Output::flush();
-    Global::exit(1);
-    // ── real body, blocked on `CommandLineArguments` un-gate ──────────────
-    // let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
-    //
-    // // The way this works:
-    // // 1. Run the bundler on source files
-    // // 2. Rewrite positional arguments to act identically to the developer
-    // //    typing in the dependency names
-    // // 3. Run the install command
-    // if cli.analyze {
-    //     struct Analyzer<'a> {
-    //         ctx: &'a mut ContextData,
-    //         cli: &'a mut CommandLineArguments,
-    //     }
-    //     impl<'a> Analyzer<'a> {
-    //         pub fn on_analyze(
-    //             &mut self,
-    //             result: &mut DependenciesScannerResult,
-    //         ) -> Result<(), Error> {
-    //             // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
-    //             let keys = result.dependencies.keys();
-    //             // TODO(port): lifetime — positionals stores borrowed &[u8] from result.dependencies; verify ownership in Phase B
-    //             let mut positionals: Vec<&[u8]> = vec![b"" as &[u8]; keys.len() + 1];
-    //             positionals[0] = b"install";
-    //             positionals[1..].copy_from_slice(keys);
-    //             self.cli.positionals = positionals.into_boxed_slice();
-    //
-    //             install_with_cli(self.ctx, self.cli.clone())?;
-    //
-    //             Global::exit(0);
-    //         }
-    //     }
-    //     let mut analyzer = Analyzer {
-    //         ctx,
-    //         cli: &mut cli,
-    //     };
-    //
-    //     // PORT NOTE: reshaped for borrowck — capture entry_points slice before borrowing cli mutably via analyzer
-    //     let entry_points = analyzer.cli.positionals[1..].to_vec().into_boxed_slice();
-    //
-    //     let mut fetcher = DependenciesScanner {
-    //         ctx: &mut analyzer as *mut Analyzer<'_> as *mut c_void,
-    //         entry_points,
-    //         // TODO(port): @ptrCast of method fn pointer — DependenciesScanner.onFetch likely expects
-    //         // `unsafe extern "C" fn(*mut c_void, *mut DependenciesScannerResult) -> Result<(), Error>`;
-    //         // wire a trampoline in Phase B.
-    //         // SAFETY: @ptrCast — Analyzer::on_analyze has layout-compatible signature with
-    //         // DependenciesScanner.on_fetch; ctx is &mut Analyzer passed as *mut c_void above.
-    //         // TODO(port): replace with explicit C-ABI trampoline in Phase B.
-    //         on_fetch: unsafe {
-    //             core::mem::transmute::<
-    //                 fn(&mut Analyzer<'_>, &mut DependenciesScannerResult) -> Result<(), Error>,
-    //                 _,
-    //             >(Analyzer::on_analyze)
-    //         },
-    //     };
-    //
-    //     // SAFETY: `Command::global_ctx()` is valid after `create_context_data`
-    //     // has run during single-threaded CLI startup.
-    //     BuildCommand::exec(unsafe { &mut *Command::global_ctx() }, Some(&mut fetcher))?;
-    //     return Ok(());
-    // }
-    //
-    // install_with_cli(ctx, cli)
+    install_with_cli(ctx, cli)
 }
 
-fn install_with_cli(ctx: &mut ContextData /* , cli: CommandLineArguments */) -> Result<(), Error> {
+fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<(), Error> {
     // TODO(port): narrow error set
-    let _ = ctx;
-    todo!(
-        "blocked_on: bun_install::package_manager_real::CommandLineArguments / PackageManager::init \
-         (reconciler-6 gate)"
-    )
-    // ── real body, blocked on `package_manager_real` un-gate ──────────────
-    // let subcommand: Subcommand = if cli.positionals.len() > 1 {
-    //     Subcommand::Add
-    // } else {
-    //     Subcommand::Install
-    // };
-    //
-    // // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
-    // // and cleanup install/add subcommand usage
-    // let (manager, original_cwd) = PackageManager::init(ctx, cli, Subcommand::Install)?;
-    //
-    // // switch to `bun add <package>`
-    // if subcommand == Subcommand::Add {
-    //     manager.subcommand = Subcommand::Add;
-    //     if manager.options.should_print_command_name() {
-    //         Output::prettyln(const_format::concatcp!(
-    //             "<r><b>bun add <r><d>v",
-    //             Global::package_json_version_with_sha,
-    //             "<r>\n"
-    //         ));
-    //         Output::flush();
-    //     }
-    //     return manager.update_package_json_and_install_with_manager(ctx, original_cwd);
-    // }
-    //
-    // if manager.options.should_print_command_name() {
-    //     Output::prettyln(const_format::concatcp!(
-    //         "<r><b>bun install <r><d>v",
-    //         Global::package_json_version_with_sha,
-    //         "<r>\n"
-    //     ));
-    //     Output::flush();
-    // }
-    //
-    // manager.install_with_manager(ctx, PackageManager::ROOT_PACKAGE_JSON_PATH, original_cwd)?;
-    //
-    // if manager.any_failed_to_install {
-    //     Global::exit(1);
-    // }
-    //
-    // Ok(())
-}
+    let subcommand: Subcommand = if cli.positionals.len() > 1 {
+        Subcommand::Add
+    } else {
+        Subcommand::Install
+    };
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun install --help` — lifted from `CommandLineArguments::print_help`
-// (src/install/PackageManager/CommandLineArguments.zig, `.install` arm) so the
-// When that module un-gates this block should be deleted in favour of
-// `CommandLineArguments::parse` handling `--help` itself.
-// ──────────────────────────────────────────────────────────────────────────
+    // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
+    // and cleanup install/add subcommand usage
+    let (manager_ptr, original_cwd) = PackageManager::init(&mut *ctx, cli, Subcommand::Install)?;
 
-type ParamType = clap::Param<clap::Help>;
+    // SAFETY: `PackageManager::init` returns the freshly populated process-global
+    // singleton (`holder::RAW_PTR`). No worker thread derefs it until
+    // `install_with_manager` schedules tasks below; until then this `&mut` is
+    // exclusive on the single CLI dispatch thread.
+    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
 
-static SHARED_PARAMS: &[ParamType] = &[
-    clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
-    clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
-    clap::param!("-p, --production                      Don't install devDependencies"),
-    clap::param!("-P, --prod"),
-    clap::param!("--no-save                             Don't update package.json or save a lockfile"),
-    clap::param!("--save                                Save to package.json (true by default)"),
-    clap::param!("--ca <STR>...                         Provide a Certificate Authority signing certificate"),
-    clap::param!("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate"),
-    clap::param!("--dry-run                             Perform a dry run without making changes"),
-    clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
-    clap::param!("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"),
-    clap::param!("--cache-dir <PATH>                    Store & load cached data from a specific directory path"),
-    clap::param!("--no-cache                            Ignore manifest cache entirely"),
-    clap::param!("--silent                              Don't log anything"),
-    clap::param!("--quiet                               Only show tarball name when packing"),
-    clap::param!("--verbose                             Excessively verbose logging"),
-    clap::param!("--no-progress                         Disable the progress bar"),
-    clap::param!("--no-summary                          Don't print a summary"),
-    clap::param!("--no-verify                           Skip verifying integrity of newly downloaded packages"),
-    clap::param!("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"),
-    clap::param!("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"),
-    clap::param!("-g, --global                          Install globally"),
-    clap::param!("--cwd <STR>                           Set a specific cwd"),
-    // PORT NOTE: Zig builds the `--backend` help string at comptime with the
-    // platform-specific suffix; `clap::param!` only accepts a literal token, so
-    // duplicate per-platform here.
-    #[cfg(target_os = "macos")]
-    clap::param!("--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""),
-    #[cfg(not(target_os = "macos"))]
-    clap::param!("--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""),
-    clap::param!("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"),
-    clap::param!("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"),
-    clap::param!("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"),
-    clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
-    clap::param!("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"),
-    clap::param!("--lockfile-only                       Generate a lockfile without installing dependencies"),
-    clap::param!("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")"),
-    clap::param!("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"),
-    clap::param!("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"),
-    clap::param!("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"),
-    clap::param!("-h, --help                            Print this help menu"),
-];
+    // switch to `bun add <package>`
+    if subcommand == Subcommand::Add {
+        manager.subcommand = Subcommand::Add;
+        if manager.options.should_print_command_name() {
+            Output::prettyln(format_args!(
+                "<r><b>bun add <r><d>v{}<r>\n",
+                Global::package_json_version_with_sha,
+            ));
+            Output::flush();
+        }
+        return update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd);
+    }
 
-static INSTALL_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(SHARED_PARAMS, [
-        clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
-        clap::param!("-D, --development"),
-        clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
-        clap::param!("--peer                        Add dependency to \"peerDependencies\""),
-        clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
-        clap::param!("--filter <STR>...                 Install packages for the matching workspaces"),
-        clap::param!("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)"),
-        clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
-        clap::param!("<POS> ...                         "),
-    ])
-});
+    if manager.options.should_print_command_name() {
+        Output::prettyln(format_args!(
+            "<r><b>bun install <r><d>v{}<r>\n",
+            Global::package_json_version_with_sha,
+        ));
+        Output::flush();
+    }
 
-fn print_help() {
-    // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-    const INTRO_TEXT: &str = "\n\
-<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\\<name\\><r><d>@\\<version\\><r>\n\
-<b>Alias<r>: <b><green>bun i<r>\n\n\
-\x20 Install the dependencies listed in package.json.\n\n\
-<b>Flags:<r>";
-    const OUTRO_TEXT: &str = "\n\n\
-<b>Examples:<r>\n\
-\x20 <d>Install the dependencies for the current project<r>\n\
-\x20 <b><green>bun install<r>\n\n\
-\x20 <d>Skip devDependencies<r>\n\
-\x20 <b><green>bun install<r> <cyan>--production<r>\n\n\
-Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.\n";
+    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
+    // `PackageManager::init` (above) on this thread; only read thereafter.
+    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH };
+    install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 
-    Output::pretty(format_args!("{}", INTRO_TEXT));
-    clap::simple_help(&INSTALL_PARAMS);
-    Output::pretty(format_args!("{}", OUTRO_TEXT));
-    Output::flush();
+    if manager.any_failed_to_install {
+        Global::exit(1);
+    }
+
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/install_command.zig (97 lines)
-//   confidence: low
-//   todos:      7
-//   notes:      Bodies stubbed with todo!() — blocked on bun_install::package_manager_real
-//               un-gate (reconciler-6). Real ported bodies preserved as comments above.
-//               Analyzer.on_analyze fn-ptr cast (@ptrCast) needs a C-ABI trampoline;
-//               positionals lifetime/ownership needs verification; borrowck reshape
-//               around entry_points.
+//   confidence: medium
+//   notes:      `Analyzer.on_analyze` re-enters the install path from inside
+//               `BuildCommand::exec`'s `on_fetch` callback while the global
+//               `ContextData` is conceptually still borrowed; raw `*mut`
+//               storage mirrors Zig's freely-aliasing `Command.Context`
+//               (`*ContextData`) and matches the precedent set by
+//               `create_command.rs`. Rewritten `positionals` are parked in
+//               `OnceLock` statics (process-lifetime — `Global::exit(0)`
+//               follows) instead of `Box::leak`.
 // ──────────────────────────────────────────────────────────────────────────

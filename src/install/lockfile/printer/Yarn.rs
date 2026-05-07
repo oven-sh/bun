@@ -11,11 +11,11 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::Lockfile;
 use bun_install::lockfile::package;
 use crate::lockfile_real::package::Alphabetizer;
-// PORT NOTE: `Printer.lockfile` is now the canonical `crate::Lockfile`
-// (column-vec stub) so it matches `PackageManager.lockfile`; the stub
-// `PackageList::slice()` returns `&PackageList` with inherent `items_*`
-// accessors, so the `PackageSliceExt` trait (typed against the
-// `MultiArrayList<Package>` slice) is no longer needed here.
+// PORT NOTE: `lockfile.packages.slice()` returns
+// `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
+// column accessors are an extension trait (Zig's `slice.items(.field)` is
+// comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
+use crate::lockfile_real::package::PackageSliceExt as _;
 use crate::lockfile_real::Printer;
 use crate::integrity;
 

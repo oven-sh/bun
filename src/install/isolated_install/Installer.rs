@@ -2128,18 +2128,22 @@ impl<'a> Installer<'a> {
                 );
             }
 
+            // PORT NOTE: see the matching note in `Step::LinkBinaries` — Zig
+            // aliases `target_node_modules_path` with `node_modules_path` and
+            // the Linker field is a raw `*const AbsPath` to permit that.
+            let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
+                Some(p) => p,
+                None => &node_modules_path,
+            };
             let mut bin_linker = bin_real::Linker {
                 bin,
                 global_bin_path: self.manager.options.bin_path,
                 package_name,
                 string_buf,
                 extern_string_buf,
-                seen: &mut seen,
+                seen: Some(&mut seen),
                 node_modules_path: &mut node_modules_path,
-                target_node_modules_path: target_node_modules_path
-                    .as_mut()
-                    .map(|p| p as *mut _)
-                    .unwrap_or(&mut node_modules_path),
+                target_node_modules_path: target_nm_ptr,
                 target_package_name: if target_node_modules_path.is_some() {
                     target_package_name
                 } else {
@@ -2148,7 +2152,8 @@ impl<'a> Installer<'a> {
                 abs_target_buf: &mut *link_target_buf,
                 abs_dest_buf: &mut *link_dest_buf,
                 rel_buf: &mut *link_rel_buf,
-                ..Default::default()
+                err: None,
+                skipped_due_to_missing_bin: false,
             };
 
             bin_linker.link(false);
@@ -2158,7 +2163,7 @@ impl<'a> Installer<'a> {
             {
                 target_node_modules_path = None;
 
-                bin_linker.target_node_modules_path = &mut node_modules_path;
+                bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 
                 if self.manager.options.log_level.is_verbose() {

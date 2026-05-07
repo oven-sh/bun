@@ -1120,16 +1120,11 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
             break 'input v;
         }
-        let str = input_value.to_bun_string(global)?;
+        let mut str = input_value.to_bun_string(global)?;
         // PORT NOTE: Zig's `str.toSlice(allocator)` is a `SliceWithUnderlyingString`
         // bundling the (possibly-transcoded) UTF-8 view with its backing
-        // `bun.String` ref. The local `types::SliceWithUnderlyingString` stub
-        // exposes the same field shape.
-        let utf8 = str.to_utf8_without_ref();
-        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(SliceWithUnderlyingString {
-            utf8,
-            underlying: str,
-        }))
+        // `bun.String` ref.
+        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
     };
 
     let mut log = logger::Log::init();

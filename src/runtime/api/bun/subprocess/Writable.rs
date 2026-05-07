@@ -58,7 +58,7 @@ impl<'a> Writable<'a> {
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref; intrusive refcount permits
                 // shared mutation (mirrors Zig `*StaticPipeWriter`).
-                unsafe { (*buffer.data.as_ptr()).update_ref(true) };
+                unsafe { (*buffer.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -72,7 +72,7 @@ impl<'a> Writable<'a> {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
+                unsafe { (*buffer.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -451,7 +451,7 @@ impl<'a> Writable<'a> {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
+                unsafe { (*buffer.as_ptr()).update_ref(false) };
                 // PORT NOTE: Zig calls `buffer.deref()` without reassigning to `.ignore`;
                 // RefPtr::deref drops the held ref.
                 buffer.deref();
@@ -483,7 +483,7 @@ impl<'a> Writable<'a> {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.data.as_ptr()).close() };
+                unsafe { (*buffer.as_ptr()).close() };
             }
             Writable::Ignore => {}
             Writable::Inherit => {}

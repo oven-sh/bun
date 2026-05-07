@@ -1549,7 +1549,7 @@ impl CAresReverse {
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }
@@ -1662,7 +1662,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }
@@ -1811,7 +1811,7 @@ impl DNSLookup {
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }

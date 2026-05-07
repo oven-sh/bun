@@ -511,7 +511,7 @@ impl Subprocess<'_> {
                 Writable::Buffer(buffer) => {
                     // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
                     // ref-counted and we hold the owning ref via `self.stdin`.
-                    unsafe { (*buffer.data.as_ptr()).source.detach() };
+                    unsafe { (*buffer.as_ptr()).source.detach() };
                     // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
                     // assignment below; do not deref explicitly.
                     self.stdin = Writable::Ignore;
@@ -535,7 +535,7 @@ impl Subprocess<'_> {
                     };
                     // SAFETY: `pipe` is the sole RefPtr we just moved out of `*out`;
                     // mutator-thread-only access to PipeReader state.
-                    let pipe_state = unsafe { &mut (*pipe.data.as_ptr()).state };
+                    let pipe_state = unsafe { &mut (*pipe.as_ptr()).state };
                     if let PipeReader::State::Done(done) = pipe_state {
                         let taken = core::mem::take(done);
                         *out = Readable::Buffer(readable::CowString::init_owned(
@@ -1019,7 +1019,7 @@ impl Subprocess<'_> {
         if let Writable::Buffer(buffer) = &mut self.stdin {
             // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
             // ref-counted and we hold the owning ref via `self.stdin`.
-            unsafe { (*buffer.data.as_ptr()).close() };
+            unsafe { (*buffer.as_ptr()).close() };
         }
 
         if !existing_stdin_value.is_empty() {
@@ -1041,14 +1041,14 @@ impl Subprocess<'_> {
             if let Readable::Pipe(pipe) = &mut self.stdout {
                 if !pipe.reader.is_done() {
                     // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                    unsafe { (*pipe.data.as_ptr()).reader.read() };
+                    unsafe { (*pipe.as_ptr()).reader.read() };
                 }
             }
 
             if let Readable::Pipe(pipe) = &mut self.stderr {
                 if !pipe.reader.is_done() {
                     // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                    unsafe { (*pipe.data.as_ptr()).reader.read() };
+                    unsafe { (*pipe.as_ptr()).reader.read() };
                 }
             }
         }
@@ -1535,10 +1535,10 @@ pub mod testing_apis {
         #[cfg(windows)]
         {
             // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-            let _ = unsafe { (*pipe.data.as_ptr()).reader.stop_reading() };
+            let _ = unsafe { (*pipe.as_ptr()).reader.stop_reading() };
         }
         // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        unsafe { (*pipe.data.as_ptr()).reader.on_error(fake_err) };
+        unsafe { (*pipe.as_ptr()).reader.on_error(fake_err) };
         Ok(JSValue::TRUE)
     }
 }

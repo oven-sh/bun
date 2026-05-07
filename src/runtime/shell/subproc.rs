@@ -329,7 +329,7 @@ impl ShellSubprocess {
                     // PORT NOTE: reshaped for borrowck — re-match after the &mut self call above.
                     if let Writable::Buffer(buffer) = &mut self.stdin {
                         // SAFETY: RefPtr<StaticPipeWriter> data is live.
-                        unsafe { (*buffer.data.as_ptr()).source.detach() };
+                        unsafe { (*buffer.as_ptr()).source.detach() };
                     }
                     self.stdin = Writable::Ignore;
                 }
@@ -676,7 +676,7 @@ impl ShellSubprocess {
 
         if let Writable::Buffer(buffer) = &mut subproc.stdin {
             // SAFETY: RefPtr<StaticPipeWriter> data is live; mut access mirrors Zig.
-            if let Err(err) = unsafe { (*buffer.data.as_ptr()).start() } {
+            if let Err(err) = unsafe { (*buffer.as_ptr()).start() } {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
@@ -797,7 +797,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
-                unsafe { (*buffer.data.as_ptr()).update_ref(true) };
+                unsafe { (*buffer.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -811,7 +811,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
-                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
+                unsafe { (*buffer.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -1020,7 +1020,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
-                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
+                unsafe { (*buffer.as_ptr()).update_ref(false) };
                 // Spec: `this.buffer.deref()` but does NOT reassign `this.*` —
                 // the variant tag is left as `.buffer`. RefPtr's Drop (on
                 // Subprocess teardown) handles the final deref.
@@ -1046,7 +1046,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
-                unsafe { (*buffer.data.as_ptr()).close() };
+                unsafe { (*buffer.as_ptr()).close() };
             }
             Writable::Ignore => {}
             Writable::Inherit => {}

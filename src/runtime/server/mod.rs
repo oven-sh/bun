@@ -175,8 +175,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => unsafe { p.as_ref() }.memory_cost(),
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.memory_cost(),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.memory_cost(),
+            AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
@@ -188,8 +187,8 @@ impl AnyRoute {
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.ref_(),
             AnyRoute::Html(r) => {
-                // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.data.as_ptr()) };
+                // SAFETY: RefPtr keeps the pointee live while held in the route table.
+                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
             }
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -211,8 +210,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => unsafe { p.as_ref() }.server.set(server),
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.set_server(server),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.server.set(server),
+            AnyRoute::Html(r) => r.data().server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server (server.zig:51-58)
         }
     }
@@ -1992,7 +1990,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 AnyRoute::Html(r) => {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
-                        any_server, app, r.data.as_ptr(), &entry.path, entry.method,
+                        any_server, app, r.as_ptr(), &entry.path, entry.method,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -2000,7 +1998,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // SAFETY: h3_app is a live FFI handle while self is.
                                 unsafe { &mut *h3_app },
-                                r.data.as_ptr(),
+                                r.as_ptr(),
                                 &entry.path,
                                 entry.method,
                             );
@@ -2010,7 +2008,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // SAFETY: `dev` is the live `*mut DevServer` snapshotted
                         // from `self.dev_server` above; no other `&mut` to it
                         // is live in this loop.
-                        bun_core::handle_oom(unsafe { &mut *dev }.html_router.put(&entry.path, r.data.as_ptr()));
+                        bun_core::handle_oom(unsafe { &mut *dev }.html_router.put(&entry.path, r.as_ptr()));
                     }
                     needs_plugins = true;
                 }
@@ -3216,9 +3214,7 @@ pub mod http_server_agent {
                     // SAFETY: RefPtr.data is a live NonNull while held in the
                     // route table; `.bundle` (IntrusiveRc) derefs to the live
                     // HTMLBundle whose `path` outlives this borrow.
-                    AnyRoute::Html(r) => {
-                        BunString::init(&*unsafe { r.data.as_ref() }.bundle.path)
-                    }
+                    AnyRoute::Html(r) => BunString::init(&*r.data().bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

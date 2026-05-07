@@ -433,7 +433,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             NativeCallbacks::H2(h2) => {
                 // SAFETY: `RefPtr` lacks `DerefMut`; reach the pointee via the
                 // raw NonNull (intrusive refcount keeps it alive until `drop`).
-                unsafe { (*h2.data.as_ptr()).on_native_close() };
+                unsafe { (*h2.as_ptr()).on_native_close() };
                 // Zig `h2.deref()` — IntrusiveRc::drop decrements.
                 drop(h2);
             }
@@ -3162,7 +3162,7 @@ impl NativeCallbacks {
                 // TODO: properly propagate exception upwards
                 // SAFETY: intrusive refcount keeps `h2` alive; `RefPtr` lacks
                 // `DerefMut`, so reach the pointee via the raw NonNull.
-                if unsafe { (*h2.data.as_ptr()).on_native_read(data) }.is_err() {
+                if unsafe { (*h2.as_ptr()).on_native_read(data) }.is_err() {
                     return false;
                 }
                 true
@@ -3174,7 +3174,7 @@ impl NativeCallbacks {
         match self {
             NativeCallbacks::H2(h2) => {
                 // SAFETY: see `on_data`.
-                unsafe { (*h2.data.as_ptr()).on_native_writable() };
+                unsafe { (*h2.as_ptr()).on_native_writable() };
                 true
             }
             NativeCallbacks::None => false,
@@ -3295,7 +3295,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { (*tls.data.as_ptr()).on_open(socket) };
+            unsafe { (*tls.as_ptr()).on_open(socket) };
         }
     }
 
@@ -3304,7 +3304,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { (*tls.data.as_ptr()).on_data(socket, decoded_data) };
+            unsafe { (*tls.as_ptr()).on_data(socket, decoded_data) };
         }
     }
 
@@ -3313,7 +3313,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            let _ = unsafe { (*tls.data.as_ptr()).on_handshake(socket, success as i32, ssl_error) };
+            let _ = unsafe { (*tls.as_ptr()).on_handshake(socket, success as i32, ssl_error) };
         }
     }
 
@@ -3321,7 +3321,7 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { (*tls.data.as_ptr()).on_end(socket) };
+            unsafe { (*tls.as_ptr()).on_end(socket) };
         }
     }
 
@@ -3330,7 +3330,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { (*tls.data.as_ptr()).on_writable(socket) };
+            unsafe { (*tls.as_ptr()).on_writable(socket) };
         }
     }
 
@@ -3338,7 +3338,7 @@ impl DuplexUpgradeContext {
         if self.is_open {
             if let Some(tls) = &mut self.tls {
                 // SAFETY: intrusive refcount; single-threaded dispatch.
-                unsafe { (*tls.data.as_ptr()).handle_error(err_value) };
+                unsafe { (*tls.as_ptr()).handle_error(err_value) };
             }
         } else {
             if let Some(tls) = self.tls.take() {
@@ -3375,7 +3375,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { (*tls.data.as_ptr()).on_timeout(socket) };
+            unsafe { (*tls.as_ptr()).on_timeout(socket) };
         }
     }
 

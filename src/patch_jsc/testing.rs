@@ -131,6 +131,8 @@ impl TestingAPIs {
             let Ok(bunstr) = dir_js.to_bun_string(global) else {
                 return Err(JSValue::UNDEFINED);
             };
+            // +1 ref from `to_bun_string`; release via `OwnedString` drop (Zig: `defer bunstr.deref()`).
+            let bunstr = OwnedString::new(bunstr);
             let path = bunstr.to_owned_slice_z();
 
             match bun_sys::open(path.as_zstr(), bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
@@ -148,6 +150,10 @@ impl TestingAPIs {
         let Ok(patchfile_bunstr) = patchfile_js.to_bun_string(global) else {
             return Err(JSValue::UNDEFINED);
         };
+        // +1 ref from `to_bun_string`; release via `OwnedString` drop (Zig:
+        // `defer patchfile_bunstr.deref()`). `to_utf8()` takes its own ref, so
+        // `patchfile_src` outlives this guard.
+        let patchfile_bunstr = OwnedString::new(patchfile_bunstr);
         let patchfile_src = patchfile_bunstr.to_utf8();
 
         // Validate the patch parses; on failure, clean up `dir_fd` and throw.

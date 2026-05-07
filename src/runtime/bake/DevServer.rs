@@ -4890,9 +4890,12 @@ impl DevServer {
             DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
-                // TODO(b2-blocked): bun_http::Headers::from wants a webcore Body view; the
-                // body-aware path is gated. Pass None and append Content-Type manually.
-                let mut headers = bun_http::Headers::from(None, bun_http::headers::Options { body: None });
+                let mut headers = bun_http::Headers::from(
+                    None,
+                    bun_http::headers::Options {
+                        body: Some(crate::webcore::headers_ref::any_blob_ref(&any_blob)),
+                    },
+                );
                 headers.append(b"Content-Type", &MimeType::HTML.value);
                 if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {
                     bun_http::headers::append_etag(any_blob.slice(), &mut headers);

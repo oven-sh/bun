@@ -150,6 +150,54 @@ impl HPACK {
     }
 }
 
+/// Owning handle for an `HPACK` instance returned by [`HPACK::init`].
+///
+/// `HPACK::init` allocates via the C wrapper (`lshpack_wrapper_init`, which
+/// `mi_malloc`s the struct and `lshpack_{enc,dec}_init`s its internals). The
+/// matching teardown is `lshpack_wrapper_deinit`, which runs the lshpack
+/// cleanup hooks before freeing — **not** a bare `mi_free`. Wrapping the raw
+/// pointer in `Box<HPACK>` (and letting `Box`'s `Drop` free it) therefore
+/// leaks the encoder/decoder's internal allocations. Use this handle instead.
+pub struct HpackHandle(core::ptr::NonNull<HPACK>);
+
+impl HpackHandle {
+    #[inline]
+    pub fn new(max_capacity: u32) -> Self {
+        // `HPACK::init` already panics (out_of_memory) on null.
+        // SAFETY: `init` never returns null (it diverges on OOM).
+        Self(unsafe { core::ptr::NonNull::new_unchecked(HPACK::init(max_capacity)) })
+    }
+}
+
+impl core::ops::Deref for HpackHandle {
+    type Target = HPACK;
+    #[inline]
+    fn deref(&self) -> &HPACK {
+        // SAFETY: `self.0` is the unique live owner of the C allocation.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for HpackHandle {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut HPACK {
+        // SAFETY: `self.0` is the unique live owner of the C allocation.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for HpackHandle {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `HPACK::init` and has not been destroyed.
+        unsafe { HPACK::destroy(self.0.as_ptr()) };
+    }
+}
+
+// SAFETY: the C wrapper has no thread affinity; lshpack state is not accessed
+// concurrently (callers serialize on the owning `H2FrameParser`).
+unsafe impl Send for HpackHandle {}
+
 type lshpack_wrapper_alloc = Option<unsafe extern "C" fn(size: usize) -> *mut c_void>;
 type lshpack_wrapper_free = Option<unsafe extern "C" fn(ptr: *mut c_void)>;
 

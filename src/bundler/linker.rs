@@ -22,16 +22,7 @@ use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
-use crate::transpiler::{ParseResult, PluginRunner, ResolveQueue, ResolveResults};
-
-/// `bun_options_types::ImportKind` ↔ `bun_logger::ImportKind` are the same
-/// `#[repr(u8)]` enum ported twice (logger/lib.rs:284, options_types/import_record.rs:12);
-/// B-3 collapses them via re-export. Until then, bridge by discriminant.
-#[inline]
-fn to_logger_import_kind(k: ImportKind) -> bun_logger::ImportKind {
-    // SAFETY: identical `#[repr(u8)]` variant set / discriminants (0..=11).
-    unsafe { core::mem::transmute::<u8, bun_logger::ImportKind>(k as u8) }
-}
+use crate::transpiler::{ParseResult, PluginRunner, PluginTarget, ResolveQueue, ResolveResults};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum CSSResolveError {

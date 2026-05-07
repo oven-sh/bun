@@ -6,10 +6,13 @@ use crate::mimalloc;
 // Phase B may reshape the vtable struct into `trait Allocator` impls instead.
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
-crate::declare_scope!(mimalloc, hidden);
+// Zig: `const log = bun.Output.scoped(.mimalloc, .hidden);` — `Output.scoped`
+// lives in `bun_core` (CYCLEBREAK §bun_alloc: MOVE_DOWN→core), and `bun_core`
+// depends on this crate, so the hidden-scope debug tracing is dropped here
+// rather than re-declared as a no-op stub.
 
 fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
-    crate::scoped_log!(mimalloc, "mi_free({})", buf.len());
+    let _ = buf.len();
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion
@@ -38,8 +41,6 @@ pub(crate) struct MimallocAllocator;
 
 impl MimallocAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        crate::scoped_log!(mimalloc, "mi_alloc({}, {})", len, alignment.to_byte_units());
-
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             // SAFETY: mimalloc FFI; len/alignment are valid
             unsafe { mimalloc::mi_malloc_aligned(len, alignment.to_byte_units()) }
@@ -121,8 +122,6 @@ pub(crate) struct ZAllocator;
 
 impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
-        crate::scoped_log!(mimalloc, "ZAllocator.alignedAlloc: {}\n", len);
-
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
             // SAFETY: mimalloc FFI; len/alignment are valid
             unsafe { mimalloc::mi_zalloc_aligned(len, alignment.to_byte_units()) }

@@ -24,17 +24,86 @@ pub type ResolveResults = HashMap<u64, ()>;
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
+/// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Defined at
+/// this tier so the `OnResolveHook` signature is nameable without `bun_jsc`;
+/// `#[repr(u8)]` discriminants match `bun_jsc::BunPluginTarget` 1:1 so the JSC
+/// thunk transmutes the tag.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum PluginTarget {
+    Bun = 0,
+    Node = 1,
+    Browser = 2,
+}
+
+/// Dispatch slot for `PluginRunner.onResolve` (PluginRunner.zig:34). The body
+/// calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be defined here
+/// (`bun_jsc` depends on this crate). The construction site
+/// (`bun_jsc::Bun__onDidAppendPlugin`) populates this with the real
+/// implementation; `Linker::link` calls through it.
+pub type OnResolveHook = fn(
+    global_object: *mut core::ffi::c_void,
+    specifier: &[u8],
+    importer: &[u8],
+    log: &mut logger::Log,
+    loc: logger::Loc,
+    target: PluginTarget,
+) -> Result<Option<bun_paths::fs::Path<'static>>, bun_core::Error>;
+
 /// Spec PluginRunner.zig — the resolver-side hook record. Lives at this tier
 /// (not `bundler_jsc`) so both `bun_jsc::VirtualMachine.plugin_runner` and
 /// `Linker.plugin_runner` can name it without a crate cycle. `global_object`
 /// is type-erased (`*mut JSGlobalObject` lives in `bun_jsc`, which depends on
-/// this crate); `bundler_jsc` casts it back when dispatching `on_resolve`.
+/// this crate); `on_resolve` is the JSC-aware dispatch slot wired at
+/// construction time by `bun_jsc`.
 #[repr(C)]
 pub struct PluginRunner {
     /// `*mut bun_jsc::JSGlobalObject` — erased to break the dep cycle.
     pub global_object: *mut core::ffi::c_void,
+    /// Spec PluginRunner.zig:34 `onResolve` — populated by `bun_jsc` at
+    /// construction. Not `Option`: a `PluginRunner` is only created after the
+    /// first `Bun.plugin()` call, at which point the global is live.
+    pub on_resolve: OnResolveHook,
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
     // PORTING.md (global mimalloc).
+}
+
+impl PluginRunner {
+    /// Spec PluginRunner.zig:14 `extractNamespace`.
+    pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
+        let Some(colon) = bun_string::strings::index_of_char(specifier, b':') else {
+            return b"";
+        };
+        let colon = colon as usize;
+        if cfg!(windows)
+            && colon == 1
+            && specifier.len() > 3
+            && bun_paths::resolve_path::is_sep_any(specifier[2])
+            && ((specifier[0] > b'a' && specifier[0] < b'z')
+                || (specifier[0] > b'A' && specifier[0] < b'Z'))
+        {
+            return b"";
+        }
+        &specifier[..colon]
+    }
+
+    /// Spec PluginRunner.zig:22 `couldBePlugin` — cheap pre-filter that rules
+    /// out `./` / `../` / absolute paths before hitting the resolve hook.
+    pub fn could_be_plugin(specifier: &[u8]) -> bool {
+        if let Some(last_dot) = bun_string::strings::last_index_of_char(specifier, b'.') {
+            let ext = &specifier[last_dot + 1..];
+            // '.' followed by either a letter or a non-ascii character
+            // maybe there are non-ascii file extensions?
+            // we mostly want to cheaply rule out "../" and ".." and "./"
+            if !ext.is_empty()
+                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
+            {
+                return true;
+            }
+        }
+        !bun_paths::is_absolute(specifier)
+            && bun_string::strings::index_of_char(specifier, b':').is_some()
+    }
 }
 
 /// CYCLEBREAK FORWARD_DECL: `bundler_jsc::plugin_runner::MacroJSCtx`.

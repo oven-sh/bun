@@ -12,22 +12,20 @@ export const meta = {
   ],
 };
 
-const WT =
-  (args && args.worktree) ||
-  (() => {
-    throw new Error("worktree required");
-  })();
-const BRANCH = (args && args.branch) || `claude/phase-f-${WT.replace(/^.*bun-5-/, "")}`;
+const A = typeof args === "string" ? JSON.parse(args) : args || {};
+if (!A.worktree) throw new Error("worktree required; args=" + JSON.stringify(A));
+const WT = A.worktree;
+const BRANCH = (A.branch) || `claude/phase-f-${WT.replace(/^.*bun-5-/, "")}`;
 const GOAL =
-  (args && args.goal) ||
+  (A.goal) ||
   (() => {
     throw new Error("goal required");
   })();
-const SCOPE = (args && args.scope) || "src/";
-const ANTI = (args && args.anti_pattern) || "";
-const CHECK_CMD = (args && args.check_cmd) || "cargo check --workspace --keep-going";
-const SMOKE = (args && args.smoke) || `bun bd -e 'console.log(1+1)' 2>&1 | head -5`;
-const MAX_ROUNDS = (args && args.max_rounds) || 6;
+const SCOPE = (A.scope) || "src/";
+const ANTI = (A.anti_pattern) || "";
+const CHECK_CMD = (A.check_cmd) || "cargo check --workspace --keep-going";
+const SMOKE = (A.smoke) || `bun bd -e 'console.log(1+1)' 2>&1 | head -5`;
+const MAX_ROUNDS = (A.max_rounds) || 6;
 
 const APPLY_S = {
   type: "object",

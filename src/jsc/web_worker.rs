@@ -1038,12 +1038,14 @@ mod __phase_a_body {
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(_) => panic!("unhandled exception"),
             };
-            let _str_guard = scopeguard::guard((), |_| str.deref());
+            // RAII: Zig's `defer str.deref()` — `OwnedString::Drop` releases the
+            // WTF ref on scope exit, including across the `?`-free error arm below.
+            let str = bun_string::OwnedString::new(str);
             let dispatch = jsc::from_js_host_call_generic(
                 vm.global,
                 core::panic::Location::caller(),
                 |g, cpp, s, e| unsafe { WebWorker__dispatchError(g, cpp, s, e) },
-                (vm.global, self.cpp_worker, str, err),
+                (vm.global, self.cpp_worker, str.get(), err),
             );
             if let Err(e) = dispatch {
                 let _ = vm.global.report_uncaught_exception(

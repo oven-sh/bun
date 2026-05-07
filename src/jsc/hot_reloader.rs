@@ -840,13 +840,13 @@ where
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         let mut _on_file_update_path_buf = PathBuffer::uninit();
-        let mut current_task = Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self);
-        let _enqueue = scopeguard::guard((), |_| {
-            // TODO(port): errdefer — current_task is borrowed mutably below; this
-            // closure cannot also borrow it. Phase B: restructure to call
-            // `current_task.enqueue()` at every exit point, or wrap Task itself
-            // in the guard.
-        });
+        // Zig: `defer current_task.enqueue();` — wrap the Task itself in the guard
+        // so any exit path (including future early-returns) flushes the buffered
+        // hashes. Dereferenced as `&mut *current_task` for the loop body below.
+        let mut current_task = scopeguard::guard(
+            Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
+            |mut t| t.enqueue(),
+        );
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.

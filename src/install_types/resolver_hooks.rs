@@ -305,7 +305,8 @@ const _: () = assert!(Behavior::PEER.bits() == (1 << 4));
 const _: () = assert!(Behavior::WORKSPACE.bits() == (1 << 5));
 
 /// Port of `install/dependency.zig` `Version.Tag`.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")] // match Zig @tagName: "npm"/"dist_tag"/"github"/...
 #[repr(u8)]
 pub enum DependencyVersionTag {
     #[default]

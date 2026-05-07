@@ -541,15 +541,15 @@ pub fn compute_chunks(
     ));
     let mut unique_key_builder =
         bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len())?;
-    // PORT NOTE: `unique_key_buf` is `Box<[u8]>`; the Zig code aliases the
-    // builder's backing buffer. Phase B: revisit once StringBuilder ownership
-    // is finalized — for now, copy the allocated slice into an owned box.
-    this.unique_key_buf = unique_key_builder.allocated_slice().to_vec().into_boxed_slice();
-
-    // errdefer: roll back unique_key_buf on failure (unique_key_builder is an owned local; Drop frees it)
-    let guard = scopeguard::guard(&mut this.unique_key_buf, |buf| {
-        *buf = Box::default();
-    });
+    // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
+    // every `chunk.unique_key` is a slice into it. Mirror that: capture the stable
+    // base pointer now (the builder never reallocates after `init_capacity`), hand
+    // out `&'static [u8]` BACKREF slices during the loop, then transfer ownership
+    // of the single allocation into `this.unique_key_buf` afterwards.
+    // SAFETY: `chunks` is non-empty (early return above) so `cap > 0` and `ptr` is set.
+    let unique_key_base: *const u8 = unique_key_builder.ptr.unwrap().as_ptr();
+    let prefix_len =
+        bun_fmt::count(format_args!("{}", bun_fmt::hex_int_lower::<16>(unique_key)));
 
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
@@ -567,24 +567,24 @@ pub fn compute_chunks(
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
         // last 8 numbers of the key are the chunk index.
-        // PORT NOTE: `chunk.unique_key` is `&'static [u8]`; leak the formatted
-        // result for now (Phase B: thread `'bump` lifetime).
-        let formatted = unique_key_builder
+        let start = unique_key_builder.len;
+        let written = unique_key_builder
             .fmt(format_args!(
                 "{}C{:08}",
                 bun_fmt::hex_int_lower::<16>(unique_key),
                 chunk_id
             ))
-            .to_vec();
-        chunk.unique_key = Box::leak(formatted.into_boxed_slice());
+            .len();
+        // SAFETY: `unique_key_base` points into the builder's fixed-capacity heap
+        // allocation; ownership of that allocation is transferred to
+        // `this.unique_key_buf` after this loop, which outlives every `Chunk` for
+        // the link step (BACKREF — same as `final_rel_path`). On any `?` error
+        // before the transfer, `sorted_chunks` is dropped alongside the builder,
+        // so no dangling slice escapes.
+        chunk.unique_key =
+            unsafe { core::slice::from_raw_parts(unique_key_base.add(start), written) };
         if this.unique_key_prefix.is_empty() {
-            this.unique_key_prefix = chunk.unique_key
-                [0..bun_fmt::count(format_args!(
-                    "{}",
-                    bun_fmt::hex_int_lower::<16>(unique_key)
-                ))]
-                .to_vec()
-                .into_boxed_slice();
+            this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
 
         if chunk.entry_point.is_entry_point()
@@ -694,8 +694,11 @@ pub fn compute_chunks(
         }
     }
 
-    // Disarm errdefer guard on success
-    let _ = scopeguard::ScopeGuard::into_inner(guard);
+    // Transfer ownership of the single backing buffer; every `chunk.unique_key`
+    // above borrows into it. (Zig's `errdefer` freed the builder and cleared
+    // `unique_key_buf`; in Rust the builder `Drop`s on error and `unique_key_buf`
+    // is only assigned here on success, so no rollback guard is needed.)
+    this.unique_key_buf = unique_key_builder.move_to_slice();
 
     Ok(sorted_chunks.to_owned_slice()?)
     // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
@@ -715,5 +718,5 @@ use crate::options::{Loader, Target};
 //   source:     src/bundler/linker_context/computeChunks.zig (503 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      Heavy borrowck reshaping needed in Phase B (MultiArrayList .items() borrows overlap with &mut this); arena-keyed ArrayHashMap<&[u8],_> lifetimes; sorted_chunks BabyList ownership for return value; chunk.unique_key/prefix leaked pending 'bump lifetime threading.
+//   notes:      Heavy borrowck reshaping needed in Phase B (MultiArrayList .items() borrows overlap with &mut this); arena-keyed ArrayHashMap<&[u8],_> lifetimes; sorted_chunks BabyList ownership for return value; chunk.unique_key slices borrow `this.unique_key_buf` (BACKREF, same single-buffer model as Zig).
 // ──────────────────────────────────────────────────────────────────────────

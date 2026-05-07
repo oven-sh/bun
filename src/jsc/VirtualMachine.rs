@@ -1873,7 +1873,8 @@ pub fn process_fetch_log(
     ret: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {
-    use crate::{BuildMessage, ResolveMessage, ZigString};
+    use crate::zig_string::ZigString;
+    use crate::{BuildMessage, ResolveMessage};
 
     // Helper: `expr catch |e| globalThis.takeException(e)`.
     let take = |r: JsResult<JSValue>| -> JSValue {
@@ -1956,7 +1957,7 @@ pub fn process_fetch_log(
             // `message_text` alive across the FFI call instead.
             let message_text =
                 format!("{} errors building \"{specifier}\"", errors.len()).into_bytes();
-            let message = ZigString::init(&message_text);
+            let message = crate::zig_string::ZigString::init(&message_text);
             *ret = ErrorableResolvedSource::err(
                 err,
                 take(global_this.create_aggregate_error(&errors, &message)),
@@ -3080,9 +3081,6 @@ impl VirtualMachine {
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        // PORT NOTE: reshaped for borrowck — capture the VM raw pointer before
-        // `self.ref_strings.entry(hash)` exclusively borrows `self`.
-        let vm_ctx = NonNull::new((self as *mut VirtualMachine).cast());
         // PORT NOTE: Zig `lock(); defer unlock()` — RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
@@ -3726,7 +3724,7 @@ impl VirtualMachine {
         if self.main.is_empty() {
             return Ok(());
         }
-        let str = jsc::ZigString::init(MAIN_FILE_NAME);
+        let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
         // SAFETY: `global` valid for VM lifetime.
         unsafe { (*self.global).delete_module_registry_entry(&str) }
     }

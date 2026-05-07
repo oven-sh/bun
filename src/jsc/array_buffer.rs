@@ -777,41 +777,25 @@ pub enum TypedArrayType {
 
 impl TypedArrayType {
     /// Maps to JSC's C-API `JSTypedArrayType` enum (declared in
-    /// `<JavaScriptCore/JSTypedArray.h>`). Returned as `c_uint` to match the
-    /// C ABI directly — the gated `javascript_core_c_api` module isn't on the
-    /// link path yet, so we encode the discriminants here. Keep in sync with
-    /// `JSTypedArrayType` in JavaScriptCore/API/JSTypedArray.h.
-    pub fn to_c(self) -> c_uint {
-        // JSTypedArrayType discriminants (declaration order in the C header):
-        const INT8: c_uint = 0;
-        const INT16: c_uint = 1;
-        const INT32: c_uint = 2;
-        const UINT8: c_uint = 3;
-        const UINT8_CLAMPED: c_uint = 4;
-        const UINT16: c_uint = 5;
-        const UINT32: c_uint = 6;
-        const FLOAT32: c_uint = 7;
-        const FLOAT64: c_uint = 8;
-        #[allow(dead_code)]
-        const ARRAY_BUFFER: c_uint = 9;
-        const NONE: c_uint = 10;
-        const BIG_INT64: c_uint = 11;
-        const BIG_UINT64: c_uint = 12;
+    /// `<JavaScriptCore/JSTypedArray.h>` and re-exported as
+    /// [`jsc_c::JSTypedArrayType`]).
+    pub fn to_c(self) -> jsc_c::JSTypedArrayType {
+        use jsc_c::JSTypedArrayType as C;
         match self {
-            TypedArrayType::TypeNone => NONE,
-            TypedArrayType::TypeInt8 => INT8,
-            TypedArrayType::TypeInt16 => INT16,
-            TypedArrayType::TypeInt32 => INT32,
-            TypedArrayType::TypeUint8 => UINT8,
-            TypedArrayType::TypeUint8Clamped => UINT8_CLAMPED,
-            TypedArrayType::TypeUint16 => UINT16,
-            TypedArrayType::TypeUint32 => UINT32,
-            TypedArrayType::TypeFloat16 => NONE,
-            TypedArrayType::TypeFloat32 => FLOAT32,
-            TypedArrayType::TypeFloat64 => FLOAT64,
-            TypedArrayType::TypeBigInt64 => BIG_INT64,
-            TypedArrayType::TypeBigUint64 => BIG_UINT64,
-            TypedArrayType::TypeDataView => NONE,
+            TypedArrayType::TypeNone => C::kJSTypedArrayTypeNone,
+            TypedArrayType::TypeInt8 => C::kJSTypedArrayTypeInt8Array,
+            TypedArrayType::TypeInt16 => C::kJSTypedArrayTypeInt16Array,
+            TypedArrayType::TypeInt32 => C::kJSTypedArrayTypeInt32Array,
+            TypedArrayType::TypeUint8 => C::kJSTypedArrayTypeUint8Array,
+            TypedArrayType::TypeUint8Clamped => C::kJSTypedArrayTypeUint8ClampedArray,
+            TypedArrayType::TypeUint16 => C::kJSTypedArrayTypeUint16Array,
+            TypedArrayType::TypeUint32 => C::kJSTypedArrayTypeUint32Array,
+            TypedArrayType::TypeFloat16 => C::kJSTypedArrayTypeNone,
+            TypedArrayType::TypeFloat32 => C::kJSTypedArrayTypeFloat32Array,
+            TypedArrayType::TypeFloat64 => C::kJSTypedArrayTypeFloat64Array,
+            TypedArrayType::TypeBigInt64 => C::kJSTypedArrayTypeBigInt64Array,
+            TypedArrayType::TypeBigUint64 => C::kJSTypedArrayTypeBigUint64Array,
+            TypedArrayType::TypeDataView => C::kJSTypedArrayTypeNone,
         }
     }
 
@@ -967,20 +951,10 @@ pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c
     unsafe { mimalloc::mi_free(bytes) };
 }
 
-/// `BlobArrayBuffer_deallocator` (array_buffer.zig:646) — releases the +1
-/// `Blob::Store` ref held as a `JSCArrayBuffer`'s deallocator context.
-#[unsafe(no_mangle)]
-pub extern "C" fn BlobArrayBuffer_deallocator(_bytes: *mut c_void, blob: *mut c_void) {
-    // zig's memory allocator interface won't work here
-    // mimalloc knows the size of things
-    // but we don't
-    let Some(store) = core::ptr::NonNull::new(blob.cast::<crate::webcore::blob::Store>()) else {
-        return;
-    };
-    // SAFETY: `blob` is a `*Blob.Store` passed by C++ as the deallocator
-    // context; it owns one outstanding reference being released here.
-    unsafe { crate::webcore::blob::Store::deref(store) };
-}
+// LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a
+// `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
+// export lives next to it at `bun_runtime::webcore::blob::Store` — `bun_jsc`
+// cannot own this symbol without a dep cycle. C++ links by name only.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions

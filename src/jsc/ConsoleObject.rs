@@ -876,6 +876,8 @@ impl<'a> TablePrinter<'a> {
                     idx: u32,
                     err: bool,
                 }
+                // Capture before constructing `ctx` (which mutably borrows `*self`).
+                let tabular_data = self.tabular_data;
                 let mut ctx = Ctx { this: self, columns, idx: 0, err: false };
                 extern "C" fn callback(
                     _: *mut jsc::VM,
@@ -894,7 +896,7 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                self.tabular_data
+                tabular_data
                     .for_each_with_context(global_object, &mut ctx as *mut _ as *mut c_void, callback)?;
                 if ctx.err {
                     return Err(jsc::JsError::Thrown);
@@ -979,6 +981,8 @@ impl<'a> TablePrinter<'a> {
                     idx: u32,
                     err: bool,
                 }
+                // Capture before constructing `ctx` (which mutably borrows `*self`).
+                let tabular_data = self.tabular_data;
                 let mut ctx = Ctx { this: self, columns, writer, idx: 0, err: false };
                 extern "C" fn callback<const C: bool>(
                     _: *mut jsc::VM,
@@ -997,7 +1001,7 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                self.tabular_data.for_each_with_context(
+                tabular_data.for_each_with_context(
                     global_object,
                     &mut ctx as *mut _ as *mut c_void,
                     callback::<ENABLE_ANSI_COLORS>,

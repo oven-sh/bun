@@ -214,9 +214,7 @@ impl Holder {
                     frames_ptr: self.frames.as_mut_ptr(),
                     frames_len: 0,
                     frames_cap: u8::try_from(Self::FRAME_COUNT).unwrap(),
-                    // TODO(port): ZigStackTrace may have additional fields (e.g.
-                    // referenced_source_provider) — fill with defaults in Phase B.
-                    ..Default::default()
+                    referenced_source_provider: None,
                 },
                 errno: 0,
                 syscall: String::EMPTY,

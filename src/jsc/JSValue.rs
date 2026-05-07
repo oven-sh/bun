@@ -1025,13 +1025,7 @@ impl JSValue {
         let Some(prop) = self.get(global, property)? else { return Ok(None) };
         if prop.is_undefined() { return Ok(None); }
         if prop.is_boolean() { return Ok(Some(prop == JSValue::TRUE)); }
-        // Zig: `jsc.Node.validators.throwErrInvalidArgType` — Node-style
-        // `ERR_INVALID_ARG_TYPE`. PORT NOTE: routed via `throw_invalid_arguments`
-        // until the validators helper is reachable from `bun_jsc`.
-        Err(global.throw_invalid_arguments(format_args!(
-            "The \"{}\" property must be of type boolean.",
-            alloc::string::String::from_utf8_lossy(property),
-        )))
+        Err(global.throw_invalid_property_type(property, "boolean", prop))
     }
     /// JSValue.zig:1703 `toEnumFromMap` — validates `is_string`, looks up via
     /// the supplied phf map, throws "must be one of …" on miss. The Zig

@@ -2377,25 +2377,50 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self { vm, printer, _marker: core::marker::PhantomData }
     }
 
+    /// Exclusive access to the owning `VirtualMachine`.
+    ///
+    /// SAFETY: `vm` is never null — it is set either from a live
+    /// `&'a mut VirtualMachine` in `source_map_handler` (exclusive for `'a`,
+    /// enforced by `PhantomData<&'a mut ()>`), or from `from_raw` whose caller
+    /// guarantees the VM outlives `'a` and that only the worker-safe leaf
+    /// fields (`source_mappings`, `debugger`) are touched. All call sites
+    /// project immediately to one of those leaf fields, so the full `&mut`
+    /// here is no broader than the pre-accessor raw `&mut *self.vm`.
+    #[inline]
+    fn vm_mut(&mut self) -> &mut VirtualMachine {
+        unsafe { &mut *self.vm }
+    }
+
+    /// Raw pointer to the active `BufferPrinter`.
+    ///
+    /// Intentionally NOT a `&mut`-returning accessor: the same
+    /// `BufferPrinter` is concurrently the live `writer` argument inside
+    /// `print_with_source_map`, so materializing a `&mut` here while the
+    /// printer is mid-write would alias. Callers must only dereference this
+    /// pointer once the writer's last byte has been emitted (i.e. inside
+    /// `on_source_map_chunk`, which the printer invokes from its tail).
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
+        self.printer
+    }
+
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
-        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
-        // `source_map_handler`; the getter's lifetime `'a` bounds the borrow.
         // VirtualMachine.zig:408: take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
         // (VSCode-extension) clients fall through to the `source_mappings`
         // fast-path handler.
-        let wants_inline_source_map = unsafe {
-            matches!(
-                (*self.vm).debugger,
-                Some(ref d) if d.mode != crate::debugger::Mode::Connect
-            )
-        };
+        let wants_inline_source_map = matches!(
+            self.vm_mut().debugger,
+            Some(ref d) if d.mode != crate::debugger::Mode::Connect
+        );
         if !wants_inline_source_map {
-            // SAFETY: same provenance as above; `source_mappings` is a value
-            // field on the VM, exclusively borrowed for the returned handler's
-            // lifetime (which is bounded by `&mut self`).
-            let source_mappings = unsafe { &mut (*self.vm).source_mappings };
-            return bun_js_printer::SourceMapHandler::for_(source_mappings);
+            // `source_mappings` is a value field on the VM, exclusively
+            // borrowed for the returned handler's lifetime (bounded by
+            // `&mut self`).
+            return bun_js_printer::SourceMapHandler::for_(
+                &mut self.vm_mut().source_mappings,
+            );
         }
         bun_js_printer::SourceMapHandler::for_(self)
     }
@@ -2427,20 +2452,20 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         let prefix_len =
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
-        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
-        // `source_map_handler`. `printer` is the raw `*mut BufferPrinter`
-        // passed in by the caller (jsc_hooks.rs), with the SAME provenance as
-        // the `writer` arg to `print_with_source_map`. By the time
-        // `on_source_map_chunk` runs (js_printer/lib.rs `print_ast` /
-        // `print_common_js` tail), the writer has emitted its last byte; we
-        // reborrow from the raw pointer here rather than from a stashed
-        // `&'a mut` so no Unique tag is held across the writer's lifetime.
-        // The caller MUST rederive its own `&mut BufferPrinter` from the raw
-        // pointer after `print_with_source_map` returns (see jsc_hooks.rs).
-        let vm = unsafe { &mut *self.vm };
+        self.vm_mut().source_mappings.put_mappings(source, chunk.buffer)?;
+
+        // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
+        // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
+        // to `print_with_source_map`. By the time `on_source_map_chunk` runs
+        // (js_printer/lib.rs `print_ast` / `print_common_js` tail), the writer
+        // has emitted its last byte; we reborrow from the raw pointer here
+        // rather than from a stashed `&'a mut` so no Unique tag is held across
+        // the writer's lifetime. The caller MUST rederive its own
+        // `&mut BufferPrinter` from the raw pointer after
+        // `print_with_source_map` returns (see jsc_hooks.rs). See
+        // `printer_ptr()` for why this is not a `&mut`-returning accessor.
         let printer = unsafe { &mut *self.printer };
 
-        vm.source_mappings.put_mappings(source, chunk.buffer)?;
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
         printer.ctx.buffer.grow_if_needed(encode_len + prefix_len + 2)?;
         // Zig: "\n" ++ source_map_url_prefix_start

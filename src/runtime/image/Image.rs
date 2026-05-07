@@ -35,43 +35,6 @@ use super::codecs;
 use super::exif;
 use super::thumbhash;
 
-// ─── local shims for upstream-missing methods (see PORTING notes) ───────────
-
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    /// `JSValue.createBufferWithCtx` (JSValue.zig) — wraps the codec buffer in
-    /// a Node `Buffer` with a custom deallocator. Declared locally until
-    /// `bun_jsc::JSValue` re-exports it.
-    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
-        global: *const JSGlobalObject,
-        ptr: *mut u8,
-        len: usize,
-        ctx: *mut core::ffi::c_void,
-        deallocator: Option<unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>,
-    ) -> JSValue;
-}
-
-#[inline]
-fn create_buffer_with_ctx(
-    global: &JSGlobalObject,
-    bytes: core::ptr::NonNull<[u8]>,
-    ctx: *mut core::ffi::c_void,
-    free: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void),
-) -> JSValue {
-    let len = bytes.len();
-    // SAFETY: `bytes` is owned by the codec; ownership transfers to JS, freed
-    // via `free` when the Buffer is collected.
-    unsafe {
-        JSBuffer__bufferFromPointerAndLengthAndDeinit(
-            global,
-            bytes.as_ptr() as *mut u8,
-            len,
-            ctx,
-            Some(free),
-        )
-    }
-}
-
 /// Lowercase JS-visible name for a `codecs::Format`. Local until `Format`
 /// derives `IntoStaticStr` (variant casing differs from JS).
 #[inline]
@@ -1753,7 +1716,7 @@ impl<'a> PipelineTask<'a> {
                 // here by construction, not omission.
                 Deliver::Buffer => promise.resolve(
                     global,
-                    create_buffer_with_ctx(global, out.bytes, core::ptr::null_mut(), out.free),
+                    JSValue::create_buffer_with_ctx(global, out.bytes, core::ptr::null_mut(), out.free),
                 )?,
                 Deliver::Blob => {
                     // Blob.Store frees via an Allocator; dupe for that path.
@@ -1805,7 +1768,7 @@ impl<'a> PipelineTask<'a> {
                 // accepts — and we don't reimplement any of it.
                 Deliver::WriteDest(dest) => {
                     let dest_js = dest.get();
-                    let data = create_buffer_with_ctx(
+                    let data = JSValue::create_buffer_with_ctx(
                         global,
                         out.bytes,
                         core::ptr::null_mut(),

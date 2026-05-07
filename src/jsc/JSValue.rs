@@ -456,6 +456,28 @@ impl JSValue {
             )
         }
     }
+    /// `JSValue.createBufferWithCtx` (JSValue.zig) — wrap a foreign-owned byte
+    /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
+    /// runs when the Buffer's backing store is collected.
+    pub fn create_buffer_with_ctx(
+        global: &JSGlobalObject,
+        bytes: core::ptr::NonNull<[u8]>,
+        ctx: *mut c_void,
+        free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    ) -> JSValue {
+        let len = bytes.len();
+        // SAFETY: `global` is live; `bytes` describes a valid range whose
+        // ownership transfers to JSC and is released via `free` on collection.
+        unsafe {
+            JSBuffer__bufferFromPointerAndLengthAndDeinit(
+                global,
+                bytes.as_ptr() as *mut u8,
+                len,
+                ctx,
+                Some(free),
+            )
+        }
+    }
     pub fn from_date_string(global: &JSGlobalObject, s: &core::ffi::CStr) -> JSValue {
         // SAFETY: `global` is live; `s` is a valid NUL-terminated C string.
         unsafe { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }

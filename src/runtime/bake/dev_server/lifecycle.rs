@@ -1,13 +1,13 @@
-//! Un-gated bodies for `DevServer::{init, start_async_bundle, finalize_bundle}`
-//! and the request-handling entry points (`on_request`, `on_asset_request`,
-//! `respond_for_html_bundle`).
+//! `WatcherContext` trait impl for `DevServer` and `WatcherAtomics::init`.
 //!
-//! These were previously stubbed in `mod.rs` pending `bun_bundler::BundleV2`
-//! field access; the bundler workflow has since un-gated the `BundleV2<'a>`
-//! struct shape, so the lifecycle is now real. Hot-update tracing, chunk
-//! receipt into `IncrementalGraph`, and the framework-route SSR path remain
-//! in the gated Phase-A draft `../DevServer.rs` (blocked on
-//! `bun_bundler::Chunk` field access + jsc method surface).
+//! `Watcher::init::<DevServer>` dispatches through the generic
+//! `WatcherContext` vtable, so the trait methods here are the *only* path the
+//! watcher thread reaches — they forward to the inherent
+//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`
+//! (ported from `DevServer.zig:4093`/`4153`).
+//!
+//! Also provides `parse_hex_to_u64`, the asset-hash decoder used by the
+//! request handlers.
 
 // `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
 // struct field gate must mirror `mod.rs` so the initializer below stays in sync.
@@ -17,22 +17,29 @@ use super::{DevServer, HotReloadEvent, WatcherAtomics};
 
 // ──────────────────────────────────────────────────────────────────────────
 // WatcherContext impl — wires `bun_watcher::Watcher::init::<DevServer>`.
-// Full bodies (`HotReloadEvent` accumulation, debouncing, event-loop dispatch)
-// live in the gated `../DevServer/HotReloadEvent.rs` draft. These trampolines
-// give `Watcher::init` a valid vtable so `init()` below is real.
+// The watcher's stored fn-ptrs (`on_file_update_wrapped` / `on_error_wrapped`
+// in `Watcher::init`) call *these* trait methods, never the inherent ones
+// directly, so each forwards to the real ported body on `DevServer`.
 // ──────────────────────────────────────────────────────────────────────────
 impl bun_watcher::WatcherContext for DevServer {
     fn on_file_update(
         &mut self,
-        _events: &mut [bun_watcher::WatchEvent],
-        _changed_files: &[bun_watcher::ChangedFilePath],
-        _watchlist: &bun_watcher::WatchList,
+        events: &mut [bun_watcher::WatchEvent],
+        changed_files: &[bun_watcher::ChangedFilePath],
+        watchlist: &bun_watcher::WatchList,
     ) {
-        // TODO(b2): port `HotReloadEvent::on_file_update` — accumulates into
-        // `watcher_atomics.events[]` then enqueues a `ConcurrentTask`.
+        DevServer::on_file_update(self, events, changed_files, watchlist);
     }
+
+    /// DevServer.zig only defines `onWatchError` (not `onError`); the trait's
+    /// default `on_watch_error` would forward here, so route both to the
+    /// inherent path-aware impl rather than emitting a generic warn.
     fn on_error(&mut self, err: bun_sys::Error) {
-        bun_core::Output::warn(format_args!("DevServer watcher error: {err}"));
+        DevServer::on_watch_error(self, err);
+    }
+
+    fn on_watch_error(&mut self, err: bun_sys::Error) {
+        DevServer::on_watch_error(self, err);
     }
 }
 

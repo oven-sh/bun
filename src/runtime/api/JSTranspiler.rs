@@ -523,7 +523,7 @@ impl Config {
                 if total_name_buf_len > 0 {
                     let mut buf: Vec<u8> = Vec::with_capacity(total_name_buf_len as usize);
                     // errdefer buf.deinit(allocator) → Drop
-                    let _ = replacements.ensure_unused_capacity(string_count as usize);
+                    bun_core::handle_oom(replacements.ensure_unused_capacity(string_count as usize));
                     {
                         let mut length_iter = JSArrayIterator::init(eliminate, global)?;
                         while let Some(value) = length_iter.next()? {

@@ -57,6 +57,13 @@ pub enum Status {
     Done,
 }
 
+// `#[repr(C)]` because this struct is the `m_ctx` payload of a generated
+// JSCell wrapper and crosses FFI as `*mut Self` (see generated_classes.rs
+// `${T}__create`/`${T}__fromJS`). C++ never dereferences it — it stores the
+// pointer as `void*` — so field FFI-safety is moot, but a stable layout keeps
+// `ResumableFetchSink__ZigStructSize` deterministic and silences the
+// "unspecified layout" half of `improper_ctypes` at the extern block.
+#[repr(C)]
 pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     pub ref_count: Cell<u32>,
     js_this: JsRef,

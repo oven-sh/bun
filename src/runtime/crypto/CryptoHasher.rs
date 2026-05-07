@@ -1361,7 +1361,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(output_buf) = output {
             Ok(output_buf.value)
         } else {
-            ArrayBuffer::create_buffer(global, output_digest_slice.as_ref())
+            ArrayBuffer::create_uint8_array(global, output_digest_slice.as_ref())
         }
     }
 
@@ -1521,7 +1521,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(output_buf) = output {
             Ok(output_buf.value)
         } else {
-            ArrayBuffer::create_buffer(global, output_digest_buf.as_ref())
+            ArrayBuffer::create_uint8_array(global, output_digest_buf.as_ref())
         }
     }
 

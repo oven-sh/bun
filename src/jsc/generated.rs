@@ -761,6 +761,17 @@ js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, on
 js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, oncancel, stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
+// `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
+// monomorphization (Zig: `@field(jsc.Codegen, "JS" ++ name)`). Payload erased;
+// the native struct lives in `bun_runtime::crypto`.
+js_class_module!(JSMD4        = "MD4"        {});
+js_class_module!(JSMD5        = "MD5"        {});
+js_class_module!(JSSHA1       = "SHA1"       {});
+js_class_module!(JSSHA224     = "SHA224"     {});
+js_class_module!(JSSHA256     = "SHA256"     {});
+js_class_module!(JSSHA384     = "SHA384"     {});
+js_class_module!(JSSHA512     = "SHA512"     {});
+js_class_module!(JSSHA512_256 = "SHA512_256" {});
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

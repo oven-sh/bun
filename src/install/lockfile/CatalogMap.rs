@@ -344,8 +344,11 @@ impl CatalogMap {
     // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
     // collections whose `Drop` recursively frees the nested maps.
 
-    pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
-        let buf = lockfile.buffers.string_bytes.as_slice();
+    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
+    /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
+    /// can split-borrow the lockfile alongside a live `StringBuilder`.
+    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
+        let buf = string_bytes;
         // PORT NOTE: `ArrayHashMap::iterator()` requires `&mut`; iterate the
         // `keys()`/`values()` slices instead so `count` can stay `&self`.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
@@ -366,17 +369,18 @@ impl CatalogMap {
     /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder` already
     /// borrows `new.buffers.string_bytes` — read the new-side buffer through
     /// it instead so the call site doesn't alias `&mut new` twice.
-    pub fn clone(
+    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
+    /// caller already holding `&mut manager.lockfile` can pass
+    /// `&mut manager.known_npm_aliases` instead of the whole manager.
+    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
-        pm: &mut PackageManager,
-        old: &Lockfile,
+        pm: &mut PM,
+        old_buf: &[u8],
         builder: &mut StringBuilder,
     ) -> Result<CatalogMap, bun_core::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog.default.ensure_total_capacity(self.default.count())?;
-
-        let old_buf = old.buffers.string_bytes.as_slice();
 
         // Zig re-reads `new.buffers.string_bytes.items` at every
         // `putAssumeCapacityContext` call. Mirror that here: per insert,

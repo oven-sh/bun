@@ -1068,17 +1068,13 @@ impl Lockfile {
             // through `builder.lockfile`, so the only conflict left is the
             // field-assign on `new.*` while `builder` borrows `new` — store
             // the results in temps and assign after `builder` drops.
-            let (overrides, catalogs) = {
-                let mut builder = new.string_builder();
-                old.overrides.count(&*old, &mut builder);
-                old.catalogs.count(&*old, &mut builder);
-                builder.allocate()?;
-                let ov = old.overrides.clone(manager, &*old, &mut builder)?;
-                let ca = old.catalogs.clone(manager, &*old, &mut builder)?;
-                (ov, ca)
-            };
-            new.overrides = overrides;
-            new.catalogs = catalogs;
+            let old_buf = old.buffers.string_bytes.as_slice();
+            let (mut builder, lf) = new.string_builder_split();
+            old.overrides.count(old_buf, &mut builder);
+            old.catalogs.count(old_buf, &mut builder);
+            builder.allocate()?;
+            *lf.overrides = old.overrides.clone(manager, old_buf, &mut builder)?;
+            *lf.catalogs = old.catalogs.clone(manager, old_buf, &mut builder)?;
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -2289,6 +2285,49 @@ impl Lockfile {
         }
     }
 
+    /// Borrowck-approved disjoint split: returns a fresh `StringBuilder`
+    /// (borrowing `buffers.string_bytes` + `string_pool`) alongside mutable
+    /// references to every other `Lockfile` field a caller might need while
+    /// the builder is live. Use this instead of routing through
+    /// `*mut Lockfile` + `unsafe { &mut (*ptr).field }` reborrows.
+    #[inline]
+    pub fn string_builder_split(&mut self) -> (StringBuilder<'_>, LockfileFields<'_>) {
+        let Buffers {
+            string_bytes,
+            dependencies,
+            resolutions,
+            extern_strings,
+            trees,
+            hoisted_dependencies,
+        } = &mut self.buffers;
+        (
+            StringBuilder {
+                len: 0,
+                cap: 0,
+                off: 0,
+                ptr: None,
+                string_bytes,
+                string_pool: &mut self.string_pool,
+            },
+            LockfileFields {
+                packages: &mut self.packages,
+                dependencies,
+                resolutions,
+                extern_strings,
+                trees,
+                hoisted_dependencies,
+                package_index: &mut self.package_index,
+                overrides: &mut self.overrides,
+                catalogs: &mut self.catalogs,
+                workspace_paths: &mut self.workspace_paths,
+                workspace_versions: &mut self.workspace_versions,
+                patched_dependencies: &mut self.patched_dependencies,
+                trusted_dependencies: &mut self.trusted_dependencies,
+                scripts: &mut self.scripts,
+            },
+        )
+    }
+
     pub fn string_buf(&mut self) -> SemverStringBuf<'_> {
         SemverStringBuf {
             bytes: &mut self.buffers.string_bytes,
@@ -2325,6 +2364,32 @@ impl Default for Scratch {
         // Zig field defaults are `undefined`; we initialize properly.
         Self::init()
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// LockfileFields — disjoint split borrow alongside StringBuilder
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Mutable references to every `Lockfile` field that is *disjoint* from the
+/// two columns a `StringBuilder` borrows (`buffers.string_bytes` +
+/// `string_pool`). Returned by `Lockfile::string_builder_split()` so callers
+/// can hold a live builder and still touch `packages` / `buffers.dependencies`
+/// / `overrides` / … without raw-pointer reborrow gymnastics.
+pub struct LockfileFields<'a> {
+    pub packages: &'a mut PackageList,
+    pub dependencies: &'a mut DependencyList,
+    pub resolutions: &'a mut PackageIDList,
+    pub extern_strings: &'a mut ExternalStringBuffer,
+    pub trees: &'a mut tree::List,
+    pub hoisted_dependencies: &'a mut DependencyIDList,
+    pub package_index: &'a mut PackageIndexMap,
+    pub overrides: &'a mut OverrideMap,
+    pub catalogs: &'a mut CatalogMap,
+    pub workspace_paths: &'a mut NameHashMap,
+    pub workspace_versions: &'a mut VersionHashMap,
+    pub patched_dependencies: &'a mut PatchedDependenciesMap,
+    pub trusted_dependencies: &'a mut Option<TrustedDependenciesSet>,
+    pub scripts: &'a mut Scripts,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

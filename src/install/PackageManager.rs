@@ -326,7 +326,7 @@ type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>
 /// Zig: `FolderResolution.Map` (resolvers/folder_resolver.zig) =
 /// `std.HashMap(u64, FolderResolution, IdentityContext(u64), 80)`.
 pub type FolderResolutionMap = HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
-type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
+pub type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;

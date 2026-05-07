@@ -1,21 +1,22 @@
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 
 use bun_aio::KeepAlive;
 use bun_core::Output;
-use bun_jsc::node::{Encoding, PathLike};
-use bun_jsc::webcore::encoding as Encoder;
+use bun_jsc::abort_signal::AbortListener;
+use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, ArgumentsSlice, CallFrame, CommonAbortReason, ConcurrentTask, EventLoop,
-    JSGlobalObject, JSValue, JsResult, Task, VirtualMachine, ZigString,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
+    ConcurrentTask, EventLoop, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine, ZigString,
 };
 use bun_paths::resolve_path as Path;
 use bun_str::strings;
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
-use bun_webcore::AbortSignal;
+
+use crate::node::types::Encoding;
+use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
 
@@ -32,7 +33,7 @@ pub struct FSWatcher {
     verbose: bool,
 
     mutex: Mutex,
-    signal: Option<Arc<AbortSignal>>,
+    signal: Option<AbortSignalRef>,
     persistent: bool,
     path_watcher: Option<Arc<path_watcher::PathWatcher>>,
     poll_ref: KeepAlive,

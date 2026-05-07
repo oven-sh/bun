@@ -1203,8 +1203,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Git => {
             // SAFETY: `version.tag == Git` discriminates the union arm.
-            let dep: &Repository = unsafe { &version.value.git };
-            let res = Resolution::init(ResolutionTagged::Git(*dep));
+            let dep: Repository = **unsafe { &version.value.git };
+            let res = Resolution::init(ResolutionTagged::Git(dep));
 
             // First: see if we already loaded the git package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
@@ -1212,8 +1212,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            let alias = this.lockfile.str(&dependency.name);
-            let url = this.lockfile.str(&dep.repo);
+            // PORT NOTE: reshaped for borrowck — `alias`/`url` borrow
+            // `this.lockfile.buffers.string_bytes`; route through a raw root
+            // so the `&mut PackageManager` calls below can coexist.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `string_bytes` is not resized in this branch; the
+            // enqueue callees copy the slices into the filename store.
+            let alias = unsafe { &*this_ptr }.lockfile.str(&dependency.name);
+            let url = unsafe { &*this_ptr }.lockfile.str(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
             let ctx = if success_fn as usize == assign_root_resolution as usize {
                 TaskCallbackContext::RootDependency(id)

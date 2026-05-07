@@ -846,14 +846,17 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
-        // Deferred tail:
+        // Deferred tail (Zig defer order is preserved up to one reorder: the
+        // outer `defer raw_response = None` is hoisted above `deref()` because
+        // `mark_request_as_done_if_necessary()` + `deref()` can drop the last
+        // ref when the JS wrapper has already finalized; nothing between them
+        // reads `raw_response`, so the swap is observably equivalent and
+        // avoids a post-destroy write).
         if EVENT == AbortEvent::Abort {
             self.mark_request_as_done_if_necessary();
-        }
-        self.deref();
-        if EVENT == AbortEvent::Abort {
             self.raw_response = None;
         }
+        self.deref();
     }
 
     pub fn on_abort(&mut self, js_value: JSValue) {

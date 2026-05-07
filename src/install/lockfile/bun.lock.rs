@@ -1852,7 +1852,7 @@ pub fn parse_into_binary_lockfile(
                 let (off, len) = parse_append_dependencies::<false, false>(
                     lockfile,
                     &value,
-                    log,
+                    &mut *log,
                     source,
                     &mut optional_peers_buf,
                     None,
@@ -2127,7 +2127,7 @@ pub fn parse_into_binary_lockfile(
                         let (off, len) = parse_append_dependencies::<true, false>(
                             lockfile,
                             deps_os_cpu_libc_bin_bundle_obj,
-                            log,
+                            &mut *log,
                             source,
                             &mut optional_peers_buf,
                             Some(pkg_path),

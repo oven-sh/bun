@@ -1037,15 +1037,22 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
+                // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
+                // Extract arm) so the defer body need not move the `&mut` out
+                // through `ManuallyDrop`'s immutable `Deref`.
+                let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
+                    // SAFETY: `task.tag == Extract` — active union arm.
+                    unsafe { &mut *(*task_ptr).request.extract }.network as *mut _
+                } else {
+                    core::ptr::null_mut()
+                };
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
-                    // function-scope provenance root; `task.tag == Extract` so
-                    // `request.extract` is the active union arm.
-                    unsafe {
-                        if (*task_ptr).tag == Task::Tag::Extract {
-                            (*manager_ptr)
-                                .preallocated_network_tasks
-                                .put((*task_ptr).request.extract.network);
+                    // function-scope provenance root; `net_ptr` (when non-null) is
+                    // the network task owned by this resolve task.
+                    if !net_ptr.is_null() {
+                        unsafe {
+                            (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                         }
                     }
                 };

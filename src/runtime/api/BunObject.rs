@@ -527,7 +527,7 @@ pub fn braces(
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
             return Err(
-                global.throw_pretty("Unexpected token while expanding braces", format_args!("")),
+                global.throw_pretty(format_args!("Unexpected token while expanding braces")),
             )
         }
     }
@@ -548,7 +548,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let vm = unsafe { &*global_this.bun_vm() };
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
-        return Err(global_this.throw("which: expected 1 argument, got 0"));
+        return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
     };
 
     let mut path_str = ZigStringSlice::EMPTY;
@@ -566,7 +566,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
-        return Err(global_this.throw("bin path is too long"));
+        return Err(global_this.throw(format_args!("bin path is too long")));
     }
 
     if bin_str.slice().is_empty() {
@@ -802,17 +802,17 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
     let arguments = arguments_.slice();
     if arguments.len() != 2 || !arguments[0].is_number() {
         return Err(global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid args"));
+            .throw_invalid_arguments(format_args!("Internal error registering macros: invalid args")));
     }
     let id = arguments[0].to_int32();
     if id == -1 || id == 0 {
         return Err(global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid id"));
+            .throw_invalid_arguments(format_args!("Internal error registering macros: invalid id")));
     }
 
     if !arguments[1].is_cell() || !arguments[1].is_callable() {
         // TODO: add "toTypeOf" helper
-        return Err(global_object.throw("Macro must be a function"));
+        return Err(global_object.throw(format_args!("Macro must be a function")));
     }
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
@@ -1042,14 +1042,14 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                 match edit.editor {
                     Some(e) => e,
                     None => {
-                        return Err(global_this.throw("Failed to auto-detect editor"));
+                        return Err(global_this.throw(format_args!("Failed to auto-detect editor")));
                     }
                 }
             }
         };
 
         if path.slice().is_empty() {
-            return Err(global_this.throw("No file path specified"));
+            return Err(global_this.throw(format_args!("No file path specified")));
         }
 
         if let Err(err) = editor.open(
@@ -1119,19 +1119,19 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     let mut args = ArgumentsSlice::init(vm, arguments);
     let Some(specifier) = args.protect_eat_next() else {
         return Err(global_this
-            .throw_invalid_arguments("Expected a specifier and a from path"));
+            .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
     };
 
     if specifier.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("specifier must be a string"));
+        return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
     }
 
     let Some(from) = args.protect_eat_next() else {
-        return Err(global_this.throw_invalid_arguments("Expected a from path"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
     };
 
     if from.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("from must be a string"));
+        return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
     }
 
     let mut is_esm = true;
@@ -1139,7 +1139,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         if next.is_boolean() {
             is_esm = next.to_boolean();
         } else {
-            return Err(global_this.throw_invalid_arguments("esm must be a boolean"));
+            return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
         }
     }
 

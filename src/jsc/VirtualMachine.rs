@@ -3171,6 +3171,7 @@ impl VirtualMachine {
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
+            transform_options: opts.args,
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
@@ -3212,6 +3213,7 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:1495 `initBake`.
     pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
+            transform_options: opts.args,
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,

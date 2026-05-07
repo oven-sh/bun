@@ -1902,7 +1902,7 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Blob::get_array_buffer(&mut this.blob, global_this, callframe)
+        this.blob.get_array_buffer(global_this, callframe)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1911,12 +1911,12 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Blob::get_slice(&mut this.blob, global_this, callframe)
+        this.blob.get_slice(global_this, callframe)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_type(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        Blob::get_type(&this.blob, global_this)
+        BlobExt::get_type(&this.blob, global_this)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1925,7 +1925,7 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Blob::get_stream(&mut this.blob, global_this, callframe)
+        this.blob.get_stream(global_this, callframe)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1956,12 +1956,12 @@ impl BuildArtifact {
         // `Blob::get_size` mutates lazy size caches; the `host_fn(getter)`
         // shim already receives `*mut Self`, so take `&mut` directly instead
         // of casting through a shared-ref-derived raw (UB under SB/TB).
-        Blob::get_size(&mut this.blob, global_object)
+        this.blob.get_size(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        Blob::get_type(&this.blob, global_object)
+        BlobExt::get_type(&this.blob, global_object)
     }
 
     #[bun_jsc::host_fn(getter)]

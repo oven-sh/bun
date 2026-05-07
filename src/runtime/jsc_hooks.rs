@@ -189,7 +189,7 @@ unsafe fn ssl_ctx_cache_get_or_create(
 /// `vm.jsc_vm` already populated by `bun_jsc::VirtualMachine::init`.
 unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
-    _opts: &InitOptions,
+    opts: &InitOptions,
 ) -> OpaqueRuntimeState {
     // PORT NOTE: do NOT form `&mut *vm` here — the caller
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the

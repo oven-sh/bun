@@ -1769,12 +1769,12 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                     path_buf[dest_off + dd + 1..dest_off + dd + 1 + cname.len()].copy_from_slice(cname);
                     path_buf[dest_off + dd + 1 + cname.len()] = 0;
 
-                    let raw = Box::leak(path_buf);
-                    // SAFETY: raw[sd+1+cname.len()] == 0 written above
-                    let src_z = unsafe { OSPathSliceZ::from_raw(raw.as_ptr(), sd + 1 + cname.len()) };
-                    // SAFETY: raw[dest_off+dd+1+cname.len()] == 0 written above
-                    let dest_z = unsafe { OSPathSliceZ::from_raw(raw.as_ptr().add(dest_off), dd + 1 + cname.len()) };
-                    CpSingleTask::<IS_SHELL>::create(this, src_z, dest_z);
+                    CpSingleTask::<IS_SHELL>::create(
+                        this,
+                        path_buf,
+                        sd + 1 + cname.len(),
+                        dd + 1 + cname.len(),
+                    );
                 }
             }
             entry = iterator.next();

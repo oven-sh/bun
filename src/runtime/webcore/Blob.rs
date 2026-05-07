@@ -595,10 +595,14 @@ impl BlobExt for Blob {
             });
             t.poll.ref_(vm_ctx());
             let proxy = http_proxy_href(global);
+            // PORT NOTE: reshaped for borrowck — `Box::into_raw(t)` moves `t`,
+            // so clone the `Arc<S3Credentials>` out (cheap atomic ref bump)
+            // and stash `path` as a raw `*const [u8]` whose backing store is
+            // kept alive by the same `t.blob` now owned by the heap task.
             let (cred, path, payer);
             {
                 let s3 = t.blob.store.as_ref().unwrap().data.as_s3();
-                cred = s3.get_credentials();
+                cred = s3.get_credentials().clone();
                 path = s3.path() as *const [u8];
                 payer = s3.request_payer;
             }
@@ -610,12 +614,12 @@ impl BlobExt for Blob {
                 let len: Option<usize> =
                     if self.size != MAX_SIZE { Some(self.size as usize) } else { None };
                 crate::webcore::__s3_client::download_slice(
-                    cred, path, self.offset as usize, len,
+                    &cred, path, self.offset as usize, len,
                     Task::<H>::cb, t_ptr, proxy.as_deref(), payer,
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
-                    cred, path, Task::<H>::cb, t_ptr, proxy.as_deref(), payer,
+                    &cred, path, Task::<H>::cb, t_ptr, proxy.as_deref(), payer,
                 )?;
             }
             return Ok(());

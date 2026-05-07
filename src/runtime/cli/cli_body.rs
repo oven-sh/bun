@@ -808,8 +808,8 @@ pub mod command {
                     .map(|a| a.to_vec().into_boxed_slice())
                     .collect();
 
-                let entry_name = graph.entry_point().name.to_vec();
-                RunCommand::boot_standalone(ctx, &entry_name, graph)?;
+                let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+                RunCommand::boot_standalone(ctx, entry_name, graph)?;
                 return Ok(());
             }
         }

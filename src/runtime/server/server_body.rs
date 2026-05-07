@@ -631,7 +631,7 @@ impl AnyRoute {
 
         init_ctx.user_routes.push(server_config::StaticRouteEntry {
             path: builder.into_boxed_slice(),
-            route: route.into_mod_any_route(),
+            route,
             method: methods,
         });
         Ok(None)
@@ -663,17 +663,6 @@ impl AnyRoute {
         }
 
         Ok(html_route)
-    }
-
-    /// Convert this Phase-A `server_body::AnyRoute` to the variant-isomorphic
-    /// `super::AnyRoute` (mod.rs) used by `StaticRouteEntry`.
-    fn into_mod_any_route(self) -> super::AnyRoute {
-        match self {
-            AnyRoute::Static(p) => super::AnyRoute::Static(p),
-            AnyRoute::File(p) => super::AnyRoute::File(p),
-            AnyRoute::Html(refptr) => super::AnyRoute::Html(refptr),
-            AnyRoute::FrameworkRouter(idx) => super::AnyRoute::FrameworkRouter(idx),
-        }
     }
 
     pub fn from_options(
@@ -1111,7 +1100,7 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             // SAFETY: route was ref'd when stored
-            let _ = unsafe { &mut *route }.on_plugins_rejected();
+            bun_core::handle_oom(unsafe { &mut *route }.on_plugins_rejected());
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }

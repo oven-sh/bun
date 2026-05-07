@@ -381,14 +381,12 @@ pub fn install_with_manager(
                         unsafe {
                             (*to_lockfile).overrides = (*from_lockfile).overrides.clone(
                                 &mut *mgr,
-                                &mut *from_lockfile,
-                                &mut *to_lockfile,
+                                &*from_lockfile,
                                 builder,
                             )?;
                             (*to_lockfile).catalogs = (*from_lockfile).catalogs.clone(
                                 &mut *mgr,
-                                &mut *from_lockfile,
-                                &mut *to_lockfile,
+                                &*from_lockfile,
                                 builder,
                             )?;
                         }

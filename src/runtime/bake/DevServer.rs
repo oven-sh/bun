@@ -30,8 +30,9 @@ use bun_js_parser::ast::server_component_boundary::ServerComponentBoundarySliceE
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
-use bun_str::{self as str, strings, String as BunString, ZStr};
+use bun_str::{self as str, strings, OwnedString, String as BunString, ZStr};
 use bun_jsc::StringJsc as _;
+use bun_jsc::event_loop::EventLoop as JscEventLoop;
 use bun_sys as sys;
 use bun_watcher::WatchItemColumns as _;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext};
@@ -2061,20 +2062,15 @@ fn check_route_failures(
 ) -> Result<CheckResult, bun_core::Error> {
     // PERF(port): was stack-fallback (65536)
     let mut gts = dev.init_graph_trace_state(0)?;
-    let _gts_guard = scopeguard::guard((), |_| {});
-    // PORT NOTE: scopeguard captured `&mut dev`, wedging every later borrow.
-    // Erase to a raw pointer; the closures only fire on scope exit when no
-    // other borrow of `dev` is live.
+    // PORT NOTE: erase to a raw pointer so the deferred cleanup only fires on
+    // scope exit when no other borrow of `dev` is live (Zig `defer` had no
+    // aliasing check).
     let dev_ptr = dev as *mut DevServer;
-    let _failures_guard = scopeguard::guard((), move |_| {
+    scopeguard::defer! {
         // SAFETY: see PORT NOTE above.
         unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
-    });
-    dev.graph_safety_lock.lock();
-    let _lock_guard = scopeguard::guard((), move |_| {
-        // SAFETY: see PORT NOTE above.
-        unsafe { (*dev_ptr).graph_safety_lock.unlock() }
-    });
+    };
+    let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = dev.route_bundle_ptr(route_bundle_index) as *mut RouteBundle;
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
     // mutates `route_bundles`; the raw-pointer reborrow sidesteps the

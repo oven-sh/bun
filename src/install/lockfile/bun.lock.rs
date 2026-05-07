@@ -446,7 +446,7 @@ impl Stringifier {
             if lockfile.catalogs.has_any() {
                 // this will sort the default map, and each
                 // named catalog map
-                lockfile.catalogs.sort(lockfile);
+                lockfile.catalogs.sort(&lockfile.buffers);
             }
 
             if lockfile.catalogs.default.count() > 0 {
@@ -1638,7 +1638,7 @@ pub fn parse_into_binary_lockfile(
             let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
             let catalog_name = sbuf!(lockfile).append(catalog_name_str)?;
 
-            let group = lockfile.catalogs.get_or_put_group(lockfile, catalog_name)?;
+            let group = lockfile.catalogs.get_or_put_group(lockfile.buffers.string_bytes.as_slice(), catalog_name)?;
 
             for prop in catalog_value.data.e_object().unwrap().properties.slice() {
                 let key = prop.key.unwrap();

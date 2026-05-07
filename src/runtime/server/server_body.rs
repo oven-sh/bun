@@ -1924,13 +1924,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // SAFETY: fh is a live FetchHeaders (either from JS or freshly created).
                     let fh = unsafe { &mut *fh };
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        sec_websocket_protocol_owned.deinit();
                         sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        sec_websocket_extensions_owned.deinit();
                         sec_websocket_extensions_owned = e.to_slice_clone();
                         sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -1948,9 +1946,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         let cookies_to_write = upgrader.cookies.take();
-        let _cookies_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if let Some(c) = &cookies_to_write { c.deref() }
-        });
+        };
 
         // Write status, custom headers, and cookies in one place
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
@@ -1980,10 +1978,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         data_value.ensure_still_alive();
 
+        // `ZigString::Slice` impls `Drop` — freed at scope exit.
         let proto_str = sec_websocket_protocol.to_slice();
-        let _ps = scopeguard::guard((), |_| proto_str.deinit());
         let ext_str = sec_websocket_extensions.to_slice();
-        let _es = scopeguard::guard((), |_| ext_str.deinit());
 
         resp.clear_aborted();
         resp.clear_on_data();
@@ -3129,7 +3126,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         jsc::mark_binding!();
         self.pending_requests += 1;
-        let _guard = scopeguard::guard((), |_| self.pending_requests -= 1);
+        scopeguard::defer! { self.pending_requests -= 1; }
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
 
@@ -3166,10 +3163,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.on_pending_request();
         #[cfg(debug_assertions)]
         unsafe { (*self.vm.event_loop()).debug.enter() };
-        let _dbg_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             #[cfg(debug_assertions)]
             unsafe { (*self.vm.event_loop()).debug.exit() };
-        });
+        }
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);
 

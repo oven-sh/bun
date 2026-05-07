@@ -2381,12 +2381,12 @@ impl Package<u64> {
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 lockfile
                     .catalogs
-                    .parse_count(lockfile, workspaces_expr, &mut string_builder);
+                    .parse_count(workspaces_expr, &mut string_builder);
             }
 
             // Count catalog strings in top-level package.json as well, since parseAppend
             // might process them later if no catalogs were found in workspaces
-            lockfile.catalogs.parse_count(lockfile, json, &mut string_builder);
+            lockfile.catalogs.parse_count(json, &mut string_builder);
 
             install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
                 &mut pm.postinstall_optimizer,
@@ -2926,7 +2926,6 @@ impl Package<u64> {
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 found_any_catalog_or_catalog_object = lockfile.catalogs.parse_append(
                     pm,
-                    lockfile,
                     log,
                     source,
                     workspaces_expr,
@@ -2942,7 +2941,6 @@ impl Package<u64> {
             if !found_any_catalog_or_catalog_object && has_workspaces {
                 let _ = lockfile.catalogs.parse_append(
                     pm,
-                    lockfile,
                     log,
                     source,
                     json,

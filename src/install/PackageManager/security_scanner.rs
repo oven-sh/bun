@@ -1196,16 +1196,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         unsafe { (**pipe).open(fds.1.unwrap()) }.unwrap()?;
         fds.1 = None; // pipe owns it now
 
-        let extra_fds = vec![
+        let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
             Stdio::Pipe(fds.0.unwrap()), // fd 4: child inherits non-overlapped read end
-        ];
+        ]);
 
         let spawn_options = SpawnOptions {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: FileSystem::instance().top_level_dir(),
+            cwd: Box::from(FileSystem::instance().top_level_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),

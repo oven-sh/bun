@@ -1805,8 +1805,8 @@ pub fn write_file_with_source_destination(
             unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
-                destination_blob.clone(),
-                source_blob.clone(),
+                destination_blob.dupe(),
+                source_blob.dupe(),
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -5165,27 +5165,44 @@ impl Blob {
                                 // Move the store without bumping its refcount, but take
                                 // independent ownership of name/content_type so the
                                 // source's eventual finalize() doesn't double-free them.
-                                let mut _blob = blob.dupe_with_content_type(false);
-                                // PORT NOTE: dupe() bumps Arc; Zig did a raw bitwise copy
-                                // then transfer(). To preserve "no refcount bump", drop
-                                // the source's store here without decrement.
-                                blob.transfer();
-                                // TODO(port): _blob.store currently double-counts; reconcile
-                                // once Store is intrusive-refcounted.
+                                // PORT NOTE: Zig did a raw bitwise copy then `transfer()`
+                                // (null without deref) → net 0 on the store refcount.
+                                // Mirror that by *taking* the StoreRef out of `blob`
+                                // (no clone, no into_raw leak) and field-copying the
+                                // rest, deep-owning `name`/`content_type`.
+                                let content_type = if blob.content_type_allocated {
+                                    Box::into_raw(
+                                        blob.content_type_slice().to_vec().into_boxed_slice(),
+                                    ) as *const [u8]
+                                } else {
+                                    blob.content_type
+                                };
+                                let _blob = Blob {
+                                    reported_estimated_size: blob.reported_estimated_size,
+                                    size: blob.size,
+                                    offset: blob.offset,
+                                    store: blob.store.take(), // ← the move (Zig: copy + transfer)
+                                    content_type,
+                                    content_type_allocated: blob.content_type_allocated,
+                                    content_type_was_set: blob.content_type_was_set,
+                                    charset: blob.charset,
+                                    is_jsdom_file: blob.is_jsdom_file,
+                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+                                    global_this: blob.global_this,
+                                    last_modified: blob.last_modified,
+                                    name: blob.name.dupe_ref(),
+                                };
                                 return Ok(_blob);
                             } else {
                                 return Ok(blob.dupe());
                             }
                         } else if let Some(artifact_ptr) = top_value.as_::<crate::api::BuildArtifact>() {
+                            // The previous "move" path here only nulled the store on a
+                            // local copy and left `build.blob` fully intact, so it was
+                            // never a real move. Share the store and deep-copy owned
+                            // buffers instead — regardless of `MOVE`.
                             // SAFETY: `as_` returns a live `*mut BuildArtifact` rooted by `top_value`.
-                            let blob = unsafe { &mut (*artifact_ptr).blob };
-                            if MOVE {
-                                let mut _blob = blob.dupe_with_content_type(false);
-                                blob.transfer();
-                                return Ok(_blob);
-                            } else {
-                                return Ok(blob.dupe());
-                            }
+                            return Ok(unsafe { &(*artifact_ptr).blob }.dupe());
                         } else {
                             let sliced = current.to_slice_clone(global)?;
                             // PORT NOTE: Zig checked `sliced.allocator.get()` to detect
@@ -5214,10 +5231,11 @@ impl Blob {
             }
         }
 
-        // PERF(port): was stack-fallback(1024) alloc — BoundedArray keeps JSValues on
-        // the conservatively-scanned stack (heap Vec<JSValue> is NOT GC-safe). Zig
-        // spilled to heap past 128 entries; Phase B may need a rooted overflow path.
-        let mut stack: bun_collections::BoundedArray<JSValue, 128> = bun_collections::BoundedArray::default();
+        // PERF(port): was stack-fallback(1024) alloc. Every value pushed here is
+        // reachable from `arg` (rooted by `_keep: EnsureStillAlive` above) via the
+        // JS object graph, so a heap `Vec<JSValue>` is GC-safe and restores Zig's
+        // unbounded capacity (the prior `BoundedArray<_, 128>` panicked on overflow).
+        let mut stack: Vec<JSValue> = Vec::new();
         let mut joiner = bun_string::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
 

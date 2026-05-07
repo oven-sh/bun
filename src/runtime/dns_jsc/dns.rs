@@ -13,6 +13,7 @@ use bun_jsc::{
 };
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::event_loop::EventLoop;
 use bun_aio::{self as Async, FilePoll, KeepAlive};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};
@@ -3030,6 +3031,20 @@ pub struct Resolver {
     pub pending_any_cache_cares: AnyPendingCache,
     pub pending_addr_cache_cares: AddrPendingCache,
     pub pending_nameinfo_cache_cares: NameInfoPendingCache,
+}
+
+/// RAII owner for a scoped `Resolver` refcount bump (Zig: `this.ref(); defer this.deref();`).
+/// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.
+#[must_use = "dropping immediately releases the scoped ref"]
+struct ResolverRefGuard(*mut Resolver);
+
+impl Drop for ResolverRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `ref_scope` took a ref on a live heap-allocated Resolver, so
+        // `self.0` is still live here and `deref` has valid write provenance.
+        unsafe { Resolver::deref(self.0) };
+    }
 }
 
 /// RAII owner for a scoped `Resolver` refcount bump (Zig: `this.ref(); defer this.deref();`).

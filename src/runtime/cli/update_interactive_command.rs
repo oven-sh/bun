@@ -172,8 +172,13 @@ impl UpdateInteractiveCommand {
     }
 
     // Helper to update a catalog entry at a specific path in the package.json AST
+    // PORT NOTE: Zig threads `*PackageManager` only for `manager.allocator`;
+    // the Rust port has no per-manager allocator, so the parameter is dropped.
+    // This also avoids overlapping `&mut PackageManager` with the live
+    // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
+    // call sites (which the previous draft laundered via raw pointers — UB
+    // under Stacked Borrows).
     fn save_package_json(
-        _manager: &mut PackageManager,
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
     ) -> Result<(), bun_core::Error> {
@@ -376,14 +381,7 @@ impl UpdateInteractiveCommand {
 
             // Write the updated package.json if modified
             if modified {
-                // PORT NOTE: reshaped for borrowck — drop the `&mut MapEntry`
-                // borrow of `manager.workspace_package_json_cache` before
-                // taking `&mut PackageManager`, then re-project.
-                let entry_ptr: *mut WorkspacePackageJsonCacheEntry = package_json;
-                // SAFETY: `entry_ptr` points into the process-lifetime cache
-                // map; `save_package_json` only reads `manager.allocator`-adjacent
-                // state and never resizes the cache map.
-                Self::save_package_json(manager, unsafe { &mut *entry_ptr }, package_json_path)?;
+                Self::save_package_json(package_json, package_json_path)?;
             }
         }
         Ok(())
@@ -467,11 +465,7 @@ impl UpdateInteractiveCommand {
             )?;
 
             // Save the updated package.json
-            // PORT NOTE: reshaped for borrowck — see same note above.
-            let entry_ptr: *mut WorkspacePackageJsonCacheEntry = package_json;
-            // SAFETY: `entry_ptr` points into the process-lifetime cache map;
-            // `save_package_json` never resizes that map.
-            Self::save_package_json(manager, unsafe { &mut *entry_ptr }, package_json_path)?;
+            Self::save_package_json(package_json, package_json_path)?;
         }
         Ok(())
     }
@@ -1761,9 +1755,17 @@ impl UpdateInteractiveCommand {
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
 
-                    let uses_default_registry = pkg.manager.options.scope.url_hash
+                    // SAFETY: `pkg.manager` points at the process-singleton
+                    // `PackageManager` (set in `get_outdated_packages`). No
+                    // `&mut PackageManager` is live during the interactive
+                    // prompt loop — `prompt_for_updates` is called between the
+                    // last and next exclusive use of `manager` in
+                    // `update_interactive` — so a transient shared deref for
+                    // these read-only `options.scope` projections is sound.
+                    let pkg_manager: &PackageManager = unsafe { &*pkg.manager };
+                    let uses_default_registry = pkg_manager.options.scope.url_hash
                         == *bun_install::npm::Registry::DEFAULT_URL_HASH
-                        && pkg.manager.scope_for_package_name(&pkg.name).url_hash
+                        && pkg_manager.scope_for_package_name(&pkg.name).url_hash
                             == *bun_install::npm::Registry::DEFAULT_URL_HASH;
                     let package_url: Box<[u8]> = if Output::enable_ansi_colors_stdout()
                         && uses_default_registry

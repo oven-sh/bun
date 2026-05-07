@@ -249,6 +249,28 @@ impl Default for S3Credentials {
     }
 }
 
+// Deep field clone with a fresh `ref_count`. Mirrors Zig struct-copy
+// semantics (`credentials.*`) used at `getCredentialsWithOptions` /
+// `constructS3FileWithS3Credentials` call sites — Zig copies the value, the
+// intrusive ref-count is not shared. Distinct from [`dupe`] which heap-
+// allocates and returns an `IntrusiveRc`.
+impl Clone for S3Credentials {
+    fn clone(&self) -> Self {
+        Self {
+            ref_count: RefCount::init(),
+            access_key_id: dupe_slice(&self.access_key_id),
+            secret_access_key: dupe_slice(&self.secret_access_key),
+            region: dupe_slice(&self.region),
+            endpoint: dupe_slice(&self.endpoint),
+            bucket: dupe_slice(&self.bucket),
+            session_token: dupe_slice(&self.session_token),
+            storage_class: self.storage_class,
+            insecure_http: self.insecure_http,
+            virtual_hosted_style: self.virtual_hosted_style,
+        }
+    }
+}
+
 impl S3Credentials {
     /// Construct a value (refcount = 1) from owned field data. Exists so
     /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted

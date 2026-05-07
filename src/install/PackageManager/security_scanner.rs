@@ -1004,7 +1004,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // TODO(port): argv as null-terminated C-string array for spawnProcess FFI.
         // Zig: `try allocator.dupeZ(u8, exec_path)` / `dupeZ(u8, code)`. Build
         // owned NUL-terminated buffers so the pointers stay valid across the
         // `spawn_process` FFI boundary; `defer free` ≡ Vec drop.
@@ -1056,7 +1055,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // TODO(port): @ptrCast(argv) / @ptrCast(std.os.environ.ptr) — raw FFI argv/envp arrays.
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
         let mut spawned = spawn::spawn_process(
             &spawn_options,

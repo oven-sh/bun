@@ -2915,37 +2915,88 @@ pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
 pub mod serializer {
     use super::*;
 
-    // Zig: comptime block computing per-field sizes/indices/types sorted by alignment
-    // (descending). This relies on `@typeInfo`/`std.meta.fields` reflection that has
-    // no Rust equivalent.
-    // TODO(port): proc-macro or hand-written const arrays. The Package<SemverIntType>
-    // struct has exactly 8 fields: name, name_hash, resolution, dependencies,
-    // resolutions, meta, bin, scripts. Phase B should expand this manually with
-    // `core::mem::{size_of, align_of}` once concrete `SemverIntType` instantiations
-    // are known (u32 and the canonical type).
+    /// Number of columns in the on-disk package table. Zig: `sizes.Types.len`.
+    pub const FIELD_COUNT: usize = PackageField::ALL.len();
+
+    // Zig: comptime block computing per-field sizes/indices sorted by alignment
+    // (descending) via `@typeInfo`/`std.meta.fields`. Rust has no struct
+    // reflection, so the 8 fields are hand-expanded and the same stable
+    // insertion sort is reproduced at call time. (`Types` is dropped — Rust
+    // can't store a `[type; N]`, and the only consumer was `AlignmentType`,
+    // which is unused on the load/save paths we port.)
     pub struct Sizes {
-        pub bytes: &'static [usize],
-        pub fields: &'static [usize],
-        // Types: omitted (Rust cannot store a `[type; N]` array).
+        pub bytes: [usize; FIELD_COUNT],
+        pub fields: [usize; FIELD_COUNT],
     }
-    // TODO(port): compute SIZES at const time per-SemverIntType.
-    pub const SIZES: Sizes = Sizes { bytes: &[], fields: &[] };
+
+    /// Port of Package.zig `Serializer.sizes` comptime block, evaluated per
+    /// `SemverIntType` instantiation.
+    pub fn sizes<SemverIntType: VersionInt>() -> Sizes {
+        #[derive(Copy, Clone)]
+        struct Data { size: usize, size_index: usize, alignment: usize }
+
+        macro_rules! entry {
+            ($i:expr, $T:ty) => {
+                Data {
+                    size: mem::size_of::<$T>(),
+                    size_index: $i,
+                    alignment: if mem::size_of::<$T>() == 0 { 1 } else { mem::align_of::<$T>() },
+                }
+            };
+        }
+        // Declaration order — must match `struct Package` field order exactly.
+        let mut data: [Data; FIELD_COUNT] = [
+            entry!(0, String),
+            entry!(1, PackageNameHash),
+            entry!(2, ResolutionType<SemverIntType>),
+            entry!(3, DependencySlice),
+            entry!(4, PackageIDSlice),
+            entry!(5, Meta),
+            entry!(6, Bin),
+            entry!(7, Scripts),
+        ];
+        // Stable insertion sort, key = alignment descending (Zig:
+        // `std.sort.insertionContext` with `lessThan = lhs.align > rhs.align`).
+        let mut i = 1;
+        while i < FIELD_COUNT {
+            let mut j = i;
+            while j > 0 && data[j].alignment > data[j - 1].alignment {
+                data.swap(j, j - 1);
+                j -= 1;
+            }
+            i += 1;
+        }
+        let mut bytes = [0usize; FIELD_COUNT];
+        let mut fields = [0usize; FIELD_COUNT];
+        let mut k = 0;
+        while k < FIELD_COUNT {
+            bytes[k] = data[k].size;
+            fields[k] = data[k].size_index;
+            k += 1;
+        }
+        Sizes { bytes, fields }
+    }
 
     // Zig: `const FieldsEnum = @typeInfo(List.Field).@"enum";`
-    // TODO(port): MultiArrayList<T>::Field enum reflection. Phase B: expose
-    // `List::<T>::FIELDS: &[Field]` from bun_collections.
+    // → `PackageField::ALL` (declaration order, same as the MultiArrayList
+    //    field enum Zig reflects over).
 
     pub fn byte_size<SemverIntType: VersionInt>(list: &List<SemverIntType>) -> usize {
-        // Zig used SIMD @Vector reduction; equivalent scalar loop:
+        // Zig used a SIMD @Vector reduction over `sizes.bytes`; equivalent
+        // scalar dot-product. Order is irrelevant for the sum, so use the
+        // declaration-order size table directly.
+        // PERF(port): comptime @Vector reduce — profile in Phase B.
+        let len = list.len();
         let mut sum: usize = 0;
-        for &sz in SIZES.bytes {
-            sum += sz * list.len();
+        for &sz in <Package<SemverIntType> as bun_collections::MultiArrayElement>::SIZES_BYTES {
+            sum += sz * len;
         }
         sum
     }
 
     // Zig: `const AlignmentType = sizes.Types[sizes.fields[0]];`
-    // TODO(port): depends on SIZES.Types — Phase B.
+    // Unused by save/load (the live aligner uses `@TypeOf(list.bytes)`), so
+    // it is intentionally not ported.
 
     pub fn save<SemverIntType: VersionInt, S, W>(
         list: &List<SemverIntType>,
@@ -2960,7 +3011,7 @@ pub mod serializer {
         writer.write_int_le::<u64>(list.len() as u64)?;
         // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs concrete type from MultiArrayList.
         writer.write_int_le::<u64>(mem::align_of::<*mut u8>() as u64)?;
-        writer.write_int_le::<u64>(SIZES.bytes.len() as u64)?;
+        writer.write_int_le::<u64>(FIELD_COUNT as u64)?;
         let begin_at = stream.get_pos()?;
         writer.write_int_le::<u64>(0)?;
         let end_at = stream.get_pos()?;

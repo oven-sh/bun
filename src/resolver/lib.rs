@@ -4134,16 +4134,12 @@ static mut BIN_FOLDERS: core::mem::MaybeUninit<BinFolderArray> = core::mem::Mayb
 static BIN_FOLDERS_LOCK: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
 static mut BIN_FOLDERS_LOADED: bool = false;
 
-pub struct AnyResolveWatcher {
-    pub context: NonNull<()>,
-    pub callback: fn(*mut (), &[u8], FD),
-}
-
-impl AnyResolveWatcher {
-    pub fn watch(&self, dir_path: &[u8], fd: FD) {
-        (self.callback)(self.context.as_ptr(), dir_path, fd)
-    }
-}
+// LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
+// register directory watches. The concrete callback lives in `bun_watcher`
+// (lower tier); defining the vtable shape there and re-exporting here keeps a
+// single type so `Watcher::get_resolve_watcher()` flows directly into
+// `Resolver.watcher` without a seam converter.
+pub use bun_watcher::AnyResolveWatcher;
 
 // Zig: `pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type` —
 // type-generator returning a struct with `.init(ctx) -> AnyResolveWatcher` and a
@@ -4155,20 +4151,26 @@ impl AnyResolveWatcher {
 // `AnyResolveWatcher` erased shim as Zig's monomorphized `wrap`.
 
 pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
+    on_watch: unsafe fn(*mut C, &[u8], FD),
     _marker: core::marker::PhantomData<*mut C>,
 }
 impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
+    pub const fn new(on_watch: unsafe fn(*mut C, &[u8], FD)) -> Self {
         Self { on_watch, _marker: core::marker::PhantomData }
     }
     pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
+        unsafe fn erase<C>(_: unsafe fn(*mut C, &[u8], FD)) {}
+        let _ = erase::<C>; // monomorphization witness
         AnyResolveWatcher {
-            // SAFETY: caller guarantees `ctx` is non-null and outlives the watcher.
-            context: NonNull::new(ctx.cast()).expect("ResolveWatcher: null ctx"),
-            // SAFETY: `fn(*mut C, &[u8], FD)` and `fn(*mut (), &[u8], FD)` are
-            // ABI-identical; the `wrap` shim in Zig did the same erase.
-            callback: unsafe { core::mem::transmute::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch) },
+            context: ctx.cast(),
+            // SAFETY: `unsafe fn(*mut C, ..)` and `unsafe fn(*mut (), ..)` are
+            // ABI-identical; the `wrap` shim in Zig did the same erase. The
+            // callback's safety contract is preserved (still `unsafe fn`).
+            callback: unsafe {
+                core::mem::transmute::<unsafe fn(*mut C, &[u8], FD), unsafe fn(*mut (), &[u8], FD)>(
+                    self.on_watch,
+                )
+            },
         }
     }
 }

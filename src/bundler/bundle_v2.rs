@@ -1653,7 +1653,7 @@ impl<'a> BundleV2<'a> {
             // Zig: `client_transpiler.resolver.caches = CacheSet.Set.init(alloc);`
             core::ptr::write(
                 &mut client_transpiler.resolver.caches,
-                crate::cache::Set::init(arena),
+                _resolver::cache::Set::init(),
             );
         }
 

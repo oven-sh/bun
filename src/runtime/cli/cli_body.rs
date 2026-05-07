@@ -1402,8 +1402,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         concatenated.extend(ctx.positionals.iter().cloned());
         concatenated.extend(ctx.passthrough.iter().cloned());
         ctx.passthrough = concatenated;
-        bun_bun_js::Run::boot(ctx, &entry_point_buf[0..cwd_len + trigger.len()], None)?;
-        Ok(())
+        run_command::boot(
+            ctx,
+            entry_point_buf[..cwd_len + trigger.len()].to_vec().into_boxed_slice(),
+            None,
+        )
+    }
     }
 
     fn bun_lockb(ctx: Context) -> Result<(), bun_core::Error> {
@@ -1768,32 +1772,7 @@ use crate::cli::{
 };
 
 use bun_install;
-
-/// Stand-in for the higher-tier `bun.js.rs` `Run` entry points. The real
-/// implementation lives in a crate that depends on `bun_runtime`, so the CLI
-/// dispatch path cannot call it directly without a cycle. `run_command.rs`
-/// hosts the lower-tier port; these stubs keep the Phase-A draft compiling
-/// until the dispatch is rewired through that path.
-mod bun_bun_js {
-    #[allow(non_snake_case)]
-    pub mod Run {
-        use super::super::command::Context;
-        pub fn boot(
-            _ctx: Context,
-            _entry: &[u8],
-            _loader: Option<bun_options_types::Loader>,
-        ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_js::Run::boot (higher-tier crate)")
-        }
-        pub fn boot_standalone<G>(
-            _ctx: Context,
-            _entry: &[u8],
-            _graph: G,
-        ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: bun_js::Run::boot_standalone (higher-tier crate)")
-        }
-    }
-}
+use bun_install::package_manager_real::Subcommand as PmSubcommand;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -21,7 +21,7 @@ use crate::package_manager_real::Subcommand;
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use super::package_manager_options as Options;
 

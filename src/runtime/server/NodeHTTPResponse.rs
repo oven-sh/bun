@@ -1917,26 +1917,12 @@ pub extern "C" fn Bun__NodeHTTPResponse_setClosed(response: *mut NodeHTTPRespons
     unsafe { (*response).flags.insert(Flags::SOCKET_CLOSED) };
 }
 
-// Codegen module for JSNodeHTTPResponse cached-property accessors.
-// Mirrors `jsc.Codegen.JSNodeHTTPResponse.on{Data,Aborted,Writable}{Get,Set}Cached`
-// (build/*/codegen/ZigGeneratedClasses.zig) — thin wrappers over the C++
-// `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue` shims emitted by
-// src/codegen/generate-classes.ts for each `cache: true` property in
-// NodeHTTPResponse.classes.ts.
-mod generated {
-    #[allow(non_snake_case)]
-    pub mod JSNodeHTTPResponse {
-        // Emits `on_data_{get,set}_cached`, `on_aborted_{get,set}_cached`,
-        // `on_writable_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
-        // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
-        ::bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable);
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/NodeHTTPResponse.zig (1255 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      .classes.ts payload w/ intrusive refcount; many `defer self.deref()` reshaped to tail calls — verify ordering vs early returns; `js::*` cached accessors via codegen_cached_accessors!; ERR_* throw helpers assumed on JSGlobalObject; UpgradeCTX::deinit renamed reset (mid-lifetime).
+//   notes:      .classes.ts payload w/ intrusive refcount; codegen owns the
+//               `#[no_mangle]` prototype thunks (generated_classes.rs re-exports
+//               this struct); `defer self.deref()` reshaped to tail calls.
 // ──────────────────────────────────────────────────────────────────────────

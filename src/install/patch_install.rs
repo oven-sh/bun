@@ -320,7 +320,7 @@ impl<'a> PatchTask<'a> {
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
-            let pkg: Package = manager.lockfile.packages.get(pkg_id);
+            let pkg: Package = manager.lockfile.packages.get(pkg_id as usize);
             // PORT NOTE: `Package` is not `Copy` in the Rust port; capture the
             // scalar fields we need after `determine_preinstall_state` consumes
             // it (Zig's `packages.get()` returns by-value-copy).

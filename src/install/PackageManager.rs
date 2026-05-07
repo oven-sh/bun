@@ -2258,14 +2258,14 @@ pub fn init_with_runtime_once(
                     max_threads: cpu_count as u32,
                     ..Default::default()
                 }),
-                // SAFETY: placeholder — Lockfile is NOT all-zero-valid POD. Zig leaves this
-                // `undefined` and overwrites below.
-                // TODO(port): replace with Box::<MaybeUninit<Lockfile>>::new_uninit() or init_empty().
-                lockfile: Box::new(unsafe { core::mem::zeroed() }), // overwritten below
-                // SAFETY: bun_sys::File is #[repr(C)] wrapping an Fd; all-zero is the invalid-fd
-                // sentinel. Zig leaves this `undefined` (never read in the runtime path).
-                // TODO(port): use bun_sys::File::INVALID once available.
-                root_package_json_file: unsafe { core::mem::zeroed() },
+                // Zig: `.lockfile = undefined` then `manager.lockfile = try allocator.create(Lockfile)`
+                // immediately after. `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
+                // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
+                lockfile: Box::new(Lockfile::default()),
+                // Zig leaves `.root_package_json_file = undefined` (never read in the runtime
+                // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
+                // on posix `Fd(0)` is stdin, not the invalid marker.
+                root_package_json_file: bun_sys::File::from_fd(Fd::invalid()),
                 // MOVE_DOWN(b0): AnyEventLoop is now bun_event_loop. The Js variant wraps an
                 // erased *mut () set by tier-6; bun_event_loop::AnyEventLoop::js_current() reads
                 // the JS_EVENT_LOOP_HOOK registered by bun_runtime::init().

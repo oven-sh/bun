@@ -26,64 +26,6 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_output::scoped_log!(StatWatcher, $($arg)*) };
 }
 
-/// RAII owner for one outstanding intrusive ref on a `StatWatcher` /
-/// `StatWatcherScheduler`. Adopts a ref taken earlier (e.g. by an async
-/// scheduler) and releases it on `Drop`, replacing the Zig
-/// `defer this.deref()` pattern.
-///
-/// TODO(port): Phase B — once these types are migrated to
-/// `bun_ptr::ThreadSafeRefCount<Self>` / `AnyRefCounted`, replace this with
-/// `bun_ptr::ScopedRef::adopt` and delete the local trait.
-#[must_use = "dropping immediately releases the ref"]
-struct DerefOnDrop<T: IntrusiveDeref>(*mut T);
-
-impl<T: IntrusiveDeref> DerefOnDrop<T> {
-    /// Adopt an already-held ref: does **not** bump on construction, but
-    /// releases on `Drop`.
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `T` for which the caller owns one
-    /// outstanding ref that this guard will consume.
-    #[inline]
-    unsafe fn adopt(ptr: *mut T) -> Self {
-        Self(ptr)
-    }
-}
-
-impl<T: IntrusiveDeref> Drop for DerefOnDrop<T> {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
-        unsafe { T::deref_raw(self.0) };
-    }
-}
-
-/// Hand-rolled intrusive-refcount deref hook for [`DerefOnDrop`]. Both
-/// `StatWatcher` and `StatWatcherScheduler` carry a raw `AtomicU32` ref count
-/// pending the Phase-B `bun_ptr::ThreadSafeRefCount` migration; this trait
-/// lets one RAII guard serve both.
-trait IntrusiveDeref {
-    /// # Safety
-    /// `this` must point to a live `Self` and the caller must own one ref.
-    unsafe fn deref_raw(this: *mut Self);
-}
-
-impl IntrusiveDeref for StatWatcher {
-    #[inline]
-    unsafe fn deref_raw(this: *mut Self) {
-        // SAFETY: forwarded caller contract.
-        unsafe { StatWatcher::deref(this) }
-    }
-}
-
-impl IntrusiveDeref for StatWatcherScheduler {
-    #[inline]
-    unsafe fn deref_raw(this: *mut Self) {
-        // SAFETY: forwarded caller contract.
-        unsafe { StatWatcherScheduler::deref(this) }
-    }
-}
-
 fn stat_to_js_stats(
     global_this: &JSGlobalObject,
     stats: &PosixStat,

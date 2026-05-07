@@ -1542,18 +1542,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
+            // PORT NOTE: reshaped for borrowck — `url` borrows `string_bytes`;
+            // route through a raw root so the `&mut PackageManager` calls
+            // below can coexist (Zig passes the aliased `*PackageManager`).
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: the enqueue callees copy `url` into the filename store
+            // before any `string_bytes` resize.
             let url = match &tarball.uri {
-                dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
-                dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
+                dependency::tarball::Uri::Local(path) => unsafe { &*this_ptr }.lockfile.str(path),
+                dependency::tarball::Uri::Remote(url) => unsafe { &*this_ptr }.lockfile.str(url),
             };
             let task_id = Task::Id::for_tarball(url);
-            let entry = this
-                .task_queue
-                .get_or_put_context(task_id, ())
-                .expect("unreachable");
-            if !entry.found_existing {
-                *entry.value_ptr = TaskCallbackList::default();
-            }
 
             if cfg!(debug_assertions) {
                 bun_output::scoped_log!(
@@ -1572,7 +1571,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             } else {
                 TaskCallbackContext::Dependency(id)
             };
-            entry.value_ptr.push(ctx);
+            // PORT NOTE: reshaped for borrowck — scope `entry` tightly.
+            {
+                let entry = this
+                    .task_queue
+                    .get_or_put_context(task_id, ())
+                    .expect("unreachable");
+                if !entry.found_existing {
+                    *entry.value_ptr = TaskCallbackList::default();
+                }
+                entry.value_ptr.push(ctx);
+            }
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -1581,24 +1590,29 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            match &version.value.tarball.uri {
+            match &tarball.uri {
                 dependency::tarball::Uri::Local(_) => {
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                         return Ok(());
                     }
 
-                    this.task_batch.push(ThreadPool::Batch::from(enqueue_local_tarball(
-                        this,
+                    let dep_name = unsafe { &*this_ptr }.lockfile.str(&dependency.name);
+                    // SAFETY: see `this_ptr` note above.
+                    let task = enqueue_local_tarball(
+                        unsafe { &mut *this_ptr },
                         task_id,
                         id,
-                        this.lockfile.str(&dependency.name),
+                        dep_name,
                         url,
                         res,
                         Integrity::default(),
-                    )));
+                    );
+                    this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    if let Some(network_task) = run_tasks::generate_network_task_for_tarball(this,
+                    // SAFETY: see `this_ptr` note above.
+                    if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+                        unsafe { &mut *this_ptr },
                         task_id,
                         url,
                         dependency.behavior.is_required(),

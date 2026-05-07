@@ -120,7 +120,7 @@ macro_rules! extern_crypto_job {
                         ctx: *mut Ctx,
                         callback: JSValue,
                     ) -> *mut Job {
-                        let vm = global.bun_vm();
+                        let vm = global.bun_vm_ptr();
                         let job = Box::into_raw(Box::new(Job {
                             vm,
                             task: WorkPoolTask {
@@ -302,7 +302,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<*mut Self> {
         // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
         // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
-        let vm = global.bun_vm();
+        let vm = global.bun_vm_ptr();
         let job = Box::into_raw(Box::new(CryptoJob {
             vm,
             task: WorkPoolTask {
@@ -591,7 +591,7 @@ pub mod random {
             UUID::init()
         } else {
             // SAFETY: `bun_vm()` returns the singleton JS VM; mutably borrowed only here.
-            unsafe { (*global.bun_vm()).rare_data() }.next_uuid()
+            global.bun_vm().as_mut().rare_data().next_uuid()
         };
 
         uuid.print((&mut bytes[..36]).try_into().unwrap());
@@ -1105,7 +1105,7 @@ impl CryptoJobCtx for Scrypt {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global; `event_loop()` is
         // a self-ptr live for the VM lifetime. Short-lived `&mut` formed at use site
         // per VirtualMachine.rs §event_loop contract.
-        let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
+        let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
 
         if let Some(err) = self.err {
             if err != 0 {
@@ -1150,7 +1150,7 @@ fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSVa
     let data = PBKDF2::from_js(global_this, call_frame, true)?;
 
     // SAFETY: `VirtualMachine::get()` returns the thread-local VM, non-null on the JS thread.
-    let vm: *mut VirtualMachine = VirtualMachine::get();
+    let vm: *mut VirtualMachine = VirtualMachine::get_mut_ptr();
     let job = PBKDF2Job::create(vm, global_this, data);
     // SAFETY: `job` was just boxed by `create()` and is live.
     Ok(unsafe { (*job).promise.value() })

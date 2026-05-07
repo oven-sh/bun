@@ -679,7 +679,7 @@ impl Pending {
         }
         // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
         // `&`-borrow on this thread, outlives this call.
-        let vm = unsafe { &*VirtualMachine::get() };
+        let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
             return;
         }
@@ -802,7 +802,7 @@ impl StreamResult {
     ) {
         // SAFETY: bun_vm() returns the per-global VM singleton; `&`-borrow is
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
-        let vm = unsafe { &*global_this.bun_vm() };
+        let vm = global_this.bun_vm();
         // PORT NOTE: Zig holds `loop` and `promise` across re-entrant resolve/reject.
         // In Rust a long-lived `&mut EventLoop` / `&mut JSPromise` would alias any
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
@@ -865,7 +865,7 @@ impl StreamResult {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if unsafe { &*VirtualMachine::get() }.is_shutting_down() {
+        if VirtualMachine::get().is_shutting_down() {
             // Zig copies `*this` to `that` and calls `that.deinit()` — a bitwise move of
             // ownership out of `*this` followed by free. `release()` is the port of `deinit`;
             // call it on `self` so `.owned`/`.owned_and_done` ByteLists are freed and

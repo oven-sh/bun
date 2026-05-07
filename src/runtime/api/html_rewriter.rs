@@ -733,7 +733,7 @@ impl BufferOutputSink {
         // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
         // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this fn.
-        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
 
         // Since we're still using vm.waitForPromise, we have to also override
         // the error rejection handler. That way, we can propagate errors to the
@@ -753,7 +753,7 @@ impl BufferOutputSink {
             // the local is dropped).
             unsafe { (*sink_error_ptr).ensure_still_alive() };
             // SAFETY: VM outlives this guard (sync stack frame).
-            let vm = unsafe { &mut *global_static.bun_vm() };
+            let vm = global_static.bun_vm().as_mut();
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
             scope.apply(vm);
         }
@@ -1281,7 +1281,7 @@ where
     // Holding a long-lived `&mut` across those calls is two-live-&mut UB under
     // Stacked Borrows, so re-acquire a short-lived borrow at each touch.
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
-    let vm = || -> &mut VirtualMachine { unsafe { &mut *global.bun_vm() } };
+    let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
 
     // PORT NOTE: Zig used a stack-pinned `TopExceptionScope` (in-place init).
     // The Rust `TopExceptionScope::init` is `&mut self`-based with a Pin
@@ -1487,7 +1487,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
         return err;
     }
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
-    let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+    let vm: &VirtualMachine = global.bun_vm();
     if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
         // SAFETY: VM-owned pointer; valid while VM lives.
         let slot = unsafe { &mut *err_ptr };

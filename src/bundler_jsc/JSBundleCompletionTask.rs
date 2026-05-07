@@ -54,7 +54,7 @@ pub fn create_and_schedule_completion_task<'a>(
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
         // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
-        env: unsafe { (*global_this.bun_vm()).transpiler.env },
+        env: global_this.bun_vm().as_mut().transpiler.env,
         log: logger::Log::init(),
         cancelled: false,
         html_build_task: None,

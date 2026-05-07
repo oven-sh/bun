@@ -192,14 +192,14 @@ unsafe extern "C" {
 #[inline]
 fn vm_get<'a>() -> &'a mut VirtualMachine {
     // SAFETY: JS-thread only; the global VM pointer is non-null once the runtime is up.
-    unsafe { &mut *VirtualMachine::get() }
+    VirtualMachine::get().as_mut()
 }
 
 /// `JSGlobalObject::bun_vm()` (lib.rs variant) returns `*mut`; deref for `Ref::ref/unref`.
 #[inline]
 fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
     // SAFETY: JS-thread only; bun_vm() returns the live VM for this global.
-    unsafe { &mut *global.bun_vm() }
+    global.bun_vm().as_mut()
 }
 
 /// `globalObject.ERR(.CODE, msg, .{}).throw()`
@@ -397,7 +397,7 @@ impl NodeHTTPResponse {
             // Unref the poll_ref since the socket is now upgraded to WebSocket
             // and will have its own lifecycle management
             // SAFETY: server.global_this() is non-null while the server is alive.
-            let vm = unsafe { &mut *(*self.server.global_this()).bun_vm() };
+            let vm = unsafe { (*self.server.global_this()).bun_vm().as_mut() };
             self.poll_ref.unref(vm);
             // SAFETY: upgrade_ctx checked non-null above.
             let ctx = unsafe { &mut *upgrade_ctx };

@@ -221,7 +221,7 @@ pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
 ) {
     // SAFETY: called on the JS thread with a live VM (C++ inspector agent
     // invokes this only after the VM is initialized).
-    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         // SAFETY: JS-thread only; sole access to the `UnsafeCell` slot here.
         unsafe { (*dbg.frontend_dev_server_agent.get()).handle = agent };
     }
@@ -715,7 +715,7 @@ impl Debugger {
         jsc::mark_binding();
 
         // Raw pointers only — see PORT NOTE above.
-        let this: *mut VirtualMachine = VirtualMachine::get();
+        let this: *mut VirtualMachine = VirtualMachine::get_mut_ptr();
         // SAFETY: `this` is this thread's VM created in
         // `start_js_debugger_thread`; `event_loop()` reads a scalar field.
         let loop_: *mut crate::event_loop::EventLoop = unsafe { (*this).event_loop() };
@@ -819,11 +819,11 @@ impl Debugger {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Debugger__didConnect() {
-    let this = VirtualMachine::get();
+    let this = VirtualMachine::get().as_mut();
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread. Spec: `this.debugger.?` would safety-panic; we early-
     // return defensively (extern "C" — unwinding is UB).
-    let Some(dbg) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+    let Some(dbg) = (this.debugger.as_deref_mut()) else {
         return;
     };
     if dbg.wait_for_connection != Wait::Off {
@@ -1080,7 +1080,7 @@ impl TestReporterHandle {
 pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         bun_core::scoped_log!(TestReporterAgent, "enable");
         dbg.test_reporter_agent.handle = agent;
 
@@ -1102,7 +1102,7 @@ pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
 pub extern "C" fn Bun__TestReporterAgentDisable(_agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         bun_core::scoped_log!(TestReporterAgent, "disable");
         dbg.test_reporter_agent.handle = core::ptr::null_mut();
     }
@@ -1193,7 +1193,7 @@ impl LifecycleHandle {
 pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         bun_core::scoped_log!(LifecycleAgent, "enable");
         dbg.lifecycle_reporter_agent.handle = agent;
     }
@@ -1203,7 +1203,7 @@ pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
 pub extern "C" fn Bun__LifecycleAgentDisable(_agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         bun_core::scoped_log!(LifecycleAgent, "disable");
         dbg.lifecycle_reporter_agent.handle = core::ptr::null_mut();
     }

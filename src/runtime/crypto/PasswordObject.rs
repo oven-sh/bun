@@ -734,7 +734,7 @@ impl JSPasswordObject {
             password,
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: unsafe { &*global_object.bun_vm() }.event_loop(),
+            event_loop: global_object.bun_vm().event_loop(),
             global: global_object as *const _,
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {
@@ -786,7 +786,7 @@ impl JSPasswordObject {
             prev_hash,
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: unsafe { &*global_object.bun_vm() }.event_loop(),
+            event_loop: global_object.bun_vm().event_loop(),
             global: global_object as *const _,
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {

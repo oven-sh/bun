@@ -287,7 +287,7 @@ impl Crypto {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        let uuid = unsafe { &mut *global.bun_vm() }.rare_data().next_uuid();
+        let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
         uuid.print((&mut bytes[0..36]).try_into().unwrap());
         str.transfer_to_js(global)
@@ -305,7 +305,7 @@ impl Crypto {
         // in so we can skip the rare_data pointer check.
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         // NOTE(port): upstream lacks `rare_data_unchecked`; `rare_data()` lazy-inits anyway.
-        let uuid = unsafe { &mut *global.bun_vm() }.rare_data().next_uuid();
+        let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
         uuid.print((&mut bytes[0..36]).try_into().unwrap());
         // DOMJIT fast path returns bare JSValue; OOM here is unrecoverable.
@@ -328,7 +328,7 @@ fn random_data(global: &JSGlobalObject, ptr: *mut u8, len: usize) {
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-            let src = unsafe { &mut *global.bun_vm() }.rare_data().entropy_slice(slice.len());
+            let src = global.bun_vm().as_mut().rare_data().entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
         _ => {
@@ -397,7 +397,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = unsafe { &mut *global.bun_vm() }.rare_data().entropy_slice(8);
+    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(8);
 
     let uuid = UUID7::init(timestamp, &<[u8; 8]>::try_from(&entropy[0..8]).unwrap());
 

@@ -40,7 +40,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTim
 /// and the cast back to `*mut GlobalData`.
 #[inline]
 pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
-    let vm_ptr = global_this.bun_vm();
+    let vm_ptr = global_this.bun_vm().as_mut();
     // PORT NOTE: reshaped for borrowck — `GlobalData::init` needs
     // `&VirtualMachine` while `rare_data()` needs `&mut VirtualMachine`. Read
     // the slot, drop the borrow, init if empty, then re-acquire the slot to
@@ -2670,7 +2670,7 @@ pub mod internal {
         };
 
         // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
-        prefetch(unsafe { (*VirtualMachine::get()).uws_loop() }, Some(hostname_z.as_zstr()), port);
+        prefetch(VirtualMachine::get().as_mut().uws_loop(), Some(hostname_z.as_zstr()), port);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3315,7 +3315,7 @@ impl Resolver {
     /// `constructor` returning `JsResult<*mut Self>`.
     pub fn constructor(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Self> {
         // SAFETY: `bun_vm()` returns the live thread-local VM for this global.
-        let vm = unsafe { &*global_this.bun_vm() };
+        let vm = global_this.bun_vm();
         Ok(Self::init(vm))
     }
 
@@ -4280,7 +4280,7 @@ impl Resolver {
         }
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
-        this.request_sent(unsafe { &*global_this.bun_vm() });
+        this.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -4476,7 +4476,7 @@ impl Resolver {
         unsafe { (*channel).resolve(name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        self.request_sent(unsafe { &*global_this.bun_vm() });
+        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -4533,7 +4533,7 @@ impl Resolver {
         unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        self.request_sent(unsafe { &*global_this.bun_vm() });
+        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -4816,7 +4816,7 @@ impl Resolver {
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
     pub fn new_resolver(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        let resolver = Resolver::init(unsafe { &*global_this.bun_vm() });
+        let resolver = Resolver::init(global_this.bun_vm());
 
         let options = callframe.argument(0);
         if options.is_object() {
@@ -4922,7 +4922,7 @@ impl Resolver {
         }
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        resolver.request_sent(unsafe { &*global_this.bun_vm() });
+        resolver.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -4934,7 +4934,7 @@ impl Resolver {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         // PORT NOTE: VirtualMachine.dns_result_order is `u8` upstream (see
         // jsc/VirtualMachine.rs TODO(b2-cycle)); cast through Order's repr(u8).
-        let raw = unsafe { (*global_this.bun_vm()).dns_result_order };
+        let raw = global_this.bun_vm().as_mut().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,

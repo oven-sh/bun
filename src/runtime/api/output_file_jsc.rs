@@ -54,7 +54,7 @@ impl SavedFile {
     pub fn to_js(global_this: &JSGlobalObject, path: &[u8], byte_size: usize) -> JSValue {
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
         // Bun-owned global; we hold a unique `&mut` only for this call.
-        let mime_type = unsafe { &mut *global_this.bun_vm() }.mime_type(path);
+        let mime_type = global_this.bun_vm().as_mut().mime_type(path);
         let store = BlobStore::init_file(
             PathOrFileDescriptor::Path(PathLike::String(PathString::init(path))),
             mime_type,

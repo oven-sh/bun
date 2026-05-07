@@ -36,49 +36,37 @@ pub static Archive__ZigStructSize: usize = core::mem::size_of::<Archive>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchiveClass__finalize(this: *mut Archive) {
-    unsafe { Archive::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Archive::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchiveClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Archive::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Archive::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchivePrototype__blob(this: *mut Archive, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Archive::blob(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Archive::blob(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchivePrototype__bytes(this: *mut Archive, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Archive::bytes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Archive::bytes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchivePrototype__extract(this: *mut Archive, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Archive::extract(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Archive::extract(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchivePrototype__files(this: *mut Archive, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Archive::files(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Archive::files(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ArchiveClass__write(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Archive::write(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Archive::write(g, c))
 }
 
 pub mod js_Archive {
@@ -126,21 +114,17 @@ pub static AttributeIterator__ZigStructSize: usize = core::mem::size_of::<Attrib
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AttributeIteratorClass__finalize(this: *mut AttributeIterator) {
-    unsafe { AttributeIterator::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| AttributeIterator::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AttributeIteratorPrototype__getThis(this: *mut AttributeIterator, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { AttributeIterator::get_this(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| AttributeIterator::get_this(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AttributeIteratorPrototype__next(this: *mut AttributeIterator, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { AttributeIterator::next(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| AttributeIterator::next(t, g, c))
 }
 
 pub mod js_AttributeIterator {
@@ -183,152 +167,117 @@ pub use crate::webcore::response::Blob as Blob;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Blob__estimatedSize(this: *mut Blob) -> usize {
-    unsafe { Blob::estimated_size(&*this) }
+    Blob::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobClass__finalize(this: *mut Blob) {
-    unsafe { Blob::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Blob::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Blob::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Blob::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getArrayBuffer(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_array_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_array_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getBytes(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_bytes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_bytes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__doUnlink(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::do_unlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::do_unlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getExists(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_exists(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_exists(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getFormData(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_form_data(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_form_data(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__doImage(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::do_image(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::do_image(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getJSON(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getLastModified(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_last_modified(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Blob::get_last_modified(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getName(this: *mut Blob, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_name(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Blob::get_name(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__setName(this: *mut Blob, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Blob::set_name(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| Blob::set_name(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getSize(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_size(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Blob::get_size(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getSlice(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_slice(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_slice(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getStat(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_stat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_stat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getStream(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_stream(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getText(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getType(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Blob::get_type(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__doWrite(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::do_write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::do_write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobPrototype__getWriter(this: *mut Blob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Blob::get_writer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Blob::get_writer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Blob__onStructuredCloneSerialize(this: *mut Blob, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) {
-    let global = unsafe { &*global };
-    unsafe { Blob::on_structured_clone_serialize(&mut *this, global, ctx, write_bytes) }
+    Blob::on_structured_clone_serialize(&mut *this, &*global, ctx, write_bytes)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Blob__onStructuredCloneDeserialize(global: *mut JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || Blob::on_structured_clone_deserialize(global, ptr, end))
+    host_fn::host_fn_result(&*global, || Blob::on_structured_clone_deserialize(&*global, ptr, end))
 }
 
 pub mod js_Blob {
@@ -390,112 +339,87 @@ pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSo
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSource__memoryCost(this: *mut BlobInternalReadableStreamSource) -> usize {
-    unsafe { BlobInternalReadableStreamSource::memory_cost(&*this) }
+    BlobInternalReadableStreamSource::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourceClass__finalize(this: *mut BlobInternalReadableStreamSource) {
-    unsafe { BlobInternalReadableStreamSource::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| BlobInternalReadableStreamSource::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__arrayBufferFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::array_buffer_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::array_buffer_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__blobFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::blob_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::blob_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__bytesFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::bytes_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::bytes_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__cancelFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::cancel_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::cancel_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__drainFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::drain_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::drain_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__getIsClosedFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::get_is_closed_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BlobInternalReadableStreamSource::get_is_closed_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__jsonFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::json_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::json_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__getOnCloseFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::get_on_close_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BlobInternalReadableStreamSource::get_on_close_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__setOnCloseFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { BlobInternalReadableStreamSource::set_on_close_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| BlobInternalReadableStreamSource::set_on_close_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__getOnDrainFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::get_on_drain_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BlobInternalReadableStreamSource::get_on_drain_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__setOnDrainFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { BlobInternalReadableStreamSource::set_on_drain_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| BlobInternalReadableStreamSource::set_on_drain_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__pullFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::pull_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::pull_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__startFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::start_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::start_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__textFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::text_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::text_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlobInternalReadableStreamSourcePrototype__updateRefFromJS(this: *mut BlobInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlobInternalReadableStreamSource::update_ref_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlobInternalReadableStreamSource::update_ref_from_js(t, g, c))
 }
 
 pub mod js_BlobInternalReadableStreamSource {
@@ -569,72 +493,57 @@ pub use crate::node::block_list_impl::BlockList as BlockList;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockList__estimatedSize(this: *mut BlockList) -> usize {
-    unsafe { BlockList::estimated_size(&*this) }
+    BlockList::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListClass__finalize(this: *mut BlockList) {
-    unsafe { BlockList::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| BlockList::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || BlockList::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, BlockList::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListPrototype__addAddress(this: *mut BlockList, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlockList::add_address(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlockList::add_address(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListPrototype__addRange(this: *mut BlockList, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlockList::add_range(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlockList::add_range(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListPrototype__addSubnet(this: *mut BlockList, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlockList::add_subnet(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlockList::add_subnet(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListPrototype__check(this: *mut BlockList, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlockList::check(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BlockList::check(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListPrototype__rules(this: *mut BlockList, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BlockList::rules(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BlockList::rules(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockListClass__isBlockList(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || BlockList::is_block_list(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| BlockList::is_block_list(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockList__onStructuredCloneSerialize(this: *mut BlockList, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) {
-    let global = unsafe { &*global };
-    unsafe { BlockList::on_structured_clone_serialize(&mut *this, global, ctx, write_bytes) }
+    BlockList::on_structured_clone_serialize(&mut *this, &*global, ctx, write_bytes)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(global: *mut JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || BlockList::on_structured_clone_deserialize(global, ptr, end))
+    host_fn::host_fn_result(&*global, || BlockList::on_structured_clone_deserialize(&*global, ptr, end))
 }
 
 pub mod js_BlockList {
@@ -682,84 +591,67 @@ pub static BuildArtifact__ZigStructSize: usize = core::mem::size_of::<BuildArtif
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactClass__finalize(this: *mut BuildArtifact) {
-    unsafe { BuildArtifact::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| BuildArtifact::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getArrayBuffer(this: *mut BuildArtifact, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_array_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildArtifact::get_array_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getHash(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_hash(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_hash(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getJSON(this: *mut BuildArtifact, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildArtifact::get_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getOutputKind(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_output_kind(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_output_kind(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getLoader(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_loader(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_loader(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getPath(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_path(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_path(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getSize(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_size(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_size(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getSlice(this: *mut BuildArtifact, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_slice(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildArtifact::get_slice(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getSourceMap(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_source_map(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_source_map(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getStream(this: *mut BuildArtifact, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildArtifact::get_stream(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getText(this: *mut BuildArtifact, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildArtifact::get_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildArtifactPrototype__getMimeType(this: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildArtifact::get_mime_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildArtifact::get_mime_type(t, g))
 }
 
 pub mod js_BuildArtifact {
@@ -869,71 +761,57 @@ pub static BuildMessage__ZigStructSize: usize = core::mem::size_of::<BuildMessag
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessageClass__finalize(this: *mut BuildMessage) {
-    unsafe { BuildMessage::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| BuildMessage::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessageClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || BuildMessage::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, BuildMessage::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__toPrimitive(this: *mut BuildMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::to_primitive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildMessage::to_primitive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getColumn(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_column(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_column(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getLevel(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_level(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_level(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getLine(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_line(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_line(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getMessage(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_message(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_message(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getNotes(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_notes(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_notes(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__getPosition(this: *mut BuildMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::get_position(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BuildMessage::get_position(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__toJSON(this: *mut BuildMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::to_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildMessage::to_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BuildMessagePrototype__toString(this: *mut BuildMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BuildMessage::to_string(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BuildMessage::to_string(t, g, c))
 }
 
 pub mod js_BuildMessage {
@@ -1020,112 +898,87 @@ pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSource__memoryCost(this: *mut BytesInternalReadableStreamSource) -> usize {
-    unsafe { BytesInternalReadableStreamSource::memory_cost(&*this) }
+    BytesInternalReadableStreamSource::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourceClass__finalize(this: *mut BytesInternalReadableStreamSource) {
-    unsafe { BytesInternalReadableStreamSource::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| BytesInternalReadableStreamSource::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__arrayBufferFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::array_buffer_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::array_buffer_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__blobFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::blob_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::blob_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__bytesFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::bytes_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::bytes_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__cancelFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::cancel_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::cancel_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__drainFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::drain_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::drain_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__getIsClosedFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::get_is_closed_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BytesInternalReadableStreamSource::get_is_closed_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__jsonFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::json_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::json_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__getOnCloseFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::get_on_close_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BytesInternalReadableStreamSource::get_on_close_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__setOnCloseFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { BytesInternalReadableStreamSource::set_on_close_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| BytesInternalReadableStreamSource::set_on_close_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__getOnDrainFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::get_on_drain_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| BytesInternalReadableStreamSource::get_on_drain_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__setOnDrainFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { BytesInternalReadableStreamSource::set_on_drain_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| BytesInternalReadableStreamSource::set_on_drain_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__pullFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::pull_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::pull_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__startFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::start_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::start_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__textFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::text_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::text_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn BytesInternalReadableStreamSourcePrototype__updateRefFromJS(this: *mut BytesInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { BytesInternalReadableStreamSource::update_ref_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| BytesInternalReadableStreamSource::update_ref_from_js(t, g, c))
 }
 
 pub mod js_BytesInternalReadableStreamSource {
@@ -1202,53 +1055,42 @@ pub static Comment__ZigStructSize: usize = core::mem::size_of::<Comment>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentClass__finalize(this: *mut Comment) {
-    unsafe { Comment::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Comment::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__after(this: *mut Comment, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::after(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Comment::after(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__before(this: *mut Comment, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::before(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Comment::before(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__remove(this: *mut Comment, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::remove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Comment::remove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__removed(this: *mut Comment, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::removed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Comment::removed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__replace(this: *mut Comment, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::replace(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Comment::replace(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__getText(this: *mut Comment, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Comment::get_text(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Comment::get_text(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CommentPrototype__setText(this: *mut Comment, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Comment::set_text(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Comment::set_text(t, g, v))
 }
 
 pub mod js_Comment {
@@ -1294,34 +1136,27 @@ pub static CronJob__ZigStructSize: usize = core::mem::size_of::<CronJob>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CronJobClass__finalize(this: *mut CronJob) {
-    unsafe { CronJob::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| CronJob::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CronJobPrototype__stop(this: *mut CronJob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CronJob::stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CronJob::stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CronJobPrototype__getCron(this: *mut CronJob, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CronJob::get_cron(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| CronJob::get_cron(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CronJobPrototype__doRef(this: *mut CronJob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CronJob::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CronJob::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CronJobPrototype__doUnref(this: *mut CronJob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CronJob::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CronJob::do_unref(t, g, c))
 }
 
 pub mod js_CronJob {
@@ -1398,30 +1233,22 @@ pub static Crypto__ZigStructSize: usize = core::mem::size_of::<Crypto>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Crypto::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Crypto::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoPrototype__getRandomValues(this: *mut Crypto, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Crypto::get_random_values(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Crypto::get_random_values(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoPrototype__randomUUID(this: *mut Crypto, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Crypto::random_uuid(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Crypto::random_uuid(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoPrototype__timingSafeEqual(this: *mut Crypto, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Crypto::timing_safe_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Crypto::timing_safe_equal(t, g, c))
 }
 
 pub mod js_Crypto {
@@ -1469,60 +1296,47 @@ pub static CryptoHasher__ZigStructSize: usize = core::mem::size_of::<CryptoHashe
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherClass__finalize(this: *mut CryptoHasher) {
-    unsafe { CryptoHasher::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| CryptoHasher::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || CryptoHasher::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, CryptoHasher::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherPrototype__getAlgorithm(this: *mut CryptoHasher, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CryptoHasher::get_algorithm(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| CryptoHasher::get_algorithm(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherPrototype__getByteLength(this: *mut CryptoHasher, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CryptoHasher::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| CryptoHasher::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherPrototype__copy(this: *mut CryptoHasher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CryptoHasher::copy(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CryptoHasher::copy(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherPrototype__digest(this: *mut CryptoHasher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CryptoHasher::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CryptoHasher::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherPrototype__update(this: *mut CryptoHasher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { CryptoHasher::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| CryptoHasher::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherClass__getAlgorithms(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || CryptoHasher::get_algorithms(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| CryptoHasher::get_algorithms(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CryptoHasherClass__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || CryptoHasher::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| CryptoHasher::hash(g, c))
 }
 
 pub mod js_CryptoHasher {
@@ -1579,119 +1393,87 @@ pub static DNSResolver__ZigStructSize: usize = core::mem::size_of::<DNSResolver>
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverClass__finalize(this: *mut DNSResolver) {
-    unsafe { DNSResolver::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DNSResolver::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__cancel(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::cancel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::cancel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__getServers(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::get_servers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::get_servers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolve(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveAny(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_any(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_any(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveCaa(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_caa(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_caa(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveCname(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_cname(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_cname(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveMx(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_mx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_mx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveNaptr(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_naptr(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_naptr(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveNs(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_ns(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_ns(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolvePtr(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_ptr(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_ptr(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveSoa(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_soa(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_soa(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveSrv(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_srv(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_srv(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__resolveTxt(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::resolve_txt(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::resolve_txt(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__reverse(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::reverse(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::reverse(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__setLocalAddress(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::set_local_address(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::set_local_address(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DNSResolverPrototype__setServers(this: *mut DNSResolver, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DNSResolver::set_servers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DNSResolver::set_servers(t, g, c))
 }
 
 pub mod js_DNSResolver {
@@ -1734,150 +1516,117 @@ pub use crate::server::DebugHTTPSServer as DebugHTTPSServer;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServer__memoryCost(this: *mut DebugHTTPSServer) -> usize {
-    unsafe { DebugHTTPSServer::memory_cost(&*this) }
+    DebugHTTPSServer::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerClass__finalize(this: *mut DebugHTTPSServer) {
-    unsafe { DebugHTTPSServer::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DebugHTTPSServer::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__dispose(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getAddress(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__closeIdleConnections(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::close_idle_connections(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::close_idle_connections(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getDevelopment(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_development(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_development(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doFetch(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_fetch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_fetch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getHostname(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getId(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_id(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getPendingRequests(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_pending_requests(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_pending_requests(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getPendingWebSockets(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_pending_web_sockets(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_pending_web_sockets(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getPort(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getProtocol(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doPublish(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doRef(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doReload(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doRequestIP(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_request_ip(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_request_ip(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doStop(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doSubscriberCount(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_subscriber_count(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_subscriber_count(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doTimeout(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doUnref(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__doUpgrade(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::do_upgrade(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPSServer::do_upgrade(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPSServerPrototype__getURL(this: *mut DebugHTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPSServer::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPSServer::get_url(t, g))
 }
 
 pub mod js_DebugHTTPSServer {
@@ -1973,150 +1722,117 @@ pub use crate::server::DebugHTTPServer as DebugHTTPServer;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServer__memoryCost(this: *mut DebugHTTPServer) -> usize {
-    unsafe { DebugHTTPServer::memory_cost(&*this) }
+    DebugHTTPServer::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerClass__finalize(this: *mut DebugHTTPServer) {
-    unsafe { DebugHTTPServer::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DebugHTTPServer::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__dispose(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getAddress(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__closeIdleConnections(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::close_idle_connections(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::close_idle_connections(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getDevelopment(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_development(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_development(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doFetch(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_fetch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_fetch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getHostname(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getId(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_id(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getPendingRequests(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_pending_requests(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_pending_requests(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getPendingWebSockets(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_pending_web_sockets(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_pending_web_sockets(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getPort(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getProtocol(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doPublish(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doRef(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doReload(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doRequestIP(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_request_ip(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_request_ip(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doStop(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doSubscriberCount(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_subscriber_count(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_subscriber_count(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doTimeout(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doUnref(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__doUpgrade(this: *mut DebugHTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::do_upgrade(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DebugHTTPServer::do_upgrade(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DebugHTTPServerPrototype__getURL(this: *mut DebugHTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DebugHTTPServer::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DebugHTTPServer::get_url(t, g))
 }
 
 pub mod js_DebugHTTPServer {
@@ -2215,14 +1931,12 @@ pub static DocEnd__ZigStructSize: usize = core::mem::size_of::<DocEnd>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocEndClass__finalize(this: *mut DocEnd) {
-    unsafe { DocEnd::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DocEnd::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocEndPrototype__append(this: *mut DocEnd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocEnd::append(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DocEnd::append(t, g, c))
 }
 
 pub mod js_DocEnd {
@@ -2268,38 +1982,32 @@ pub static DocType__ZigStructSize: usize = core::mem::size_of::<DocType>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypeClass__finalize(this: *mut DocType) {
-    unsafe { DocType::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DocType::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypePrototype__name(this: *mut DocType, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocType::name(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DocType::name(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypePrototype__publicId(this: *mut DocType, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocType::public_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DocType::public_id(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypePrototype__remove(this: *mut DocType, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocType::remove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| DocType::remove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypePrototype__removed(this: *mut DocType, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocType::removed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DocType::removed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DocTypePrototype__systemId(this: *mut DocType, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { DocType::system_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| DocType::system_id(t, g))
 }
 
 pub mod js_DocType {
@@ -2376,7 +2084,7 @@ pub static DoneCallback__ZigStructSize: usize = core::mem::size_of::<DoneCallbac
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DoneCallbackClass__finalize(this: *mut DoneCallback) {
-    unsafe { DoneCallback::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| DoneCallback::finalize(t))
 }
 
 pub mod js_DoneCallback {
@@ -2422,140 +2130,107 @@ pub static Element__ZigStructSize: usize = core::mem::size_of::<Element>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementClass__finalize(this: *mut Element) {
-    unsafe { Element::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Element::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__after(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::after(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::after(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__append(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::append(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::append(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getAttributes(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_attributes(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_attributes(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__before(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::before(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::before(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getCanHaveContent(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_can_have_content(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_can_have_content(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getAttribute(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_attribute(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::get_attribute(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__hasAttribute(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::has_attribute(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::has_attribute(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getNamespaceURI(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_namespace_uri(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_namespace_uri(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__onEndTag(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::on_end_tag(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::on_end_tag(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__prepend(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::prepend(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::prepend(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__remove(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::remove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::remove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__removeAndKeepContent(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::remove_and_keep_content(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::remove_and_keep_content(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__removeAttribute(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::remove_attribute(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::remove_attribute(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getRemoved(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_removed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_removed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__replace(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::replace(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::replace(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getSelfClosing(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_self_closing(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_self_closing(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__setAttribute(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::set_attribute(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::set_attribute(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__setInnerContent(this: *mut Element, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::set_inner_content(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Element::set_inner_content(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__getTagName(this: *mut Element, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Element::get_tag_name(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Element::get_tag_name(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ElementPrototype__setTagName(this: *mut Element, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Element::set_tag_name(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Element::set_tag_name(t, g, v))
 }
 
 pub mod js_Element {
@@ -2610,40 +2285,32 @@ pub static EndTag__ZigStructSize: usize = core::mem::size_of::<EndTag>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagClass__finalize(this: *mut EndTag) {
-    unsafe { EndTag::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| EndTag::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagPrototype__after(this: *mut EndTag, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { EndTag::after(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| EndTag::after(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagPrototype__before(this: *mut EndTag, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { EndTag::before(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| EndTag::before(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagPrototype__getName(this: *mut EndTag, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { EndTag::get_name(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| EndTag::get_name(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagPrototype__setName(this: *mut EndTag, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { EndTag::set_name(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| EndTag::set_name(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn EndTagPrototype__remove(this: *mut EndTag, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { EndTag::remove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| EndTag::remove(t, g, c))
 }
 
 pub mod js_EndTag {
@@ -2689,680 +2356,492 @@ pub static Expect__ZigStructSize: usize = core::mem::size_of::<Expect>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__finalize(this: *mut Expect) {
-    unsafe { Expect::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Expect::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Expect::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Expect::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, Expect::call)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__fail(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::fail(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::fail(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenLastCalledWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_last_called_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_last_called_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveLastReturnedWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_last_returned_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_last_returned_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__getNot(this: *mut Expect, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::get_not(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Expect::get_not(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenNthCalledWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_nth_called_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_nth_called_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveNthReturnedWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_nth_returned_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_nth_returned_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype___pass(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::_pass(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::_pass(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__getRejects(this: *mut Expect, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::get_rejects(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Expect::get_rejects(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__getResolves(this: *mut Expect, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::get_resolves(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Expect::get_resolves(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBe(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeArray(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_array(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_array(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeArrayOfSize(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_array_of_size(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_array_of_size(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeBoolean(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_boolean(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_boolean(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenCalled(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_called(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_called(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenCalledTimes(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_called_times(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_called_times(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenCalledWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_called_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_called_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeCloseTo(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_close_to(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_close_to(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeDate(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_date(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_date(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeDefined(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_defined(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_defined(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeEmpty(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_empty(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_empty(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeEmptyObject(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_empty_object(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_empty_object(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeEven(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_even(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_even(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeFalse(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_false(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_false(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeFalsy(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_falsy(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_falsy(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeFinite(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_finite(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_finite(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeFunction(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_function(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_function(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeGreaterThan(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_greater_than(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_greater_than(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeGreaterThanOrEqual(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_greater_than_or_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_greater_than_or_equal(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeInstanceOf(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_instance_of(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_instance_of(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeInteger(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_integer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_integer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeLessThan(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_less_than(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_less_than(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeLessThanOrEqual(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_less_than_or_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_less_than_or_equal(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeNaN(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_na_n(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_na_n(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeNegative(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_negative(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_negative(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeNil(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_nil(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_nil(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeNull(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_null(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_null(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeNumber(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_number(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_number(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeObject(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_object(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_object(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeOdd(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_odd(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_odd(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeOneOf(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_one_of(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_one_of(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBePositive(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_positive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_positive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeString(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_string(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_string(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeSymbol(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_symbol(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_symbol(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeTrue(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_true(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_true(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeTruthy(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_truthy(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_truthy(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeTypeOf(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_type_of(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_type_of(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeUndefined(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_undefined(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_undefined(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeValidDate(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_valid_date(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_valid_date(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toBeWithin(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_be_within(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_be_within(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContain(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainAllKeys(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_all_keys(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_all_keys(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainAllValues(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_all_values(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_all_values(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainAnyKeys(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_any_keys(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_any_keys(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainAnyValues(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_any_values(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_any_values(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainEqual(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_equal(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainKey(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_key(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_key(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainKeys(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_keys(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_keys(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainValue(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_value(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_value(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toContainValues(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_contain_values(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_contain_values(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toEndWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_end_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_end_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toEqual(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_equal(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toEqualIgnoringWhitespace(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_equal_ignoring_whitespace(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_equal_ignoring_whitespace(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveBeenCalledOnce(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_been_called_once(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_been_called_once(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveLength(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_length(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_length(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveProperty(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_property(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_property(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveReturned(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_returned(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_returned(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveReturnedTimes(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_returned_times(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_returned_times(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toHaveReturnedWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_have_returned_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_have_returned_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toInclude(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_include(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_include(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toIncludeRepeated(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_include_repeated(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_include_repeated(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toMatch(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_match(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_match(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toMatchInlineSnapshot(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_match_inline_snapshot(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_match_inline_snapshot(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toMatchObject(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_match_object(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_match_object(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toMatchSnapshot(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_match_snapshot(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_match_snapshot(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toSatisfy(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_satisfy(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_satisfy(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toStartWith(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_start_with(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_start_with(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toStrictEqual(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_strict_equal(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_strict_equal(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toThrow(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_throw(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_throw(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toThrowErrorMatchingInlineSnapshot(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_throw_error_matching_inline_snapshot(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_throw_error_matching_inline_snapshot(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectPrototype__toThrowErrorMatchingSnapshot(this: *mut Expect, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Expect::to_throw_error_matching_snapshot(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Expect::to_throw_error_matching_snapshot(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__addSnapshotSerializer(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::add_snapshot_serializer(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::add_snapshot_serializer(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__any(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::any(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::any(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__anything(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::anything(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::anything(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__arrayContaining(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::array_containing(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::array_containing(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__assertions(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::assertions(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::assertions(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__closeTo(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::close_to(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::close_to(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__extend(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::extend(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::extend(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__hasAssertions(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::has_assertions(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::has_assertions(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__getStaticNot(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::get_static_not(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| Expect::get_static_not(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__objectContaining(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::object_containing(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::object_containing(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__getStaticRejectsTo(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::get_static_rejects_to(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| Expect::get_static_rejects_to(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__getStaticResolvesTo(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::get_static_resolves_to(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| Expect::get_static_resolves_to(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__stringContaining(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::string_containing(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::string_containing(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__stringMatching(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::string_matching(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::string_matching(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectClass__doUnreachable(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Expect::do_unreachable(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Expect::do_unreachable(g, c))
 }
 
 pub mod js_Expect {
@@ -3430,14 +2909,12 @@ pub static ExpectAny__ZigStructSize: usize = core::mem::size_of::<ExpectAny>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectAnyClass__finalize(this: *mut ExpectAny) {
-    unsafe { ExpectAny::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectAny::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectAnyClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectAny::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectAny::call)
 }
 
 pub mod js_ExpectAny {
@@ -3492,14 +2969,12 @@ pub static ExpectAnything__ZigStructSize: usize = core::mem::size_of::<ExpectAny
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectAnythingClass__finalize(this: *mut ExpectAnything) {
-    unsafe { ExpectAnything::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectAnything::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectAnythingClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectAnything::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectAnything::call)
 }
 
 pub mod js_ExpectAnything {
@@ -3545,14 +3020,12 @@ pub static ExpectArrayContaining__ZigStructSize: usize = core::mem::size_of::<Ex
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectArrayContainingClass__finalize(this: *mut ExpectArrayContaining) {
-    unsafe { ExpectArrayContaining::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectArrayContaining::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectArrayContainingClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectArrayContaining::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectArrayContaining::call)
 }
 
 pub mod js_ExpectArrayContaining {
@@ -3607,14 +3080,12 @@ pub static ExpectCloseTo__ZigStructSize: usize = core::mem::size_of::<ExpectClos
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectCloseToClass__finalize(this: *mut ExpectCloseTo) {
-    unsafe { ExpectCloseTo::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectCloseTo::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectCloseToClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectCloseTo::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectCloseTo::call)
 }
 
 pub mod js_ExpectCloseTo {
@@ -3680,14 +3151,12 @@ pub static ExpectCustomAsymmetricMatcher__ZigStructSize: usize = core::mem::size
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectCustomAsymmetricMatcherClass__finalize(this: *mut ExpectCustomAsymmetricMatcher) {
-    unsafe { ExpectCustomAsymmetricMatcher::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectCustomAsymmetricMatcher::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectCustomAsymmetricMatcherPrototype__asymmetricMatch(this: *mut ExpectCustomAsymmetricMatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectCustomAsymmetricMatcher::asymmetric_match(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectCustomAsymmetricMatcher::asymmetric_match(t, g, c))
 }
 
 pub mod js_ExpectCustomAsymmetricMatcher {
@@ -3753,38 +3222,32 @@ pub static ExpectMatcherContext__ZigStructSize: usize = core::mem::size_of::<Exp
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextClass__finalize(this: *mut ExpectMatcherContext) {
-    unsafe { ExpectMatcherContext::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectMatcherContext::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextPrototype__equals(this: *mut ExpectMatcherContext, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherContext::equals(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectMatcherContext::equals(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextPrototype__getExpand(this: *mut ExpectMatcherContext, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherContext::get_expand(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ExpectMatcherContext::get_expand(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextPrototype__getIsNot(this: *mut ExpectMatcherContext, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherContext::get_is_not(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ExpectMatcherContext::get_is_not(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextPrototype__getPromise(this: *mut ExpectMatcherContext, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherContext::get_promise(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ExpectMatcherContext::get_promise(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherContextPrototype__getUtils(this: *mut ExpectMatcherContext, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherContext::get_utils(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ExpectMatcherContext::get_utils(t, g))
 }
 
 pub mod js_ExpectMatcherContext {
@@ -3830,35 +3293,27 @@ pub static ExpectMatcherUtils__ZigStructSize: usize = core::mem::size_of::<Expec
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherUtilsClass__finalize(this: *mut ExpectMatcherUtils) {
-    unsafe { ExpectMatcherUtils::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectMatcherUtils::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherUtilsPrototype__printExpected(this: *mut ExpectMatcherUtils, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherUtils::print_expected(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectMatcherUtils::print_expected(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherUtilsPrototype__matcherHint(this: *mut ExpectMatcherUtils, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherUtils::matcher_hint(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectMatcherUtils::matcher_hint(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherUtilsPrototype__printReceived(this: *mut ExpectMatcherUtils, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherUtils::print_received(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectMatcherUtils::print_received(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectMatcherUtilsPrototype__stringify(this: *mut ExpectMatcherUtils, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectMatcherUtils::stringify(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectMatcherUtils::stringify(t, g, c))
 }
 
 pub mod js_ExpectMatcherUtils {
@@ -3904,14 +3359,12 @@ pub static ExpectObjectContaining__ZigStructSize: usize = core::mem::size_of::<E
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectObjectContainingClass__finalize(this: *mut ExpectObjectContaining) {
-    unsafe { ExpectObjectContaining::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectObjectContaining::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectObjectContainingClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectObjectContaining::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectObjectContaining::call)
 }
 
 pub mod js_ExpectObjectContaining {
@@ -3966,74 +3419,57 @@ pub static ExpectStatic__ZigStructSize: usize = core::mem::size_of::<ExpectStati
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticClass__finalize(this: *mut ExpectStatic) {
-    unsafe { ExpectStatic::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectStatic::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__any(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::any(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::any(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__anything(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::anything(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::anything(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__arrayContaining(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::array_containing(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::array_containing(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__closeTo(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::close_to(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::close_to(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__getNot(this: *mut ExpectStatic, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::get_not(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ExpectStatic::get_not(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__objectContaining(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::object_containing(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::object_containing(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__getRejectsTo(this: *mut ExpectStatic, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::get_rejects_to(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ExpectStatic::get_rejects_to(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__getResolvesTo(this: *mut ExpectStatic, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::get_resolves_to(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ExpectStatic::get_resolves_to(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__stringContaining(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::string_containing(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::string_containing(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStaticPrototype__stringMatching(this: *mut ExpectStatic, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectStatic::string_matching(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectStatic::string_matching(t, g, c))
 }
 
 pub mod js_ExpectStatic {
@@ -4079,14 +3515,12 @@ pub static ExpectStringContaining__ZigStructSize: usize = core::mem::size_of::<E
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStringContainingClass__finalize(this: *mut ExpectStringContaining) {
-    unsafe { ExpectStringContaining::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectStringContaining::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStringContainingClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectStringContaining::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectStringContaining::call)
 }
 
 pub mod js_ExpectStringContaining {
@@ -4141,14 +3575,12 @@ pub static ExpectStringMatching__ZigStructSize: usize = core::mem::size_of::<Exp
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStringMatchingClass__finalize(this: *mut ExpectStringMatching) {
-    unsafe { ExpectStringMatching::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectStringMatching::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectStringMatchingClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectStringMatching::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectStringMatching::call)
 }
 
 pub mod js_ExpectStringMatching {
@@ -4203,41 +3635,32 @@ pub static ExpectTypeOf__ZigStructSize: usize = core::mem::size_of::<ExpectTypeO
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfClass__finalize(this: *mut ExpectTypeOf) {
-    unsafe { ExpectTypeOf::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ExpectTypeOf::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || ExpectTypeOf::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, ExpectTypeOf::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfClass__call(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ExpectTypeOf::call(global, callframe))
+    host_fn::host_fn_static(global, callframe, ExpectTypeOf::call)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfPrototype__getReturnsExpectTypeOf(this: *mut ExpectTypeOf, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectTypeOf::get_returns_expect_type_of(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ExpectTypeOf::get_returns_expect_type_of(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfPrototype__fnOneArgumentReturnsVoid(this: *mut ExpectTypeOf, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectTypeOf::fn_one_argument_returns_void(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectTypeOf::fn_one_argument_returns_void(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ExpectTypeOfPrototype__fnOneArgumentReturnsExpectTypeOf(this: *mut ExpectTypeOf, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ExpectTypeOf::fn_one_argument_returns_expect_type_of(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ExpectTypeOf::fn_one_argument_returns_expect_type_of(t, g, c))
 }
 
 pub mod js_ExpectTypeOf {
@@ -4285,20 +3708,17 @@ pub static FFI__ZigStructSize: usize = core::mem::size_of::<FFI>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FFIClass__finalize(this: *mut FFI) {
-    unsafe { FFI::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| FFI::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FFIPrototype__close(this: *mut FFI, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FFI::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FFI::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FFIPrototype__getSymbols(this: *mut FFI, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FFI::get_symbols(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FFI::get_symbols(t, g))
 }
 
 pub mod js_FFI {
@@ -4353,40 +3773,32 @@ pub static FSWatcher__ZigStructSize: usize = core::mem::size_of::<FSWatcher>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcher__hasPendingActivity(this: *mut FSWatcher) -> bool {
-    unsafe { FSWatcher::has_pending_activity(&*this) }
+    FSWatcher::has_pending_activity(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcherClass__finalize(this: *mut FSWatcher) {
-    unsafe { FSWatcher::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| FSWatcher::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcherPrototype__doClose(this: *mut FSWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FSWatcher::do_close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FSWatcher::do_close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcherPrototype__hasRef(this: *mut FSWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FSWatcher::has_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FSWatcher::has_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcherPrototype__doRef(this: *mut FSWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FSWatcher::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FSWatcher::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FSWatcherPrototype__doUnref(this: *mut FSWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FSWatcher::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FSWatcher::do_unref(t, g, c))
 }
 
 pub mod js_FSWatcher {
@@ -4438,91 +3850,72 @@ pub use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSource__memoryCost(this: *mut FileInternalReadableStreamSource) -> usize {
-    unsafe { FileInternalReadableStreamSource::memory_cost(&*this) }
+    FileInternalReadableStreamSource::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourceClass__finalize(this: *mut FileInternalReadableStreamSource) {
-    unsafe { FileInternalReadableStreamSource::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| FileInternalReadableStreamSource::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__cancelFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::cancel_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::cancel_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__drainFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::drain_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::drain_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__getIsClosedFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::get_is_closed_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileInternalReadableStreamSource::get_is_closed_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__getOnCloseFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::get_on_close_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileInternalReadableStreamSource::get_on_close_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__setOnCloseFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { FileInternalReadableStreamSource::set_on_close_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| FileInternalReadableStreamSource::set_on_close_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__getOnDrainFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::get_on_drain_from_js(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileInternalReadableStreamSource::get_on_drain_from_js(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__setOnDrainFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { FileInternalReadableStreamSource::set_on_drain_from_js(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| FileInternalReadableStreamSource::set_on_drain_from_js(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__pullFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::pull_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::pull_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__setFlowingFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::set_flowing_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::set_flowing_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__setRawModeFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::set_raw_mode_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::set_raw_mode_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__startFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::start_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::start_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileInternalReadableStreamSourcePrototype__updateRefFromJS(this: *mut FileInternalReadableStreamSource, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileInternalReadableStreamSource::update_ref_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileInternalReadableStreamSource::update_ref_from_js(t, g, c))
 }
 
 pub mod js_FileInternalReadableStreamSource {
@@ -4599,46 +3992,37 @@ pub static FileSystemRouter__ZigStructSize: usize = core::mem::size_of::<FileSys
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterClass__finalize(this: *mut FileSystemRouter) {
-    unsafe { FileSystemRouter::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| FileSystemRouter::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || FileSystemRouter::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, FileSystemRouter::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterPrototype__match(this: *mut FileSystemRouter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileSystemRouter::r#match(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileSystemRouter::r#match(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterPrototype__getOrigin(this: *mut FileSystemRouter, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileSystemRouter::get_origin(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileSystemRouter::get_origin(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterPrototype__reload(this: *mut FileSystemRouter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileSystemRouter::reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FileSystemRouter::reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterPrototype__getRoutes(this: *mut FileSystemRouter, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileSystemRouter::get_routes(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileSystemRouter::get_routes(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FileSystemRouterPrototype__getStyle(this: *mut FileSystemRouter, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FileSystemRouter::get_style(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| FileSystemRouter::get_style(t, g))
 }
 
 pub mod js_FileSystemRouter {
@@ -4717,28 +4101,22 @@ pub static FrameworkFileSystemRouter__ZigStructSize: usize = core::mem::size_of:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FrameworkFileSystemRouterClass__finalize(this: *mut FrameworkFileSystemRouter) {
-    unsafe { FrameworkFileSystemRouter::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| FrameworkFileSystemRouter::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FrameworkFileSystemRouterClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || FrameworkFileSystemRouter::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, FrameworkFileSystemRouter::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FrameworkFileSystemRouterPrototype__match(this: *mut FrameworkFileSystemRouter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FrameworkFileSystemRouter::r#match(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FrameworkFileSystemRouter::r#match(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn FrameworkFileSystemRouterPrototype__toJSON(this: *mut FrameworkFileSystemRouter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { FrameworkFileSystemRouter::to_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| FrameworkFileSystemRouter::to_json(t, g, c))
 }
 
 pub mod js_FrameworkFileSystemRouter {
@@ -4786,40 +4164,32 @@ pub static Glob__ZigStructSize: usize = core::mem::size_of::<Glob>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Glob__hasPendingActivity(this: *mut Glob) -> bool {
-    unsafe { Glob::has_pending_activity(&*this) }
+    Glob::has_pending_activity(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GlobClass__finalize(this: *mut Glob) {
-    unsafe { Glob::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Glob::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GlobClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Glob::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Glob::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GlobPrototype____scan(this: *mut Glob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Glob::__scan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Glob::__scan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GlobPrototype____scanSync(this: *mut Glob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Glob::__scan_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Glob::__scan_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GlobPrototype__match(this: *mut Glob, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Glob::r#match(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Glob::r#match(t, g, c))
 }
 
 pub mod js_Glob {
@@ -4867,217 +4237,157 @@ pub static H2FrameParser__ZigStructSize: usize = core::mem::size_of::<H2FramePar
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserClass__finalize(this: *mut H2FrameParser) {
-    unsafe { H2FrameParser::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| H2FrameParser::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || H2FrameParser::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, H2FrameParser::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__altsvc(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::altsvc(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::altsvc(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getBufferSize(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_buffer_size(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_buffer_size(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__detachFromJS(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::detach_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::detach_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__emitAbortToAllStreams(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::emit_abort_to_all_streams(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::emit_abort_to_all_streams(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__emitErrorToAllStreams(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::emit_error_to_all_streams(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::emit_error_to_all_streams(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__flushFromJS(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::flush_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::flush_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__forEachStream(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::for_each_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::for_each_stream(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getCurrentState(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_current_state(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_current_state(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getEndAfterHeaders(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_end_after_headers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_end_after_headers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getNextStream(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_next_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_next_stream(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getStreamContext(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_stream_context(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_stream_context(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__getStreamState(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::get_stream_state(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::get_stream_state(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__goaway(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::goaway(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::goaway(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__hasNativeRead(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::has_native_read(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::has_native_read(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__isStreamAborted(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::is_stream_aborted(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::is_stream_aborted(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__noTrailers(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::no_trailers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::no_trailers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__origin(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::origin(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::origin(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__ping(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::ping(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::ping(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__read(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::read(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::read(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__request(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::request(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::request(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__rstStream(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::rst_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::rst_stream(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__sendTrailers(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::send_trailers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::send_trailers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__setLocalWindowSize(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::set_local_window_size(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::set_local_window_size(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__setNativeSocketFromJS(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::set_native_socket_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::set_native_socket_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__setNextStreamID(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::set_next_stream_id(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::set_next_stream_id(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__setStreamContext(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::set_stream_context(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::set_stream_context(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__setStreamPriority(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::set_stream_priority(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::set_stream_priority(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__updateSettings(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::update_settings(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::update_settings(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn H2FrameParserPrototype__writeStream(this: *mut H2FrameParser, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { H2FrameParser::write_stream(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| H2FrameParser::write_stream(t, g, c))
 }
 
 pub mod js_H2FrameParser {
@@ -5321,13 +4631,12 @@ pub static HTMLBundle__ZigStructSize: usize = core::mem::size_of::<HTMLBundle>()
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLBundleClass__finalize(this: *mut HTMLBundle) {
-    unsafe { HTMLBundle::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| HTMLBundle::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLBundlePrototype__getIndex(this: *mut HTMLBundle, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTMLBundle::get_index(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTMLBundle::get_index(t, g))
 }
 
 pub mod js_HTMLBundle {
@@ -5382,35 +4691,27 @@ pub static HTMLRewriter__ZigStructSize: usize = core::mem::size_of::<HTMLRewrite
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLRewriterClass__finalize(this: *mut HTMLRewriter) {
-    unsafe { HTMLRewriter::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| HTMLRewriter::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLRewriterClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || HTMLRewriter::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, HTMLRewriter::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLRewriterPrototype__on(this: *mut HTMLRewriter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTMLRewriter::on(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTMLRewriter::on(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLRewriterPrototype__onDocument(this: *mut HTMLRewriter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTMLRewriter::on_document(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTMLRewriter::on_document(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTMLRewriterPrototype__transform(this: *mut HTMLRewriter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTMLRewriter::transform(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTMLRewriter::transform(t, g, c))
 }
 
 pub mod js_HTMLRewriter {
@@ -5455,150 +4756,117 @@ pub use crate::server::HTTPSServer as HTTPSServer;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServer__memoryCost(this: *mut HTTPSServer) -> usize {
-    unsafe { HTTPSServer::memory_cost(&*this) }
+    HTTPSServer::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerClass__finalize(this: *mut HTTPSServer) {
-    unsafe { HTTPSServer::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| HTTPSServer::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__dispose(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getAddress(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__closeIdleConnections(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::close_idle_connections(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::close_idle_connections(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getDevelopment(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_development(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_development(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doFetch(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_fetch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_fetch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getHostname(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getId(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_id(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getPendingRequests(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_pending_requests(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_pending_requests(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getPendingWebSockets(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_pending_web_sockets(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_pending_web_sockets(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getPort(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getProtocol(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doPublish(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doRef(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doReload(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doRequestIP(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_request_ip(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_request_ip(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doStop(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doSubscriberCount(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_subscriber_count(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_subscriber_count(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doTimeout(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doUnref(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__doUpgrade(this: *mut HTTPSServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::do_upgrade(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPSServer::do_upgrade(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPSServerPrototype__getURL(this: *mut HTTPSServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPSServer::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPSServer::get_url(t, g))
 }
 
 pub mod js_HTTPSServer {
@@ -5694,150 +4962,117 @@ pub use crate::server::HTTPServer as HTTPServer;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServer__memoryCost(this: *mut HTTPServer) -> usize {
-    unsafe { HTTPServer::memory_cost(&*this) }
+    HTTPServer::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerClass__finalize(this: *mut HTTPServer) {
-    unsafe { HTTPServer::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| HTTPServer::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__dispose(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getAddress(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__closeIdleConnections(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::close_idle_connections(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::close_idle_connections(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getDevelopment(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_development(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_development(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doFetch(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_fetch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_fetch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getHostname(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getId(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_id(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_id(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getPendingRequests(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_pending_requests(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_pending_requests(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getPendingWebSockets(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_pending_web_sockets(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_pending_web_sockets(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getPort(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getProtocol(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doPublish(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doRef(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doReload(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doRequestIP(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_request_ip(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_request_ip(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doStop(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doSubscriberCount(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_subscriber_count(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_subscriber_count(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doTimeout(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doUnref(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__doUpgrade(this: *mut HTTPServer, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::do_upgrade(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| HTTPServer::do_upgrade(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn HTTPServerPrototype__getURL(this: *mut HTTPServer, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { HTTPServer::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| HTTPServer::get_url(t, g))
 }
 
 pub mod js_HTTPServer {
@@ -5933,190 +5168,142 @@ pub use crate::image::image_body::Image as Image;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Image__estimatedSize(this: *mut Image) -> usize {
-    unsafe { Image::estimated_size(&*this) }
+    Image::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__finalize(this: *mut Image) {
-    unsafe { Image::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Image::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Image::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, Image::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFormatAvif(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_format_avif(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_format_avif(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doBlob(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_blob(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_blob(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doBuffer(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doBytes(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_bytes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_bytes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doDataUrl(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_data_url(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_data_url(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFlip(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_flip(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_flip(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFlop(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_flop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_flop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFormatHeic(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_format_heic(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_format_heic(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__getHeight(this: *mut Image, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::get_height(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Image::get_height(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFormatJpeg(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_format_jpeg(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_format_jpeg(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doMetadata(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_metadata(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_metadata(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doModulate(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_modulate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_modulate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doPlaceholder(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_placeholder(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_placeholder(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFormatPng(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_format_png(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_format_png(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doResize(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_resize(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_resize(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doRotate(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_rotate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_rotate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doToBase64(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_to_base64(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_to_base64(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doFormatWebp(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_format_webp(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_format_webp(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__getWidth(this: *mut Image, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::get_width(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Image::get_width(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImagePrototype__doWrite(this: *mut Image, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Image::do_write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Image::do_write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__getBackend(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || Image::get_backend(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| Image::get_backend(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__setBackend(global: *mut JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || Image::set_backend(global, this_value, value, prop))
+    host_fn::host_fn_static_setter(global, this_value, value, prop, |g, t, v, p| Image::set_backend(g, t, v, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__clipboardChangeCount(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Image::clipboard_change_count(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Image::clipboard_change_count(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__fromClipboard(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Image::from_clipboard(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Image::from_clipboard(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImageClass__hasClipboardImage(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Image::has_clipboard_image(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Image::has_clipboard_image(g, c))
 }
 
 pub mod js_Image {
@@ -6173,55 +5360,42 @@ pub static Immediate__ZigStructSize: usize = core::mem::size_of::<Immediate>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediateClass__finalize(this: *mut Immediate) {
-    unsafe { Immediate::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Immediate::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediateClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Immediate::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Immediate::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__getDestroyed(this: *mut Immediate, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::get_destroyed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Immediate::get_destroyed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__dispose(this: *mut Immediate, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Immediate::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__toPrimitive(this: *mut Immediate, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::to_primitive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Immediate::to_primitive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__hasRef(this: *mut Immediate, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::has_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Immediate::has_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__doRef(this: *mut Immediate, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Immediate::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ImmediatePrototype__doUnref(this: *mut Immediate, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Immediate::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Immediate::do_unref(t, g, c))
 }
 
 pub mod js_Immediate {
@@ -6289,85 +5463,67 @@ pub static Listener__ZigStructSize: usize = core::mem::size_of::<Listener>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerClass__finalize(this: *mut Listener) {
-    unsafe { Listener::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Listener::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__dispose(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getData(this: *mut Listener, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::get_data(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Listener::get_data(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__setData(this: *mut Listener, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Listener::set_data(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Listener::set_data(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getFD(this: *mut Listener, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::get_fd(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Listener::get_fd(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getsockname(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::getsockname(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::getsockname(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getHostname(this: *mut Listener, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Listener::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getPort(this: *mut Listener, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Listener::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__ref(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::r#ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::r#ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__reload(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__stop(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::stop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::stop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__getUnix(this: *mut Listener, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::get_unix(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Listener::get_unix(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ListenerPrototype__unref(this: *mut Listener, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Listener::unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Listener::unref(t, g, c))
 }
 
 pub mod js_Listener {
@@ -6433,47 +5589,37 @@ pub static MD4__ZigStructSize: usize = core::mem::size_of::<MD4>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Class__finalize(this: *mut MD4) {
-    unsafe { MD4::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| MD4::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || MD4::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, MD4::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Prototype__getByteLength(this: *mut MD4, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD4::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MD4::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Prototype__digest(this: *mut MD4, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD4::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MD4::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Prototype__update(this: *mut MD4, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD4::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MD4::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || MD4::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| MD4::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD4Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || MD4::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| MD4::hash(g, c))
 }
 
 pub mod js_MD4 {
@@ -6521,47 +5667,37 @@ pub static MD5__ZigStructSize: usize = core::mem::size_of::<MD5>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Class__finalize(this: *mut MD5) {
-    unsafe { MD5::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| MD5::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || MD5::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, MD5::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Prototype__getByteLength(this: *mut MD5, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD5::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MD5::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Prototype__digest(this: *mut MD5, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD5::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MD5::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Prototype__update(this: *mut MD5, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MD5::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MD5::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || MD5::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| MD5::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MD5Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || MD5::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| MD5::hash(g, c))
 }
 
 pub mod js_MD5 {
@@ -6609,49 +5745,42 @@ pub static MatchedRoute__ZigStructSize: usize = core::mem::size_of::<MatchedRout
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRouteClass__finalize(this: *mut MatchedRoute) {
-    unsafe { MatchedRoute::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| MatchedRoute::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getFilePath(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_file_path(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_file_path(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getKind(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_kind(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_kind(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getName(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_name(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_name(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getParams(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_params(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_params(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getPathname(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_pathname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_pathname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getQuery(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_query(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_query(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MatchedRoutePrototype__getScriptSrc(this: *mut MatchedRoute, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MatchedRoute::get_script_src(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MatchedRoute::get_script_src(t, g))
 }
 
 pub mod js_MatchedRoute {
@@ -6772,78 +5901,62 @@ pub static MySQLConnection__ZigStructSize: usize = core::mem::size_of::<MySQLCon
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionClass__finalize(this: *mut MySQLConnection) {
-    unsafe { MySQLConnection::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| MySQLConnection::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || MySQLConnection::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, MySQLConnection::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__doClose(this: *mut MySQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::do_close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLConnection::do_close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__getConnected(this: *mut MySQLConnection, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::get_connected(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| MySQLConnection::get_connected(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__doFlush(this: *mut MySQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::do_flush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLConnection::do_flush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__getOnClose(this: *mut MySQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::get_on_close(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| MySQLConnection::get_on_close(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__setOnClose(this: *mut MySQLConnection, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { MySQLConnection::set_on_close(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| MySQLConnection::set_on_close(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__getOnConnect(this: *mut MySQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::get_on_connect(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| MySQLConnection::get_on_connect(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__setOnConnect(this: *mut MySQLConnection, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { MySQLConnection::set_on_connect(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| MySQLConnection::set_on_connect(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__getQueries(this: *mut MySQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::get_queries(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| MySQLConnection::get_queries(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__doRef(this: *mut MySQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLConnection::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLConnectionPrototype__doUnref(this: *mut MySQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLConnection::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLConnection::do_unref(t, g, c))
 }
 
 pub mod js_MySQLConnection {
@@ -6919,54 +6032,42 @@ pub use bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery as MySQLQuery;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQuery__estimatedSize(this: *mut MySQLQuery) -> usize {
-    unsafe { MySQLQuery::estimated_size(&*this) }
+    MySQLQuery::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryClass__finalize(this: *mut MySQLQuery) {
-    unsafe { MySQLQuery::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| MySQLQuery::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || MySQLQuery::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, MySQLQuery::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryPrototype__doCancel(this: *mut MySQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLQuery::do_cancel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLQuery::do_cancel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryPrototype__doDone(this: *mut MySQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLQuery::do_done(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLQuery::do_done(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryPrototype__doRun(this: *mut MySQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLQuery::do_run(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLQuery::do_run(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryPrototype__setModeFromJS(this: *mut MySQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLQuery::set_mode_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLQuery::set_mode_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MySQLQueryPrototype__setPendingValueFromJS(this: *mut MySQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { MySQLQuery::set_pending_value_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| MySQLQuery::set_pending_value_from_js(t, g, c))
 }
 
 pub mod js_MySQLQuery {
@@ -7053,73 +6154,57 @@ pub use crate::node::native_brotli_impl::NativeBrotli as NativeBrotli;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotli__estimatedSize(this: *mut NativeBrotli) -> usize {
-    unsafe { NativeBrotli::estimated_size(&*this) }
+    NativeBrotli::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliClass__finalize(this: *mut NativeBrotli) {
-    unsafe { NativeBrotli::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| NativeBrotli::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || NativeBrotli::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, NativeBrotli::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__close(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__init(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::init(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::init(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__getOnError(this: *mut NativeBrotli, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::get_on_error(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NativeBrotli::get_on_error(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__setOnError(this: *mut NativeBrotli, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NativeBrotli::set_on_error(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NativeBrotli::set_on_error(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__params(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::params(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::params(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__reset(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::reset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::reset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__write(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeBrotliPrototype__writeSync(this: *mut NativeBrotli, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeBrotli::write_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeBrotli::write_sync(t, g, c))
 }
 
 pub mod js_NativeBrotli {
@@ -7195,73 +6280,57 @@ pub use crate::node::native_zlib_impl::NativeZlib as NativeZlib;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlib__estimatedSize(this: *mut NativeZlib) -> usize {
-    unsafe { NativeZlib::estimated_size(&*this) }
+    NativeZlib::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibClass__finalize(this: *mut NativeZlib) {
-    unsafe { NativeZlib::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| NativeZlib::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || NativeZlib::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, NativeZlib::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__close(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__init(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::init(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::init(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__getOnError(this: *mut NativeZlib, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::get_on_error(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NativeZlib::get_on_error(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__setOnError(this: *mut NativeZlib, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NativeZlib::set_on_error(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NativeZlib::set_on_error(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__params(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::params(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::params(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__reset(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::reset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::reset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__write(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZlibPrototype__writeSync(this: *mut NativeZlib, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZlib::write_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZlib::write_sync(t, g, c))
 }
 
 pub mod js_NativeZlib {
@@ -7337,73 +6406,57 @@ pub use crate::node::native_zstd_impl::NativeZstd as NativeZstd;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstd__estimatedSize(this: *mut NativeZstd) -> usize {
-    unsafe { NativeZstd::estimated_size(&*this) }
+    NativeZstd::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdClass__finalize(this: *mut NativeZstd) {
-    unsafe { NativeZstd::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| NativeZstd::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || NativeZstd::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, NativeZstd::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__close(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__init(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::init(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::init(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__getOnError(this: *mut NativeZstd, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::get_on_error(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NativeZstd::get_on_error(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__setOnError(this: *mut NativeZstd, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NativeZstd::set_on_error(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NativeZstd::set_on_error(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__params(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::params(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::params(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__reset(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::reset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::reset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__write(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NativeZstdPrototype__writeSync(this: *mut NativeZstd, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NativeZstd::write_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NativeZstd::write_sync(t, g, c))
 }
 
 pub mod js_NativeZstd {
@@ -7482,195 +6535,152 @@ pub static NodeHTTPResponse__ZigStructSize: usize = core::mem::size_of::<NodeHTT
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponseClass__finalize(this: *mut NodeHTTPResponse) {
-    unsafe { NodeHTTPResponse::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| NodeHTTPResponse::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__abort(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::abort(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::abort(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getAborted(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_aborted(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_aborted(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getBufferedAmount(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_buffered_amount(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_buffered_amount(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__cork(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::cork(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::cork(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__drainRequestBody(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::drain_request_body(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::drain_request_body(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__dumpRequestBody(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::dump_request_body(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| NodeHTTPResponse::dump_request_body(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__end(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::end(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::end(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getEnded(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_ended(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_ended(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getFinished(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_finished(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_finished(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getFlags(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_flags(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_flags(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__flushHeaders(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::flush_headers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::flush_headers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getBytesWritten(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_bytes_written(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::get_bytes_written(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getHasBody(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_has_body(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_has_body(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getHasCustomOnData(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_has_custom_on_data(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_has_custom_on_data(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__setHasCustomOnData(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NodeHTTPResponse::set_has_custom_on_data(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| NodeHTTPResponse::set_has_custom_on_data(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getOnAbort(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_on_abort(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NodeHTTPResponse::get_on_abort(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__setOnAbort(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NodeHTTPResponse::set_on_abort(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NodeHTTPResponse::set_on_abort(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getOnData(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_on_data(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NodeHTTPResponse::get_on_data(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__setOnData(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NodeHTTPResponse::set_on_data(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NodeHTTPResponse::set_on_data(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getOnWritable(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_on_writable(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| NodeHTTPResponse::get_on_writable(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__setOnWritable(this: *mut NodeHTTPResponse, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { NodeHTTPResponse::set_on_writable(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| NodeHTTPResponse::set_on_writable(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__doPause(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::do_pause(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| NodeHTTPResponse::do_pause(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__jsRef(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::js_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::js_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__doResume(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::do_resume(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::do_resume(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__jsUnref(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::js_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::js_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__getUpgraded(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::get_upgraded(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeHTTPResponse::get_upgraded(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__write(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__writeContinue(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::write_continue(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::write_continue(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeHTTPResponsePrototype__writeHead(this: *mut NodeHTTPResponse, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeHTTPResponse::write_head(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeHTTPResponse::write_head(t, g, c))
 }
 
 pub mod js_NodeHTTPResponse {
@@ -7747,628 +6757,452 @@ pub static NodeJSFS__ZigStructSize: usize = core::mem::size_of::<NodeJSFS>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSClass__finalize(this: *mut NodeJSFS) {
-    unsafe { NodeJSFS::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| NodeJSFS::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__access(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::access(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::access(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__accessSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::access_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::access_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__appendFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::append_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::append_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__appendFileSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::append_file_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::append_file_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__chmod(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::chmod(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::chmod(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__chmodSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::chmod_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::chmod_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__chown(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::chown(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::chown(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__chownSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::chown_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::chown_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__close(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__closeSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::close_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::close_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__copyFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::copy_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::copy_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__copyFileSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::copy_file_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::copy_file_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__cp(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::cp(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::cp(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__cpSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::cp_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::cp_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__getDirent(this: *mut NodeJSFS, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::get_dirent(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeJSFS::get_dirent(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__exists(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::exists(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::exists(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__existsSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::exists_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::exists_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fchmod(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fchmod(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fchmod(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fchmodSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fchmod_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fchmod_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fchown(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fchown(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fchown(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fchownSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fchown_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fchown_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fdatasync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fdatasync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fdatasync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fdatasyncSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fdatasync_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fdatasync_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fstat(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fstat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fstat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fstatSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fstat_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fstat_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fsync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fsync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fsync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__fsyncSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::fsync_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::fsync_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__ftruncate(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::ftruncate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::ftruncate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__ftruncateSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::ftruncate_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::ftruncate_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__futimes(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::futimes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::futimes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__futimesSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::futimes_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::futimes_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lchmod(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lchmod(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lchmod(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lchmodSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lchmod_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lchmod_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lchown(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lchown(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lchown(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lchownSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lchown_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lchown_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__link(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::link(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::link(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__linkSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::link_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::link_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lstat(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lstat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lstat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lstatSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lstat_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lstat_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lutimes(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lutimes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lutimes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__lutimesSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::lutimes_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::lutimes_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__mkdir(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::mkdir(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::mkdir(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__mkdirSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::mkdir_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::mkdir_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__mkdtemp(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::mkdtemp(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::mkdtemp(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__mkdtempSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::mkdtemp_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::mkdtemp_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__open(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::open(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::open(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__openSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::open_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::open_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__read(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::read(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::read(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readdir(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readdir(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readdir(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readdirSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readdir_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readdir_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::read_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::read_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readFileSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::read_file_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::read_file_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readlink(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readlinkSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readlink_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readlink_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::read_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::read_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readv(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readv(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readv(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__readvSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::readv_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::readv_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__realpath(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::realpath(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::realpath(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__realpathNative(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::realpath_native(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::realpath_native(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__realpathNativeSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::realpath_native_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::realpath_native_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__realpathSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::realpath_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::realpath_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__rename(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rename(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rename(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__renameSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rename_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rename_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__rm(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rm(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rm(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__rmdir(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rmdir(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rmdir(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__rmdirSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rmdir_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rmdir_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__rmSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::rm_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::rm_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__stat(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::stat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::stat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__statfs(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::statfs(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::statfs(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__statfsSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::statfs_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::statfs_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__getStats(this: *mut NodeJSFS, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::get_stats(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| NodeJSFS::get_stats(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__statSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::stat_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::stat_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__symlink(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::symlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::symlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__symlinkSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::symlink_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::symlink_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__truncate(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::truncate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::truncate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__truncateSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::truncate_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::truncate_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__unlink(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::unlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::unlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__unlinkSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::unlink_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::unlink_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__unwatchFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::unwatch_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::unwatch_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__utimes(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::utimes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::utimes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__utimesSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::utimes_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::utimes_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__watch(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::watch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::watch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__watchFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::watch_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::watch_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__write(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__writeFile(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::write_file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::write_file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__writeFileSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::write_file_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::write_file_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__writeSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::write_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::write_sync(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__writev(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::writev(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::writev(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn NodeJSFSPrototype__writevSync(this: *mut NodeJSFS, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { NodeJSFS::writev_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| NodeJSFS::writev_sync(t, g, c))
 }
 
 pub mod js_NodeJSFS {
@@ -8411,38 +7245,32 @@ pub use crate::shell::parsed_shell_script::ParsedShellScript as ParsedShellScrip
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScript__memoryCost(this: *mut ParsedShellScript) -> usize {
-    unsafe { ParsedShellScript::memory_cost(&*this) }
+    ParsedShellScript::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScript__estimatedSize(this: *mut ParsedShellScript) -> usize {
-    unsafe { ParsedShellScript::estimated_size(&*this) }
+    ParsedShellScript::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScriptClass__finalize(this: *mut ParsedShellScript) {
-    unsafe { ParsedShellScript::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ParsedShellScript::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScriptPrototype__setCwd(this: *mut ParsedShellScript, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ParsedShellScript::set_cwd(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ParsedShellScript::set_cwd(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScriptPrototype__setEnv(this: *mut ParsedShellScript, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ParsedShellScript::set_env(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ParsedShellScript::set_env(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ParsedShellScriptPrototype__setQuiet(this: *mut ParsedShellScript, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ParsedShellScript::set_quiet(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ParsedShellScript::set_quiet(t, g, c))
 }
 
 pub mod js_ParsedShellScript {
@@ -8488,83 +7316,67 @@ pub static PostgresSQLConnection__ZigStructSize: usize = core::mem::size_of::<Po
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnection__hasPendingActivity(this: *mut PostgresSQLConnection) -> bool {
-    unsafe { PostgresSQLConnection::has_pending_activity(&*this) }
+    PostgresSQLConnection::has_pending_activity(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionClass__finalize(this: *mut PostgresSQLConnection) {
-    unsafe { PostgresSQLConnection::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| PostgresSQLConnection::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || PostgresSQLConnection::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, PostgresSQLConnection::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__doClose(this: *mut PostgresSQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::do_close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLConnection::do_close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__getConnected(this: *mut PostgresSQLConnection, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::get_connected(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| PostgresSQLConnection::get_connected(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__doFlush(this: *mut PostgresSQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::do_flush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLConnection::do_flush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__getOnClose(this: *mut PostgresSQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::get_on_close(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| PostgresSQLConnection::get_on_close(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__setOnClose(this: *mut PostgresSQLConnection, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { PostgresSQLConnection::set_on_close(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| PostgresSQLConnection::set_on_close(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__getOnConnect(this: *mut PostgresSQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::get_on_connect(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| PostgresSQLConnection::get_on_connect(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__setOnConnect(this: *mut PostgresSQLConnection, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { PostgresSQLConnection::set_on_connect(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| PostgresSQLConnection::set_on_connect(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__getQueries(this: *mut PostgresSQLConnection, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::get_queries(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| PostgresSQLConnection::get_queries(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__doRef(this: *mut PostgresSQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLConnection::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLConnectionPrototype__doUnref(this: *mut PostgresSQLConnection, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLConnection::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLConnection::do_unref(t, g, c))
 }
 
 pub mod js_PostgresSQLConnection {
@@ -8640,54 +7452,42 @@ pub use bun_sql_jsc::postgres::PostgresSQLQuery as PostgresSQLQuery;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQuery__estimatedSize(this: *mut PostgresSQLQuery) -> usize {
-    unsafe { PostgresSQLQuery::estimated_size(&*this) }
+    PostgresSQLQuery::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryClass__finalize(this: *mut PostgresSQLQuery) {
-    unsafe { PostgresSQLQuery::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| PostgresSQLQuery::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || PostgresSQLQuery::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, PostgresSQLQuery::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryPrototype__doCancel(this: *mut PostgresSQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLQuery::do_cancel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLQuery::do_cancel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryPrototype__doDone(this: *mut PostgresSQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLQuery::do_done(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLQuery::do_done(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryPrototype__doRun(this: *mut PostgresSQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLQuery::do_run(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLQuery::do_run(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryPrototype__setModeFromJS(this: *mut PostgresSQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLQuery::set_mode_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLQuery::set_mode_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PostgresSQLQueryPrototype__setPendingValueFromJS(this: *mut PostgresSQLQuery, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { PostgresSQLQuery::set_pending_value_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| PostgresSQLQuery::set_pending_value_from_js(t, g, c))
 }
 
 pub mod js_PostgresSQLQuery {
@@ -8774,1196 +7574,862 @@ pub use crate::valkey_jsc::valkey::RedisClient as RedisClient;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClient__memoryCost(this: *mut RedisClient) -> usize {
-    unsafe { RedisClient::memory_cost(&*this) }
+    RedisClient::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientClass__finalize(this: *mut RedisClient) {
-    unsafe { RedisClient::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| RedisClient::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || RedisClient::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, RedisClient::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__append(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::append(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::append(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__bitcount(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::bitcount(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::bitcount(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__blmove(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::blmove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::blmove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__blmpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::blmpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::blmpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__blpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::blpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::blpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__brpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::brpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::brpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__brpoplpush(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::brpoplpush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::brpoplpush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getBufferedAmount(this: *mut RedisClient, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get_buffered_amount(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| RedisClient::get_buffered_amount(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__bzmpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::bzmpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::bzmpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__bzpopmax(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::bzpopmax(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::bzpopmax(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__bzpopmin(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::bzpopmin(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::bzpopmin(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__jsDisconnect(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::js_disconnect(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::js_disconnect(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__jsConnect(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::js_connect(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::js_connect(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getConnected(this: *mut RedisClient, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get_connected(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| RedisClient::get_connected(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__copy(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::copy(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::copy(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__decr(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::decr(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::decr(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__decrby(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::decrby(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::decrby(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__del(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::del(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::del(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__dump(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::dump(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::dump(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__duplicate(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::duplicate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::duplicate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__exists(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::exists(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::exists(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__expire(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::expire(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::expire(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__expireat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::expireat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::expireat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__expiretime(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::expiretime(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::expiretime(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__get(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::get(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getbit(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::getbit(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::getbit(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getBuffer(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::get_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getdel(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::getdel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::getdel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::getex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::getex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getrange(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::getrange(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::getrange(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getset(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::getset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::getset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hdel(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hdel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hdel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hexists(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hexists(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hexists(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hexpire(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hexpire(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hexpire(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hexpireat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hexpireat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hexpireat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hexpiretime(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hexpiretime(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hexpiretime(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hget(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hget(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hget(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hgetall(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hgetall(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hgetall(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hgetdel(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hgetdel(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hgetdel(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hgetex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hgetex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hgetex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hincrby(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hincrby(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hincrby(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hincrbyfloat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hincrbyfloat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hincrbyfloat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hkeys(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hkeys(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hkeys(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hlen(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hlen(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hlen(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hmget(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hmget(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hmget(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hmset(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hmset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hmset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hpersist(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hpersist(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hpersist(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hpexpire(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hpexpire(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hpexpire(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hpexpireat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hpexpireat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hpexpireat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hpexpiretime(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hpexpiretime(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hpexpiretime(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hpttl(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hpttl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hpttl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hrandfield(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hrandfield(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hrandfield(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hscan(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hscan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hscan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hset(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hsetex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hsetex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hsetex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hsetnx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hsetnx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hsetnx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hstrlen(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hstrlen(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hstrlen(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__httl(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::httl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::httl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__hvals(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::hvals(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::hvals(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__incr(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::incr(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::incr(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__incrby(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::incrby(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::incrby(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__incrbyfloat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::incrbyfloat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::incrbyfloat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__keys(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::keys(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::keys(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lindex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lindex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lindex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__linsert(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::linsert(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::linsert(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__llen(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::llen(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::llen(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lmove(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lmove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lmove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lmpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lmpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lmpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lpos(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lpos(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lpos(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lpush(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lpush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lpush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lpushx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lpushx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lpushx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lrange(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lrange(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lrange(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lrem(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lrem(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lrem(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__lset(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::lset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::lset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__ltrim(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::ltrim(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::ltrim(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__mget(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::mget(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::mget(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__mset(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::mset(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::mset(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__msetnx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::msetnx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::msetnx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getOnClose(this: *mut RedisClient, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get_on_close(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| RedisClient::get_on_close(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setOnClose(this: *mut RedisClient, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { RedisClient::set_on_close(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| RedisClient::set_on_close(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__getOnConnect(this: *mut RedisClient, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::get_on_connect(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| RedisClient::get_on_connect(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setOnConnect(this: *mut RedisClient, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { RedisClient::set_on_connect(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| RedisClient::set_on_connect(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__persist(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::persist(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::persist(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pexpire(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pexpire(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pexpire(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pexpireat(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pexpireat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pexpireat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pexpiretime(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pexpiretime(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pexpiretime(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pfadd(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pfadd(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pfadd(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__ping(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::ping(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::ping(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__psetex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::psetex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::psetex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__psubscribe(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::psubscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::psubscribe(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pttl(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pttl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pttl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__publish(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__pubsub(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::pubsub(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::pubsub(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__punsubscribe(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::punsubscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::punsubscribe(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__randomkey(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::randomkey(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::randomkey(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__rename(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::rename(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::rename(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__renamenx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::renamenx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::renamenx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__rpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::rpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::rpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__rpoplpush(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::rpoplpush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::rpoplpush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__rpush(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::rpush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::rpush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__rpushx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::rpushx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::rpushx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sadd(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sadd(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sadd(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__scan(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::scan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::scan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__scard(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::scard(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::scard(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__script(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::script(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::script(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sdiff(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sdiff(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sdiff(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sdiffstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sdiffstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sdiffstore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__select(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::select(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::select(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__jsSend(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::js_send(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::js_send(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__set(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::set(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::set(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setbit(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::setbit(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::setbit(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::setex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::setex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setnx(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::setnx(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::setnx(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__setrange(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::setrange(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::setrange(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sinter(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sinter(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sinter(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sintercard(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sintercard(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sintercard(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sinterstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sinterstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sinterstore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sismember(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sismember(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sismember(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__smembers(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::smembers(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::smembers(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__smismember(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::smismember(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::smismember(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__smove(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::smove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::smove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__spop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::spop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::spop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__spublish(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::spublish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::spublish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__srandmember(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::srandmember(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::srandmember(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__srem(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::srem(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::srem(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sscan(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sscan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sscan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__strlen(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::strlen(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::strlen(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__subscribe(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::subscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::subscribe(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__substr(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::substr(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::substr(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sunion(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sunion(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sunion(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__sunionstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::sunionstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::sunionstore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__touch(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::touch(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::touch(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__ttl(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::ttl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::ttl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__type(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::r#type(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::r#type(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__unlink(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::unlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::unlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__unsubscribe(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::unsubscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::unsubscribe(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zadd(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zadd(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zadd(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zcard(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zcard(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zcard(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zcount(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zcount(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zcount(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zdiff(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zdiff(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zdiff(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zdiffstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zdiffstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zdiffstore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zincrby(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zincrby(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zincrby(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zinter(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zinter(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zinter(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zintercard(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zintercard(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zintercard(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zinterstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zinterstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zinterstore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zlexcount(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zlexcount(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zlexcount(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zmpop(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zmpop(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zmpop(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zmscore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zmscore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zmscore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zpopmax(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zpopmax(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zpopmax(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zpopmin(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zpopmin(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zpopmin(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrandmember(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrandmember(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrandmember(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrange(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrange(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrange(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrangebylex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrangebylex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrangebylex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrangebyscore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrangebyscore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrangebyscore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrangestore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrangestore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrangestore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrank(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrank(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrank(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrem(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrem(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrem(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zremrangebylex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zremrangebylex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zremrangebylex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zremrangebyrank(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zremrangebyrank(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zremrangebyrank(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zremrangebyscore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zremrangebyscore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zremrangebyscore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrevrange(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrevrange(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrevrange(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrevrangebylex(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrevrangebylex(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrevrangebylex(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrevrangebyscore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrevrangebyscore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrevrangebyscore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zrevrank(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zrevrank(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zrevrank(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zscan(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zscan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zscan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zscore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zscore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zscore(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zunion(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zunion(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zunion(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RedisClientPrototype__zunionstore(this: *mut RedisClient, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { RedisClient::zunionstore(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| RedisClient::zunionstore(t, g, c))
 }
 
 pub mod js_RedisClient {
@@ -10061,157 +8527,127 @@ pub use crate::webcore::request::Request as Request;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Request__memoryCost(this: *mut Request) -> usize {
-    unsafe { Request::memory_cost(&*this) }
+    Request::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Request__estimatedSize(this: *mut Request) -> usize {
-    unsafe { Request::estimated_size(&*this) }
+    Request::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestClass__finalize(this: *mut Request) {
-    unsafe { Request::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Request::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Request::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, Request::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getArrayBuffer(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_array_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_array_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getBlob(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_blob(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_blob(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getBody(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_body(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_body(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getBodyUsed(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_body_used(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_body_used(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getBytes(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_bytes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_bytes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getCache(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_cache(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_cache(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__doClone(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::do_clone(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::do_clone(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getCredentials(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_credentials(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_credentials(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getDestination(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_destination(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_destination(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getFormData(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_form_data(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_form_data(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getHeaders(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_headers(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_headers(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getIntegrity(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_integrity(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_integrity(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getJSON(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getMethod(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_method(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_method(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getMode(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_mode(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_mode(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getRedirect(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_redirect(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_redirect(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getReferrer(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_referrer(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_referrer(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getReferrerPolicy(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_referrer_policy(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_referrer_policy(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getSignal(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_signal(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_signal(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getText(this: *mut Request, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Request::get_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RequestPrototype__getUrl(this: *mut Request, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Request::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Request::get_url(t, g))
 }
 
 pub mod js_Request {
@@ -10309,89 +8745,72 @@ pub static ResolveMessage__ZigStructSize: usize = core::mem::size_of::<ResolveMe
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessageClass__finalize(this: *mut ResolveMessage) {
-    unsafe { ResolveMessage::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ResolveMessage::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessageClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || ResolveMessage::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, ResolveMessage::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__toPrimitive(this: *mut ResolveMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::to_primitive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResolveMessage::to_primitive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getCode(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_code(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_code(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getColumn(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_column(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_column(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getImportKind(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_import_kind(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_import_kind(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getLevel(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_level(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_level(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getLine(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_line(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_line(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getMessage(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_message(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_message(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getPosition(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_position(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_position(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getReferrer(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_referrer(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_referrer(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__getSpecifier(this: *mut ResolveMessage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::get_specifier(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResolveMessage::get_specifier(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__toJSON(this: *mut ResolveMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::to_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResolveMessage::to_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResolveMessagePrototype__toString(this: *mut ResolveMessage, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResolveMessage::to_string(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResolveMessage::to_string(t, g, c))
 }
 
 pub mod js_ResolveMessage {
@@ -10514,55 +8933,47 @@ pub static ResourceUsage__ZigStructSize: usize = core::mem::size_of::<ResourceUs
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsageClass__finalize(this: *mut ResourceUsage) {
-    unsafe { ResourceUsage::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ResourceUsage::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getContextSwitches(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_context_switches(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_context_switches(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getCPUTime(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_cpu_time(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_cpu_time(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getMaxRSS(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_max_rss(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_max_rss(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getMessages(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_messages(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_messages(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getOps(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_ops(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_ops(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getSharedMemorySize(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_shared_memory_size(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_shared_memory_size(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getSignalCount(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_signal_count(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_signal_count(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResourceUsagePrototype__getSwapCount(this: *mut ResourceUsage, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResourceUsage::get_swap_count(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ResourceUsage::get_swap_count(t, g))
 }
 
 pub mod js_ResourceUsage {
@@ -10636,143 +9047,112 @@ pub use crate::webcore::response::Response as Response;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Response__estimatedSize(this: *mut Response) -> usize {
-    unsafe { Response::estimated_size(&*this) }
+    Response::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponseClass__finalize(this: *mut Response) {
-    unsafe { Response::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Response::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponseClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Response::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, Response::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getArrayBuffer(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_array_buffer(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_array_buffer(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getBlob(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_blob(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_blob(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getBody(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_body(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_body(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getBodyUsed(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_body_used(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_body_used(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getBytes(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_bytes(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_bytes(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__doClone(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::do_clone(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::do_clone(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getFormData(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_form_data(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_form_data(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getHeaders(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_headers(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_headers(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getJSON(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getOK(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_ok(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_ok(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getRedirected(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_redirected(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_redirected(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getStatus(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_status(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_status(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getStatusText(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_status_text(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_status_text(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getText(this: *mut Response, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Response::get_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getResponseType(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_response_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_response_type(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponsePrototype__getURL(this: *mut Response, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Response::get_url(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Response::get_url(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponseClass__constructError(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Response::construct_error(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Response::construct_error(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponseClass__constructJSON(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Response::construct_json(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Response::construct_json(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResponseClass__constructRedirect(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || Response::construct_redirect(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| Response::construct_redirect(g, c))
 }
 
 pub mod js_Response {
@@ -10870,42 +9250,32 @@ pub static ResumableFetchSink__ZigStructSize: usize = core::mem::size_of::<Resum
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkClass__finalize(this: *mut ResumableFetchSink) {
-    unsafe { ResumableFetchSink::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ResumableFetchSink::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || ResumableFetchSink::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, ResumableFetchSink::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkPrototype__jsEnd(this: *mut ResumableFetchSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableFetchSink::js_end(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableFetchSink::js_end(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkPrototype__jsSetHandlers(this: *mut ResumableFetchSink, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableFetchSink::js_set_handlers(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ResumableFetchSink::js_set_handlers(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkPrototype__jsStart(this: *mut ResumableFetchSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableFetchSink::js_start(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableFetchSink::js_start(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableFetchSinkPrototype__jsWrite(this: *mut ResumableFetchSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableFetchSink::js_write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableFetchSink::js_write(t, g, c))
 }
 
 pub mod js_ResumableFetchSink {
@@ -10984,42 +9354,32 @@ pub static ResumableS3UploadSink__ZigStructSize: usize = core::mem::size_of::<Re
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkClass__finalize(this: *mut ResumableS3UploadSink) {
-    unsafe { ResumableS3UploadSink::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ResumableS3UploadSink::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || ResumableS3UploadSink::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, ResumableS3UploadSink::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkPrototype__jsEnd(this: *mut ResumableS3UploadSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableS3UploadSink::js_end(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableS3UploadSink::js_end(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkPrototype__jsSetHandlers(this: *mut ResumableS3UploadSink, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableS3UploadSink::js_set_handlers(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ResumableS3UploadSink::js_set_handlers(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkPrototype__jsStart(this: *mut ResumableS3UploadSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableS3UploadSink::js_start(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableS3UploadSink::js_start(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ResumableS3UploadSinkPrototype__jsWrite(this: *mut ResumableS3UploadSink, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ResumableS3UploadSink::js_write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ResumableS3UploadSink::js_write(t, g, c))
 }
 
 pub mod js_ResumableS3UploadSink {
@@ -11098,126 +9458,92 @@ pub static S3Client__ZigStructSize: usize = core::mem::size_of::<S3Client>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__finalize(this: *mut S3Client) {
-    unsafe { S3Client::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| S3Client::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || S3Client::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, S3Client::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__unlink(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::unlink(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::unlink(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__exists(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::exists(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::exists(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__file(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::file(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::file(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__listObjects(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::list_objects(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::list_objects(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__presign(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::presign(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::presign(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__size(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::size(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::size(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__stat(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::stat(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::stat(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientPrototype__write(this: *mut S3Client, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Client::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| S3Client::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticUnlink(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_unlink(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_unlink(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticExists(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_exists(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_exists(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticFile(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_file(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_file(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticListObjects(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_list_objects(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_list_objects(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticPresign(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_presign(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_presign(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticSize(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_size(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_size(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticStat(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_stat(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_stat(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3ClientClass__staticWrite(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || S3Client::static_write(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| S3Client::static_write(g, c))
 }
 
 pub mod js_S3Client {
@@ -11265,38 +9591,32 @@ pub static S3Stat__ZigStructSize: usize = core::mem::size_of::<S3Stat>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatClass__finalize(this: *mut S3Stat) {
-    unsafe { S3Stat::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| S3Stat::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || S3Stat::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, S3Stat::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatPrototype__getEtag(this: *mut S3Stat, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Stat::get_etag(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| S3Stat::get_etag(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatPrototype__getLastModified(this: *mut S3Stat, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Stat::get_last_modified(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| S3Stat::get_last_modified(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatPrototype__getSize(this: *mut S3Stat, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Stat::get_size(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| S3Stat::get_size(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn S3StatPrototype__getContentType(this: *mut S3Stat, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { S3Stat::get_content_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| S3Stat::get_content_type(t, g))
 }
 
 pub mod js_S3Stat {
@@ -11386,47 +9706,37 @@ pub static SHA1__ZigStructSize: usize = core::mem::size_of::<SHA1>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Class__finalize(this: *mut SHA1) {
-    unsafe { SHA1::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA1::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA1::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA1::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Prototype__getByteLength(this: *mut SHA1, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA1::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA1::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Prototype__digest(this: *mut SHA1, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA1::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA1::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Prototype__update(this: *mut SHA1, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA1::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA1::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA1::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA1::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA1Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA1::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA1::hash(g, c))
 }
 
 pub mod js_SHA1 {
@@ -11474,47 +9784,37 @@ pub static SHA224__ZigStructSize: usize = core::mem::size_of::<SHA224>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Class__finalize(this: *mut SHA224) {
-    unsafe { SHA224::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA224::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA224::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA224::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Prototype__getByteLength(this: *mut SHA224, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA224::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA224::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Prototype__digest(this: *mut SHA224, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA224::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA224::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Prototype__update(this: *mut SHA224, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA224::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA224::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA224::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA224::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA224Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA224::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA224::hash(g, c))
 }
 
 pub mod js_SHA224 {
@@ -11562,47 +9862,37 @@ pub static SHA256__ZigStructSize: usize = core::mem::size_of::<SHA256>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Class__finalize(this: *mut SHA256) {
-    unsafe { SHA256::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA256::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA256::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA256::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Prototype__getByteLength(this: *mut SHA256, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA256::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA256::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Prototype__digest(this: *mut SHA256, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA256::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA256::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Prototype__update(this: *mut SHA256, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA256::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA256::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA256::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA256::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA256Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA256::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA256::hash(g, c))
 }
 
 pub mod js_SHA256 {
@@ -11650,47 +9940,37 @@ pub static SHA384__ZigStructSize: usize = core::mem::size_of::<SHA384>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Class__finalize(this: *mut SHA384) {
-    unsafe { SHA384::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA384::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA384::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA384::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Prototype__getByteLength(this: *mut SHA384, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA384::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA384::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Prototype__digest(this: *mut SHA384, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA384::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA384::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Prototype__update(this: *mut SHA384, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA384::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA384::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA384::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA384::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA384Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA384::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA384::hash(g, c))
 }
 
 pub mod js_SHA384 {
@@ -11738,47 +10018,37 @@ pub static SHA512__ZigStructSize: usize = core::mem::size_of::<SHA512>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Class__finalize(this: *mut SHA512) {
-    unsafe { SHA512::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA512::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA512::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA512::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Prototype__getByteLength(this: *mut SHA512, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA512::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Prototype__digest(this: *mut SHA512, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA512::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Prototype__update(this: *mut SHA512, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA512::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA512::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA512::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA512::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA512::hash(g, c))
 }
 
 pub mod js_SHA512 {
@@ -11826,47 +10096,37 @@ pub static SHA512_256__ZigStructSize: usize = core::mem::size_of::<SHA512_256>()
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Class__finalize(this: *mut SHA512_256) {
-    unsafe { SHA512_256::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SHA512_256::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Class__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SHA512_256::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SHA512_256::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Prototype__getByteLength(this: *mut SHA512_256, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512_256::get_byte_length(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SHA512_256::get_byte_length(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Prototype__digest(this: *mut SHA512_256, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512_256::digest(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA512_256::digest(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Prototype__update(this: *mut SHA512_256, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SHA512_256::update(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SHA512_256::update(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Class__getByteLengthStatic(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || SHA512_256::get_byte_length_static(global, this_value, prop))
+    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| SHA512_256::get_byte_length_static(g, t, p))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SHA512_256Class__hash(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SHA512_256::hash(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SHA512_256::hash(g, c))
 }
 
 pub mod js_SHA512_256 {
@@ -11914,92 +10174,72 @@ pub static ScopeFunctions__ZigStructSize: usize = core::mem::size_of::<ScopeFunc
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsClass__finalize(this: *mut ScopeFunctions) {
-    unsafe { ScopeFunctions::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ScopeFunctions::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getConcurrent(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_concurrent(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_concurrent(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnConcurrentIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_concurrent_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_concurrent_if(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnEach(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_each(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_each(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getFailing(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_failing(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_failing(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnFailingIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_failing_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_failing_if(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_if(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getOnly(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_only(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_only(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getSerial(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_serial(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_serial(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnSerialIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_serial_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_serial_if(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getSkip(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_skip(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_skip(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnSkipIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_skip_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_skip_if(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__getTodo(this: *mut ScopeFunctions, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::get_todo(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ScopeFunctions::get_todo(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScopeFunctionsPrototype__fnTodoIf(this: *mut ScopeFunctions, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ScopeFunctions::fn_todo_if(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ScopeFunctions::fn_todo_if(t, g, c))
 }
 
 pub mod js_ScopeFunctions {
@@ -12117,26 +10357,22 @@ pub use crate::api::bun_secure_context::SecureContext as SecureContext;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SecureContext__memoryCost(this: *mut SecureContext) -> usize {
-    unsafe { SecureContext::memory_cost(&*this) }
+    SecureContext::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SecureContextClass__finalize(this: *mut SecureContext) {
-    unsafe { SecureContext::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SecureContext::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SecureContextClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SecureContext::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SecureContext::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SecureContextClass__intern(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SecureContext::intern(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SecureContext::intern(g, c))
 }
 
 pub mod js_SecureContext {
@@ -12181,166 +10417,127 @@ pub use crate::server::server_web_socket::ServerWebSocket as ServerWebSocket;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocket__memoryCost(this: *mut ServerWebSocket) -> usize {
-    unsafe { ServerWebSocket::memory_cost(&*this) }
+    ServerWebSocket::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketClass__finalize(this: *mut ServerWebSocket) {
-    unsafe { ServerWebSocket::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ServerWebSocket::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || ServerWebSocket::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, ServerWebSocket::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getBinaryType(this: *mut ServerWebSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_binary_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ServerWebSocket::get_binary_type(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__setBinaryType(this: *mut ServerWebSocket, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { ServerWebSocket::set_binary_type(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| ServerWebSocket::set_binary_type(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__close(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::close(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ServerWebSocket::close(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__cork(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::cork(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ServerWebSocket::cork(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getData(this: *mut ServerWebSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_data(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ServerWebSocket::get_data(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__setData(this: *mut ServerWebSocket, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { ServerWebSocket::set_data(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| ServerWebSocket::set_data(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getBufferedAmount(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_buffered_amount(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::get_buffered_amount(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__isSubscribed(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::is_subscribed(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::is_subscribed(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__ping(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::ping(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::ping(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__pong(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::pong(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::pong(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__publish(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::publish(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::publish(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__publishBinary(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::publish_binary(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::publish_binary(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__publishText(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::publish_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::publish_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getReadyState(this: *mut ServerWebSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_ready_state(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ServerWebSocket::get_ready_state(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getRemoteAddress(this: *mut ServerWebSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_remote_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ServerWebSocket::get_remote_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__send(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::send(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::send(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__sendBinary(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::send_binary(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::send_binary(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__sendText(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::send_text(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::send_text(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__subscribe(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::subscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::subscribe(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__getSubscriptions(this: *mut ServerWebSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::get_subscriptions(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| ServerWebSocket::get_subscriptions(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__terminate(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame, js_this_value: JSValue) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::terminate(&mut *this, global, callframe, js_this_value) })
+    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ServerWebSocket::terminate(t, g, c, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ServerWebSocketPrototype__unsubscribe(this: *mut ServerWebSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ServerWebSocket::unsubscribe(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ServerWebSocket::unsubscribe(t, g, c))
 }
 
 pub mod js_ServerWebSocket {
@@ -12416,43 +10613,37 @@ pub use crate::shell::Interpreter as ShellInterpreter;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreter__memoryCost(this: *mut ShellInterpreter) -> usize {
-    unsafe { ShellInterpreter::memory_cost(&*this) }
+    ShellInterpreter::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreter__estimatedSize(this: *mut ShellInterpreter) -> usize {
-    unsafe { ShellInterpreter::estimated_size(&*this) }
+    ShellInterpreter::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreter__hasPendingActivity(this: *mut ShellInterpreter) -> bool {
-    unsafe { ShellInterpreter::has_pending_activity(&*this) }
+    ShellInterpreter::has_pending_activity(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreterClass__finalize(this: *mut ShellInterpreter) {
-    unsafe { ShellInterpreter::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| ShellInterpreter::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreterPrototype__isRunning(this: *mut ShellInterpreter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ShellInterpreter::is_running(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ShellInterpreter::is_running(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreterPrototype__runFromJS(this: *mut ShellInterpreter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ShellInterpreter::run_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ShellInterpreter::run_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ShellInterpreterPrototype__getStarted(this: *mut ShellInterpreter, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { ShellInterpreter::get_started(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| ShellInterpreter::get_started(t, g, c))
 }
 
 pub mod js_ShellInterpreter {
@@ -12515,70 +10706,57 @@ pub use crate::socket::socket_address::SocketAddress as SocketAddress;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddress__estimatedSize(this: *mut SocketAddress) -> usize {
-    unsafe { SocketAddress::estimated_size(&*this) }
+    SocketAddress::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressClass__finalize(this: *mut SocketAddress) {
-    unsafe { SocketAddress::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SocketAddress::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SocketAddress::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, SocketAddress::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__getAddress(this: *mut SocketAddress, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SocketAddress::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__getAddrFamily(this: *mut SocketAddress, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::get_addr_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SocketAddress::get_addr_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__getFamily(this: *mut SocketAddress, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::get_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SocketAddress::get_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__getFlowLabel(this: *mut SocketAddress, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::get_flow_label(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SocketAddress::get_flow_label(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__getPort(this: *mut SocketAddress, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SocketAddress::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressPrototype__toJSON(this: *mut SocketAddress, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SocketAddress::to_json(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SocketAddress::to_json(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressClass__isSocketAddress(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SocketAddress::is_socket_address(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SocketAddress::is_socket_address(g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SocketAddressClass__parse(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || SocketAddress::parse(global, callframe))
+    host_fn::host_fn_static(global, callframe, |g, c| SocketAddress::parse(g, c))
 }
 
 pub mod js_SocketAddress {
@@ -12643,50 +10821,42 @@ pub use bun_sourcemap_jsc::JSSourceMap as SourceMap;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMap__memoryCost(this: *mut SourceMap) -> usize {
-    unsafe { SourceMap::memory_cost(&*this) }
+    SourceMap::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMap__estimatedSize(this: *mut SourceMap) -> usize {
-    unsafe { SourceMap::estimated_size(&*this) }
+    SourceMap::estimated_size(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapClass__finalize(this: *mut SourceMap) {
-    unsafe { SourceMap::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| SourceMap::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || SourceMap::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, SourceMap::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapPrototype__findEntry(this: *mut SourceMap, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SourceMap::find_entry(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SourceMap::find_entry(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapPrototype__findOrigin(this: *mut SourceMap, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SourceMap::find_origin(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| SourceMap::find_origin(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapPrototype__getLineLengths(this: *mut SourceMap, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SourceMap::get_line_lengths(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SourceMap::get_line_lengths(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SourceMapPrototype__getPayload(this: *mut SourceMap, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { SourceMap::get_payload(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| SourceMap::get_payload(t, g))
 }
 
 pub mod js_SourceMap {
@@ -12754,28 +10924,22 @@ pub static StatWatcher__ZigStructSize: usize = core::mem::size_of::<StatWatcher>
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn StatWatcherClass__finalize(this: *mut StatWatcher) {
-    unsafe { StatWatcher::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| StatWatcher::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn StatWatcherPrototype__doClose(this: *mut StatWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { StatWatcher::do_close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| StatWatcher::do_close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn StatWatcherPrototype__doRef(this: *mut StatWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { StatWatcher::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| StatWatcher::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn StatWatcherPrototype__doUnref(this: *mut StatWatcher, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { StatWatcher::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| StatWatcher::do_unref(t, g, c))
 }
 
 pub mod js_StatWatcher {
@@ -12838,127 +11002,102 @@ pub use crate::shell::Subprocess as Subprocess;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Subprocess__memoryCost(this: *mut Subprocess) -> usize {
-    unsafe { Subprocess::memory_cost(&*this) }
+    Subprocess::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessClass__finalize(this: *mut Subprocess) {
-    unsafe { Subprocess::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Subprocess::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__asyncDispose(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::async_dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::async_dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getConnected(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_connected(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_connected(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__disconnect(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::disconnect(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::disconnect(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getExitCode(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_exit_code(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_exit_code(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getExited(this: *mut Subprocess, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_exited(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Subprocess::get_exited(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__kill(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::kill(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::kill(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getKilled(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_killed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_killed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getPid(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_pid(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_pid(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getStdout(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_stdout(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_stdout(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__doRef(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__resourceUsage(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::resource_usage(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::resource_usage(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__doSend(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::do_send(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::do_send(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getSignalCode(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_signal_code(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_signal_code(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getStderr(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_stderr(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_stderr(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getStdin(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_stdin(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_stdin(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getStdio(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_stdio(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_stdio(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__getTerminal(this: *mut Subprocess, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::get_terminal(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Subprocess::get_terminal(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SubprocessPrototype__doUnref(this: *mut Subprocess, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Subprocess::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Subprocess::do_unref(t, g, c))
 }
 
 pub mod js_Subprocess {
@@ -13087,355 +11226,267 @@ pub use crate::socket::TCPSocket as TCPSocket;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocket__memoryCost(this: *mut TCPSocket) -> usize {
-    unsafe { TCPSocket::memory_cost(&*this) }
+    TCPSocket::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketClass__finalize(this: *mut TCPSocket) {
-    unsafe { TCPSocket::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| TCPSocket::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__end(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::end(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::end(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getALPNProtocol(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_alpn_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_alpn_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getAuthorized(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_authorized(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_authorized(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getBytesWritten(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_bytes_written(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_bytes_written(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__close(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getData(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_data(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_data(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setData(this: *mut TCPSocket, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { TCPSocket::set_data(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| TCPSocket::set_data(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__disableRenegotiation(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::disable_renegotiation(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::disable_renegotiation(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__endBuffered(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::end_buffered(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::end_buffered(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__exportKeyingMaterial(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::export_keying_material(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::export_keying_material(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getFD(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_fd(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_fd(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__flush(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::flush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::flush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getAuthorizationError(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_authorization_error(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_authorization_error(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getCertificate(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getCipher(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_cipher(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_cipher(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getEphemeralKeyInfo(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_ephemeral_key_info(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_ephemeral_key_info(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getPeerCertificate(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_peer_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_peer_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getServername(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_servername(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_servername(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getSession(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_session(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_session(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getSharedSigalgs(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_shared_sigalgs(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_shared_sigalgs(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getTLSFinishedMessage(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_tls_finished_message(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_tls_finished_message(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getTLSPeerFinishedMessage(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_tls_peer_finished_message(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_tls_peer_finished_message(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getTLSTicket(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_tls_ticket(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_tls_ticket(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getTLSVersion(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_tls_version(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::get_tls_version(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__isSessionReused(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::is_session_reused(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::is_session_reused(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getListener(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_listener(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_listener(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getLocalAddress(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_local_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_local_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getLocalFamily(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_local_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_local_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getLocalPort(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_local_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_local_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__pauseFromJS(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::pause_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::pause_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getReadyState(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_ready_state(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_ready_state(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__jsRef(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::js_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::js_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__reload(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getRemoteAddress(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_remote_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_remote_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getRemoteFamily(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_remote_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_remote_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__getRemotePort(this: *mut TCPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::get_remote_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TCPSocket::get_remote_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__renegotiate(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::renegotiate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::renegotiate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__resumeFromJS(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::resume_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::resume_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setKeepAlive(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_keep_alive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_keep_alive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setMaxSendFragment(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_max_send_fragment(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_max_send_fragment(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setNoDelay(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_no_delay(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_no_delay(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setServername(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_servername(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_servername(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setSession(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_session(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_session(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__setVerifyMode(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::set_verify_mode(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::set_verify_mode(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__shutdown(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::shutdown(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::shutdown(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__terminate(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::terminate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::terminate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__timeout(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__jsUnref(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::js_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::js_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__upgradeTLS(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::upgrade_tls(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::upgrade_tls(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__write(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TCPSocketPrototype__writeBuffered(this: *mut TCPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TCPSocket::write_buffered(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TCPSocket::write_buffered(t, g, c))
 }
 
 pub mod js_TCPSocket {
@@ -13542,369 +11593,277 @@ pub use crate::socket::TLSSocket as TLSSocket;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocket__memoryCost(this: *mut TLSSocket) -> usize {
-    unsafe { TLSSocket::memory_cost(&*this) }
+    TLSSocket::memory_cost(&*this)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketClass__finalize(this: *mut TLSSocket) {
-    unsafe { TLSSocket::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| TLSSocket::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__end(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::end(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::end(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getALPNProtocol(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_alpn_protocol(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_alpn_protocol(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getAuthorized(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_authorized(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_authorized(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getBytesWritten(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_bytes_written(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_bytes_written(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__close(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getData(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_data(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_data(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setData(this: *mut TLSSocket, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { TLSSocket::set_data(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| TLSSocket::set_data(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__disableRenegotiation(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::disable_renegotiation(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::disable_renegotiation(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__endBuffered(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::end_buffered(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::end_buffered(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__exportKeyingMaterial(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::export_keying_material(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::export_keying_material(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getFD(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_fd(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_fd(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__flush(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::flush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::flush(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getAuthorizationError(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_authorization_error(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_authorization_error(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getCertificate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getCipher(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_cipher(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_cipher(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getEphemeralKeyInfo(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_ephemeral_key_info(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_ephemeral_key_info(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getPeerCertificate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_peer_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_peer_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getPeerX509Certificate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_peer_x509_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_peer_x509_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getServername(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_servername(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_servername(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getSession(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_session(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_session(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getSharedSigalgs(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_shared_sigalgs(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_shared_sigalgs(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getTLSFinishedMessage(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_tls_finished_message(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_tls_finished_message(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getTLSPeerFinishedMessage(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_tls_peer_finished_message(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_tls_peer_finished_message(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getTLSTicket(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_tls_ticket(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_tls_ticket(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getTLSVersion(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_tls_version(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_tls_version(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getX509Certificate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_x509_certificate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::get_x509_certificate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__isSessionReused(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::is_session_reused(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::is_session_reused(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getListener(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_listener(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_listener(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getLocalAddress(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_local_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_local_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getLocalFamily(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_local_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_local_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getLocalPort(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_local_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_local_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__pauseFromJS(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::pause_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::pause_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getReadyState(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_ready_state(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_ready_state(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__jsRef(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::js_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::js_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__reload(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getRemoteAddress(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_remote_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_remote_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getRemoteFamily(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_remote_family(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_remote_family(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__getRemotePort(this: *mut TLSSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::get_remote_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TLSSocket::get_remote_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__renegotiate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::renegotiate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::renegotiate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__resumeFromJS(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::resume_from_js(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::resume_from_js(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setKeepAlive(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_keep_alive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_keep_alive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setMaxSendFragment(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_max_send_fragment(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_max_send_fragment(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setNoDelay(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_no_delay(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_no_delay(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setServername(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_servername(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_servername(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setSession(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_session(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_session(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__setVerifyMode(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::set_verify_mode(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::set_verify_mode(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__shutdown(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::shutdown(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::shutdown(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__terminate(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::terminate(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::terminate(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__timeout(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::timeout(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::timeout(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__jsUnref(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::js_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::js_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__upgradeTLS(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::upgrade_tls(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::upgrade_tls(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__write(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::write(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TLSSocketPrototype__writeBuffered(this: *mut TLSSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TLSSocket::write_buffered(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TLSSocket::write_buffered(t, g, c))
 }
 
 pub mod js_TLSSocket {
@@ -14014,117 +11973,92 @@ pub static Terminal__ZigStructSize: usize = core::mem::size_of::<Terminal>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalClass__finalize(this: *mut Terminal) {
-    unsafe { Terminal::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Terminal::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Terminal::constructor(global, callframe, this_value)).cast()
+    host_fn::host_fn_construct_this(global, callframe, this_value, Terminal::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__asyncDispose(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::async_dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::async_dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__close(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__getClosed(this: *mut Terminal, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::get_closed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Terminal::get_closed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__getControlFlags(this: *mut Terminal, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::get_control_flags(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Terminal::get_control_flags(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__setControlFlags(this: *mut Terminal, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Terminal::set_control_flags(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Terminal::set_control_flags(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__getInputFlags(this: *mut Terminal, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::get_input_flags(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Terminal::get_input_flags(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__setInputFlags(this: *mut Terminal, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Terminal::set_input_flags(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Terminal::set_input_flags(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__getLocalFlags(this: *mut Terminal, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::get_local_flags(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Terminal::get_local_flags(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__setLocalFlags(this: *mut Terminal, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Terminal::set_local_flags(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Terminal::set_local_flags(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__getOutputFlags(this: *mut Terminal, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::get_output_flags(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Terminal::get_output_flags(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__setOutputFlags(this: *mut Terminal, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Terminal::set_output_flags(&mut *this, global, value) })
+    host_fn::host_fn_setter(this, global, value, |t, g, v| Terminal::set_output_flags(t, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__doRef(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__resize(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::resize(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::resize(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__setRawMode(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::set_raw_mode(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::set_raw_mode(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__doUnref(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::do_unref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TerminalPrototype__write(this: *mut Terminal, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Terminal::write(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Terminal::write(t, g, c))
 }
 
 pub mod js_Terminal {
@@ -14203,53 +12137,42 @@ pub static TextChunk__ZigStructSize: usize = core::mem::size_of::<TextChunk>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkClass__finalize(this: *mut TextChunk) {
-    unsafe { TextChunk::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| TextChunk::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__after(this: *mut TextChunk, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::after(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextChunk::after(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__before(this: *mut TextChunk, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::before(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextChunk::before(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__lastInTextNode(this: *mut TextChunk, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::last_in_text_node(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextChunk::last_in_text_node(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__remove(this: *mut TextChunk, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::remove(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextChunk::remove(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__removed(this: *mut TextChunk, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::removed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextChunk::removed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__replace(this: *mut TextChunk, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::replace(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextChunk::replace(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextChunkPrototype__getText(this: *mut TextChunk, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextChunk::get_text(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextChunk::get_text(t, g))
 }
 
 pub mod js_TextChunk {
@@ -14304,39 +12227,32 @@ pub static TextDecoder__ZigStructSize: usize = core::mem::size_of::<TextDecoder>
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderClass__finalize(this: *mut TextDecoder) {
-    unsafe { TextDecoder::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| TextDecoder::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || TextDecoder::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, TextDecoder::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderPrototype__decode(this: *mut TextDecoder, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextDecoder::decode(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextDecoder::decode(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderPrototype__getEncoding(this: *mut TextDecoder, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextDecoder::get_encoding(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextDecoder::get_encoding(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderPrototype__getFatal(this: *mut TextDecoder, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextDecoder::get_fatal(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextDecoder::get_fatal(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextDecoderPrototype__getIgnoreBOM(this: *mut TextDecoder, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextDecoder::get_ignore_bom(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| TextDecoder::get_ignore_bom(t, g))
 }
 
 pub mod js_TextDecoder {
@@ -14393,28 +12309,22 @@ pub static TextEncoderStreamEncoder__ZigStructSize: usize = core::mem::size_of::
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextEncoderStreamEncoderClass__finalize(this: *mut TextEncoderStreamEncoder) {
-    unsafe { TextEncoderStreamEncoder::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| TextEncoderStreamEncoder::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextEncoderStreamEncoderClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || TextEncoderStreamEncoder::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, TextEncoderStreamEncoder::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextEncoderStreamEncoderPrototype__encode(this: *mut TextEncoderStreamEncoder, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextEncoderStreamEncoder::encode(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextEncoderStreamEncoder::encode(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TextEncoderStreamEncoderPrototype__flush(this: *mut TextEncoderStreamEncoder, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { TextEncoderStreamEncoder::flush(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| TextEncoderStreamEncoder::flush(t, g, c))
 }
 
 pub mod js_TextEncoderStreamEncoder {
@@ -14462,117 +12372,92 @@ pub static Timeout__ZigStructSize: usize = core::mem::size_of::<Timeout>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutClass__finalize(this: *mut Timeout) {
-    unsafe { Timeout::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Timeout::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Timeout::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Timeout::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__getDestroyed(this: *mut Timeout, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::get_destroyed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| Timeout::get_destroyed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__get_idleStart(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::get_idle_start(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Timeout::get_idle_start(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__set_idleStart(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Timeout::set_idle_start(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| Timeout::set_idle_start(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__get_idleTimeout(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::get_idle_timeout(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Timeout::get_idle_timeout(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__set_idleTimeout(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Timeout::set_idle_timeout(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| Timeout::set_idle_timeout(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__get_onTimeout(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::get_on_timeout(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Timeout::get_on_timeout(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__set_onTimeout(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Timeout::set_on_timeout(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| Timeout::set_on_timeout(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__get_repeat(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::get_repeat(&mut *this, this_value, global) })
+    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| Timeout::get_repeat(t, v, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__set_repeat(this: *mut Timeout, this_value: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_setter_result(global, || unsafe { Timeout::set_repeat(&mut *this, this_value, global, value) })
+    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| Timeout::set_repeat(t, tv, g, v))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__dispose(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::dispose(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::dispose(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__toPrimitive(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::to_primitive(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::to_primitive(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__close(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__hasRef(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::has_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::has_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__doRef(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::do_ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::do_ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__doRefresh(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::do_refresh(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::do_refresh(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TimeoutPrototype__doUnref(this: *mut Timeout, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Timeout::do_unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Timeout::do_unref(t, g, c))
 }
 
 pub mod js_Timeout {
@@ -14673,42 +12558,32 @@ pub static Transpiler__ZigStructSize: usize = core::mem::size_of::<Transpiler>()
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerClass__finalize(this: *mut Transpiler) {
-    unsafe { Transpiler::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| Transpiler::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerClass__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_construct_result(global, || Transpiler::constructor(global, callframe)).cast()
+    host_fn::host_fn_construct(global, callframe, Transpiler::constructor).cast()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerPrototype__scan(this: *mut Transpiler, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Transpiler::scan(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Transpiler::scan(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerPrototype__scanImports(this: *mut Transpiler, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Transpiler::scan_imports(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Transpiler::scan_imports(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerPrototype__transform(this: *mut Transpiler, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Transpiler::transform(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Transpiler::transform(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TranspilerPrototype__transformSync(this: *mut Transpiler, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { Transpiler::transform_sync(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| Transpiler::transform_sync(t, g, c))
 }
 
 pub mod js_Transpiler {
@@ -14756,148 +12631,112 @@ pub static UDPSocket__ZigStructSize: usize = core::mem::size_of::<UDPSocket>();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketClass__finalize(this: *mut UDPSocket) {
-    unsafe { UDPSocket::finalize(this) }
+    host_fn::host_fn_finalize(this, |t| UDPSocket::finalize(t))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__close(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::close(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::close(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__addMembership(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::add_membership(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::add_membership(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getAddress(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__addSourceSpecificMembership(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::add_source_specific_membership(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::add_source_specific_membership(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getBinaryType(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_binary_type(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_binary_type(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getClosed(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_closed(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_closed(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__dropMembership(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::drop_membership(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::drop_membership(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__dropSourceSpecificMembership(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::drop_source_specific_membership(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::drop_source_specific_membership(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getHostname(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_hostname(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_hostname(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getPort(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_port(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_port(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__ref(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::r#ref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::r#ref(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__reload(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::reload(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::reload(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__getRemoteAddress(this: *mut UDPSocket, global: *mut JSGlobalObject) -> JSValue {
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::get_remote_address(&mut *this, global) })
+    host_fn::host_fn_getter(this, global, |t, g| UDPSocket::get_remote_address(t, g))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__send(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::send(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::send(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__sendMany(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::send_many(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::send_many(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__setBroadcast(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::set_broadcast(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::set_broadcast(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__setMulticastInterface(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::set_multicast_interface(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::set_multicast_interface(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__setMulticastLoopback(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::set_multicast_loopback(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::set_multicast_loopback(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__setMulticastTTL(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::set_multicast_ttl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::set_multicast_ttl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__setTTL(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::set_ttl(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::set_ttl(t, g, c))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn UDPSocketPrototype__unref(this: *mut UDPSocket, global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    let global = unsafe { &*global };
-    let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || unsafe { UDPSocket::unref(&mut *this, global, callframe) })
+    host_fn::host_fn_this(this, global, callframe, |t, g, c| UDPSocket::unref(t, g, c))
 }
 
 pub mod js_UDPSocket {

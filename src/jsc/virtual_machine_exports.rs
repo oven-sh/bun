@@ -21,14 +21,14 @@ pub extern "C" fn Bun__VirtualMachine__isShuttingDown(this: &VirtualMachine) -> 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
-    VirtualMachine::get()
+    VirtualMachine::get_mut_ptr()
 }
 
 /// Caller must check for termination exception
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__drainMicrotasks() {
     // SAFETY: VM singleton + its event loop are process-lifetime.
-    unsafe { (*(*VirtualMachine::get()).event_loop()).tick() };
+    unsafe { (*VirtualMachine::get().as_mut().event_loop()).tick() };
 }
 
 #[unsafe(no_mangle)]
@@ -53,7 +53,7 @@ pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bo
     use crate::virtual_machine::IPCInstanceUnion;
     // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
     // JSGlobalObject::bun_vm contract.
-    match unsafe { &(*global.bun_vm()).ipc } {
+    match unsafe { &global.bun_vm().as_mut().ipc } {
         Some(IPCInstanceUnion::Initialized(inst)) => {
             // SAFETY: `inst` was produced by `IPCInstance::new` (Box::into_raw)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
@@ -68,7 +68,7 @@ pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bo
 pub extern "C" fn Bun__GlobalObject__hasIPC(global: &JSGlobalObject) -> bool {
     // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
     // JSGlobalObject::bun_vm contract.
-    unsafe { (*global.bun_vm()).ipc.is_some() }
+    global.bun_vm().as_mut().ipc.is_some()
 }
 
 #[unsafe(no_mangle)]
@@ -83,7 +83,7 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
     // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
     // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(unsafe { (*global.bun_vm()).main() })
+    str.eql_utf8(global.bun_vm().as_mut().main())
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -106,7 +106,7 @@ pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut crate::cpp_
     // SAFETY: bun_vm() yields the live per-thread VM; `event_loop()` never
     // returns null for a Bun-owned global.
     unsafe {
-        (*(*global.bun_vm()).event_loop()).enqueue_task(Task::init(task));
+        (*global.bun_vm().as_mut().event_loop()).enqueue_task(Task::init(task));
     }
 }
 
@@ -176,7 +176,7 @@ impl HandledPromiseContext {
         let global = unsafe { &*context.global_this };
         // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
         // JSGlobalObject::bun_vm contract.
-        let _ = unsafe { (*global.bun_vm()).handled_promise(global, context.promise.get()) };
+        let _ = global.bun_vm().as_mut().handled_promise(global, context.promise.get());
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
         // Strong's Drop replaces the explicit `.unprotect()`.
         Ok(())
@@ -194,7 +194,7 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
     // SAFETY: bun_vm() yields the live per-thread VM; `event_loop()` never
     // returns null for a Bun-owned global.
     unsafe {
-        (*(*global.bun_vm()).event_loop())
+        (*global.bun_vm().as_mut().event_loop())
             .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
     }
 }
@@ -225,13 +225,13 @@ pub extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__setTLSRejectUnauthorizedValue(value: i32) {
     // SAFETY: VM singleton is process-lifetime.
-    unsafe { (*VirtualMachine::get()).default_tls_reject_unauthorized = Some(value != 0) };
+    VirtualMachine::get().as_mut().default_tls_reject_unauthorized = Some(value != 0);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
     // SAFETY: VM singleton is process-lifetime.
-    if unsafe { (*VirtualMachine::get()).get_tls_reject_unauthorized() } { 1 } else { 0 }
+    if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() { 1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
@@ -242,7 +242,7 @@ pub extern "C" fn Bun__isNoProxy(
     host_len: usize,
 ) -> bool {
     // SAFETY: VM singleton is process-lifetime.
-    let vm = unsafe { &*VirtualMachine::get() };
+    let vm = VirtualMachine::get();
     // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
         Some(unsafe { core::slice::from_raw_parts(hostname_ptr, hostname_len) })
@@ -265,7 +265,7 @@ pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
     unsafe {
-        (*VirtualMachine::get()).default_verbose_fetch = Some(match value {
+        VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
             1 => HTTPVerboseLevel::Headers as u8,
             2 => HTTPVerboseLevel::Curl as u8,
             _ => HTTPVerboseLevel::None as u8,
@@ -277,7 +277,7 @@ pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
 pub extern "C" fn Bun__getVerboseFetchValue() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
-    match unsafe { (*VirtualMachine::get()).get_verbose_fetch() } {
+    match VirtualMachine::get().as_mut().get_verbose_fetch() {
         HTTPVerboseLevel::None => 0,
         HTTPVerboseLevel::Headers => 1,
         HTTPVerboseLevel::Curl => 2,

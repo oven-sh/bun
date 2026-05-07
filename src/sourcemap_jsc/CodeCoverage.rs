@@ -502,7 +502,7 @@ impl ByteRangeMapping {
         let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
-            unsafe { &mut *bun_jsc::VirtualMachine::VirtualMachine::get() }
+            bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
         let mut line_hits = LinesHits::default();

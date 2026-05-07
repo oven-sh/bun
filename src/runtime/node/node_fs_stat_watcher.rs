@@ -823,7 +823,7 @@ impl StatWatcher {
         // errdefer free → Drop handles it
 
         // SAFETY: `args.global_this` is live (caller holds it).
-        let vm = unsafe { (*args.global_this).bun_vm() };
+        let vm = unsafe { (*args.global_this).bun_vm_ptr() };
         let this = Box::new(StatWatcher {
             next: core::ptr::null_mut(),
             ctx: vm,

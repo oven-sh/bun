@@ -366,7 +366,7 @@ impl DeferredFailure {
         // SAFETY: `VirtualMachine::get()` returns the live thread-local VM; `event_loop()` is a
         // self-pointer set at init. Short-lived `&mut *p` formed at the use site per
         // VirtualMachine.rs guidance.
-        unsafe { (*(*VirtualMachine::get()).event_loop()).enqueue_task(managed_task) };
+        unsafe { (*VirtualMachine::get().as_mut().event_loop()).enqueue_task(managed_task) };
     }
 }
 

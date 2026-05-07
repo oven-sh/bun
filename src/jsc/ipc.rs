@@ -97,7 +97,7 @@ impl InternalMsgHolder {
         let worker = self.worker.get().unwrap();
 
         // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-        let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
+        let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
 
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
@@ -1072,7 +1072,7 @@ impl SendQueue {
         self.close_next_tick = Some(task);
         // SAFETY: VirtualMachine::get() returns the singleton; enqueue_task
         // only mutates the task queue.
-        unsafe { (*VirtualMachine::get()).enqueue_task(self.close_next_tick.unwrap()) };
+        VirtualMachine::get().as_mut().enqueue_task(self.close_next_tick.unwrap());
     }
 
     fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
@@ -2033,7 +2033,7 @@ pub mod IPCHandlers {
             // `event_loop()` takes `&self`, so deref-and-reborrow at the call
             // site — never materialize `&mut VirtualMachine` (Stacked-Borrows
             // UB).
-            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
+            let loop_ = global_this.bun_vm().as_mut().event_loop();
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow per use so `&mut EventLoop` isn't held
             // across `on_data2`.
@@ -2066,7 +2066,7 @@ pub mod IPCHandlers {
             let global_this = send_queue.get_global_this();
             // SAFETY: see `on_data` — `bun_vm()` is live; deref to call
             // `event_loop(&self)` without materializing `&mut VirtualMachine`.
-            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
+            let loop_ = global_this.bun_vm().as_mut().event_loop();
             // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
@@ -2148,7 +2148,7 @@ pub mod IPCHandlers {
             // SAFETY: see `PosixSocket::on_data` — `bun_vm()` is live; deref to
             // call `event_loop(&self)` without materializing
             // `&mut VirtualMachine`.
-            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
+            let loop_ = global_this.bun_vm().as_mut().event_loop();
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
             // held across the decode loop or send_queue borrows below.

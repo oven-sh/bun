@@ -317,7 +317,7 @@ pub fn list_objects(
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
-        vm: VirtualMachine::get(),
+        vm: VirtualMachine::get_mut_ptr(),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
@@ -435,7 +435,7 @@ pub fn writable_stream(
         let global = unsafe { &*sink.global_this };
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-            let event_loop = unsafe { (*global.bun_vm()).event_loop() };
+            let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
             // RAII: `enter()` now, `exit()` on drop (Zig: `defer event_loop.exit()`).
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
@@ -505,7 +505,7 @@ pub fn writable_stream(
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
         // keeping this task alive). Dereference to `&'static` for storage, matching the
         // Zig pointer field.
-        vm: unsafe { &*VirtualMachine::get() },
+        vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: StreamBuffer::default(),
         path: Box::<[u8]>::from(path),
@@ -855,7 +855,7 @@ pub fn upload_stream(
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload. Dereference to `&'static` for storage, matching
         // the Zig pointer field.
-        vm: unsafe { &*VirtualMachine::get() },
+        vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: StreamBuffer::default(),
         path: Box::<[u8]>::from(path),
@@ -1000,7 +1000,7 @@ pub fn download_stream(
         range: range.map(Vec::into_boxed_slice),
         headers,
         // `VirtualMachine::get()` returns the live per-thread VM singleton (`*mut VirtualMachine`).
-        vm: VirtualMachine::get(),
+        vm: VirtualMachine::get_mut_ptr(),
         has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
         signal_store: Default::default(),
         signals: Default::default(),
@@ -1030,7 +1030,7 @@ pub fn download_stream(
 
     // SAFETY: `VirtualMachine::get()` returns the live per-thread VM singleton; the
     // `&mut` borrow is scoped to the two getter calls below.
-    let vm_mut = unsafe { &mut *VirtualMachine::get() };
+    let vm_mut = VirtualMachine::get().as_mut();
     let verbose = vm_mut.get_verbose_fetch();
     let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
 

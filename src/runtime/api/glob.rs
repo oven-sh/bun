@@ -340,7 +340,7 @@ impl Glob {
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
         // `arguments` drops at scope exit (was `defer arguments.deinit()`).
         let Some(pat_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!("Glob.constructor: expected 1 arguments, got 0")));
@@ -387,7 +387,7 @@ impl Glob {
     pub fn __scan(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
@@ -426,7 +426,7 @@ impl Glob {
     pub fn __scan_sync(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
 
         let mut arena = Arena::new();
         let mut glob_walker = match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {
@@ -462,7 +462,7 @@ impl Glob {
 
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
         let Some(str_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!("Glob.matchString: expected 1 arguments, got 0")));
         };

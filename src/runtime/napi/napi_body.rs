@@ -1140,7 +1140,7 @@ fn not_implemented_yet(name: &'static str) {
         // SAFETY: VirtualMachine::get() returns the current thread's VM (non-null);
         // `log` is set during init.
         let should_warn = unsafe {
-            (*VirtualMachine::get())
+            VirtualMachine::get().as_mut()
                 .log
                 .map_or(true, |l| l.as_ref().level.at_least(bun_logger::Level::Warn))
         };
@@ -1614,7 +1614,7 @@ impl napi_async_work {
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: bun_vm() never null for a Bun-owned global.
-            event_loop: unsafe { &*global.bun_vm() }.event_loop(),
+            event_loop: global.bun_vm().event_loop(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -2045,7 +2045,7 @@ pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
     let env = unsafe { &*env_ };
     // SAFETY: bun_vm() never null; rare_data() needs `&mut`.
-    unsafe { &mut *env.to_js().bun_vm() }.rare_data().push_cleanup_hook(
+    env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_ as *mut c_void,
         napi_internal_register_cleanup_callback,
@@ -2087,13 +2087,13 @@ impl Finalizer {
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
             // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
-            let _ = unsafe { &mut *env_ref.to_js().bun_vm() }
+            let _ = env_ref.to_js().bun_vm().as_mut()
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
 
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
             // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
-            let _ = unsafe { &mut *env_ref.to_js().bun_vm() }
+            let _ = env_ref.to_js().bun_vm().as_mut()
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
     }
@@ -2537,7 +2537,7 @@ pub extern "C" fn napi_create_threadsafe_function(
     }
 
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    let vm = unsafe { &mut *env.to_js().bun_vm() };
+    let vm = env.to_js().bun_vm().as_mut();
     let callback = if let Some(c) = call_js_cb {
         TsfnCallback::C {
             napi_threadsafe_function_call_js: c,
@@ -3176,7 +3176,7 @@ impl NapiFinalizerTask {
         // from C++; "main thread" is determined by whether the thread-local VM
         // holder is populated.
         // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = unsafe { &*global_this.bun_vm() };
+        let vm: &VirtualMachine = global_this.bun_vm();
         let is_main_thread = VirtualMachine::get_or_null().is_some();
         let this = Box::into_raw(self);
 
@@ -3191,7 +3191,7 @@ impl NapiFinalizerTask {
         if vm.is_shutting_down() {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             // SAFETY: bun_vm() never null; rare_data() needs `&mut`.
-            unsafe { &mut *global_this.bun_vm() }
+            global_this.bun_vm().as_mut()
                 .rare_data()
                 .push_cleanup_hook(vm.global(), this as *mut c_void, Self::run_as_cleanup_hook);
         } else {

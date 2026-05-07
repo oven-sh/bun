@@ -75,7 +75,7 @@ pub mod bun_install_js_bindings {
         // package-manager borrow are scoped independently.
         // SAFETY: `bun_vm()` returns the live VM that owns `global`; this host fn
         // runs on the JS thread so no concurrent `&mut VirtualMachine` exists.
-        let vm = unsafe { &mut *global.bun_vm() };
+        let vm = global.bun_vm().as_mut();
         if vm.transpiler.resolver.env_loader.is_none() {
             vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
         }

@@ -257,7 +257,7 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn event_loop_ctx(self) -> &'a VirtualMachine {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global; lifetime tied to 'a.
-        unsafe { &*self.global_this.bun_vm() }
+        self.global_this.bun_vm()
     }
 
     #[inline]
@@ -298,7 +298,7 @@ impl<'a> GlobalJS<'a> {
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
-        unsafe { (*(*self.global_this.bun_vm()).transpiler.env).map.create_null_delimited_env_map() }
+        unsafe { (*self.global_this.bun_vm().as_mut().transpiler.env).map.create_null_delimited_env_map() }
     }
 
     #[inline]
@@ -318,14 +318,14 @@ impl<'a> GlobalJS<'a> {
     pub fn top_level_dir(self) -> &'a [u8] {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.fs` is a
         // long-lived `*mut FileSystem` singleton.
-        unsafe { (*(*self.global_this.bun_vm()).transpiler.fs).top_level_dir }
+        unsafe { (*self.global_this.bun_vm().as_mut().transpiler.fs).top_level_dir }
     }
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader<'static>` owned by the VM. `'static` widens to `'a`.
-        unsafe { &*(*self.global_this.bun_vm()).transpiler.env }
+        unsafe { &*self.global_this.bun_vm().as_mut().transpiler.env }
     }
 
     #[inline]
@@ -1119,7 +1119,7 @@ pub mod testing_apis {
         {
             let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
-            let vm = unsafe { &*global.bun_vm() };
+            let vm = global.bun_vm();
             let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
             let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
@@ -1159,7 +1159,7 @@ pub mod testing_apis {
     ) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
@@ -1250,7 +1250,7 @@ pub mod testing_apis {
     ) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,

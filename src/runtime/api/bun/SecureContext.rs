@@ -63,7 +63,7 @@ impl SecureContext {
         let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = unsafe { &mut *global.bun_vm() };
+        let vm = global.bun_vm().as_mut();
         let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
@@ -85,7 +85,7 @@ impl SecureContext {
         let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = unsafe { &mut *global.bun_vm() };
+        let vm = global.bun_vm().as_mut();
         let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 

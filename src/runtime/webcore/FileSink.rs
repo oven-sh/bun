@@ -330,7 +330,7 @@ impl FileSink {
                         // `event_loop()` returns the live VM-owned `*mut EventLoop`.
                         let _entered = unsafe {
                             bun_jsc::event_loop::EventLoop::enter_scope(
-                                (*global.bun_vm()).event_loop(),
+                                global.bun_vm().as_mut().event_loop(),
                             )
                         };
                         stream.cancel(global);
@@ -961,7 +961,7 @@ impl FileSink {
         // below; explicit `.deinit()` calls from the Zig are subsumed.
         if let Some(global) = self_.js_global() {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
-            let vm = unsafe { &mut *global.bun_vm() };
+            let vm = global.bun_vm().as_mut();
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
         }
         // SAFETY: `this` was produced by `Box::into_raw` in the constructors.

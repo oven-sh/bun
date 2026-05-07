@@ -484,7 +484,7 @@ impl TimerObjectInternals {
     fn convert_to_interval(&mut self, global: &JSGlobalObject, timer: JSValue, repeat: JSValue) {
         debug_assert!(self.flags.kind() == Kind::SetTimeout);
 
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get_mut_ptr();
 
         let new_interval: u32 = if let Some(num) = repeat.get_number() {
             if num < 1.0 || num > (u32::MAX >> 1) as f64 {
@@ -554,7 +554,7 @@ impl TimerObjectInternals {
         callback: JSValue,
         arguments: JSValue,
     ) {
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get_mut_ptr();
         let timer_all = Self::timer_all();
         *self = Self {
             id,
@@ -619,7 +619,7 @@ impl TimerObjectInternals {
         // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
         // on such a timer would otherwise leak an event-loop ref and hang the process.
         if !did_have_js_ref && !self.get_destroyed() {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), true);
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
         }
 
         this_value
@@ -637,7 +637,7 @@ impl TimerObjectInternals {
         }
 
         self.this_value.set_strong(this_value, global_object);
-        self.reschedule(this_value, VirtualMachine::get(), global_object);
+        self.reschedule(this_value, VirtualMachine::get_mut_ptr(), global_object);
 
         this_value
     }
@@ -649,7 +649,7 @@ impl TimerObjectInternals {
         self.flags.set_has_js_ref(false);
 
         if did_have_js_ref {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), false);
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), false);
         }
 
         this_value
@@ -804,7 +804,7 @@ impl TimerObjectInternals {
         let s = unsafe { &mut *this };
         // PORT NOTE: Zig `this_value.deinit()` is handled by `JsRef: Drop` when the
         // parent `Box::from_raw` reclaims fields immediately after this returns.
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get_mut_ptr();
         let kind = s.flags.kind();
         let timer_all = Self::timer_all();
 

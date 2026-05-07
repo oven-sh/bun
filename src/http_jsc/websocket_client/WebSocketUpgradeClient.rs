@@ -228,7 +228,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
     ) -> Option<*mut Self> {
-        let vm_ptr = global.bun_vm();
+        let vm_ptr = global.bun_vm_ptr();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
         // outlives this call. `vm` is rebound as a fresh `&mut` at each use
         // site below to avoid stacking exclusive borrows across re-entrant
@@ -560,7 +560,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn clear_data(&mut self) {
-        self.poll_ref.unref(vm_loop_ctx(VirtualMachineRef::get()));
+        self.poll_ref.unref(vm_loop_ctx(VirtualMachineRef::get_mut_ptr()));
 
         self.subprotocols.clear_and_free();
         self.clear_input();

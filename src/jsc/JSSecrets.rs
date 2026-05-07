@@ -40,7 +40,7 @@ impl SecretsJob {
         ctx: *mut SecretsJobOptions,
         promise: JSValue,
     ) -> *mut SecretsJob {
-        let vm = global.bun_vm();
+        let vm = global.bun_vm_ptr();
         let job = Box::into_raw(Box::new(SecretsJob {
             vm,
             task: WorkPoolTask {

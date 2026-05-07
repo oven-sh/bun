@@ -561,15 +561,56 @@ impl Drop for MacroModeGuard {
     }
 }
 
+// SAFETY: `VirtualMachine` is a per-JS-thread singleton (see `VMHolder`).
+// All access is same-thread; the `Sync` impl exists so `&'static
+// VirtualMachine` can be returned from [`VirtualMachine::get`] and passed
+// through `'static`-bound closures / trait objects without `T: Sync`
+// cascading. Cross-thread paths go through `ConcurrentTask` which never
+// hands out a `&VirtualMachine`. Fields mutated post-init are wrapped in
+// [`JsCell`] for interior mutability.
+unsafe impl Sync for VirtualMachine {}
+unsafe impl Send for VirtualMachine {}
+
 impl VirtualMachine {
-    /// Spec VirtualMachine.zig:357-366 returns a raw `*VirtualMachine`.
-    /// Returning `&'static mut` would let any two overlapping calls (e.g. a JS
-    /// callback fired from inside `vm.tick()` that itself calls `get()`) hold
-    /// two live `&'static mut` to the same allocation — UB. Callers form a
-    /// short-lived `&mut *p` at the use site instead.
+    /// Safe `&'static` accessor for the current thread's VM. The VM is a
+    /// per-thread singleton allocated once in [`init`] and never freed until
+    /// thread teardown, so the `'static` lifetime is sound. Mutation goes
+    /// through [`JsCell`]-wrapped fields (`vm.field.get_mut()`); legacy code
+    /// that still needs `&mut VirtualMachine` whole-struct uses
+    /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
     #[inline]
-    pub fn get() -> *mut VirtualMachine {
+    pub fn get() -> &'static VirtualMachine {
+        // SAFETY: `get_or_null()` returns the thread-local pointer set by
+        // `init()`; non-null while a VM is installed; the allocation outlives
+        // the thread.
+        unsafe { &*Self::get_mut_ptr() }
+    }
+
+    /// Raw `*mut` accessor for the current thread's VM. Prefer [`Self::get`]
+    /// for read access and `JsCell` field projection for mutation; this exists
+    /// for the (shrinking) set of call sites that still take
+    /// `*mut VirtualMachine` or need a whole-struct `&mut`.
+    #[inline]
+    pub fn get_mut_ptr() -> *mut VirtualMachine {
         Self::get_or_null().expect("VirtualMachine.get() called with no VM on this thread")
+    }
+
+    /// `&mut self` from `&self` — the `JsCell` escape hatch applied to the
+    /// whole VM. Exists so legacy `&mut VirtualMachine`-taking helpers can be
+    /// called from a safe `&'static VirtualMachine` without an `unsafe` block
+    /// at every call site. Same single-JS-thread soundness contract as
+    /// [`JsCell::get_mut`]; keep the borrow short and do not hold across
+    /// reentrant JS calls.
+    /// Routes through [`Self::get_mut_ptr`] (the thread-local raw pointer)
+    /// rather than casting `&self`, so provenance is the original `*mut`
+    /// allocation — avoids the `invalid_reference_casting` UB lint.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn as_mut(&self) -> &mut VirtualMachine {
+        debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
+        // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
+        // Provenance comes from the thread-local `*mut` set in `init()`.
+        unsafe { &mut *Self::get_mut_ptr() }
     }
 
     #[inline]
@@ -1011,7 +1052,7 @@ impl VirtualMachine {
         let path: &[u8] = unsafe { (*entry_point).source.path.text };
         let promise = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
-            unsafe { (*VirtualMachine::get())._load_macro_entry_point(path) }
+            VirtualMachine::get().as_mut()._load_macro_entry_point(path)
         });
         promise.ok_or_else(|| bun_core::err!("JSError"))
     }
@@ -1566,7 +1607,17 @@ impl VirtualMachine {
     pub fn event_loop_ctx(this: *mut Self) -> bun_aio::EventLoopCtx {
         bun_aio::EventLoopCtx { owner: this.cast(), vtable: &VM_EVENT_LOOP_CTX_VTABLE }
     }
+
+    /// `&self` overload of [`event_loop_ctx`]. Routes through
+    /// [`Self::get_mut_ptr`] for write provenance (the vtable callbacks
+    /// dereference `owner` as `*mut VirtualMachine`).
+    #[inline]
+    pub fn loop_ctx(&self) -> bun_aio::EventLoopCtx {
+        debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
+        Self::event_loop_ctx(Self::get_mut_ptr())
+    }
 }
+
 
 impl VirtualMachine {
     /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
@@ -2466,7 +2517,7 @@ impl IPCInstance {
         crate::mark_binding!();
         let global_this = self.global_this;
         // SAFETY: VM singleton + its event loop are process-lifetime.
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
 
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -2498,7 +2549,7 @@ impl IPCInstance {
     pub fn handle_ipc_close(&mut self) {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.
-        let vm = unsafe { &mut *VirtualMachine::get() };
+        let vm = VirtualMachine::get().as_mut();
         // SAFETY: event loop is process-lifetime.
         let event_loop = unsafe { &mut *vm.event_loop() };
         if let Some(hooks) = runtime_hooks() {
@@ -3284,7 +3335,7 @@ impl VirtualMachine {
         // SAFETY: per fn contract.
         let hash = unsafe { (*ref_string).hash };
         // SAFETY: `get()` is the live per-thread VM.
-        unsafe { (*VirtualMachine::get()).ref_strings.remove(&hash) };
+        VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
 
     /// Spec VirtualMachine.zig:1590 `refCountedResolvedSource`.
@@ -4350,7 +4401,7 @@ impl VirtualMachine {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
                 let ctx = unsafe { &mut *(ctx as *mut AggCtx<'_>) };
                 // SAFETY: per-thread VM.
-                let vm = unsafe { &mut *VirtualMachine::get() };
+                let vm = VirtualMachine::get().as_mut();
                 // SAFETY: `formatter`/`writer`/`exception_list` borrow the
                 // caller's stack locals, live across the synchronous
                 // `for_each` call; reborrow the raw pointers for the
@@ -4559,7 +4610,7 @@ impl VirtualMachine {
             return Ok(());
         }
         // SAFETY: per-thread VM.
-        let vm = unsafe { &mut *VirtualMachine::get() };
+        let vm = VirtualMachine::get().as_mut();
         let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
         // SAFETY: `transpiler.fs` set during `init` and live for VM lifetime.
         let dir = unsafe { (*vm.transpiler.fs).top_level_dir };
@@ -5827,7 +5878,7 @@ impl VirtualMachine {
 
         if top_frame.is_some() {
             // SAFETY: per-thread VM.
-            let vm = unsafe { &*VirtualMachine::get() };
+            let vm = VirtualMachine::get();
             let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();

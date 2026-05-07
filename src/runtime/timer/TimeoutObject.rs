@@ -131,7 +131,7 @@ impl TimeoutObject {
         }
 
         // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
-        if unsafe { (*global.bun_vm()).is_inspector_enabled() } {
+        if global.bun_vm().as_mut().is_inspector_enabled() {
             Debugger::did_schedule_async_call(
                 global,
                 Debugger::AsyncCallType::DOMTimer,
@@ -205,7 +205,7 @@ impl TimeoutObject {
 
     #[bun_jsc::host_fn(method)]
     pub fn close(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global.bun_vm());
+        this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
     }
 
@@ -248,7 +248,7 @@ impl TimeoutObject {
 
     #[bun_jsc::host_fn(method)]
     pub fn dispose(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global.bun_vm());
+        this.internals.cancel(global.bun_vm_ptr());
         Ok(JSValue::UNDEFINED)
     }
 }

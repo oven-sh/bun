@@ -112,7 +112,7 @@ impl ParsedShellScript {
     pub fn set_cwd(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut arguments = bun_jsc::ArgumentsSlice::init(vm, arguments.slice());
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));

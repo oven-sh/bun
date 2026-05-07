@@ -612,7 +612,7 @@ impl AWSSignatureCache {
 
 #[inline(always)]
 fn s3_rare_data() -> *mut RareData {
-    let vm = VirtualMachine::get_main_thread_vm().unwrap_or_else(VirtualMachine::get);
+    let vm = VirtualMachine::get_main_thread_vm().unwrap_or_else(VirtualMachine::get_mut_ptr);
     // SAFETY: `vm` is the live per-thread (or main-thread) VM.
     unsafe { (*vm).rare_data() as *mut RareData }
 }

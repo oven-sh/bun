@@ -956,7 +956,7 @@ impl FSWatcher {
         let file_path: &bun_str::ZStr =
             Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
 
-        let vm = args.global_this.bun_vm();
+        let vm = args.global_this.bun_vm_ptr();
 
         let ctx = Box::into_raw(Box::new(FSWatcher {
             ctx: vm,

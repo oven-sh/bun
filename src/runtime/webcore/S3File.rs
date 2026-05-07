@@ -128,7 +128,7 @@ where
 pub fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -157,7 +157,7 @@ pub fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 pub fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -189,7 +189,7 @@ pub fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -247,7 +247,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -276,7 +276,7 @@ pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
 pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -310,7 +310,7 @@ fn construct_s3_file_internal_store(
     // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
     // and live for the VM lifetime.
     let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
-        (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
+        (*global.bun_vm().as_mut().transpiler.env).get_s3_credentials()
     });
     construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
 }
@@ -369,7 +369,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         }
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
-                        if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
+                        if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
                             // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
                             // canonical-table hit (via `Compact::to_mime_type`) is always
                             // `Borrowed(&'static)`. If a future table source ever yields
@@ -433,7 +433,7 @@ pub fn construct_s3_file_with_s3_credentials(
                         }
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() returns the live VM raw ptr.
-                        if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
+                        if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
                             // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
                             // canonical-table hit (via `Compact::to_mime_type`) is always
                             // `Borrowed(&'static)`. If a future table source ever yields
@@ -594,7 +594,7 @@ impl S3BlobStatTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = unsafe { (*global.bun_vm()).transpiler.env };
+        let env = global.bun_vm().as_mut().transpiler.env;
 
         s3::stat(
             credentials,
@@ -621,7 +621,7 @@ impl S3BlobStatTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = unsafe { (*global.bun_vm()).transpiler.env };
+        let env = global.bun_vm().as_mut().transpiler.env;
 
         s3::stat(
             credentials,
@@ -647,7 +647,7 @@ impl S3BlobStatTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init.
-        let env = unsafe { (*global.bun_vm()).transpiler.env };
+        let env = global.bun_vm().as_mut().transpiler.env;
 
         s3::stat(
             credentials,
@@ -788,7 +788,7 @@ pub fn get_stat(this: &mut Blob, global: &JSGlobalObject, _callframe: &CallFrame
 pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -833,7 +833,7 @@ pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
 
 pub fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let vm = unsafe { &*global.bun_vm() };
+    let vm = global.bun_vm();
     let arguments = callframe.arguments_old::<2>();
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
 

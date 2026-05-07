@@ -221,7 +221,7 @@ impl<'a> Snapshots<'a> {
 
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
-        let vm = unsafe { &mut *VirtualMachine::get() };
+        let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
             vm.transpiler.options.jsx.clone().into(),
             js_parser::options::Loader::Js,
@@ -378,7 +378,7 @@ impl<'a> Snapshots<'a> {
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
-        let vm = unsafe { &mut *VirtualMachine::get() };
+        let vm = VirtualMachine::get().as_mut();
 
         // PERF(port): was arena bulk-free per iteration — reset() inside the loop.
         let mut arena = bun_alloc::Arena::new();

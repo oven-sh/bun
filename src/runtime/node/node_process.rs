@@ -53,7 +53,7 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
-    let vm = global_object.bun_vm();
+    let vm = global_object.bun_vm().as_mut();
     // SAFETY: vm is the live per-thread VirtualMachine for this global.
     unsafe { (*vm).exit_handler.exit_code = code };
     // SAFETY: worker is either None or a valid `*const WebWorker` (BACKREF set
@@ -190,7 +190,7 @@ pub extern "C" fn Bun__Process__createExecArgv(global_object: *const JSGlobalObj
 fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback alloc (4096 bytes) — profile in Phase B
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-    let vm = unsafe { &*global_object.bun_vm() };
+    let vm = global_object.bun_vm();
 
     if let Some(worker) = vm.worker {
         // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker`
@@ -333,7 +333,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-    let vm = unsafe { &*global_object.bun_vm() };
+    let vm = global_object.bun_vm();
 
     // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
 
@@ -404,7 +404,7 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-    let vm = unsafe { &*global_object.bun_vm() };
+    let vm = global_object.bun_vm();
     if let Some(source) = vm.module_loader.eval_source.as_deref() {
         return ZigString::init(source.contents()).to_js(global_object);
     }
@@ -451,7 +451,7 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
             .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
     }
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-    let vm = unsafe { &*global_object.bun_vm() };
+    let vm = global_object.bun_vm();
     // SAFETY: `vm.transpiler.fs` is a live `*mut FileSystem` (process singleton).
     let fs = unsafe { &mut *vm.transpiler.fs };
 

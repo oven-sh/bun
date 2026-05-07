@@ -43,7 +43,7 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
     // `transpiler.env` is the process-singleton dotenv loader, initialised
     // before any JS runs.
-    unsafe { (*(*global.bun_vm()).transpiler.env).get_http_proxy(true, None, None) }
+    unsafe { (*global.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None) }
         .map(|p| p.href.to_vec())
 }
 
@@ -395,7 +395,7 @@ impl BlobExt for Blob {
 
             read_file::ReadFileUV::start(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
-                unsafe { &*global.bun_vm() }.event_loop(),
+                global.bun_vm().event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
@@ -589,7 +589,7 @@ impl BlobExt for Blob {
         {
             return read_file::ReadFileUV::start(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
-                unsafe { &*global.bun_vm() }.event_loop(),
+                global.bun_vm().event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
@@ -754,7 +754,7 @@ impl BlobExt for Blob {
         let mut hex_buf = [0u8; 70];
         let boundary = {
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let random = unsafe { (*global_this.bun_vm()).rare_data() }.next_uuid().bytes;
+            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
             use std::io::Write;
             let mut cursor = &mut hex_buf[..];
             // Zig `{x}` on `[16]u8` emits 32 contiguous lowercase-hex chars.
@@ -1154,7 +1154,7 @@ impl BlobExt for Blob {
     fn do_write(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1194,7 +1194,7 @@ impl BlobExt for Blob {
                         self.content_type_was_set = true;
 
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
                             self.content_type = mime.value.as_ref() as *const [u8];
                         } else {
                             let mut buf = vec![0u8; slice.len()];
@@ -1225,7 +1225,7 @@ impl BlobExt for Blob {
     fn do_unlink(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1274,7 +1274,7 @@ impl BlobExt for Blob {
             // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
             // is a live `*mut Loader` owned by the transpiler.
             let proxy = unsafe {
-                (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
             };
             let proxy_url = proxy.map(|p| p.href);
 
@@ -1363,7 +1363,7 @@ impl BlobExt for Blob {
                     fd,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -1398,7 +1398,7 @@ impl BlobExt for Blob {
                     Fd::INVALID,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
                     ),
                 );
 
@@ -1460,7 +1460,7 @@ impl BlobExt for Blob {
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
-            unsafe { (*global_this.bun_vm()).drain_microtasks() };
+            global_this.bun_vm().as_mut().drain_microtasks();
 
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
@@ -1543,7 +1543,7 @@ impl BlobExt for Blob {
             // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
             // is the process-singleton dotenv loader, never null once init'd.
             let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
             };
             let proxy = proxy_url.as_ref().map(|p| p.href);
 
@@ -1567,7 +1567,7 @@ impl BlobExt for Blob {
                         }
                         self.content_type_was_set = true;
                         // SAFETY: see other `mime_type` call sites.
-                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
                             self.content_type = mime.value.as_ref() as *const [u8];
                         } else {
                             let mut buf = vec![0u8; slice.len()];
@@ -1638,7 +1638,7 @@ impl BlobExt for Blob {
 
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let vm = unsafe { &mut *global_this.bun_vm() };
+            let vm = global_this.bun_vm().as_mut();
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
@@ -1680,7 +1680,7 @@ impl BlobExt for Blob {
             let sink = webcore::FileSink::init(
                 fd,
                 jsc::EventLoopHandle::init(
-                    unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
@@ -1707,7 +1707,7 @@ impl BlobExt for Blob {
                 bun_sys::Fd::INVALID,
                 // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                 jsc::EventLoopHandle::init(
-                    unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
                 ),
             );
 
@@ -1820,7 +1820,7 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &arguments_.ptr[..3]);
+        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -1855,7 +1855,7 @@ impl BlobExt for Blob {
                         break 'inner;
                     }
 
-                    if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                    if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
                         content_type = match mime.value {
                             ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
                             ::std::borrow::Cow::Owned(v) => {
@@ -2034,7 +2034,7 @@ impl BlobExt for Blob {
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = unsafe { &mut *global_this.bun_vm() };
+                        let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
                         let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Stat::create(
@@ -2056,7 +2056,7 @@ impl BlobExt for Blob {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = unsafe { &mut *global_this.bun_vm() };
+                        let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
                         let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Fstat::create(
@@ -2216,7 +2216,7 @@ impl BlobExt for Blob {
                                     }
                                     blob.content_type_was_set = true;
 
-                                    if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                                    if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
                                         blob.content_type = match mime.value {
                                         ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
                                         ::std::borrow::Cow::Owned(v) => {
@@ -3247,7 +3247,7 @@ impl BlobExt for Blob {
             if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
                 if p.slice().starts_with(b"s3://") {
                     // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = unsafe { &mut *global_this.bun_vm() };
+                    let vm = global_this.bun_vm().as_mut();
                     // `bun_dotenv::Loader` (T2) returns its local POD mirror by
                     // reference; lift it into the refcounted
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
@@ -3287,7 +3287,7 @@ impl BlobExt for Blob {
                 }
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
-                if unsafe { &*global_this.bun_vm() }.standalone_module_graph.is_some() {
+                if global_this.bun_vm().standalone_module_graph.is_some() {
                     // PORT NOTE (layering): `vm.standalone_module_graph` is a
                     // type-erased `&dyn` so `bun_jsc` doesn't depend on
                     // `bun_standalone_graph`. The concrete `Graph` is the sole
@@ -3329,7 +3329,7 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
                     // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = unsafe { &mut *global_this.bun_vm() };
+                    let vm = global_this.bun_vm().as_mut();
                     // `RareData::{stdin,stdout,stderr}()` return the cached
                     // `webcore::blob::Store` erased to `*mut c_void` (the
                     // low-tier crate cannot name the high-tier type — see
@@ -4677,7 +4677,7 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
 pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
-    let mut args = jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, arguments);
+    let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
@@ -4977,7 +4977,7 @@ pub fn jsdom_file_construct_(
                         blob.content_type_was_set = true;
 
                         // SAFETY: bun_vm() returns the live VM pointer for this global.
-                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
                             blob.content_type = match mime.value {
                                         ::std::borrow::Cow::Borrowed(s) => s as *const [u8],
                                         ::std::borrow::Cow::Owned(v) => {
@@ -5031,7 +5031,7 @@ pub fn construct_bun_file(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let vm = unsafe { &*global_object.bun_vm() };
+    let vm = global_object.bun_vm();
     let arguments = callframe.arguments_old::<2>();
     let arguments_slice = arguments.slice();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
@@ -5068,7 +5068,7 @@ pub fn construct_bun_file(
                         }
                         blob.content_type_was_set = true;
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(entry) = unsafe { (*global_object.bun_vm()).mime_type(str.slice()) } {
+                        if let Some(entry) = global_object.bun_vm().as_mut().mime_type(str.slice()) {
                             blob.content_type = entry.value.as_ref() as *const [u8];
                             break 'inner;
                         }

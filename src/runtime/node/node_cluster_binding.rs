@@ -52,9 +52,8 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let handle = arguments[1];
     let callback = arguments[2];
 
-    let vm = global.bun_vm();
+    let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
-    let vm = unsafe { &mut *vm };
 
     if vm.ipc.is_none() {
         return Ok(JSValue::FALSE);
@@ -234,7 +233,7 @@ pub fn handle_internal_message_primary(
     };
 
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
+    let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
@@ -295,7 +294,7 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 
     let enabled = arguments[0].to_boolean();
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
         vm.channel_ref.ref_(vm_ctx());
@@ -310,7 +309,7 @@ pub extern "C" fn Bun__refChannelUnlessOverridden(global: *mut JSGlobalObject) {
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.ref_(vm_ctx());
     }
@@ -321,7 +320,7 @@ pub extern "C" fn Bun__unrefChannelUnlessOverridden(global: *mut JSGlobalObject)
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.unref(vm_ctx());
     }
@@ -333,7 +332,7 @@ pub fn channel_ignore_one_disconnect_event_listener(
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
     Ok(JSValue::FALSE)
 }
@@ -343,7 +342,7 @@ pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlo
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let vm = unsafe { &*global.bun_vm() };
+    let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
 

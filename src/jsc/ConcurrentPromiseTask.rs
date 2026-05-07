@@ -61,7 +61,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
         // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; the VM
         // and its `EventLoop` outlive every task scheduled on it.
-        let event_loop = unsafe { (*VirtualMachine::get()).event_loop() };
+        let event_loop = VirtualMachine::get().as_mut().event_loop();
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,

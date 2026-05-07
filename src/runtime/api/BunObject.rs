@@ -60,7 +60,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             } else {
                 // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
                 // singleton, set during VM init and never freed.
-                let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
+                let fs = unsafe { &*VirtualMachine::get().as_mut().transpiler.fs };
                 let _ = write_bytes(writer, fs.abs(&[to]));
             }
         } else {
@@ -80,7 +80,7 @@ pub fn get_public_path<W: core::fmt::Write>(to: &[u8], origin: &bun_url::URL, wr
     get_public_path_with_asset_prefix(
         to,
         // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem singleton.
-        unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir },
+        unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir },
         origin,
         b"",
         writer,
@@ -545,7 +545,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let arguments_ = callframe.arguments_old::<2>();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
-    let vm = unsafe { &*global_this.bun_vm() };
+    let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
         return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
@@ -816,7 +816,7 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
     }
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let get_or_put_result = unsafe { &mut *VirtualMachine::get() }
+    let get_or_put_result = VirtualMachine::get().as_mut()
         .macros
         .get_or_put(id)
         .expect("unreachable");
@@ -835,13 +835,13 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
 pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton; `fs` is
     // the process-lifetime resolver FileSystem singleton.
-    ZigString::init(unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir })
+    ZigString::init(unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir })
         .to_js(global_this)
 }
 
 pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    ZigString::init(unsafe { &*VirtualMachine::get() }.origin.origin).to_js(global_this)
+    ZigString::init(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
 pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -851,7 +851,7 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 // callconv(jsc.conv) — emitted by #[bun_jsc::host_call]; see PORTING.md §FFI.
 pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
-    let vm = unsafe { &mut *global_this.bun_vm() };
+    let vm = global_this.bun_vm().as_mut();
     // If JS has set it to a custom value, use that one
     if let Some(overridden_main) = vm.overridden_main.get() {
         return overridden_main;
@@ -920,7 +920,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
 pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
-    unsafe { &mut *global_this.bun_vm() }
+    global_this.bun_vm().as_mut()
         .overridden_main
         .set(global_this, new_value);
     true
@@ -960,7 +960,7 @@ thread_local! {
 pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let args = callframe.arguments_old::<4>();
     // SAFETY: bun_vm() returns the live per-thread singleton.
-    let vm = unsafe { &*global_this.bun_vm() };
+    let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, args.slice());
     let mut path = ZigStringSlice::EMPTY;
     let mut editor_choice: Option<Editor> = None;
@@ -1115,7 +1115,7 @@ pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue
 
 fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live per-thread singleton.
-    let vm = unsafe { &*global_this.bun_vm() };
+    let vm = global_this.bun_vm();
     let mut args = ArgumentsSlice::init(vm, arguments);
     let Some(specifier) = args.protect_eat_next() else {
         return Err(global_this
@@ -1321,7 +1321,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
     let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let bun_vm = unsafe { &mut *global.bun_vm() };
+    let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
@@ -1329,7 +1329,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
         Some(unsafe { core::mem::transmute::<&[BunString], &'static [BunString]>(paths) });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
-        unsafe { (*global.bun_vm()).transpiler.resolver.custom_dir_paths = None };
+        global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
     }
 
     jsc::to_js_host_call(
@@ -1436,7 +1436,7 @@ pub use crate::crypto as crypto_mod;
 #[bun_jsc::host_fn]
 pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let ns = unsafe { (*global_this.bun_vm()).origin_timer.elapsed().as_nanos() as u64 };
+    let ns = global_this.bun_vm().as_mut().origin_timer.elapsed().as_nanos() as u64;
     Ok(JSValue::js_number_from_uint64(ns))
 }
 
@@ -1445,7 +1445,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     let arguments = callframe.arguments_old::<2>();
     let arguments = arguments.slice();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &mut *global_object.bun_vm() };
+    let vm = global_object.bun_vm().as_mut();
     let mut config: crate::server::ServerConfig = 'brk: {
         let mut args = ArgumentsSlice::init(vm, arguments);
 
@@ -1468,7 +1468,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     };
 
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
-    let vm = unsafe { &mut *global_object.bun_vm() };
+    let vm = global_object.bun_vm().as_mut();
 
     // PORT NOTE (layering): Zig's `HotMap` is a `TaggedPtrUnion` over the four
     // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
@@ -1529,7 +1529,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             if config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = unsafe { &mut *global_object.bun_vm() }.hot_map() {
+                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
                         &config.id,
                         HotMapEntry { tag: $tag as u8, ptr: server.cast::<()>() },
@@ -1538,7 +1538,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             }
 
             // SAFETY: bun_vm() returns the live thread-local VM.
-            if let Some(debugger) = unsafe { &mut *global_object.bun_vm() }.debugger.as_deref_mut() {
+            if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
                 let any = AnyServer::from(server as *const $ServerType);
                 crate::server::http_server_agent::notify_server_started(
                     &mut debugger.http_server_agent,
@@ -1679,7 +1679,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     {
         let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-        let vm = unsafe { &*global_this.bun_vm() };
+        let vm = global_this.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments_.slice());
 
         let mut buf = PathBuffer::uninit();
@@ -1835,7 +1835,7 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     use crate::webcore::s3_client::S3Client;
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &mut *global_this.bun_vm() };
+    let vm = global_this.bun_vm().as_mut();
     // PORT NOTE: reshaped for borrowck — capture the raw env loader pointer
     // before `rare_data()` takes the long-lived `&mut` of `vm`.
     let env_ptr = vm.transpiler.env;
@@ -1884,7 +1884,7 @@ pub fn get_tls_default_ciphers(global_this: &JSGlobalObject, _: &JSObject) -> JS
     // which (per rare_data.zig) returns `?[:0]const u8`; coerce to a JS string
     // here, falling back to the compiled-in uWS default cipher list.
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &mut *global_this.bun_vm() };
+    let vm = global_this.bun_vm().as_mut();
     let bytes: &[u8] = match vm.rare_data().tls_default_ciphers() {
         Some(c) => c,
         None => bun_uws::get_default_ciphers().as_bytes(),
@@ -1898,7 +1898,7 @@ pub fn set_tls_default_ciphers(
     ciphers: JSValue,
 ) -> JSValue {
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &mut *global_this.bun_vm() };
+    let vm = global_this.bun_vm().as_mut();
     let Ok(sliced) = ciphers.to_slice(global_this) else {
         return JSValue::ZERO;
     };
@@ -1948,7 +1948,7 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     use bun_standalone_graph::{Graph as StandaloneModuleGraph, File as GraphFile};
     use crate::webcore::blob::{Blob, BlobExt as _};
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &*global_this.bun_vm() };
+    let vm = global_this.bun_vm();
     if vm.standalone_module_graph.is_none() {
         return JSValue::create_empty_array(global_this, 0);
     }
@@ -2109,7 +2109,7 @@ pub mod environment_variables {
         ptr: *mut *const Box<[u8]>,
     ) -> usize {
         // SAFETY: caller is C++ with live global; ptr is a valid out-param.
-        let bun_vm = unsafe { &mut *(*global_object).bun_vm() };
+        let bun_vm = unsafe { (*global_object).bun_vm() }.as_mut();
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let env = unsafe { &*bun_vm.transpiler.env };
         let keys: &[Box<[u8]>] = env.map.map.keys();
@@ -2160,7 +2160,7 @@ pub mod environment_variables {
         // SAFETY: caller is C++ with live pointers.
         let global_object = unsafe { &*global_object };
         // SAFETY: bun_vm() returns the live thread-local VM.
-        let vm = unsafe { &*global_object.bun_vm() };
+        let vm = global_object.bun_vm();
         let name_slice = unsafe { (*name).to_utf8() };
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let Some(val) = (unsafe { &*vm.transpiler.env }).get(name_slice.slice()) else {
@@ -2189,7 +2189,7 @@ pub mod environment_variables {
         // SAFETY: caller is C++ with live pointers.
         let global_object = unsafe { &*global_object };
         // SAFETY: bun_vm() returns the live thread-local VM.
-        let vm = unsafe { &mut *global_object.bun_vm() };
+        let vm = global_object.bun_vm().as_mut();
         let name_slice = unsafe { (*name).to_utf8() };
 
         // Synchronize the slot swap + env.map.put against a concurrently
@@ -2235,7 +2235,7 @@ pub mod environment_variables {
 
     pub fn get_env_names(global_object: &JSGlobalObject, names: &mut [ZigString]) -> usize {
         // SAFETY: bun_vm() returns the live thread-local VM.
-        let vm = unsafe { &*global_object.bun_vm() };
+        let vm = global_object.bun_vm();
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let keys = unsafe { &*vm.transpiler.env }.map.map.keys();
         let len = names.len().min(keys.len());
@@ -2247,7 +2247,7 @@ pub mod environment_variables {
 
     pub fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {
         // SAFETY: bun_vm() returns the live thread-local VM.
-        let vm = unsafe { &*global_object.bun_vm() };
+        let vm = global_object.bun_vm();
         let sliced = name.to_slice();
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let value = unsafe { &*vm.transpiler.env }.get(sliced.slice())?;
@@ -2259,7 +2259,7 @@ pub mod environment_variables {
 pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
     // SAFETY: caller is C++ with a live global.
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
-    let vm = unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() };
+    let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
     let _ = vm.uncaught_exception(unsafe { &*global_object }, err, false);
 }
 
@@ -3071,7 +3071,7 @@ pub mod JSZstd {
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
 
         // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-        let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
+        let vm: &'static VirtualMachine = global_this.bun_vm();
         let job = ZstdJob::create(vm, global_this, buffer, true, level);
         // SAFETY: job is live until run_from_js consumes it.
         Ok(unsafe { (*job).promise.value() })
@@ -3082,7 +3082,7 @@ pub mod JSZstd {
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
 
         // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-        let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
+        let vm: &'static VirtualMachine = global_this.bun_vm();
         let job = ZstdJob::create(vm, global_this, buffer, false, 0); // level is ignored for decompression
         // SAFETY: job is live until run_from_js consumes it.
         Ok(unsafe { (*job).promise.value() })

@@ -743,7 +743,7 @@ impl ErrorDeferred {
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
-        unsafe { &mut *global_this.bun_vm() }
+        global_this.bun_vm().as_mut()
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(context, Context::callback));
     }
 }

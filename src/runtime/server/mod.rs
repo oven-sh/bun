@@ -1672,7 +1672,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 arena: &bake_options.arena,
                 root: bake_options.root,
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: unsafe { &*jsc::VirtualMachine::get() },
+                vm: jsc::VirtualMachine::get(),
                 // LAYERING: `UserOptions` carries the `bake_body` shapes;
                 // `DevServer::Options` consumes the keystone shapes. In Zig
                 // these are one type — `From` impls in `bake/mod.rs` bridge
@@ -2375,7 +2375,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                         if !unsafe { &*this }.config.h1 {
                             // SAFETY: per-thread VM singleton; no aliasing `&mut`.
-                            unsafe { &mut *jsc::VirtualMachine::get() }.event_loop_handle =
+                            jsc::VirtualMachine::get().as_mut().event_loop_handle =
                                 Some(bun_aio::Loop::get());
                         }
                     }

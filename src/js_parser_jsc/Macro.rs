@@ -326,7 +326,7 @@ impl Macro {
     ) -> Result<Macro, Error> {
         // TODO(port): narrow error set
         let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
-            VirtualMachine::get()
+            VirtualMachine::get_mut_ptr()
         } else {
             // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
             // across this block because `VirtualMachine.init` (via
@@ -935,7 +935,7 @@ impl Runner {
 
         // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
         // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
-        let global_object = unsafe { &*(*VirtualMachine::get()).global };
+        let global_object = unsafe { &*VirtualMachine::get().as_mut().global };
 
         match &caller.data {
             ExprData::ECall(call) => {
@@ -1038,7 +1038,7 @@ impl Runner {
         unsafe {
             Bun__startMacro(
                 call as *const c_void,
-                (*VirtualMachine::get()).global.cast::<c_void>(),
+                VirtualMachine::get().as_mut().global.cast::<c_void>(),
             );
         }
         CALL_STATE.with(|s| s.set(core::ptr::null_mut()));

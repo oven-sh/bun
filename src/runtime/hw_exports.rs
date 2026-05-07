@@ -33,7 +33,7 @@ use crate::webcore::BlobExt as _;
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isMainThreadVM() -> bool {
     // SAFETY: `get()` returns the live per-thread VM raw ptr.
-    unsafe { (*VirtualMachine::get()).is_main_thread }
+    VirtualMachine::get().as_mut().is_main_thread
 }
 
 /// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
@@ -51,7 +51,7 @@ pub fn Bun__drainMicrotasksFromJS(global: *mut JSGlobalObject, _callframe: *mut 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__logUnhandledException(exception: JSValue) {
     // SAFETY: `get()` returns the live per-thread VM raw ptr; mutator thread.
-    unsafe { (*VirtualMachine::get()).run_error_handler(exception, None) };
+    VirtualMachine::get().as_mut().run_error_handler(exception, None);
 }
 
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
@@ -312,7 +312,7 @@ pub fn on_resolve_entry_point_result(
         );
     }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(unsafe { (*global.bun_vm()).exit_handler.exit_code }));
+    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
 #[bun_jsc::host_fn(export = "Bun__onRejectEntryPointResult")]
@@ -335,7 +335,7 @@ pub fn on_reject_entry_point_result(
         );
     }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(unsafe { (*global.bun_vm()).exit_handler.exit_code }));
+    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
 // ─── bindgenv2 dispatch shims (GeneratedBindings.zig: `bindgen_*_dispatch*`) ─
@@ -394,7 +394,7 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
     // `vm.garbageCollect(force)` — mimalloc cleanup, then sync `runGC(true)`
     // when `force`, else `collectAsync()` + `heap.size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    unsafe { *out = (*global.bun_vm()).garbage_collect(force) };
+    unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
     true
 }
 

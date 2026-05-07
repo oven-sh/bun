@@ -35,7 +35,7 @@ impl Counters {
 // directly; the trampoline is wired by codegen.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the per-thread VirtualMachine singleton; caller is on the JS thread.
-    unsafe { &*global.bun_vm() }.counters.to_js(global)
+    global.bun_vm().counters.to_js(global)
 }
 
 // Zig: `const Field = std.meta.FieldEnum(Counters);`

@@ -279,7 +279,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     let arguments = frame.arguments_old::<2>();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global
     // (see JSGlobalObject.zig:620); ArgumentsSlice borrows it for the call.
-    let mut args = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     let mut input: &[u8] = b"";
     let mut input_slice = ZigStringSlice::empty();

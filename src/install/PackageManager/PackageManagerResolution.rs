@@ -7,6 +7,7 @@ use bun_semver::{SlicedString, String as SemverString};
 use bun_str::strings;
 
 use crate::dependency;
+use crate::lockfile::package::PackageListExt as _;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;

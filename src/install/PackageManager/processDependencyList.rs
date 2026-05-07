@@ -1,77 +1,129 @@
-use bun_core::{dirname, Global, Output};
-use bun_js_parser::Expr;
-use crate::bun_json as json;
+use bun_core::{Global, Output};
 use bun_logger as logger;
-use bun_paths::platform;
+use bun_paths::dirname;
 use bun_paths::resolve_path::join_abs_string_z;
+use bun_paths::platform;
+use bun_semver::version::VersionInt;
 use bun_semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
-use crate::lockfile::{self, Lockfile, StringBuilder};
-use crate::lockfile_real::package::{Package, Scripts};
+use crate::bun_json as json;
+use crate::bun_json::Expr;
+use crate::lockfile_real::package::{Package, ResolverContext, Scripts};
+use crate::lockfile_real::StringBuilder;
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{PackageManager, TaskCallbackList};
+use crate::package_manager_real::{
+    enqueue, resolution as pm_resolution, PackageManager, TaskCallbackList,
+};
+use crate::repository_real::Repository;
+use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
-    initialize_store, DependencyID, ExtractData, Features, PackageID, Repository, Resolution,
+    initialize_store, DependencyID, ExtractData, Features, PackageID, Resolution,
     TaskCallbackContext, INVALID_PACKAGE_ID,
 };
+
+// ──────────────────────────────────────────────────────────────────────────
+// GitResolver
+// ──────────────────────────────────────────────────────────────────────────
 
 pub struct GitResolver<'a> {
     pub resolved: &'a [u8],
     pub resolution: &'a Resolution,
     pub dep_id: DependencyID,
-    // TODO(port): `new_name: []u8 = ""` — unused in this file; verify whether mutability is needed.
-    pub new_name: &'a [u8],
+    /// Zig: `new_name: []u8 = ""` — owned scratch buffer that
+    /// `Package::parse_with_json` may assign when the package.json `name`
+    /// field is missing (see `ResolverContext::set_new_name`).
+    pub new_name: Vec<u8>,
 }
 
-impl<'a> GitResolver<'a> {
-    // TODO(port): add trait bound for `builder` (.count/.append) once StringBuilder trait exists
-    pub fn count<B>(&self, builder: &mut B, _: Expr) {
+impl<'a> ResolverContext for GitResolver<'a> {
+    const IS_GIT_RESOLVER: bool = true;
+
+    fn check_bundled_dependencies() -> bool {
+        true
+    }
+
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
         builder.count(self.resolved);
     }
 
-    pub fn resolve<B>(&self, builder: &mut B, _: Expr) -> Result<Resolution, bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut resolution = *self.resolution;
-        resolution.value.github.resolved = builder.append::<SemverString>(self.resolved);
-        Ok(resolution)
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        // Zig: `var resolution = this.resolution.*;
+        //       resolution.value.github.resolved = builder.append(String, this.resolved);`
+        // `git` and `github` share the `Repository` payload in the value union,
+        // so writing through `.github` is correct for both tags.
+        // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
+        // `process_extracted_tarball_package`); both store a `Repository`.
+        let mut repo = unsafe { self.resolution.value.github };
+        repo.resolved = builder.append::<SemverString>(self.resolved);
+        Ok(ResolutionType::init(match self.resolution.tag {
+            ResolutionTag::Git => TaggedValue::Git(repo),
+            _ => TaggedValue::Github(repo),
+        }))
     }
 
-    pub fn check_bundled_dependencies() -> bool {
-        true
+    fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
+        // SAFETY: `ResolutionType<S>` layout is invariant under `S` for the
+        // git/github payload (only `Value::npm` carries `Version<S>`); callers
+        // gate on `IS_GIT_RESOLVER` so the npm arm is never read.
+        unsafe { &*(self.resolution as *const Resolution as *const ResolutionType<SemverIntType>) }
+    }
+    fn dep_id(&self) -> DependencyID {
+        self.dep_id
+    }
+    fn new_name(&self) -> &[u8] {
+        &self.new_name
+    }
+    fn set_new_name(&mut self, name: Vec<u8>) {
+        self.new_name = name;
+    }
+    fn take_new_name(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.new_name)
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// TarballResolver
+// ──────────────────────────────────────────────────────────────────────────
 
 struct TarballResolver<'a> {
     url: &'a [u8],
     resolution: &'a Resolution,
 }
 
-impl<'a> TarballResolver<'a> {
-    // TODO(port): add trait bound for `builder` (.count/.append) once StringBuilder trait exists
-    pub fn count<B>(&self, builder: &mut B, _: Expr) {
+impl<'a> ResolverContext for TarballResolver<'a> {
+    fn check_bundled_dependencies() -> bool {
+        true
+    }
+
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
         builder.count(self.url);
     }
 
-    pub fn resolve<B>(&self, builder: &mut B, _: Expr) -> Result<Resolution, bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut resolution = *self.resolution;
-        match resolution.tag {
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        Ok(ResolutionType::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
-                resolution.value.local_tarball = builder.append::<SemverString>(self.url);
+                TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
             }
             ResolutionTag::RemoteTarball => {
-                resolution.value.remote_tarball = builder.append::<SemverString>(self.url);
+                TaggedValue::RemoteTarball(builder.append::<SemverString>(self.url))
             }
             _ => unreachable!(),
-        }
-        Ok(resolution)
-    }
-
-    pub fn check_bundled_dependencies() -> bool {
-        true
+        }))
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// PackageManager impl
+// ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
     /// Returns true if we need to drain dependencies
@@ -90,18 +142,16 @@ impl PackageManager {
                         resolved: &data.resolved,
                         resolution,
                         dep_id,
-                        new_name: b"",
+                        new_name: Vec::new(),
                     };
 
                     let mut pkg = Package::default();
                     if let Some(json) = &data.json {
                         let package_json_source =
-                            &logger::Source::init_path_string(&json.path, &json.buf);
+                            &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
 
-                        if let Err(err) = pkg.parse(
-                            self.lockfile,
-                            self,
-                            self.log,
+                        if let Err(err) = pkg.parse_from_real_manager(
+                            self as *mut PackageManager,
                             package_json_source,
                             &mut resolver,
                             Features::NPM,
@@ -110,23 +160,20 @@ impl PackageManager {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 Output::err(
                                     err,
-                                    format_args!(
-                                        "failed to parse package.json for <b>{}<r>",
-                                        resolution.fmt_url(string_buf),
-                                    ),
+                                    "failed to parse package.json for <b>{}<r>",
+                                    format_args!("{}", resolution.fmt_url(string_buf)),
                                 );
                             }
                             Global::crash();
                         }
 
-                        let has_scripts = pkg.scripts.has_any() || 'brk: {
+                        let has_scripts = pkg.scripts.has_any() || {
                             let dir = dirname(&json.path).unwrap_or(b"");
                             let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
                                 dir,
                                 &[b"binding.gyp" as &[u8]],
                             );
-
-                            break 'brk sys::exists(binding_dot_gyp_path);
+                            sys::exists(binding_dot_gyp_path.as_bytes())
                         };
 
                         pkg.meta.set_has_install_script(has_scripts);
@@ -134,38 +181,49 @@ impl PackageManager {
                     }
 
                     // package.json doesn't exist, no dependencies to worry about but we need to decide on a name for the dependency
-                    let mut repo = match resolution.tag {
-                        ResolutionTag::Git => resolution.value.git,
-                        ResolutionTag::Github => resolution.value.github,
-                        _ => unreachable!(),
+                    // SAFETY: tag is `.git` or `.github`; both store `Repository`.
+                    let repo = unsafe {
+                        match resolution.tag {
+                            ResolutionTag::Git => resolution.value.git,
+                            ResolutionTag::Github => resolution.value.github,
+                            _ => unreachable!(),
+                        }
                     };
 
                     let new_name = Repository::create_dependency_name_from_version_literal(
-                        &mut repo,
-                        self.lockfile,
+                        &repo,
+                        &mut self.lockfile,
                         dep_id,
                     );
-                    // `defer manager.allocator.free(new_name)` — `new_name` is owned (Vec<u8>/Box<[u8]>); drops at scope end.
+                    // `defer manager.allocator.free(new_name)` — `new_name: Vec<u8>` drops at scope end.
 
                     {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&new_name);
-                        // TODO(port): Zig passed `undefined` for the unused Expr param
-                        resolver.count(&mut builder, Expr::default());
+                        // inlined `resolver.count(&mut builder, undefined)` —
+                        // ResolverContext::count is typed against `lockfile_real::StringBuilder`;
+                        // the body is a single `builder.count(resolved)`.
+                        builder.count(resolver.resolved);
 
-                        builder.allocate();
+                        bun_core::handle_oom(builder.allocate());
 
                         let name = builder.append::<ExternalString>(&new_name);
                         pkg.name = name.value;
                         pkg.name_hash = name.hash;
 
-                        pkg.resolution = resolver
-                            .resolve(&mut builder, Expr::default())
-                            .expect("unreachable");
+                        // inlined `resolver.resolve(&mut builder, undefined)` for the same
+                        // builder-type reason; body is two lines (see `GitResolver::resolve`).
+                        // SAFETY: tag is `.git` or `.github`; both store `Repository`.
+                        let mut repo = unsafe { resolver.resolution.value.github };
+                        repo.resolved = builder.append::<SemverString>(resolver.resolved);
+                        pkg.resolution = ResolutionType::init(match resolver.resolution.tag {
+                            ResolutionTag::Git => TaggedValue::Git(repo),
+                            _ => TaggedValue::Github(repo),
+                        });
                     }
 
-                    break 'package pkg;
+                    pkg
                 };
 
                 // Store the tarball integrity hash so the lockfile can pin the
@@ -178,17 +236,20 @@ impl PackageManager {
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {
-                    self.lockfile
-                        .scratch
-                        .dependency_list_queue
-                        .write_item(package.dependencies);
+                    bun_core::handle_oom(
+                        self.lockfile
+                            .scratch
+                            .dependency_list_queue
+                            .write_item(package.dependencies),
+                    );
                 }
 
                 Some(package)
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
-                let package_json_source = &logger::Source::init_path_string(&json.path, &json.buf);
+                let package_json_source =
+                    &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
                 let mut package = Package::default();
 
                 let mut resolver = TarballResolver {
@@ -196,10 +257,8 @@ impl PackageManager {
                     resolution,
                 };
 
-                if let Err(err) = package.parse(
-                    self.lockfile,
-                    self,
-                    self.log,
+                if let Err(err) = package.parse_from_real_manager(
+                    self as *mut PackageManager,
                     package_json_source,
                     &mut resolver,
                     Features::NPM,
@@ -215,14 +274,13 @@ impl PackageManager {
                     Global::crash();
                 }
 
-                let has_scripts = package.scripts.has_any() || 'brk: {
+                let has_scripts = package.scripts.has_any() || {
                     let dir = dirname(&json.path).unwrap_or(b"");
                     let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
                         dir,
                         &[b"binding.gyp" as &[u8]],
                     );
-
-                    break 'brk sys::exists(binding_dot_gyp_path);
+                    sys::exists(binding_dot_gyp_path.as_bytes())
                 };
 
                 package.meta.set_has_install_script(has_scripts);
@@ -234,10 +292,12 @@ impl PackageManager {
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {
-                    self.lockfile
-                        .scratch
-                        .dependency_list_queue
-                        .write_item(package.dependencies);
+                    bun_core::handle_oom(
+                        self.lockfile
+                            .scratch
+                            .dependency_list_queue
+                            .write_item(package.dependencies),
+                    );
                 }
 
                 Some(package)
@@ -246,11 +306,16 @@ impl PackageManager {
                 if !data.json.as_ref().unwrap().buf.is_empty() {
                     let json = data.json.as_ref().unwrap();
                     let package_json_source =
-                        &logger::Source::init_path_string(&json.path, &json.buf);
+                        &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
+                    // SAFETY: `self.log` is set once by `PackageManager::init()` and
+                    // never null while tasks run (mirrors Zig's non-optional `*logger.Log`).
+                    let log = unsafe { &mut *self.log };
+                    let bump = bun_alloc::Arena::new();
                     let json_root = match json::parse_package_json_utf8(
                         package_json_source,
-                        self.log,
+                        log,
+                        &bump,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -265,16 +330,12 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
-                    // PORT NOTE: `bun_json` returns the T2 `bun_logger::js_ast::Expr`;
-                    // `Scripts::parse_*` are typed against `bun_js_parser::Expr`. The
-                    // logger AST has an `Into` lift (see js_parser/ast/Expr.rs).
-                    let json_root: bun_js_parser::Expr = json_root.into();
                     let mut builder = self.lockfile.string_builder();
                     Scripts::parse_count(&mut builder, &json_root);
                     builder.allocate().expect("unreachable");
                     debug_assert!(*package_id != INVALID_PACKAGE_ID);
-                    // TODO(port): MultiArrayList SoA accessor — verify .items(.scripts) mapping
-                    let scripts = &mut self.lockfile.packages.items_mut().scripts[*package_id as usize];
+                    let scripts =
+                        &mut self.lockfile.packages.items_scripts_mut()[*package_id as usize];
                     scripts.parse_alloc(&mut builder, &json_root);
                     scripts.filled = true;
                 }
@@ -290,16 +351,17 @@ impl PackageManager {
         any_root: Option<&mut bool>,
         install_peer: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         match item {
             TaskCallbackContext::Dependency(dependency_id) => {
-                // PORT NOTE: reshaped for borrowck
+                // PORT NOTE: reshaped for borrowck — copy the dependency/row
+                // out of the buffer before re-borrowing `self` for enqueue.
                 let dependency =
                     self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
                 let resolution =
                     self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
 
-                self.enqueue_dependency_with_main(
+                enqueue::enqueue_dependency_with_main(
+                    self,
                     dependency_id,
                     &dependency,
                     resolution,
@@ -312,13 +374,14 @@ impl PackageManager {
                 let resolution =
                     self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
 
-                self.enqueue_dependency_with_main_and_success_fn(
+                enqueue::enqueue_dependency_with_main_and_success_fn(
+                    self,
                     dependency_id,
                     &dependency,
                     resolution,
                     install_peer,
-                    PackageManager::assign_root_resolution,
-                    PackageManager::fail_root_resolution,
+                    pm_resolution::assign_root_resolution,
+                    Some(PackageManager::fail_root_resolution),
                 )?;
                 if let Some(ptr) = any_root {
                     let new_resolution_id =
@@ -334,14 +397,14 @@ impl PackageManager {
     }
 
     pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             let dependency =
                 self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize];
             let resolution =
                 self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
 
-            self.enqueue_dependency_with_main(
+            enqueue::enqueue_dependency_with_main(
+                self,
                 peer_dependency_id,
                 &dependency,
                 resolution,
@@ -351,9 +414,10 @@ impl PackageManager {
         Ok(())
     }
 
-    // TODO(port): `callbacks` was `comptime anytype` with a `@TypeOf(callbacks) != void and
-    // @TypeOf(callbacks.onResolve) != void` check. Modeled as `Option<impl FnOnce(C)>`; Phase B
-    // may want a dedicated trait if other callback fields are added.
+    /// Zig: `callbacks` was `comptime anytype` with a
+    /// `@TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void`
+    /// check. Modeled as `Option<impl FnOnce(C)>` — only `onResolve` is ever
+    /// read, and the void path is `None`.
     pub fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
@@ -361,11 +425,10 @@ impl PackageManager {
         on_resolve: Option<impl FnOnce(C)>,
         install_peer: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        if !dep_list.as_slice().is_empty() {
+        if !dep_list.is_empty() {
             let dependency_list = dep_list;
             let mut any_root = false;
-            for item in dependency_list.as_slice().iter().copied() {
+            for item in dependency_list.iter().copied() {
                 self.process_dependency_list_item(item, Some(&mut any_root), install_peer)?;
             }
 
@@ -375,20 +438,17 @@ impl PackageManager {
                 }
             }
 
-            // `dependency_list.deinit(this.allocator)` — drops at scope end.
+            // `dependency_list.deinit(this.allocator)` — owned `Vec`; drops here.
             drop(dependency_list);
         }
         Ok(())
     }
 }
 
-// TODO(port): `Resolution.tag` enum path — adjust once `crate::Resolution` lands.
-use crate::resolution::Tag as ResolutionTag;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Free-function re-export surface — Zig declares these at file scope with an
 // explicit `*PackageManager` first param. Thin shims over the
-// `impl PackageManager` bodies above so `pub use process_dependency_list::{...}`
+// `impl PackageManager` bodies above so `pub use process_dependency_list::{…}`
 // in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -429,11 +489,3 @@ pub fn process_dependency_list<C>(
 ) -> Result<(), bun_core::Error> {
     this.process_dependency_list(dep_list, ctx, on_resolve, install_peer)
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/processDependencyList.zig (360 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Resolver count/resolve are unbounded generics pending a StringBuilder trait; `callbacks: anytype` flattened to Option<FnOnce>; borrowck reshape on lockfile buffer indexing.
-// ──────────────────────────────────────────────────────────────────────────

@@ -1780,9 +1780,11 @@ impl FetchTasklet {
             }
         } else {
             if success {
-                let _ = task_ref
-                    .scheduled_response_buffer
-                    .write(task_ref.response_buffer.list.as_slice());
+                bun_core::handle_oom(
+                    task_ref
+                        .scheduled_response_buffer
+                        .write(task_ref.response_buffer.list.as_slice()),
+                );
             }
             // reset for reuse
             task_ref.response_buffer.reset();

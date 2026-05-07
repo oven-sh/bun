@@ -1638,6 +1638,118 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
     };
 
 impl DevServer {
+    /// `DevServer.handleParseTaskFailure` — DevServer.zig:3063.
+    /// Note: The log is not consumed here.
+    pub fn handle_parse_task_failure(
+        &mut self,
+        err: bun_core::Error,
+        graph: Graph,
+        abs_path: &[u8],
+        log: &Log,
+        bv2: &mut bun_bundler::BundleV2<'_>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.graph_safety_lock.lock();
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+
+        bun_core::scoped_log!(
+            DevServer,
+            "handleParseTaskFailure({}, .{}, {}, {} messages)",
+            err.name(),
+            <&'static str>::from(graph),
+            bun_core::fmt::quote(abs_path),
+            log.msgs.len(),
+        );
+
+        if err == bun_core::err!("FileNotFound") || err == bun_core::err!("ModuleNotFound") {
+            // Special-case files being deleted.
+            match graph {
+                Graph::Server | Graph::Ssr => self.server_graph.on_file_deleted(abs_path, bv2)?,
+                Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
+            }
+        } else {
+            match graph {
+                Graph::Server => self.server_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    false,
+                )?,
+                Graph::Ssr => self.server_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    true,
+                )?,
+                Graph::Client => self.client_graph.insert_failure(
+                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    log,
+                    false,
+                )?,
+            }
+        }
+        Ok(())
+    }
+
+    /// `DevServer.getLogForResolutionFailures` — DevServer.zig:3098.
+    /// Return a log to write resolution failures into.
+    pub fn get_log_for_resolution_failures(
+        &mut self,
+        abs_path: &[u8],
+        graph: Graph,
+    ) -> Result<&mut Log, bun_core::Error> {
+        debug_assert!(self.current_bundle.is_some());
+
+        self.graph_safety_lock.lock();
+        let lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+
+        // PORT NOTE: Zig `switch (graph == .client) { inline else => |is_client| ... }` — unrolled.
+        let owner: serialized_failure::OwnerPacked = if graph == Graph::Client {
+            let r = self.client_graph.insert_stale(abs_path, false)?;
+            serialized_failure::OwnerPacked::new(Side::Client, r.get())
+        } else {
+            let r = self.server_graph.insert_stale(abs_path, graph == Graph::Ssr)?;
+            serialized_failure::OwnerPacked::new(Side::Server, r.get())
+        };
+        let current_bundle = self.current_bundle.as_mut().unwrap();
+        let gop = current_bundle.resolution_failure_entries.get_or_put(owner)?;
+        if !gop.found_existing {
+            *gop.value_ptr = Log::init();
+        }
+        Ok(gop.value_ptr)
+    }
+
+    /// `DevServer.putOrOverwriteAsset` — DevServer.zig. Ownership of `contents`
+    /// is transferred to `Assets`.
+    pub fn put_or_overwrite_asset(
+        &mut self,
+        path: &bun_resolver::fs::Path<'_>,
+        contents: &[u8],
+        content_hash: u64,
+    ) -> Result<(), bun_core::Error> {
+        self.graph_safety_lock.lock();
+        let lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `lock_ptr` points into `*self`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+
+        // The vtable boundary passes raw bytes (lower-tier `bun_bundler` cannot
+        // name `crate::webcore::AnyBlob`); wrap into an `InternalBlob` here.
+        let blob = crate::webcore::AnyBlob::InternalBlob(crate::webcore::InternalBlob {
+            bytes: contents.to_vec(),
+            was_string: false,
+        });
+        let _ = self.assets.replace_path(
+            path.text,
+            &blob,
+            &bun_http_types::MimeType::by_extension(path.name.ext_without_leading_dot()),
+            content_hash,
+        )?;
+        Ok(())
+    }
+
     /// Construct the erased handle the bundler stores in
     /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
     #[inline]

@@ -803,12 +803,9 @@ unsafe fn print_exception(
 ) {
     // Spec VirtualMachine.zig:2164-2188 — the print half of `runErrorHandler`
     // (the `had_errors` save/restore lives in the low-tier caller). Route via
-    // the buffered error writer so the `defer writer.flush()` flush happens
-    // exactly once after the formatter is done.
+    // the buffered error writer; `defer writer.flush()` becomes a tail call —
+    // no early returns below.
     let writer = bun_core::Output::error_writer_buffered();
-    let _flush = scopeguard::guard((), |_| {
-        let _ = writer.flush();
-    });
 
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let vm_ref = unsafe { &mut *vm };
@@ -836,6 +833,8 @@ unsafe fn print_exception(
         );
         // `defer formatter.deinit()` → Drop.
     }
+
+    let _ = writer.flush();
 }
 
 /// `vm.timer.insert(timer)` — Spec Timer.zig `All.insert`. The heap lives in

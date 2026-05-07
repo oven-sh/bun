@@ -11,12 +11,10 @@ use crate::{Features, PackageManager, PackageNameHash};
 use crate::repository::Repository;
 
 // ──────────────────────────────────────────────────────────────────────────
-// NpmAliasRegistry — abstracts over the two `PackageManager` types (stub at
-// `crate::PackageManager` and real at `crate::package_manager_real::PackageManager`)
-// so `parse_with_tag` can record `npm:` aliases without depending on either
-// concrete struct. Zig threads `*PackageManager` directly; Rust splits the
-// type during the port, so we expose only the one method `parse` actually
-// touches (`known_npm_aliases.put`).
+// NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
+// actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
+// `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
+// `PackageManager` surface (Zig threads `*PackageManager` directly).
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
@@ -25,16 +23,8 @@ pub trait NpmAliasRegistry {
 
 impl NpmAliasRegistry for PackageManager {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, _version: &Version) {
-        // Stub PM stores `()` per `lib.rs` field type.
-        self.known_npm_aliases.insert(hash, ());
-    }
-}
-
-impl NpmAliasRegistry for crate::package_manager_real::PackageManager {
-    #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        // Real PM stores the parsed `Version` (Zig: `pm.known_npm_aliases.put(hash, result)`).
+        // Zig: `pm.known_npm_aliases.put(hash, result)`.
         self.known_npm_aliases.insert(hash, Clone::clone(version));
     }
 }
@@ -727,8 +717,10 @@ impl Version {
                 Tag::Folder | Tag::DistTag => {
                     self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
                 }
-                Tag::Git => self.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
-                Tag::Github => self.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
+                Tag::Git => Repository::eql(&self.value.git, &rhs.value.git, lhs_buf, rhs_buf),
+                Tag::Github => {
+                    Repository::eql(&self.value.github, &rhs.value.github, lhs_buf, rhs_buf)
+                }
                 Tag::Tarball => self
                     .value
                     .tarball

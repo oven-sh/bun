@@ -546,18 +546,7 @@ impl ServerConfig {
     }
 }
 
-// ─── from_js + JS-side parsing (gated) ───────────────────────────────────────
-// All of validate_route_name / get_routes_object / FromJSOptions / from_js
-// touch bun_jsc method surface (JSValue::get, JSGlobalObject::throw_*,
-// JSPropertyIterator, ArgumentsSlice). Preserved verbatim; un-gate once
-// `bun_jsc` is a dep of bun_runtime.
-// TODO(b2-blocked): bun_jsc method surface.
-
-pub mod _gated_from_js {
-use super::*;
-use crate::server::jsc::{JSPropertyIterator, JsError};
-use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
-use bun_core::fmt as bun_fmt;
+// ─── from_js + JS-side parsing ───────────────────────────────────────────────
 
 // Local extension shim for `JSValue::get_boolean_strict` (upstream copy in
 // `crate::node::fs` is `pub(super)` and not reachable here).
@@ -595,9 +584,9 @@ fn any_route_from_js(
     global: &JSGlobalObject,
     path: &[u8],
     argument: JSValue,
-    init_ctx: &mut super::super::server_body::ServerInitContext,
+    init_ctx: &mut super::server_body::ServerInitContext,
 ) -> JsResult<Option<AnyRoute>> {
-    use super::super::server_body::AnyRoute as BodyAnyRoute;
+    use super::server_body::AnyRoute as BodyAnyRoute;
     Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
         BodyAnyRoute::Static(rc) => AnyRoute::Static(rc),
         BodyAnyRoute::File(rc) => AnyRoute::File(rc),

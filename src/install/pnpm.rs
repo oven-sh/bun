@@ -2005,7 +2005,7 @@ fn update_package_json_after_migration(
 // originals and only touch the EObject/EArray/EString shapes.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn negatable_from_json<T: npm::Field>(expr: &Expr) -> T {
+fn negatable_from_json<T: npm::NegatableEnum + npm::NegatableExt>(expr: &Expr) -> T {
     let mut this = T::NONE.negatable();
     match &expr.data {
         ExprData::EArray(arr) => {

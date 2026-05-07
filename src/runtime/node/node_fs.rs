@@ -837,49 +837,73 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Trait abstracting over Argument types' deinit/toThreadSafe.
+///
+/// Zig: every Arguments struct defines `toThreadSafe(self: *@This())` (clone
+/// any borrowed JS-backed slices so the work-pool callback may run off-thread)
+/// and most define `deinitAndUnprotect` (free those clones and `unprotect` any
+/// retained `JSValue`s). The Zig spec dispatches via `@hasDecl`; in Rust the
+/// trait methods are **required** so missing impls are a compile error rather
+/// than a silent UAF/leak.
 pub trait FsArgument {
     const HAVE_ABORT_SIGNAL: bool = false;
-    /// Zig: every Arguments struct defines `toThreadSafe(self: *@This())` —
-    /// clone any borrowed JS-backed slices so the work-pool callback may run
-    /// off-thread. Default body is a porting stub; per-type overrides land
-    /// with each Arguments port.
-    fn to_thread_safe(&mut self) {
-        // TODO(port): per-Argument toThreadSafe — most are PathLike/slice
-        // clones; leave as no-op until each `args::*` is fleshed out.
-    }
-    /// Zig: `deinitAndUnprotect` — free clones from `to_thread_safe` and
-    /// `JSValue.unprotect` any retained handles. Default no-op stub.
-    fn deinit_and_unprotect(&mut self) {
-        // TODO(port): per-Argument deinitAndUnprotect.
-    }
+    fn to_thread_safe(&mut self);
+    fn deinit_and_unprotect(&mut self);
     fn signal(&self) -> Option<&AbortSignal> { None }
 }
 
-/// Mass-implement [`FsArgument`] for the `args::*` payload structs so the
-/// generic `AsyncFSTask::<R, A, F>::run_from_js_thread` is callable from the
-/// high-tier dispatch table. Per-type `to_thread_safe`/`deinit_and_unprotect`
-/// bodies override the defaults as each Arguments port lands.
-macro_rules! impl_fs_argument_stub {
+/// Forward [`FsArgument`] to the inherent `to_thread_safe` /
+/// `deinit_and_unprotect` methods each `args::*` struct already defines (1:1
+/// with `Arguments.*.toThreadSafe` / `deinitAndUnprotect` in `node_fs.zig`).
+macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
-        $( impl FsArgument for $ty {} )+
+        $( impl FsArgument for $ty {
+            #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit_and_unprotect(self) }
+        } )+
+    };
+    // Fd-only types — Zig has only `toThreadSafe(_: *const @This()) void {}`
+    // and no `deinitAndUnprotect`; spec node_fs.zig:325 falls back to
+    // `deinit()` (also a no-op for these).
+    ( @fd $( $ty:ty ),+ $(,)? ) => {
+        $( impl FsArgument for $ty {
+            #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit(self) }
+        } )+
     };
 }
-impl_fs_argument_stub!(
+impl_fs_argument!(
     args::Rename, args::Truncate, args::Writev, args::Readv, args::FTruncate,
-    args::Chown, args::Fchown, args::Lutimes, args::Chmod, args::FChmod,
-    args::StatFS, args::Stat, args::Fstat, args::Link, args::Symlink,
+    args::Chown, args::Lutimes, args::Chmod,
+    args::StatFS, args::Stat, args::Link, args::Symlink,
     args::Readlink, args::Realpath, args::Unlink, args::RmDir, args::Mkdir,
-    args::MkdirTemp, args::Readdir, args::Close, args::Open, args::Futimes,
+    args::MkdirTemp, args::Readdir, args::Open,
     args::Write, args::Read, args::Exists,
-    args::Access, args::FdataSync, args::CopyFile, args::Fsync,
+    args::Access, args::CopyFile,
+);
+impl_fs_argument!(@fd
+    args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
+    args::FdataSync, args::Fsync,
 );
 // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
-// `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold.
+// `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
+// `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
 impl FsArgument for args::ReadFile {
     const HAVE_ABORT_SIGNAL: bool = true;
+    #[inline] fn to_thread_safe(&mut self) { args::ReadFile::to_thread_safe(self) }
+    #[inline] fn deinit_and_unprotect(&mut self) { args::ReadFile::deinit_and_unprotect(self) }
+    #[inline] fn signal(&self) -> Option<&AbortSignal> {
+        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `deinit`.
+        self.signal.map(|s| unsafe { s.as_ref() })
+    }
 }
 impl FsArgument for args::WriteFile {
     const HAVE_ABORT_SIGNAL: bool = true;
+    #[inline] fn to_thread_safe(&mut self) { args::WriteFile::to_thread_safe(self) }
+    #[inline] fn deinit_and_unprotect(&mut self) { args::WriteFile::deinit_and_unprotect(self) }
+    #[inline] fn signal(&self) -> Option<&AbortSignal> {
+        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `deinit`.
+        self.signal.map(|s| unsafe { s.as_ref() })
+    }
 }
 
 /// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
@@ -1082,8 +1106,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
 
         if Self::HAVE_ABORT_SIGNAL {
             if let Some(signal) = self.args.signal() {
-                if let Some(reason) = signal.reason_if_aborted_js(global_object) {
-                    return promise.reject(global_object, Ok(reason));
+                if let Some(reason) = signal.reason_if_aborted(global_object) {
+                    return promise.reject(global_object, Ok(reason.to_js(global_object)));
                 }
             }
         }

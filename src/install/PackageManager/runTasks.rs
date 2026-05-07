@@ -650,7 +650,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     format_args!(
                                         "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                         bstr::BStr::new(err.name().as_bytes()),
-                                        bstr::BStr::new(extract.name),
+                                        bstr::BStr::new(extract.name.slice()),
                                         extract.resolution.fmt(
                                             &manager.lockfile.buffers.string_bytes,
                                             PathSep::Auto,
@@ -699,7 +699,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             C::on_package_download_error(
                                 extract_ctx,
                                 task.task_id,
-                                extract.name,
+                                extract.name.slice(),
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -711,7 +711,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 extract_ctx,
                                 // TODO(port): second arg is PackageID here, Task::Id above — see trait note
                                 Task::Id::from_package_id(package_id),
-                                extract.name,
+                                extract.name.slice(),
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -727,7 +727,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             format_args!(
                                 "{} downloading tarball <b>{}@{}<r>",
                                 err.name(),
-                                bstr::BStr::new(extract.name),
+                                bstr::BStr::new(extract.name.slice()),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
                                     PathSep::Auto,
@@ -741,7 +741,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             format_args!(
                                 "{} downloading tarball <b>{}@{}<r>",
                                 err.name(),
-                                bstr::BStr::new(extract.name),
+                                bstr::BStr::new(extract.name.slice()),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
                                     PathSep::Auto,
@@ -751,7 +751,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name) {
+                            if strings::eql(&request.name, extract.name.slice()) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -795,7 +795,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             C::on_package_download_error(
                                 extract_ctx,
                                 task.task_id,
-                                extract.name,
+                                extract.name.slice(),
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -807,7 +807,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 extract_ctx,
                                 // TODO(port): PackageID vs Task::Id — see trait note
                                 Task::Id::from_package_id(package_id),
-                                extract.name,
+                                extract.name.slice(),
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -839,7 +839,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name) {
+                            if strings::eql(&request.name, extract.name.slice()) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -862,7 +862,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
-                        bstr::BStr::new(extract.name),
+                        bstr::BStr::new(extract.name.slice()),
                     );
                     Output::flush();
                 }
@@ -871,7 +871,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
                             unsafe { &mut *manager.downloads_node.unwrap() },
-                            extract.name,
+                            extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
                         *has_updated_this_run = true;

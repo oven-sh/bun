@@ -8,7 +8,7 @@ use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
 use bun_paths::{self as Path, platform, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String;
 use bun_str::{strings, ZStr};
-use bun_sys::{self as Syscall, Dir, Fd, FdDirExt};
+use bun_sys::{self as Syscall, Dir, Fd, FdDirExt, FdExt};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -34,7 +34,8 @@ use crate::package_manager::{self, Options, PackageManager};
 use crate::PackageManagerOptionsStub as PackageManagerOptions;
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
-use crate::patch_install::PatchTask;
+use crate::network_task::ForTarballError;
+use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
 use crate::{
@@ -146,7 +147,7 @@ impl NodeModulesFolder {
             Ok(d) => Fd::from_std_dir(&d),
             Err(_) => return false,
         };
-        let res = dir.directory_exists_at(file_path).unwrap_or(false);
+        let res = bun_sys::directory_exists_at(dir, file_path).unwrap_or(false);
         dir.close();
         res
     }
@@ -225,7 +226,7 @@ impl NodeModulesFolder {
         }
 
         let dir = Fd::from_std_dir(&self.open_dir(root_node_modules_dir)?);
-        let res = bun_sys::File::openat(dir, file_path, bun_sys::O::RDONLY, 0).unwrap();
+        let res = bun_sys::File::openat(dir, file_path, bun_sys::O::RDONLY, 0);
         dir.close();
         res.map_err(|e| e.to_zig_err())
     }
@@ -561,24 +562,21 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        if let Some(log) = manager.log {
-                            // SAFETY: NonNull from a long-lived owning allocation.
-                            unsafe {
-                                (*log.as_ptr())
-                                    .add_error_fmt_opts(
-                                        format_args!(
-                                            "Failed to link <b>{}<r>: {}",
-                                            bstr::BStr::new(alias),
-                                            err.name(),
-                                        ),
-                                        Default::default(),
-                                    )
-                                    .unwrap_or_oom()
-                            };
-                        }
+                        // SAFETY: `manager.log` is a borrowed `*mut Log` set in
+                        // `init()` and outlives the install pass; never null.
+                        unsafe { &mut *manager.log }
+                            .add_error_fmt_opts(
+                                format_args!(
+                                    "Failed to link <b>{}<r>: {}",
+                                    bstr::BStr::new(alias),
+                                    err.name(),
+                                ),
+                                Default::default(),
+                            )
+                            .unwrap_or_oom();
                     }
 
-                    if self.options.enable.fail_early {
+                    if self.options.enable.fail_early() {
                         manager.crash();
                     }
                 }

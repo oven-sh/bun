@@ -192,8 +192,8 @@ impl PackageManager {
 
                     let new_name = Repository::create_dependency_name_from_version_literal(
                         &repo,
-                        &mut self.lockfile,
-                        dep_id,
+                        self.lockfile.buffers.string_bytes.as_slice(),
+                        &self.lockfile.buffers.dependencies[dep_id as usize],
                     );
                     // `defer manager.allocator.free(new_name)` — `new_name: Vec<u8>` drops at scope end.
 

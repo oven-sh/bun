@@ -17,7 +17,7 @@ use crate::{
     ZigException, ZigString,
 };
 use crate::virtual_machine::VirtualMachine;
-use bun_string::{self as strings, String as BunString};
+use bun_string::{self as strings, OwnedString, String as BunString};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
@@ -30,21 +30,11 @@ mod JSLexer {
         bun_js_parser::lexer::is_latin1_identifier(name)
     }
     /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
-    /// over a UTF-16 slice. `bun_js_printer` has a private copy; reproduce
-    /// the (tiny) check here rather than widen its visibility.
+    /// over a UTF-16 slice. Delegates to the canonical impl in
+    /// `bun_js_printer` (widened to `pub` for this caller).
+    #[inline]
     pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
-        if name.is_empty() { return false; }
-        let c0 = name[0];
-        if !(c0 == b'_' as u16 || c0 == b'$' as u16
-            || (b'a' as u16..=b'z' as u16).contains(&c0)
-            || (b'A' as u16..=b'Z' as u16).contains(&c0))
-        { return false; }
-        name[1..].iter().all(|&c| {
-            c == b'_' as u16 || c == b'$' as u16
-                || (b'a' as u16..=b'z' as u16).contains(&c)
-                || (b'A' as u16..=b'Z' as u16).contains(&c)
-                || (b'0' as u16..=b'9' as u16).contains(&c)
-        })
+        bun_js_printer::is_latin1_identifier_u16(name)
     }
 }
 mod JSPrinter {
@@ -2527,11 +2517,12 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                let mut str = BunString::empty();
+                                // Zig: `defer str.deref()` — `OwnedString` releases the
+                                // +1 WTF ref on every exit (incl. the `?` below).
+                                let mut str = OwnedString::new(BunString::empty());
                                 next_value.json_stringify_fast(global, &mut str)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
-                                str.deref();
                             }
                         }
                         if unsafe { (&*self.remaining_values).is_empty() } {
@@ -3241,7 +3232,9 @@ pub mod formatter {
                 Tag::String => {
                     // This is called from the '%s' formatter, so it can actually be any value
                     use crate::StringJsc as _;
-                    let str: BunString = BunString::from_js(value, self.global_this)?;
+                    // Zig: `defer str.deref()` — `OwnedString` releases the +1 WTF
+                    // ref on every exit of this arm (5 returns + fall-through).
+                    let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
                     writer.add_for_new_line(str.length());
 
                     if self.quote_strings && js_type != jsc::JSType::RegExpObject {

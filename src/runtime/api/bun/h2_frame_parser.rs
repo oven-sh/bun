@@ -279,14 +279,6 @@ pub(crate) trait H2GlobalErrExt {
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_>;
-    /// Zig `globalObject.toTypeError(code, fmt, .{})` — build (don't throw) a coded error.
-    fn to_type_error(&self, code: JscErrorCode, msg: &'static str) -> JSValue;
-    fn to_type_error_fmt(&self, code: JscErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
-    /// Zig `jsc.toInvalidArguments(fmt, .{}, globalObject)` — build a TypeError JSValue.
-    fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue;
-    /// `JSGlobalObject::clear_exception` lives in the cfg-gated
-    /// `JSGlobalObject.rs`; until that file un-gates, expose the FFI here.
-    fn clear_exception(&self);
 }
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
@@ -304,26 +296,6 @@ impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
     fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
         H2ErrBuilder { global: self, code: JscErrorCode::INVALID_ARG_TYPE, msg }
-    }
-    #[inline]
-    fn to_type_error(&self, code: JscErrorCode, msg: &'static str) -> JSValue {
-        code.fmt(self, format_args!("{msg}"))
-    }
-    #[inline]
-    fn to_type_error_fmt(&self, code: JscErrorCode, args: core::fmt::Arguments<'_>) -> JSValue {
-        code.fmt(self, args)
-    }
-    #[inline]
-    fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue {
-        JscErrorCode::INVALID_ARG_TYPE.fmt(self, args)
-    }
-    #[inline]
-    fn clear_exception(&self) {
-        unsafe extern "C" {
-            fn JSGlobalObject__clearException(global: *const JSGlobalObject);
-        }
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; no extra preconditions.
-        unsafe { JSGlobalObject__clearException(self) }
     }
 }
 

@@ -274,7 +274,6 @@ impl Config {
 
                     let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(count as usize);
                     let mut iter = external.array_iterator(global)?;
-                    let mut i: usize = 0;
                     while let Some(entry) = iter.next()? {
                         if !entry.js_type().is_string_like() {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -290,10 +289,8 @@ impl Config {
                         let mut buf = Vec::new();
                         write!(&mut buf, "{}", zig_str).expect("unreachable");
                         externals.push(buf.into_boxed_slice());
-                        i += 1;
                     }
 
-                    externals.truncate(i);
                     self.transform.external = externals;
                 } else {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -1705,26 +1702,31 @@ impl JSTranspiler {
             &source,
         );
 
-        if let Err(err) = scan_result {
-            self.scan_pass_result.reset();
+        // Zig: `defer this.scan_pass_result.reset()` covers every exit past this
+        // point (including the catch arm and the `try namedImportsToJS` error
+        // path). Compute the result, then reset unconditionally before returning.
+        let result = (|| -> JsResult<JSValue> {
+            if let Err(err) = scan_result {
+                if (log.warnings + log.errors) > 0 {
+                    return Err(
+                        global.throw_value(log.to_js(global, "Failed to scan imports")?),
+                    );
+                }
+                return Err(global.throw_error(err, "Failed to scan imports"));
+            }
+
             if (log.warnings + log.errors) > 0 {
                 return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
             }
-            return Err(global.throw_error(err, "Failed to scan imports"));
-        }
 
-        if (log.warnings + log.errors) > 0 {
-            self.scan_pass_result.reset();
-            return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
-        }
-
-        let named_imports_value = named_imports_to_js(
-            global,
-            self.scan_pass_result.import_records.as_slice(),
-            self.config.trim_unused_imports.unwrap_or(false),
-        )?;
+            named_imports_to_js(
+                global,
+                self.scan_pass_result.import_records.as_slice(),
+                self.config.trim_unused_imports.unwrap_or(false),
+            )
+        })();
         self.scan_pass_result.reset();
-        Ok(named_imports_value)
+        result
     }
 }
 

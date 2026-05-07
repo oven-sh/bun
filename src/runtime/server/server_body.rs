@@ -1718,8 +1718,13 @@ where
         // SAFETY: upgrader_ptr is live (ref_() above)
         let upgrader = unsafe { &mut *upgrader_ptr };
         if let Some(req_ptr) = upgrader.req {
+            // PORT NOTE: `RequestContext.req` is type-erased to `*mut c_void`
+            // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
+            // contexts have a distinct generic param and `request_context.get`
+            // above would have returned None — so the concrete `Req` is always
+            // `uws_sys::Request` here.
             // SAFETY: BACKREF; uws::Request is live while RequestContext.req is Some.
-            let r = unsafe { &mut *req_ptr };
+            let r = unsafe { &mut *(req_ptr as *mut uws_sys::Request) };
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str = ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
             }
@@ -1859,92 +1864,11 @@ where
         Ok(JSValue::TRUE)
     }
 
-    pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
-        httplog!("onReload");
+    // `on_reload_from_zig` lives in the unconstrained impl block in
+    // `mod.rs` (alongside `set_routes`/`js_gc_route_list_set`); the duplicate
+    // copy that was here caused E0034 at `Bun.serve` call sites.
 
-        // SAFETY: app is set when reload is called
-        unsafe { &mut *self.app.unwrap() }.clear_routes();
-        if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
-        }
-
-        // only reload those two, but ignore if they're not specified.
-        // PORT NOTE: Zig compared `JSValue` handles directly; here `Option<Strong>`
-        // wraps a `Strong` that owns its handle, so identity comparison is
-        // approximated by checking the new handler is set (non-undefined).
-        if new_config.on_request.as_ref().map_or(false, |s| !s.get().is_undefined()) {
-            // Old Strong drops (releases) when overwritten.
-            self.config.on_request = new_config.on_request.take();
-        }
-        // PORT NOTE (server.zig:1120): replaced whenever the values *differ* —
-        // no zero/undefined guard, unlike onRequest/onError. A reload that
-        // omits the node:http handler must clear it.
-        if self.config.on_node_http_request.as_ref().map(|s| s.get())
-            != new_config.on_node_http_request.as_ref().map(|s| s.get())
-        {
-            self.config.on_node_http_request = new_config.on_node_http_request.take();
-        }
-        if new_config.on_error.as_ref().map_or(false, |s| !s.get().is_undefined()) {
-            self.config.on_error = new_config.on_error.take();
-        }
-
-        if let Some(mut ws) = new_config.websocket.take() {
-            ws.handler.flags.set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
-            if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
-                if let Some(old_ws) = &self.config.websocket {
-                    old_ws.handler.unprotect();
-                }
-                ws.global_object = global as *const _;
-                // Zig assigns `ws.*` (move).
-                self.config.websocket = Some(ws);
-            } else {
-                // We don't replace the existing websocket config here, but
-                // the new one was already protected in WebSocketServerContext.onCreate.
-                // Unprotect the discarded handlers so they don't leak.
-                ws.handler.unprotect();
-            }
-        }
-
-        // These get re-applied when we set the static routes again.
-        if let Some(dev_server) = &mut self.dev_server {
-            // Prevent a use-after-free in the hash table keys.
-            dev_server.html_router.map.clear();
-            dev_server.html_router.fallback = None;
-        }
-
-        // PORT NOTE: StaticRouteEntry impls Drop; assigning over static_routes deinits the old ones.
-        self.config.static_routes = mem::take(&mut new_config.static_routes);
-
-        // Zig: per-element `allocator.free(route)` then free the slice — `Vec<Box<[u8]>>`
-        // drops both on assignment.
-        self.config.negative_routes = mem::take(&mut new_config.negative_routes);
-
-        if new_config.had_routes_object {
-            // PORT NOTE: UserRouteBuilder drops on assignment.
-            self.config.user_routes_to_build = mem::take(&mut new_config.user_routes_to_build);
-            self.user_routes.clear();
-        }
-
-        let route_list_value = self.set_routes();
-        if new_config.had_routes_object {
-            if let Some(server_js_value) = self.js_value.try_get() {
-                if !server_js_value.is_empty() {
-                    Self::js_gc_route_list_set(server_js_value, global, route_list_value);
-                }
-            }
-        }
-
-        if self.inspector_server_id.0 != 0 {
-            if let Some(debugger) = &self.vm_ref().debugger {
-                bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
-                    &debugger.http_server_agent,
-                    self.as_any_server(),
-                ));
-            }
-        }
-    }
-
-    pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
+(&mut self) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set
         if self.app.is_none() {
             // Static routes will get cleaned up when the server is stopped

@@ -458,22 +458,20 @@ impl Interpreter {
         ctx: *mut bun_options_types::Context::ContextData,
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
-        jsobjs: *mut [crate::jsc::JSValue],
+        jsobjs: Vec<crate::jsc::JSValue>,
         export_env_: Option<EnvMap>,
         cwd_: Option<&[u8]>,
-        mini_env: Option<&mut bun_dotenv::Loader<'_>>,
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
         // Zig: on `.js` event loop, take `export_env_` (or empty); on `.mini`,
-        // populate from the loop's `DotEnv::Loader`.
-        let export_env = if let Some(e) = export_env_ {
-            e
-        } else if let Some(env_loader) = mini_env {
-            // PORT NOTE: Zig reads `event_loop.env()`. The Rust
-            // `EventLoopHandle` shim (opaque usize) can't dereference into the
-            // loop yet, so the caller passes the loader explicitly. Same data,
-            // different plumbing — drop the extra arg once `EventLoopHandle`
-            // becomes the real `bun_event_loop::EventLoopHandle`.
+        // populate from `event_loop.env()` (the loop's `DotEnv::Loader`).
+        let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
+            export_env_.unwrap_or_else(EnvMap::init)
+        } else {
+            // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
+            // `DotEnv::Loader`, which is set by `init_global()` and outlives
+            // the interpreter (thread-lifetime singleton).
+            let env_loader = unsafe { &mut *event_loop.env() };
             let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
             let mut iter = env_loader.iterator();
             while let Some(entry) = iter.next() {
@@ -482,8 +480,6 @@ impl Interpreter {
                 export_env.insert(key, value);
             }
             export_env
-        } else {
-            EnvMap::init()
         };
 
         // ── cwd / cwd_fd ───────────────────────────────────────────────────

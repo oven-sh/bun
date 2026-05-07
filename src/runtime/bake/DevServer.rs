@@ -4659,10 +4659,7 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
     fn from(v: framework_router::OpaqueFileIdOptional) -> Self { Self::Optional(v) }
 }
 
-fn on_request<R>(dev: &mut DevServer, req: &mut Request, resp: &mut R)
-where
-    R: ResponseLike, // TODO(port): resp: anytype — bun_uws::ResponseLike once upstream lands
-{
+fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
     let mut params: framework_router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let route_bundle_index = dev
@@ -4671,7 +4668,7 @@ where
         let mut ctx = RequestEnsureRouteBundledCtx {
             dev: dev as *mut DevServer,
             req: ReqOrSaved::Req(req),
-            resp: resp.as_any_response(),
+            resp,
             kind: deferred_request::HandlerKind::ServerHandler,
             route_bundle_index,
         };
@@ -4687,11 +4684,11 @@ where
     }
 
     if dev.server.as_ref().unwrap().config().on_request.is_some() {
-        dev.server.as_mut().unwrap().on_request(req, resp.as_any_response());
+        dev.server.as_mut().unwrap().on_request(req, resp);
         return;
     }
 
-    send_built_in_not_found(resp);
+    send_built_in_not_found(&mut resp);
 }
 
 impl DevServer {
@@ -6346,7 +6343,7 @@ pub extern "C" fn Bake__bundleNewRouteJSFunctionImpl(
     request_ptr: *mut c_void,
     url: BunString,
 ) -> JSValue {
-    jsc::to_js_host_call(global, bundle_new_route_js_function_impl(global, request_ptr, url))
+    jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
 }
 
 fn bundle_new_route_js_function_impl(

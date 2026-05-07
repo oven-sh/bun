@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError};
+use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError, VirtualMachineSqlExt as _};
 use bun_string::String as BunString;
 use bun_wyhash::hash;
 

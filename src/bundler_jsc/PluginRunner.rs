@@ -34,9 +34,11 @@ pub fn could_be_plugin(specifier: &[u8]) -> bool {
     PluginRunner::could_be_plugin(specifier)
 }
 
-// `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) is wired as
-// the `bun_bundler::transpiler::PluginRunner.on_resolve` dispatch slot by
-// `bun_jsc::Bun__onDidAppendPlugin`; no body here.
+// `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) lives at
+// `bun_jsc::plugin_runner::PluginRunner` as the `PluginResolver` impl —
+// `bun_jsc` is the lowest tier that can name `JSGlobalObject` AND is reachable
+// from `Bun__onDidAppendPlugin`. Only `onResolveJSC` (called from
+// `bun_runtime::jsc_hooks`) lives at this tier.
 
 /// Spec PluginRunner.zig:121 `onResolveJSC`.
 pub fn on_resolve_jsc(

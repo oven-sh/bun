@@ -2,7 +2,7 @@
 //! `us_socket_context_t` that used to live here is gone — connections link
 //! into `RareData.postgres_group`/`postgres_tls_group` instead.
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSGlobalObjectSqlExt, JSValue, StrongOptional};
+use crate::jsc::{CallFrame, JSGlobalObject, JSGlobalObjectSqlExt, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
 #[derive(Default)]
@@ -21,7 +21,7 @@ impl PostgresSQLContext {
     pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
-        let ctx = &mut unsafe { &mut *global.sql_vm_ptr() }.rare_data().postgresql_context;
+        let ctx = &mut unsafe { &mut *global.sql_vm_ptr() }.sql_state().postgresql_context;
         ctx.on_query_resolve_fn.set(global, frame.argument(0));
         ctx.on_query_reject_fn.set(global, frame.argument(1));
         JSValue::UNDEFINED

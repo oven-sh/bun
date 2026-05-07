@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine,
+    VirtualMachine, VirtualMachineSqlExt as _,
 };
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};

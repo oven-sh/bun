@@ -116,15 +116,7 @@ impl JSGlobalObject {
 
     pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
         crate::mark_binding();
-        let mut dt = GregorianDateTime {
-            year: 0,
-            month: 0,
-            day: 0,
-            hour: 0,
-            minute: 0,
-            second: 0,
-            weekday: 0,
-        };
+        let mut dt = GregorianDateTime::default();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
         // stack locals (`dt` fields) and remain valid for the duration of the call.
         unsafe {
@@ -471,8 +463,9 @@ impl JSGlobalObject {
         typename: &[u8],
         value: JSValue,
     ) -> JsError {
+        // `defer ty_str.deinit()` → `ZigStringSlice` is RAII: `Owned` frees
+        // its `Vec<u8>`, `WTF` derefs the backing `WTFStringImpl` in `Drop`.
         let ty_str = value.js_type_string(self).to_slice(self);
-        // defer ty_str.deinit() → Drop on the slice type.
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(

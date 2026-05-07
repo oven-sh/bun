@@ -4972,11 +4972,41 @@ impl VirtualMachine {
         {
             return Some(lookup);
         }
-        // TODO(port): blocked_on `bun_standalone::StandaloneModuleGraph` —
-        // crate not surfaced at this tier yet. Fall back to `None` (matches
-        // the non-standalone runtime path).
-        let _ = self.standalone_module_graph;
-        None
+
+        // Spec VirtualMachine.zig:3871-3889 — standalone-module-graph fallback.
+        // `graph.find(path).?.sourcemap.load()` reaches into
+        // `bun_standalone_graph::{Graph,File,LazySourceMap}` (higher tier);
+        // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
+        // §Dispatch (cold path — one-time decode then cached below).
+        let graph = self.standalone_module_graph?;
+        let hooks = runtime_hooks()?;
+        // SAFETY: `graph` is the process-lifetime standalone graph trait
+        // object; hook downcasts to the concrete type on the high tier.
+        let map = unsafe { (hooks.load_standalone_sourcemap)(graph, path) }?;
+
+        // Spec: `map.ref(); this.source_mappings.putValue(path, Value.init(map))`.
+        // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
+        // ref into the table (reclaimed by `put_value`'s replace path /
+        // `SavedSourceMap` teardown). `catch bun.outOfMemory()` → `handle_oom`.
+        bun_core::handle_oom(self.source_mappings.put_value(
+            path,
+            crate::saved_source_map::Value::init(std::sync::Arc::into_raw(
+                std::sync::Arc::clone(&map),
+            )),
+        ));
+
+        let mapping = map.find_mapping(line, column)?;
+
+        Some(bun_sourcemap::mapping::Lookup {
+            mapping,
+            // PORT NOTE: `Lookup::source_map` is `Option<&'a ParsedSourceMap>`
+            // but `map` is an owned `Arc`; same lifetime gap as
+            // `SavedSourceMap::resolve_mapping` (TODO(b2-blocked) there) —
+            // drop the local strong ref and return without the back-pointer.
+            source_map: None,
+            prefetched_source_code: None,
+            name: None,
+        })
     }
 
     /// Spec VirtualMachine.zig:3989 `initIPCInstance`.

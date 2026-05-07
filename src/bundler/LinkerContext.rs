@@ -1746,6 +1746,21 @@ impl<'a> LinkerContext<'a> {
         let _ = self.dev_server.is_some()
             && parse_graph.input_files.items_loader()[source_index.get() as usize].is_javascript_like();
 
+        // PORT NOTE: reshaped for borrowck — `Options` borrows `ts_enums` /
+        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
+        // `require_or_import_meta_for_source_callback` field below needs
+        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
+        // (graph SoA storage is never reallocated during the print step).
+        // SAFETY: `self.graph` columns are stable heap allocations valid for
+        // the duration of this call; the printer only reads from them.
+        let ts_enums: &js_ast::ast::ast::TsEnumsMap =
+            unsafe { &*(&self.graph.ts_enums as *const _) };
+        let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
+            &*(&self.graph.files.items_line_offset_table()[source_index.get() as usize] as *const _)
+        };
+        let mangled_props: &js_printer::MangledProps =
+            unsafe { &*(&self.mangled_props as *const _) };
+
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -1756,7 +1771,7 @@ impl<'a> LinkerContext<'a> {
             commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
             commonjs_module_exports_assigned_deoptimized: ast.flags.contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: Some(&self.graph.ts_enums),
+            ts_enums: Some(ts_enums),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -1773,9 +1788,7 @@ impl<'a> LinkerContext<'a> {
             },
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
-            line_offset_tables: Some(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            ),
+            line_offset_tables: Some(line_offset_table),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
@@ -1789,7 +1802,7 @@ impl<'a> LinkerContext<'a> {
             } else {
                 None
             },
-            mangled_props: Some(&self.mangled_props),
+            mangled_props: Some(mangled_props),
             ..Default::default()
         };
 
@@ -2494,30 +2507,6 @@ pub struct ImportTrackerIterator {
     pub status: ImportTrackerStatus,
     pub value: ImportTracker,
     pub import_data: Box<[crate::ImportData]>,
-}
-
-/// CYCLEBREAK FORWARD_DECL: `bun_resolve_builtins::HardcodedModule::Alias::has`.
-/// `bun_resolve_builtins` is not yet a dependency of `bun_bundler` (Cargo.toml
-/// `TODO(b2-blocked)`); mirror the resolver's local stub so
-/// `match_import_with_export` type-checks. Real lookup wires up when the dep
-/// lands — until then no browser-polyfill-specific note is emitted (matches
-/// `linker.rs::hardcoded_module`).
-mod resolve_builtins_shim {
-    pub mod HardcodedModule {
-        pub mod Alias {
-            #[inline]
-            pub fn has(_name: &[u8], _target: super::super::RuntimeTarget, _opts: super::AliasOptions) -> bool {
-                // TODO(b2-blocked): bun_resolve_builtins — real lookup table.
-                false
-            }
-        }
-        #[derive(Default, Clone, Copy)]
-        pub struct AliasOptions {
-            pub rewrite_jest_for_tests: bool,
-        }
-    }
-    #[derive(Clone, Copy)]
-    pub enum RuntimeTarget { Bun }
 }
 
 /// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the

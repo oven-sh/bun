@@ -256,21 +256,6 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
-    // blocked_on: cross-crate type divergence —
-    //   - `_resolver::Result.path_pair.primary` is `bun_resolver::fs::Path<'_>`
-    //     (lifetime'd mirror), distinct from the `'static` `bun_resolver::fs::Path`
-    //     this struct stores;
-    //   - `_resolver::Result.jsx` is `bun_resolver::options::jsx::Pragma`
-    //     (resolver-local TYPE_ONLY mirror), distinct from
-    //     `crate::options::jsx::Pragma`;
-    //   - `_resolver::Result.module_type` is
-    //     `bun_options_types::BundleEnums::ModuleType`, distinct from
-    //     `crate::options::ModuleType` (`options_impl::ModuleType` — local enum
-    //     not yet unified with the lower-tier def).
-    // All three collapse to `clone()`/direct-assign once the TYPE_ONLY mirrors
-    // unify (lib.rs `pub mod options` shadow + resolver `fs::Path` lifetime
-    // erasure). Body preserved verbatim for that flip.
-    
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,

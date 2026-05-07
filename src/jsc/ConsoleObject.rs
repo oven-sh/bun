@@ -1655,7 +1655,10 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                stack_check: StackCheck::init(),
+                // Zig field default is `.{ .cached_stack_end = maxInt(usize) }`
+                // (check always passes); callers that want a real bound
+                // overwrite with `StackCheck::init()` explicitly.
+                stack_check: StackCheck::default(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,

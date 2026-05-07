@@ -584,7 +584,7 @@ impl<'a> Parser<'a> {
                         e.name(),
                         p.lexer.loc().start
                     ));
-                    let _ = p.log.print(Output::writer());
+                    let _ = p.log().print(Output::writer());
                 }
                 return Err(e);
             }
@@ -592,12 +592,10 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        // Route through `p.log` — the unique `&'a mut Log` now lives inside `p`
-        // (handed off above). Reading via `self.log` (`NonNull`) here would
-        // invalidate `p.log`'s Unique tag under Stacked Borrows yet `p.log` is
-        // used again below in `prepare_for_visit_pass`/`append_part`. Zig spec
-        // (Parser.zig:292) reads `self.log.errors`; both alias the same `*Log`.
-        if p.log.errors > 0 {
+        // Zig spec (Parser.zig:292) reads `self.log.errors`; `p.log` and
+        // `self.log` alias the same `NonNull<Log>` so either is fine — route
+        // through `p` for clarity.
+        if p.log().errors > 0 {
             #[cfg(target_arch = "wasm32")]
             {
                 // If the logger is backed by console.log, every print appends a newline.
@@ -605,7 +603,7 @@ impl<'a> Parser<'a> {
                 // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
                 // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
-                for msg in p.log.msgs.as_slice() {
+                for msg in p.log().msgs.as_slice() {
                     let mut m: logger::Msg = *msg;
                     let _ = m.write_format(Output::writer(), true);
                 }
@@ -741,7 +739,7 @@ impl<'a> Parser<'a> {
                 parse_tracer.end();
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log.add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
                     return Err(err!("SyntaxError"));
@@ -758,7 +756,7 @@ impl<'a> Parser<'a> {
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log.errors > orig_error_count {
+        if p.log().errors > orig_error_count {
             return Err(err!("SyntaxError"));
         }
 
@@ -1010,7 +1008,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here
-        if p.log.errors > orig_error_count {
+        if p.log().errors > orig_error_count {
             return Err(err!("SyntaxError"));
         }
 
@@ -1580,7 +1578,7 @@ impl<'a> Parser<'a> {
                         });
                     }
 
-                    p.log.add_range_error_with_notes(
+                    p.log().add_range_error_with_notes(
                         Some(p.source),
                         record.range,
                         b"Cannot use import statement with CommonJS-only features".as_slice(),

@@ -1266,11 +1266,14 @@ pub struct GregorianDateTime {
     pub weekday: i32,
 }
 
+/// `JSGlobalObject.validateObject`'s anonymous options struct
+/// (JSGlobalObject.zig:710). Field names match Zig (`nullable`, not
+/// `allow_nullable`) so callers porting from Zig don't have to rename.
 #[derive(Default, Copy, Clone)]
 pub struct ValidateObjectOpts {
-    pub allow_nullable: bool,
     pub allow_array: bool,
     pub allow_function: bool,
+    pub nullable: bool,
 }
 
 /// Mirrors `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig). Defined once

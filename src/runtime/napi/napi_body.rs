@@ -482,6 +482,31 @@ impl napi_typedarray_type {
     pub fn to_c(self) -> c_uint {
         self.to_js_type().to_typed_array_type().to_c()
     }
+
+    /// Zig: `ArrayBuffer.TypedArrayType.toNapi` (array_buffer.zig:524).
+    ///
+    /// LAYERING: lives here (not as `TypedArrayType::to_napi` in `bun_jsc`) because
+    /// `napi_typedarray_type` is defined in `bun_runtime`, which depends on `bun_jsc`.
+    /// Hosting the inverse mapping on the napi side breaks the cycle.
+    pub fn from_typed_array_type(ty: jsc::TypedArrayType) -> Option<napi_typedarray_type> {
+        use jsc::TypedArrayType as T;
+        match ty {
+            T::TypeNone => None,
+            T::TypeInt8 => Some(napi_typedarray_type::int8_array),
+            T::TypeInt16 => Some(napi_typedarray_type::int16_array),
+            T::TypeInt32 => Some(napi_typedarray_type::int32_array),
+            T::TypeUint8 => Some(napi_typedarray_type::uint8_array),
+            T::TypeUint8Clamped => Some(napi_typedarray_type::uint8_clamped_array),
+            T::TypeUint16 => Some(napi_typedarray_type::uint16_array),
+            T::TypeUint32 => Some(napi_typedarray_type::uint32_array),
+            T::TypeFloat16 => None,
+            T::TypeFloat32 => Some(napi_typedarray_type::float32_array),
+            T::TypeFloat64 => Some(napi_typedarray_type::float64_array),
+            T::TypeBigInt64 => Some(napi_typedarray_type::bigint64_array),
+            T::TypeBigUint64 => Some(napi_typedarray_type::biguint64_array),
+            T::TypeDataView => None,
+        }
+    }
 }
 
 #[repr(u32)]

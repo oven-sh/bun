@@ -665,7 +665,9 @@ pub mod StringImplAllocator {
         let this: WTFStringImpl = ptr.cast();
         // SAFETY: see `alloc`.
         debug_assert!(unsafe { (*this).m_ptr.latin1 } == buf.as_ptr());
-        debug_assert!(unsafe { (*this).m_length as usize } == buf.len());
+        // Zig: `bun.assert(this.latin1Slice().len == buf.len)` — `latin1Slice().len` is
+        // `byteLength()` (i.e. `m_length * 2` for UTF-16), not the code-unit count.
+        debug_assert!(unsafe { (*this).byte_length() } == buf.len());
         // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
         unsafe { WTFStringImplStruct::deref(this) };
     }

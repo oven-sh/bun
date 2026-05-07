@@ -6578,7 +6578,6 @@ impl CrossChunkImport {
             // Sort imports from a single chunk by alias for determinism
             let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
-            // TODO: do we need to clone this array?
             for item in import_items.slice_mut() {
                 item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
                 debug_assert!(!item.export_alias.is_empty());

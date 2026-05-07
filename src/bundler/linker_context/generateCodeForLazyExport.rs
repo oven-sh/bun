@@ -159,10 +159,10 @@ pub fn generate_code_for_lazy_export(
                     idx: IndexInt,
                 ) {
                     debug_assert!(ref_.can_be_composed());
+                    let real_ref = ref_.to_real_ref(idx);
                     let from_this_file = ref_.source_index(idx) == self.source_index;
                     if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
-                        || (!from_this_file
-                            && self.composes_visited.contains_key(&to_js_ref(ref_.to_real_ref(idx))))
+                        || (!from_this_file && self.composes_visited.contains_key(&real_ref))
                     {
                         return;
                     }
@@ -171,10 +171,7 @@ pub fn generate_code_for_lazy_export(
                     // PERF(port): was assume-OOM `catch |err| bun.handleOom(err)`; Vec::push aborts on OOM.
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
-                            E::NameOfSymbol {
-                                ref_: to_js_ref(ref_.to_real_ref(idx)),
-                                ..Default::default()
-                            },
+                            E::NameOfSymbol { ref_: real_ref, ..Default::default() },
                             self.loc,
                         ),
                         tail: E::TemplateContents::Cooked(E::String::init(b" ")),
@@ -184,7 +181,7 @@ pub fn generate_code_for_lazy_export(
                     if from_this_file {
                         self.inner_visited.set(ref_.inner_index() as usize);
                     } else {
-                        self.composes_visited.insert(to_js_ref(ref_.to_real_ref(idx)), ());
+                        self.composes_visited.insert(real_ref, ());
                     }
                 }
 

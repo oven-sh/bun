@@ -1678,17 +1678,7 @@ impl SysErrorJsc for bun_sys::Error {
     /// `#[repr(C)]`). This impl re-packs that result into the FFI-layout
     /// [`SystemError`] expected by `SystemError__toErrorInstance`.
     fn to_system_error(&self) -> SystemError {
-        let sys = bun_sys::Error::to_system_error(self);
-        SystemError {
-            errno: sys.errno,
-            code: sys.code,
-            message: sys.message,
-            path: sys.path,
-            syscall: sys.syscall,
-            hostname: sys.hostname,
-            fd: sys.fd,
-            dest: sys.dest,
-        }
+        SystemError::from(bun_sys::Error::to_system_error(self))
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         <Self as SysErrorJsc>::to_system_error(self).to_error_instance(global)

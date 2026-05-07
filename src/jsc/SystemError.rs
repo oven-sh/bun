@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_str::String;
+use bun_string::String;
 
 use crate::{JSGlobalObject, JSPromise, JSValue};
 

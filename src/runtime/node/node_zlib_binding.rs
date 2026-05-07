@@ -2,8 +2,20 @@ use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
 
 use bun_aio::KeepAlive;
+use bun_event_loop::Taskable;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::{
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    StrongOptional, WorkPoolTask,
+};
+use bun_str::{String as BunString, ZigStringSlice};
+use bun_threading::work_pool::WorkPool;
+use bun_zlib;
 
-// ─── type defs (real) ─────────────────────────────────────────────────────
+bun_output::declare_scope!(zlib, hidden);
+
+// ─── type defs ────────────────────────────────────────────────────────────
 
 /// Zig: `fn CompressionStream(comptime T: type) type { return struct { ... } }`
 /// This is a mixin: methods all take `this: *T` and access fields on `T`

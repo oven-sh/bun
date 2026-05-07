@@ -102,6 +102,12 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
                 true
             }
             uws::InternalSocket::Detached => true,
+            #[cfg(windows)]
+            uws::InternalSocket::Pipe(p) => {
+                // SAFETY: `Pipe` carries a non-null `*mut WindowsNamedPipe`
+                // (type-erased in `bun_uws`); set by `WindowsNamedPipeContext`.
+                unsafe { (*(p as *mut super::windows_named_pipe::WindowsNamedPipe)).resume_stream() }
+            }
             _ => false,
         }
     }
@@ -113,6 +119,11 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
                 true
             }
             uws::InternalSocket::Detached => true,
+            #[cfg(windows)]
+            uws::InternalSocket::Pipe(p) => {
+                // SAFETY: see `resume_stream` above.
+                unsafe { (*(p as *mut super::windows_named_pipe::WindowsNamedPipe)).pause_stream() }
+            }
             _ => false,
         }
     }
@@ -3131,14 +3142,26 @@ macro_rules! impl_socket_js_class {
             // `$ty` = `NewSocket<SSL>` embeds `bun_uws::NewSocketHandler<SSL>`,
             // which is not `#[repr(C)]` and trips the `improper_ctypes` lint.
             // The C++ side treats these as opaque pointers anyway.
-            unsafe extern "C" {
-                #[link_name = concat!(stringify!($name), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+            //
+            // C++ codegen emits these with `JSC_CALLCONV` (= sysv64 on win-x64),
+            // so the ABI must be cfg-selected to match — same scheme as the
+            // `mod socket_js` extern block above.
+            macro_rules! __extern_block {
+                ($abi:literal) => {
+                    unsafe extern $abi {
+                        #[link_name = concat!(stringify!($name), "__fromJS")]
+                        fn __from_js(value: JSValue) -> *mut c_void;
+                        #[link_name = concat!(stringify!($name), "__fromJSDirect")]
+                        fn __from_js_direct(value: JSValue) -> *mut c_void;
+                        #[link_name = concat!(stringify!($name), "__create")]
+                        fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+                    }
+                };
             }
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            __extern_block!("sysv64");
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            __extern_block!("C");
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: pure FFI downcast; null on type mismatch.

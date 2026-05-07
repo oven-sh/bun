@@ -6420,9 +6420,7 @@ pub trait FileOpener: Sized {
                 let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
                 {
                     // SAFETY: req points into self_.req(); cleanup before reuse.
-                    let _guard = scopeguard::guard((), |_| unsafe {
-                        bun_uv_sys::uv_fs_req_cleanup(req);
-                    });
+                    scopeguard::defer! { unsafe { bun_uv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
                     if let Some(err_enum) = result.err_enum() {

@@ -572,11 +572,9 @@ fn patch_commit_get_version<'a>(
     patch_tag_path: &ZStr,
 ) -> sys::Maybe<&'a [u8]> {
     let patch_tag_fd = sys::open(patch_tag_path, sys::O::RDONLY, 0)?;
-    let _guard = scopeguard::guard((), |_| {
-        patch_tag_fd.close();
-        // we actually need to delete this
-        let _ = sys::unlink(patch_tag_path);
-    });
+    // we actually need to delete this -- runs after fd close (LIFO drop order)
+    scopeguard::defer! { let _ = sys::unlink(patch_tag_path); }
+    let _close = sys::CloseOnDrop::new(patch_tag_fd);
 
     let version = sys::File::from_fd(patch_tag_fd).read_fill_buf(&mut buf[..])?;
 
@@ -1016,7 +1014,7 @@ fn overwrite_package_in_node_modules_folder(
     // `defer src_path.deinit();` — Drop
 
     let cached_package_folder = sys::open_dir(cache_dir, cache_dir_subpath)?;
-    let _close = scopeguard::guard((), |_| cached_package_folder.close());
+    let _close = sys::CloseOnDrop::dir(cached_package_folder);
 
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[
         bun_paths::os_path_literal!("node_modules"),

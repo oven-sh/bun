@@ -493,19 +493,6 @@
             ]
           },
           {
-            "group": "Runtime & Debugging",
-            "icon": "bug",
-            "pages": [
-              "/guides/runtime/vscode-debugger",
-              "/guides/runtime/web-debugger",
-              "/guides/runtime/heap-snapshot",
-              "/guides/runtime/build-time-constants",
-              "/guides/runtime/define-constant",
-              "/guides/runtime/cicd",
-              "/guides/runtime/codesign-macos-executable"
-            ]
-          },
-          {
             "group": "Module System",
             "icon": "box",
             "pages": [

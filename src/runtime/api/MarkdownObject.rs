@@ -1126,7 +1126,7 @@ impl<'a> JsCallbackRenderer<'a> {
     }
 
     // ========================================
-    // VTable implementation
+    // RendererImpl bodies
     // ========================================
 
     fn enter_block_impl(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {

@@ -991,6 +991,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1007,6 +1008,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
             return LIBUS_SOCKET_ERROR;
         }
     }

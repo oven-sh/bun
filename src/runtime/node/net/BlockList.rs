@@ -9,12 +9,15 @@ use core::ffi::c_void;
 struct StructuredCloneWriter {
     ctx: *mut c_void,
     // TODO(port): callconv(jsc.conv) — see note on `on_structured_clone_serialize`.
-    impl_: extern "C" fn(*mut c_void, *const u8, u32),
+    impl_: unsafe extern "C" fn(*mut c_void, *const u8, u32),
 }
 
 impl StructuredCloneWriter {
     fn write(&self, bytes: &[u8]) -> usize {
-        (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32);
+        // SAFETY: `ctx` and `impl_` were supplied together by the C++
+        // SerializedScriptValue writer; the callback only reads `len` bytes
+        // from `ptr`, both of which we derive from a single `&[u8]`.
+        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
         bytes.len()
     }
 
@@ -391,7 +394,7 @@ impl BlockList {
         ctx: *mut c_void,
         // TODO(port): callconv(jsc.conv) — `extern "C"` is correct on non-Windows-x64;
         // on Windows-x64 this must be `extern "sysv64"`. Needs `#[bun_jsc::host_call]` typedef.
-        write_bytes: extern "C" fn(*mut c_void, *const u8, u32),
+        write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
     ) {
         let _guard = this.mutex.lock();
         this.ref_();
@@ -402,11 +405,13 @@ impl BlockList {
 
     pub fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
-        ptr: &mut *mut u8,
-        end: *mut u8,
+        ptr: *mut *mut u8,
+        end: *const u8,
     ) -> JsResult<JSValue> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
-        // caller (C++ SerializedScriptValue); `end >= *ptr`.
+        // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
+        // non-null out-param the caller expects us to advance.
+        let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
         let buf = unsafe { core::slice::from_raw_parts(*ptr, total_length) };
         let mut pos: usize = 0;

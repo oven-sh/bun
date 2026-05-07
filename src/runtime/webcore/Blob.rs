@@ -165,8 +165,8 @@ pub trait BlobExt {
     );
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
-        ptr: &mut *mut u8,
-        end: *mut u8,
+        ptr: *mut *mut u8,
+        end: *const u8,
     ) -> JsResult<JSValue> where Self: Sized;
     fn from_url_search_params(
         global_this: &JSGlobalObject,

@@ -213,11 +213,12 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
     // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
     if let Some(graph) = vm.standalone_module_graph {
-        // SAFETY: `standalone_module_graph` is `NonNull<c_void>` pointing at a
-        // process-lifetime `bun_standalone_graph::Graph` (BACKREF — set during init).
-        let graph = unsafe { graph.cast::<bun_standalone_graph::Graph>().as_ref() };
+        // `standalone_module_graph` is the lower-crate trait object
+        // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the field we
+        // need is exposed via the trait so no downcast is required.
+        let compile_exec_argv = graph.compile_exec_argv();
         let bun_options_argc = bun_core::bun_options_argc();
-        if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+        if !compile_exec_argv.is_empty() || bun_options_argc > 0 {
             // `defer args.deinit()` + `defer for args |*a| a.deref()`
             let mut args = scopeguard::guard(Vec::<BunString>::new(), |v| {
                 for a in &v {
@@ -235,9 +236,8 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
                 }
             }
 
-            if !graph.compile_exec_argv.is_empty() {
-                for token in graph
-                    .compile_exec_argv
+            if !compile_exec_argv.is_empty() {
+                for token in compile_exec_argv
                     .split(|b| matches!(*b, b' ' | b'\t' | b'\n' | b'\r'))
                     .filter(|s: &&[u8]| !s.is_empty())
                 {

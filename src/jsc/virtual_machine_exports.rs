@@ -111,9 +111,9 @@ pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    // SAFETY: bun_vm() / event_loop() never return null for a Bun-owned global.
+    // SAFETY: `event_loop()` never returns null for a Bun-owned global.
     unsafe {
-        (*(*global.bun_vm()).event_loop()).enqueue_task(Task::init(task));
+        (*global.bun_vm().event_loop()).enqueue_task(Task::init(task));
     }
 }
 
@@ -122,8 +122,9 @@ pub extern "C" fn Bun__reportUnhandledError(global: &JSGlobalObject, value: JSVa
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let _ = unsafe { (*global.bun_vm()).uncaught_exception(global, value, false) };
+        // SAFETY: bun_vm_ptr() yields the live per-thread VM; `uncaught_exception`
+        // mutates VM counters/flags.
+        let _ = unsafe { (*global.bun_vm_ptr()).uncaught_exception(global, value, false) };
     }
     JSValue::UNDEFINED
 }
@@ -137,10 +138,10 @@ pub extern "C" fn Bun__queueTaskConcurrently(
     task: *mut crate::cpp_task::CppTask,
 ) {
     crate::mark_binding!();
-    // SAFETY: bun_vm()/event_loop() never null for a Bun-owned global; called
+    // SAFETY: `event_loop()` never returns null for a Bun-owned global; called
     // off-thread but `bunVMConcurrently` and the loop wakeup are thread-safe.
     unsafe {
-        (*(*global.bun_vm()).event_loop())
+        (*global.bun_vm_concurrently().event_loop())
             .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
     }
 }
@@ -150,8 +151,9 @@ pub extern "C" fn Bun__handleRejectedPromise(global: &JSGlobalObject, promise: &
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let jsc_vm = unsafe { &mut *global.bun_vm() };
+    // SAFETY: bun_vm_ptr() yields the live per-thread VM; `unhandled_rejection`
+    // mutates VM counters/flags.
+    let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
 
     // this seems to happen in some cases when GC is running
     if result.is_empty() {

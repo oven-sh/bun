@@ -619,23 +619,21 @@ impl Debugger {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Debugger__didConnect() {
-    // TODO(b2): `vm.debugger` is `Option<()>` until VirtualMachine.rs swaps
-    // the field type to `Option<Box<Debugger>>`. The real body flips
-    // `wait_for_connection = Off`, unrefs `poll_ref`, and wakes the loop.
     let this = VirtualMachine::get();
-    // SAFETY: VirtualMachine::get() returns the per-thread singleton; called on
-    // JS thread. `event_loop()` returns the raw `*mut EventLoop` slot.
-    unsafe { (*(*this).event_loop()).wakeup() };
+    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
+    // on the JS thread. Spec: `this.debugger.?` would safety-panic; we early-
+    // return defensively (extern "C" — unwinding is UB).
+    let Some(debugger) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+        return;
+    };
+    if debugger.wait_for_connection != Wait::Off {
+        debugger.wait_for_connection = Wait::Off;
+        debugger.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        // SAFETY: `event_loop()` returns the raw `*mut EventLoop` slot; live
+        // for VM lifetime. `wakeup()` takes `&self` (thread-safe).
+        unsafe { (*(*this).event_loop()).wakeup() };
+    }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT NOTE: a Phase-A draft `mod __phase_a_body` previously lived here with
-// duplicate `impl Debugger` bodies for `wait_for_debugger_if_necessary` /
-// `create` / `start_js_debugger_thread` / `start`. Its cfg gate was stripped
-// per PORTING.md §Forbidden but the module body was not deleted, causing
-// E0592 duplicate inherent definitions against the live impls above. Removed
-// outright; see Debugger.zig:31-231 for the spec bodies the high tier ports.
-// ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
 // AsyncTaskTracker — stable surface (used by WorkTask / event_loop).
@@ -648,11 +646,7 @@ pub struct AsyncTaskTracker {
 
 impl AsyncTaskTracker {
     pub fn init(vm: &mut VirtualMachine) -> AsyncTaskTracker {
-        let _ = vm;
-        // TODO(b2-blocked): VirtualMachine::next_async_task_id is in the
-        // gated impl block; until that un-gates, debugger async tracking is
-        // a no-op (id = 0 short-circuits all `did_*` methods).
-        AsyncTaskTracker { id: 0 }
+        AsyncTaskTracker { id: vm.next_async_task_id() }
     }
 
     pub fn did_schedule(self, global_object: &JSGlobalObject) {

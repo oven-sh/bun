@@ -774,18 +774,18 @@ impl IntermediateOutput {
                             };
 
                             // normalize windows paths to '/'
-                            // TODO(port): @constCast — Zig mutates the file_path bytes in place.
-                            // This requires the underlying storage to be mutable. Phase B should
-                            // verify ownership; for now cast through raw ptr.
-                            // SAFETY: file_path points into mutable bundler-owned storage in Zig.
-                            unsafe {
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    core::slice::from_raw_parts_mut(
-                                        file_path.as_ptr() as *mut u8,
-                                        file_path.len(),
-                                    ),
-                                );
-                            }
+                            // Zig does `@constCast(file_path)` and mutates the bundler-owned
+                            // storage in place. In Rust the source slices are reachable only
+                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
+                            // shared-provenance pointer is UB regardless of whether the write
+                            // happens. Copy into a pooled scratch buffer and normalise that.
+                            let file_path: &[u8] = {
+                                let n = file_path.len();
+                                let dst = &mut file_path_buf[..n];
+                                dst.copy_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+                                dst
+                            };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if from_chunk_dir.is_empty() || force_absolute_path {

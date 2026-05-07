@@ -440,7 +440,7 @@ impl Cmd {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             match bun_which::which(&mut *path_buf, path, &cwd, &first_arg) {
                 Some(p) => p.as_bytes().to_vec(),
-                None => match (first_arg == b"bun" || first_arg == b"bun-debug")
+                None => match matches!(first_arg.as_slice(), b"bun" | b"bun-debug")
                     .then(bun_core::self_exe_path)
                     .and_then(Result::ok)
                 {
@@ -510,10 +510,12 @@ impl Cmd {
 
         // Map state-node IO → subproc Stdio (spec: `io.to_subproc_stdio`).
         let mut shellio = ShellIO::default();
-        spawn_args
-            .cmd_parent
-            .io
-            .to_subproc_stdio(&mut spawn_args.stdio, &mut shellio);
+        {
+            // Split borrow: `cmd_parent.io` (read) and `stdio` (write) are
+            // disjoint fields of `SpawnArgs`.
+            let SpawnArgs { cmd_parent, stdio, .. } = &mut spawn_args;
+            cmd_parent.io.to_subproc_stdio(stdio, &mut shellio);
+        }
 
         // TODO(port): `initRedirections(&spawn_args)` — file/jsbuf redirects on
         // a spawned subprocess. Builtin redirects are handled in
@@ -635,7 +637,7 @@ impl Cmd {
         match core::mem::take(&mut me.exec) {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
-            Exec::Subproc(sub) => {
+            Exec::Subproc(sub) if !sub.child.is_null() => {
                 // SAFETY: `child` was set by `initSubproc` from a
                 // `Box::into_raw(ShellSubprocess)` and stays valid until
                 // this drop. Single-threaded.
@@ -650,6 +652,9 @@ impl Cmd {
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
+            // `Exec::Subproc` with null `child`: spawn failed before the
+            // subprocess box was returned. Nothing to tear down.
+            Exec::Subproc(_) => {}
         }
         // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.
         // Argv/env are heap-owned `Vec`s in the port; nothing arena-backed to
@@ -826,7 +831,7 @@ impl Cmd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Cmd.zig (1018 lines)
-//   confidence: medium (state-machine + expansion + builtin Exec wired)
-//   blocked_on: subproc::ShellSubprocess (which() + spawn),
-//               IOWriter redirect handling, writeFailingError
+//   confidence: medium (state-machine + expansion + builtin + subproc spawn
+//               wired)
+//   blocked_on: initRedirections (file/jsbuf redirect → subproc.stdio)
 // ──────────────────────────────────────────────────────────────────────────

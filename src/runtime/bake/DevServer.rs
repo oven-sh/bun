@@ -1902,9 +1902,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin = ready.map(|p| {
-                                            ::core::ptr::NonNull::new(p as *const _ as *mut c_void).unwrap()
-                                        });
+                                        dev.bundler_options.plugin = ready.map(NonNull::from);
                                     }
                                 }
                             }

@@ -6,31 +6,12 @@ use bun_collections::BabyList;
 use bun_core::zstr;
 use bun_threading::{Mutex, UnboundedQueue};
 
-// PORT NOTE: `path_watcher` / `node_fs_watcher` are not yet wired into the
-// `crate::node` module tree, so the `Event`/`EventType` shapes the Zig spec
-// borrows from them are mirrored locally here until those siblings are gated in.
-// TODO(port): replace with `use super::path_watcher::{Event, EventType}` once wired.
-
-#[derive(Clone)]
-pub enum Event {
-    Rename(Box<[u8]>),
-    Change(Box<[u8]>),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum EventType {
-    Rename,
-    Change,
-}
-
-impl EventType {
-    pub fn to_event(self, path: &[u8]) -> Event {
-        match self {
-            EventType::Rename => Event::Rename(Box::<[u8]>::from(path)),
-            EventType::Change => Event::Change(Box::<[u8]>::from(path)),
-        }
-    }
-}
+// Zig: `const Event = bun.jsc.Node.fs.Watcher.Event` /
+//      `const EventType = @import("./path_watcher.zig").PathWatcher.EventType`.
+// Both siblings are wired into `crate::node`, and intra-crate module cycles are
+// fine in Rust, so import the real shapes instead of mirroring them.
+use super::node_fs_watcher::Event;
+use super::path_watcher::EventType;
 
 /// Minimal port of `std.Thread.Semaphore` (Zig) — `bun_threading` has no
 /// semaphore yet. Only `post`/`wait` are used (once each, to sync CF thread
@@ -585,7 +566,9 @@ impl FSEventsLoop {
             let Some(handle) = *watcher else { continue };
             // SAFETY: handle is alive while held under mutex (see comment above)
             let handle = unsafe { &mut *handle.as_ptr() };
-            let handle_path = handle.path;
+            // SAFETY: `path` borrows from the owning PathWatcher, which outlives this
+            // FSEventsWatcher (its drop runs `unregister_watcher` under this mutex).
+            let handle_path = unsafe { &*handle.path };
 
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
@@ -638,7 +621,7 @@ impl FSEventsLoop {
                 }
 
                 let event_type: EventType = if is_rename { EventType::Rename } else { EventType::Change };
-                handle.emit(event_type.to_event(path), is_file);
+                handle.emit(event_type.to_event(path.into()), is_file);
             }
             handle.flush();
         }
@@ -694,11 +677,13 @@ impl FSEventsLoop {
             let mut count: u32 = 0;
             for w in watchers {
                 if let Some(watcher) = *w {
-                    // SAFETY: watcher alive under mutex
+                    // SAFETY: watcher alive under mutex; its `path` borrows from the
+                    // owning PathWatcher, whose `ZBox` storage is NUL-terminated, so
+                    // `as_ptr()` yields a valid C string for CF.
                     let watcher = &*watcher.as_ptr();
                     let path = (cf.string_create_with_file_system_representation)(
                         ptr::null_mut(),
-                        watcher.path.as_ptr(),
+                        (*watcher.path).as_ptr().cast(),
                     );
                     paths[count as usize] = path;
                     count += 1;

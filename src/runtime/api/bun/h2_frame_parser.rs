@@ -4469,7 +4469,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
         }
 
-        let stream_id = stream_arg.to_int32() as u32;
+        let stream_id = stream_arg.to_u32();
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
@@ -4776,7 +4776,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
         }
 
-        let stream_id = stream_arg.to_int32() as u32;
+        let stream_id = stream_arg.to_u32();
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }

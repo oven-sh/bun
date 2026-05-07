@@ -152,25 +152,10 @@ impl ShellGlobTask {
 
 /// Spec: `Interpreter.Builtin.Rm.ShellRmTask.DirTask`. A child node in the
 /// recursive rm tree-walk; posts back to main when its subtree is empty.
-#[repr(C)]
-pub struct ShellRmDirTask {
-    pub parent: *mut crate::shell::builtins::rm::ShellRmTask,
-    pub path: Vec<u8>,
-    pub remaining: core::sync::atomic::AtomicU32,
-    pub err: Option<bun_sys::Error>,
-}
-
-impl ShellRmDirTask {
-    /// # Safety
-    /// `this` is a live `Box::into_raw`'d DirTask.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract; `parent` outlives every DirTask child.
-        let parent = unsafe { &mut *(*this).parent };
-        // SAFETY: `interp` set at parent schedule.
-        let interp = unsafe { &mut *parent.task.interp };
-        crate::shell::builtins::rm::ShellRmTask::on_dir_task_done(parent, interp, this);
-    }
-}
+/// Re-export: the real DirTask lives in `builtins::rm` (full recursive
+/// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
+/// for the verbose-write bounce-back.
+pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

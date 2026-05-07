@@ -47,27 +47,6 @@ fn format_name(f: codecs::Format) -> &'static str {
     }
 }
 
-/// Local extension: `JSValue::get_optional_enum::<E>()` until `bun_jsc` exposes it.
-trait GetOptionalEnum {
-    fn get_optional_enum<E: jsc::FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        key: &'static str,
-    ) -> JsResult<Option<E>>;
-}
-impl GetOptionalEnum for JSValue {
-    fn get_optional_enum<E: jsc::FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        key: &'static str,
-    ) -> JsResult<Option<E>> {
-        match self.get(global, key)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_enum::<E>(global, key)?)),
-            _ => Ok(None),
-        }
-    }
-}
-
 // `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
 // provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
@@ -820,7 +799,9 @@ impl Image {
             let bytes = match system_backend::clipboard() {
                 Ok(Some(b)) => b,
                 Ok(None) => return Ok(JSValue::NULL),
-                Err(system_backend::BackendError::OutOfMemory) => return global.throw_out_of_memory(),
+                Err(system_backend::BackendError::OutOfMemory) => {
+                    return Err(global.throw_out_of_memory());
+                }
                 // BackendUnavailable (and any other backend error) ⇔ no image present.
                 Err(_) => return Ok(JSValue::NULL),
             };

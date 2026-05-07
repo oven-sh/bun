@@ -1273,7 +1273,7 @@ extern crate alloc;
 // in the higher-tier `bun_runtime` crate (`api::Timer::All`, `node::fs`,
 // `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
 // §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
-// installs the static instance at startup via `set_runtime_hooks`. Every call
+// defines the `#[no_mangle]` static `__BUN_RUNTIME_HOOKS`. Every call
 // site below is `// PERF(port): was inline switch` — acceptable, each does
 // real work (I/O, JS callback, allocation).
 // ──────────────────────────────────────────────────────────────────────────

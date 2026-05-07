@@ -7,17 +7,18 @@
 //! `bundler::entry_points::ServerEntryPoint`, `bundler::Transpiler`,
 //! `HardcodedModule`, …) directly without inverting the crate DAG. Instead the
 //! low tier defines a manual fn-pointer table; this module owns the static
-//! instances and the bodies, and [`install_jsc_hooks`] wires them in at
-//! startup (immediately after `dispatch::install_dispatch_hooks`).
+//! instances and the bodies as `#[no_mangle]` link-time-resolved symbols
+//! (declared `extern "Rust"` on the low-tier side).
 //!
 //! Layout:
 //!   1. [`RuntimeState`] — per-VM state the low tier stores as `*mut c_void`
 //!      (owns `timer::All` + the synthetic `bun:main` `ServerEntryPoint`).
-//!   2. `RUNTIME_HOOKS_INSTANCE` — `init_runtime_state` / `generate_entry_point`
+//!   2. `__BUN_RUNTIME_HOOKS` — `init_runtime_state` / `generate_entry_point`
 //!      / `load_preloads` / `ensure_debugger` / `auto_tick`.
-//!   3. `LOADER_HOOKS_INSTANCE` — `transpile_source_code` /
+//!   3. `__BUN_LOADER_HOOKS` — `transpile_source_code` /
 //!      `fetch_builtin_module` / `transpile_file`.
-//!   4. [`install_jsc_hooks`] — one-shot setter, called from `main.rs`.
+//!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
+//!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -4719,6 +4720,69 @@ pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
 #[unsafe(no_mangle)]
 pub fn __bun_js_vm_get() -> *mut () {
     bun_jsc::virtual_machine::VirtualMachine::get().cast()
+}
+
+/// `bun_event_loop::__bun_stdio_blob_store_new` body — Zig rare_data.zig:551
+/// inline `Blob.Store.new(.{ .ref_count = 2, .data = .{ .file = … } })`.
+/// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
+/// (one for `RareData`/`MiniEventLoop`, one for the eventual `Blob` consumer).
+/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
+/// resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
+    use bun_jsc::node_path::PathOrFileDescriptor;
+    use bun_jsc::webcore_types::store::{Data, File, Store};
+    let store: Box<Store> = Store::new(Store {
+        data: Data::File(File {
+            pathlike: PathOrFileDescriptor::Fd(fd),
+            is_atty: Some(is_atty),
+            mode,
+            ..Default::default()
+        }),
+        mime_type: bun_http_types::MimeType::NONE,
+        ref_count: core::sync::atomic::AtomicU32::new(2),
+        is_all_ascii: None,
+    });
+    Box::into_raw(store).cast()
+}
+
+/// `bun_options_types::__bun_http_sync_download_init_thread` body —
+/// `bun_http::HTTPThread::init(&Default::default())`. Spec
+/// CompileTarget.zig:165. Declared `extern "Rust"` in
+/// `bun_options_types::CompileTarget`; link-time resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_http_sync_download_init_thread() {
+    bun_http::http_thread::init(&Default::default());
+}
+
+/// `bun_options_types::__bun_http_sync_download_get` body — synchronous GET
+/// for `bun build --compile` cross-target binary download. Spec
+/// CompileTarget.zig:187-202. Declared `extern "Rust"` in
+/// `bun_options_types::CompileTarget`; link-time resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_http_sync_download_get<'a>(
+    url: bun_url::URL<'a>,
+    http_proxy: Option<bun_url::URL<'a>>,
+    reject_unauthorized: bool,
+    progress_node: *mut (), // erased *mut bun_core::Progress::Node
+    out: *mut bun_string::MutableString,
+) -> Result<u16, bun_core::Error> {
+    let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
+        bun_http::Method::GET,
+        url,
+        Default::default(),
+        b"",
+        out,
+        b"",
+        http_proxy,
+        None,
+        bun_http::FetchRedirect::Follow,
+    ));
+    async_http.client.progress_node =
+        core::ptr::NonNull::new(progress_node.cast::<bun_core::Progress::Node>());
+    async_http.client.flags.reject_unauthorized = reject_unauthorized;
+    let response = async_http.send_sync()?;
+    Ok(response.status_code as u16)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -268,7 +268,7 @@ pub use bun_aio::KeepAlive;
 // two sides disagree on pointee types — the previous local `EventLoopTimer` /
 // `SSLConfig` stubs were layout-incompatible with what `hw_exports.rs` wrote),
 // the low tier defines the fn-pointer table and `bun_runtime::jsc_hooks::
-// install_jsc_hooks()` registers a `&'static` instance. Every signature here
+// `__BUN_SQL_RUNTIME_HOOKS` defines a `#[no_mangle]` instance. Every signature here
 // is checked by the compiler at the registration site.
 // ──────────────────────────────────────────────────────────────────────────
 

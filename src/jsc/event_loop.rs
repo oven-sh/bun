@@ -3,8 +3,9 @@
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
 //! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
 //! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
-//! `bun_runtime` types and are hoisted to that tier via [`set_tick_queue_hook`]
-//! / [`set_run_immediate_hook`]; `auto_tick`/`auto_tick_active` likewise
+//! `bun_runtime` types and are hoisted to that tier via link-time
+//! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
+//! `auto_tick`/`auto_tick_active` likewise
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
@@ -63,7 +64,7 @@ pub struct EventLoop {
     /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
     /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
     /// (cycle). Low tier stores the erased pointer; the high-tier hook
-    /// installed via [`set_run_immediate_hook`] casts it back.
+    /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
 
@@ -90,7 +91,7 @@ pub struct EventLoop {
     /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
     /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
     /// Low tier stores the erased pointer; the high-tier hook installed via
-    /// [`set_run_wtf_timer_hook`] casts it back.
+    /// (link-time `__bun_run_wtf_timer`) casts it back.
     pub imminent_gc_timer: AtomicPtr<()>,
 
     #[cfg(unix)]
@@ -1247,13 +1248,104 @@ pub fn __bun_js_event_loop_current() -> *mut () {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `bun_event_loop::SpawnSyncEventLoop` extern impls
+//
+// `SpawnSyncEventLoop` lives in the lower-tier `bun_event_loop` crate and
+// cannot name `jsc::EventLoop` / `jsc::VirtualMachine`. Zig
+// (`SpawnSyncEventLoop.zig`) did inline field access. The bodies live here as
+// `#[no_mangle]` Rust-ABI fns, declared `extern "Rust"` on the low-tier side
+// and resolved at link time. Each erased `*mut ()` is a `*mut VirtualMachine`
+// or `*mut EventLoop`; cast back and forward to the real method/field.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline(always)]
+unsafe fn vm_cast(vm: *mut ()) -> *mut VirtualMachine {
+    vm.cast::<VirtualMachine>()
+}
+
+/// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
+/// `uws_loop` in `event_loop.uws_loop`. Spec SpawnSyncEventLoop.zig:62-68.
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
+    let vm = unsafe { vm_cast(vm) };
+    let mut el = Box::new(EventLoop::default());
+    // SAFETY: `vm` is the live per-thread VM.
+    el.global = NonNull::new(unsafe { (*vm).global });
+    el.virtual_machine = NonNull::new(vm);
+    #[cfg(windows)]
+    {
+        el.uws_loop = NonNull::new(uws_loop);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = uws_loop;
+    }
+    Box::into_raw(el).cast()
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
+    // SAFETY: paired with `Box::into_raw` in `__bun_spawn_sync_create_event_loop`.
+    drop(unsafe { Box::from_raw(el.cast::<EventLoop>()) });
+}
+
+/// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
+/// Spec SpawnSyncEventLoop.zig:93-95.
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
+    let el = el.cast::<EventLoop>();
+    let vm = unsafe { vm_cast(vm) };
+    // SAFETY: `el` is the live heap-owned isolated loop; `vm` is the per-thread VM.
+    unsafe {
+        (*el).global = NonNull::new((*vm).global);
+        (*el).virtual_machine = NonNull::new(vm);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
+    // SAFETY: `el` is the live heap-owned isolated loop.
+    unsafe { (*el.cast::<EventLoop>()).tick_tasks_only() };
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_vm_get_event_loop_handle(
+    vm: *mut (),
+) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
+    // SAFETY: `vm` is the live per-thread VM.
+    unsafe { (*vm_cast(vm)).event_loop_handle }.and_then(NonNull::new)
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_vm_set_event_loop_handle(
+    vm: *mut (),
+    h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
+) {
+    // SAFETY: `vm` is the live per-thread VM.
+    unsafe { (*vm_cast(vm)).event_loop_handle = h.map(NonNull::as_ptr) };
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
+    // SAFETY: `vm` is the live per-thread VM; `el` is its previous `event_loop`
+    // pointer (a `*mut EventLoop` into `regular_event_loop`/`macro_event_loop`).
+    unsafe { (*vm_cast(vm)).event_loop = el.cast::<EventLoop>() };
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
+    // SAFETY: `vm` is the live per-thread VM.
+    let vm = unsafe { vm_cast(vm) };
+    unsafe { core::mem::replace(&mut (*vm).suppress_microtask_drain, v) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/event_loop.zig (748 lines)
 //   confidence: high
 //   notes:      Full bodies ported. Task / ImmediateObject / WTFTimer dispatch
-//               hoisted to bun_runtime via TICK_QUEUE_HOOK / RUN_IMMEDIATE_HOOK
-//               / RUN_WTF_TIMER_HOOK (low tier stores `*mut ()`, high tier owns
-//               the cast — PORTING.md §Dispatch); auto_tick / auto_tick_active
+//               hoisted to bun_runtime via link-time `extern "Rust"` (low tier
+//               stores `*mut ()`, high tier owns the cast); auto_tick / auto_tick_active
 //               dispatch via virtual_machine::RuntimeHooks (need Timer::All for
 //               poll deadline). All re-exports resolve to real types.
 // ──────────────────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ pub fn update_package_json_and_install_catch_error(
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other
             // `&mut Log` to it is live for the duration of this `print` call.
-            let log = unsafe { (*(&raw mut Cli::LOG_)).assume_init_mut() };
+            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }

@@ -20,7 +20,7 @@ impl InstallCommand {
                 // SAFETY: `Cli::LOG_` is initialised once during single-threaded
                 // startup in `Cli::start()` before any command (including this
                 // one) is dispatched; no other `&mut` to it is live here.
-                let log = unsafe { (*(&raw mut Cli::LOG_)).assume_init_mut() };
+                let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::exit(1);
             }
@@ -190,7 +190,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
 
     // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
     // `PackageManager::init` (above) on this thread; only read thereafter.
-    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH };
+    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 
     if manager.any_failed_to_install {

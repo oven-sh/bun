@@ -221,7 +221,7 @@ use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_collections::{ByteVecExt, VecExt};
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
-// from `Option<NonNull<T>>` to `Option<&'static mut T>` so call sites can invoke
+// from `Option<NonNull<T>>` to an unbounded exclusive borrow so call sites can invoke
 // methods directly; the borrow is scoped by the caller's `scopeguard` + deref().
 #[allow(non_snake_case)]
 mod NativePromiseContext {

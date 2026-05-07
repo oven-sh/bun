@@ -111,7 +111,7 @@ pub mod js_fns {
         global_this: &JSGlobalObject,
         cfg: &GetActiveCfg<'a>,
     ) -> JsResult<&'static mut BunTestRoot> {
-        // TODO(port): lifetime — Jest.runner is a process-global; modeled as &'static mut here.
+        // TODO(port): lifetime — Jest.runner is a process-global; modeled as an unbounded `&mut` here.
         let Some(runner) = Jest::runner() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
@@ -509,7 +509,7 @@ impl BunTestRoot {
         // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
         // A pointer coerced from `&mut self` carries provenance bounded by this
         // call's reborrow; the next `Jest::runner()` hands out a fresh
-        // `&'static mut TestRunner`, invalidating that tag, so later derefs at
+        // an exclusive `&mut TestRunner`, invalidating that tag, so later derefs at
         // `BunTest::run`/`on_uncaught_exception` would be use-after-invalidation
         // under Stacked Borrows. Zig (.zig:178) just passes a stable `*BunTestRoot`.
         // SAFETY: single-threaded; `RUNNER` outlives every BunTest. Field
@@ -583,7 +583,7 @@ impl BunTestRoot {
                     Output::flush();
                     reporter.last_printed_dot.set(false);
                 }
-                // `Jest::runner()` would hand out `&'static mut TestRunner` while
+                // `Jest::runner()` would hand out an exclusive `&mut TestRunner` while
                 // `self: &BunTestRoot` — a field of that same TestRunner — is
                 // live. Project `current_file` through the raw global ptr instead.
                 if let Some(runner_ptr) = Jest::runner_ptr() {

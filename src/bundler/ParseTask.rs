@@ -2289,9 +2289,7 @@ fn run_with_source_code(
     // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
     // `'static` erasure: the context outlives the parse.
     opts.macro_context = unsafe {
-        Some(core::mem::transmute::<&mut _, &'static mut _>(
-            (*transpiler).macro_context.as_mut().unwrap(),
-        ))
+        Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _))
     };
     opts.package_version = task.package_version.slice();
 

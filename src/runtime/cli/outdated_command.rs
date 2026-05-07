@@ -88,7 +88,7 @@ impl OutdatedCommand {
         // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
         // non-null and exclusively owned by this thread for the command's
         // duration (mirrors Zig's `*PackageManager`).
-        let manager: &'static mut PackageManager = unsafe { &mut *pm_ptr };
+        let manager = unsafe { &mut *pm_ptr };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
         // implicit via Drop at scope exit.
 

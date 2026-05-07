@@ -35,15 +35,20 @@ pub union union_EncodedJSValue {
 }
 pub type EncodedJSValue = union_EncodedJSValue;
 
+// PORTING.md §Global mutable state: never mutated → would be `const`, but kept
+// as `#[no_mangle] static` to preserve the exported symbol for TinyCC-compiled
+// FFI stubs. `RacyCell` is `repr(transparent)` so the symbol's bytes are
+// identical to a bare `EncodedJSValue`; the wrapper only satisfies `Sync`
+// (the union contains `*mut c_void`).
 #[unsafe(no_mangle)]
-pub static mut ValueUndefined: EncodedJSValue = EncodedJSValue {
-    as_int64: (2 | 8) as i64,
-};
+pub static ValueUndefined: bun_core::RacyCell<EncodedJSValue> =
+    bun_core::RacyCell::new(EncodedJSValue { as_int64: (2 | 8) as i64 });
 
 pub const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 
 #[unsafe(no_mangle)]
-pub static mut ValueTrue: EncodedJSValue = EncodedJSValue { as_int64: TRUE_I64 };
+pub static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
+    bun_core::RacyCell::new(EncodedJSValue { as_int64: TRUE_I64 });
 
 pub type JSContext = *mut c_void;
 

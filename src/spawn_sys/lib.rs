@@ -93,7 +93,11 @@ pub mod ffi {
         pub fn Bun__noOrphans_onExit(pid: libc::pid_t);
 
         /// The PID to forward signals to. Set to 0 when unregistering.
-        pub static mut Bun__currentSyncPID: i64;
+        ///
+        /// C++ declares this as plain `int64_t`; `AtomicI64` is `#[repr(C)]`
+        /// with the same size/align, and the C side only does word-sized
+        /// loads/stores from the signal handler, so `Relaxed` here matches.
+        pub static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
         /// Race condition: a signal could be sent before `spawn_process_posix`
         /// returns. Call after the child PID is known.

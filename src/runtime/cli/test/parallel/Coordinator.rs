@@ -690,10 +690,15 @@ pub mod abort_handler {
 
     pub static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
+    // PORTING.md §Global mutable state: written once in `install()` (single
+    // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
+    // no concurrent access.
     #[cfg(unix)]
-    static mut PREV_INT: MaybeUninit<libc::sigaction> = MaybeUninit::uninit();
+    static PREV_INT: bun_core::RacyCell<MaybeUninit<libc::sigaction>> =
+        bun_core::RacyCell::new(MaybeUninit::uninit());
     #[cfg(unix)]
-    static mut PREV_TERM: MaybeUninit<libc::sigaction> = MaybeUninit::uninit();
+    static PREV_TERM: bun_core::RacyCell<MaybeUninit<libc::sigaction>> =
+        bun_core::RacyCell::new(MaybeUninit::uninit());
 
     #[cfg(unix)]
     extern "C" fn posix_handler(_: i32, _: *const libc::siginfo_t, _: *const c_void) {
@@ -739,12 +744,12 @@ pub mod abort_handler {
                 libc::sigaction(
                     libc::SIGINT,
                     &raw const act,
-                    (&raw mut PREV_INT).cast::<libc::sigaction>(),
+                    PREV_INT.get().cast::<libc::sigaction>(),
                 );
                 libc::sigaction(
                     libc::SIGTERM,
                     &raw const act,
-                    (&raw mut PREV_TERM).cast::<libc::sigaction>(),
+                    PREV_TERM.get().cast::<libc::sigaction>(),
                 );
             }
         }
@@ -769,12 +774,12 @@ pub mod abort_handler {
             unsafe {
                 libc::sigaction(
                     libc::SIGINT,
-                    (&raw const PREV_INT).cast::<libc::sigaction>(),
+                    PREV_INT.get().cast::<libc::sigaction>(),
                     core::ptr::null_mut(),
                 );
                 libc::sigaction(
                     libc::SIGTERM,
-                    (&raw const PREV_TERM).cast::<libc::sigaction>(),
+                    PREV_TERM.get().cast::<libc::sigaction>(),
                     core::ptr::null_mut(),
                 );
             }

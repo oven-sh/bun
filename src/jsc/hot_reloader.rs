@@ -323,23 +323,24 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
 /// starts; after that point only the watcher thread touches it. Its
 /// contents are written to `watch_changed_trigger_file` immediately
 /// before `reload_process`; the new process reads and deletes that file.
-// TODO(port): lifetime — Zig was `?*bun.StringSet`; written once on main thread
-// before watcher thread starts, then watcher-thread-only. `static mut` mirrors that.
-pub static mut WATCH_CHANGED_PATHS: Option<*mut StringSet> = None;
+// Zig was `?*bun.StringSet`; written once on main thread before watcher thread
+// starts, then watcher-thread-only. `AtomicPtr` carries the publish.
+pub static WATCH_CHANGED_PATHS: core::sync::atomic::AtomicPtr<StringSet> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Absolute path of the temp file `flush_changed_paths_for_reload` writes
 /// the changed-path list into. The same path is exported via the
 /// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
 /// process can find it. Set alongside `WATCH_CHANGED_PATHS` by
 /// `test_command.zig`; the string must outlive the process.
-pub static mut WATCH_CHANGED_TRIGGER_FILE: Option<&'static ZStr> = None;
+pub static WATCH_CHANGED_TRIGGER_FILE: bun_core::RacyCell<Option<&'static ZStr>> =
+    bun_core::RacyCell::new(None);
 
-#[allow(static_mut_refs)]
 fn record_changed_path(path: &[u8]) {
-    // SAFETY: see doc on WATCH_CHANGED_PATHS — single-writer after init.
-    let Some(set) = (unsafe { WATCH_CHANGED_PATHS }) else {
+    let set = WATCH_CHANGED_PATHS.load(core::sync::atomic::Ordering::Acquire);
+    if set.is_null() {
         return;
-    };
+    }
     if path.is_empty() {
         return;
     }
@@ -351,7 +352,6 @@ fn record_changed_path(path: &[u8]) {
 /// Write the recorded changed paths to the trigger file so the next
 /// process (after exec()) can consume them. Best-effort: if the write
 /// fails, the new process falls back to querying git.
-#[allow(static_mut_refs)]
 fn flush_changed_paths_for_reload() {
     // `WATCH_CHANGED_TRIGGER_FILE` is never set on Windows (see
     // `ChangedFilesFilter.initWatchTrigger`), so this body would be
@@ -362,11 +362,12 @@ fn flush_changed_paths_for_reload() {
     }
     #[cfg(not(windows))]
     {
-        // SAFETY: see doc on WATCH_CHANGED_PATHS — single-writer after init.
-        let Some(set) = (unsafe { WATCH_CHANGED_PATHS }) else {
+        let set = WATCH_CHANGED_PATHS.load(core::sync::atomic::Ordering::Acquire);
+        if set.is_null() {
             return;
-        };
-        let Some(dest) = (unsafe { WATCH_CHANGED_TRIGGER_FILE }) else {
+        }
+        // SAFETY: see doc on WATCH_CHANGED_TRIGGER_FILE — single-writer after init.
+        let Some(dest) = (unsafe { WATCH_CHANGED_TRIGGER_FILE.read() }) else {
             return;
         };
         // SAFETY: same single-writer invariant as above.
@@ -396,7 +397,8 @@ unsafe extern "C" {
 // static per monomorphization. Rust can't put a static in a generic impl; both
 // HotReloader and WatchReloader now share this. Revisit if the per-type split
 // was load-bearing.
-static mut CLEAR_SCREEN: bool = false;
+static CLEAR_SCREEN: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub ctx: *mut Ctx,
@@ -560,8 +562,7 @@ where
             // VirtualMachine. But fixing that here would diverge from observable
             // Zig behaviour; revisit upstream first.
             flush_changed_paths_for_reload();
-            // SAFETY: CLEAR_SCREEN is only mutated during single-threaded init.
-            bun_core::reload_process(unsafe { CLEAR_SCREEN }, false);
+            bun_core::reload_process(CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed), false);
             unreachable!();
         }
 
@@ -619,7 +620,7 @@ where
         }));
 
         // SAFETY: single-threaded init; watcher thread not yet started.
-        unsafe { CLEAR_SCREEN = clear_screen_flag };
+        CLEAR_SCREEN.store(clear_screen_flag, core::sync::atomic::Ordering::Relaxed);
         let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
             Ok(w) => w,
             Err(err) => {
@@ -703,7 +704,7 @@ where
         let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
 
         // SAFETY: single-threaded init; watcher thread not yet started.
-        unsafe { CLEAR_SCREEN = ctx.compute_clear_screen() };
+        CLEAR_SCREEN.store(ctx.compute_clear_screen(), core::sync::atomic::Ordering::Relaxed);
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
         if let Err(_) = unsafe { (*watcher_ptr).start() } {

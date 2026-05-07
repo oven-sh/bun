@@ -134,9 +134,12 @@ mod bun_test {
 }
 
 // TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
-// process-wide mutable buffers. Use thread_local in Phase B if needed across threads.
-static mut PATH_BUF: PathBuffer = PathBuffer::ZEROED;
-static mut PATH_BUF2: PathBuffer = PathBuffer::ZEROED;
+// process-wide mutable buffers. PORTING.md §Global mutable state: single-thread
+// CLI scratch → RacyCell. Currently unused (Zig parity placeholders).
+#[allow(dead_code)]
+static PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
+#[allow(dead_code)]
+static PATH_BUF2: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
@@ -208,21 +211,9 @@ pub fn write_test_status_line(status: bun_test::Execution::Result, writer: &mut 
     }
 }
 
-/// `Output::error_writer()` / `Output::writer()` return `*mut io::Writer`; the
-/// callers in this file want `&mut io::Writer` so `bun_io::Write` methods
-/// resolve. Single-threaded CLI use only.
-#[inline]
-fn err_w() -> &'static mut bun_core::io::Writer {
-    // SAFETY: process-wide stderr writer; CLI is single-threaded for the
-    // duration of these calls and `error_writer()` always returns a valid
-    // pointer into the static stdio table.
-    unsafe { &mut *Output::error_writer() }
-}
-#[inline]
-fn out_w() -> &'static mut bun_core::io::Writer {
-    // SAFETY: see `err_w`.
-    unsafe { &mut *Output::writer() }
-}
+// `Output::error_writer()` / `Output::writer()` already return an unbounded
+// `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
+// reborrows. Call sites use the `Output` accessors directly.
 
 /// Local shim: `bun_io::Write` over the vtable-erased `bun_core::io::Writer`
 /// (stderr/stdout). Upstream `bun_core::io::Writer` does not implement
@@ -1215,7 +1206,7 @@ impl CommandLineReporter {
         if let Some(idx) = worker_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line);
         } else {
-            let _ = err_w().write_all(formatted_line);
+            let _ = Output::error_writer().write_all(formatted_line);
         }
 
         let Some(this) = buntest.reporter else { return; }; // command line reporter is missing! uh oh!
@@ -1304,6 +1295,9 @@ impl CommandLineReporter {
         }
 
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+        // collection loop below (single-threaded CLI report path).
+        let map = unsafe { &mut *map.as_ptr() };
         // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
         // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
         // `Copy`, so collect mutable borrows into the thread-local map instead
@@ -1327,6 +1321,9 @@ impl CommandLineReporter {
     /// workers to emit a fragment the coordinator merges.
     pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_str::ZStr) -> Result<(), bun_core::Error> {
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+        // collection loop below (single-threaded CLI report path).
+        let map = unsafe { &mut *map.as_ptr() };
         // PORT NOTE: see `generate_code_coverage` — collect borrows, not bitwise copies.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
@@ -1437,7 +1434,7 @@ impl CommandLineReporter {
             0
         };
 
-        let mut console = CoreIoWriteAdapter(err_w());
+        let mut console = CoreIoWriteAdapter(Output::error_writer());
         let base_fraction = opts.fractions;
         let mut failing = false;
 
@@ -1726,7 +1723,7 @@ impl TestCommand {
 
         if !ctx.test_options.test_worker {
             // print the version so you know its doing stuff if it takes a sec
-            let w = out_w();
+            let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
             let _ = w.write_all(&if colors {
                 Output::pretty_fmt::<true>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
@@ -1779,11 +1776,7 @@ impl TestCommand {
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
-        // SAFETY: `isBunTest` is a process-global written once at startup
-        // (before the VM thread spawns) and only read thereafter.
-        unsafe {
-            jsc::virtual_machine::isBunTest = true;
-        }
+        jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
         // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
@@ -1880,8 +1873,8 @@ impl TestCommand {
         // until `exec()` exits the process, so `&mut reporter.jest` remains
         // valid for the process lifetime.
         unsafe {
-            jest::Jest::RUNNER =
-                Some(core::ptr::NonNull::from(&mut reporter.jest));
+            jest::Jest::RUNNER
+                .write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
         // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
@@ -1929,11 +1922,10 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         vm.preload = core::mem::take(&mut ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
-        // SAFETY: set once at startup before the HTTP thread spawns; only read on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI = ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, core::sync::atomic::Ordering::Relaxed);
         vm.transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
@@ -2298,7 +2290,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests skipped:<r>\n", reporter.summary().skip);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.skips_to_repeat_buf);
             }
 
@@ -2310,7 +2302,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests todo:<r>\n", reporter.summary().todo);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
             }
 
@@ -2322,7 +2314,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests failed:<r>\n", reporter.summary().fail);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
             }
         }
@@ -2625,7 +2617,7 @@ impl TestCommand {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(err_w()));
+                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     log.msgs.clear();
                     log.errors = 0;
                 }

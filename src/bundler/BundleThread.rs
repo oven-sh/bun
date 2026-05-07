@@ -362,14 +362,18 @@ pub mod singleton {
     use super::*;
 
     static ONCE: Once = Once::new();
-    static mut INSTANCE: *mut () = core::ptr::null_mut();
+    // PORTING.md §Global mutable state: init-once leaked Box → AtomicPtr.
+    // Type-erased because Rust forbids generic statics; see module comment.
+    static INSTANCE: core::sync::atomic::AtomicPtr<()> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     // Blocks the calling thread until the bun build thread is created.
     // std.once also blocks other callers of this function until the first caller is done.
     fn load_once_impl<C: CompletionStruct>() {
         let bundle_thread = Box::into_raw(Box::new(BundleThread::<C>::uninitialized()));
-        // SAFETY: only called once under ONCE.
-        unsafe { INSTANCE = bundle_thread.cast::<()>() };
+        // Only called once under ONCE; Release pairs with `get`'s Acquire (via
+        // `Once`'s own synchronization, but the explicit ordering is harmless).
+        INSTANCE.store(bundle_thread.cast::<()>(), core::sync::atomic::Ordering::Release);
 
         // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
@@ -391,9 +395,9 @@ pub mod singleton {
     /// type-erased.
     pub fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
         ONCE.call_once(load_once_impl::<C>);
-        // SAFETY: INSTANCE is non-null after call_once and never written again; pointer is
+        // INSTANCE is non-null after call_once and never written again; pointer is
         // a leaked 'static Box of `BundleThread<C>` (same `C` per the safety contract).
-        unsafe { INSTANCE.cast::<BundleThread<C>>() }
+        INSTANCE.load(core::sync::atomic::Ordering::Acquire).cast::<BundleThread<C>>()
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {

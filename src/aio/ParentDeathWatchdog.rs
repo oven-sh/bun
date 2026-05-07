@@ -48,19 +48,17 @@ pub struct ParentDeathWatchdog;
 /// convention for "terminated because the controlling end went away".
 pub const EXIT_CODE: u8 = 128 + 1;
 
-// PORT NOTE: Zig used plain `var` globals (unsynchronized). Mirrored here as
-// `static mut` with the same single-writer-at-startup discipline; reads after
-// `enable()` are technically racy in both languages.
-// TODO(port): consider AtomicBool/AtomicI32 if Phase B wants strict soundness.
-static mut ENABLED: bool = false;
-static mut ORIGINAL_PPID: libc::pid_t = 0;
-static mut INSTALL_THREAD_ID: Option<std::thread::ThreadId> = None;
+// PORT NOTE: Zig used plain `var` globals (unsynchronized). Converted to
+// atomics/OnceLock per docs/PORTING.md §Global mutable state — same
+// single-writer-at-startup discipline, but no `static mut` aliasing.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+static ORIGINAL_PPID: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+static INSTALL_THREAD_ID: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
 
 /// Whether no-orphans mode was enabled at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
 pub fn is_enabled() -> bool {
-    // SAFETY: written once on main thread at startup before any reader.
-    unsafe { ENABLED }
+    ENABLED.load(Ordering::Relaxed)
 }
 
 /// The original parent pid to watch from contexts that have no event loop
@@ -75,13 +73,11 @@ pub fn ppid_to_watch() -> Option<libc::pid_t> {
     }
     #[cfg(unix)]
     {
-        // SAFETY: written once on main thread at startup before any reader.
-        unsafe {
-            if !ENABLED || ORIGINAL_PPID <= 1 {
-                return None;
-            }
-            Some(ORIGINAL_PPID)
+        let ppid = ORIGINAL_PPID.load(Ordering::Relaxed);
+        if !ENABLED.load(Ordering::Relaxed) || ppid <= 1 {
+            return None;
         }
+        Some(ppid)
     }
 }
 
@@ -91,8 +87,8 @@ pub fn ppid_to_watch() -> Option<libc::pid_t> {
 /// reaches grandchildren that the libproc/procfs walk would miss once the
 /// script itself has exited. Stack-disciplined for nested `spawnSync` (e.g.
 /// `pre`/`post` lifecycle scripts) — though in practice depth is 1.
-static mut SYNC_PGIDS_BUF: [libc::pid_t; 4] = [0; 4];
-static mut SYNC_PGIDS_LEN: usize = 0;
+static SYNC_PGIDS_BUF: bun_core::RacyCell<[libc::pid_t; 4]> = bun_core::RacyCell::new([0; 4]);
+static SYNC_PGIDS_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Returns true if the push was recorded; caller must pop iff true. Depth >4
 /// would lose stack discipline if push were a silent no-op while pop wasn't.
@@ -103,23 +99,25 @@ pub fn push_sync_pgid(pgid: libc::pid_t) -> bool {
         return false;
     }
     #[cfg(unix)]
-    // SAFETY: single-threaded spawnSync stack discipline; mirrors Zig globals.
-    unsafe {
-        if SYNC_PGIDS_LEN >= SYNC_PGIDS_BUF.len() {
+    {
+        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+        if len >= 4 {
             return false;
         }
-        SYNC_PGIDS_LEN += 1;
-        SYNC_PGIDS_BUF[SYNC_PGIDS_LEN - 1] = pgid;
+        // SAFETY: single-threaded spawnSync stack discipline; only this thread
+        // touches the buffer between push/pop.
+        unsafe { (*SYNC_PGIDS_BUF.get())[len] = pgid };
+        SYNC_PGIDS_LEN.store(len + 1, Ordering::Relaxed);
         true
     }
 }
 
 pub fn pop_sync_pgid() {
     #[cfg(unix)]
-    // SAFETY: single-threaded spawnSync stack discipline; mirrors Zig globals.
-    unsafe {
-        if SYNC_PGIDS_LEN > 0 {
-            SYNC_PGIDS_LEN -= 1;
+    {
+        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+        if len > 0 {
+            SYNC_PGIDS_LEN.store(len - 1, Ordering::Relaxed);
         }
     }
 }
@@ -132,8 +130,10 @@ pub fn pop_sync_pgid() {
 pub fn kill_sync_script_tree() {
     #[cfg(unix)]
     {
-        // SAFETY: read-only iteration of startup-populated globals.
-        let pgids = unsafe { &SYNC_PGIDS_BUF[..SYNC_PGIDS_LEN] };
+        let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
+        // SAFETY: read-only iteration of startup-populated globals; single-threaded
+        // spawnSync stack discipline guarantees no concurrent writer.
+        let pgids = unsafe { &(&*SYNC_PGIDS_BUF.get())[..len] };
         for &pgid in pgids {
             if pgid > 1 {
                 // SAFETY: FFI call; kill(2) is async-signal-safe.
@@ -177,14 +177,15 @@ unsafe extern "C" {
 /// default to the main thread keeps "die with Bun" semantics; Workers can
 /// still opt in explicitly via the (Zig-level) `linux_pdeathsig` option.
 pub fn should_default_spawn_pdeathsig() -> bool {
-    // SAFETY: globals written once at startup before any worker thread exists.
-    unsafe { ENABLED && Some(std::thread::current().id()) == INSTALL_THREAD_ID }
+    ENABLED.load(Ordering::Relaxed)
+        && INSTALL_THREAD_ID.get().copied() == Some(std::thread::current().id())
 }
 
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
-static mut INSTANCE: ParentDeathWatchdog = ParentDeathWatchdog;
+static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
+    bun_core::RacyCell::new(ParentDeathWatchdog);
 
 /// Called from `main()` before the CLI starts. Checks the env var and enables
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
@@ -208,12 +209,10 @@ pub fn enable() {
     // SAFETY: called only on the main thread during startup, before any
     // concurrent reader exists; idempotent guard prevents double-init.
     unsafe {
-        if ENABLED {
+        if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-
-        ENABLED = true;
-        INSTALL_THREAD_ID = Some(std::thread::current().id());
+        let _ = INSTALL_THREAD_ID.set(std::thread::current().id());
         // Let `bun_spawn_sys::spawn_process_posix` consult our thread-scoped
         // policy when defaulting `linux_pdeathsig` — the -sys crate has no
         // `bun_aio` dep, so it calls back through this hook.
@@ -236,10 +235,11 @@ pub fn enable() {
         // up watching a parent (Bun may have been spawned directly by launchd/init).
         bun_core::add_exit_callback(on_process_exit);
 
-        ORIGINAL_PPID = libc::getppid();
+        let ppid = libc::getppid();
+        ORIGINAL_PPID.store(ppid, Ordering::Relaxed);
         // Already orphaned (parent died before we got here, or launchd/init
         // spawned us directly) — nothing to watch.
-        if ORIGINAL_PPID <= 1 {
+        if ppid <= 1 {
             return;
         }
 
@@ -258,7 +258,7 @@ pub fn enable() {
             // Race: parent may have died between getppid() above and prctl()
             // taking effect. If so we've already been reparented and the kernel
             // will never deliver the signal — exit now.
-            if libc::getppid() != ORIGINAL_PPID {
+            if libc::getppid() != ppid {
                 kill_descendants();
                 libc::_exit(EXIT_CODE as c_int);
             }
@@ -278,8 +278,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
     }
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: globals written once at startup; read-only here.
-        let (enabled, original_ppid) = unsafe { (ENABLED, ORIGINAL_PPID) };
+        let (enabled, original_ppid) =
+            (ENABLED.load(Ordering::Relaxed), ORIGINAL_PPID.load(Ordering::Relaxed));
         if !enabled || original_ppid <= 1 {
             return;
         }
@@ -294,8 +294,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             bun_core::exit(EXIT_CODE as u32);
         }
 
-        // SAFETY: INSTANCE is a 'static singleton with no fields.
-        let instance_ptr = unsafe { core::ptr::addr_of_mut!(INSTANCE) };
+        // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
+        let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
         let poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
@@ -775,5 +775,5 @@ fn parse_pid(s: &[u8]) -> Option<libc::pid_t> {
 //   source:     src/aio/ParentDeathWatchdog.zig (501 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      static mut globals mirror Zig vars (racy by design); FilePoll::init/register + bun_sys::Result/Fd-Drop API shapes need Phase-B verification; added buf_print_z/parse_pid helpers for std.fmt.bufPrintZ/parseInt
+//   notes:      RacyCell globals mirror Zig vars (racy by design); FilePoll::init/register + bun_sys::Result/Fd-Drop API shapes need Phase-B verification; added buf_print_z/parse_pid helpers for std.fmt.bufPrintZ/parseInt
 // ──────────────────────────────────────────────────────────────────────────

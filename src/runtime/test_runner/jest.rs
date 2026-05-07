@@ -308,21 +308,25 @@ pub type FileMap = ArrayHashMap<u32, u32>;
 pub mod Jest {
     use super::*;
 
-    // TODO(port): global mutable state; Zig `pub var runner: ?*TestRunner = null`.
-    pub static mut RUNNER: Option<NonNull<TestRunner<'static>>> = None;
+    // Zig `pub var runner: ?*TestRunner = null`.
+    // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
+    // over `Option<NonNull<_>>` so direct `.read()` projections in
+    // `snapshot.rs` etc. keep their shape.
+    pub static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
+        bun_core::RacyCell::new(None);
 
     pub fn runner() -> Option<&'static mut TestRunner<'static>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.map(|p| &mut *p.as_ptr()) }
+        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
     /// Raw-pointer accessor for callers that must not materialise
-    /// `&'static mut TestRunner` because a sub-borrow of it (e.g.
+    /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER }
+        unsafe { RUNNER.read() }
     }
 
     #[unsafe(no_mangle)]
@@ -796,5 +800,5 @@ pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<(
 //   source:     src/test_runner/jest.zig (519 lines)
 //   confidence: medium
 //   todos:      12
-//   notes:      TestRunner<'a> from LIFETIMES.tsv; Jest as module w/ static mut RUNNER; extern JSMock__* fns need jsc.conv ABI; bun_test sibling-module API names guessed (ScopeFunctions/HookKind/StateData).
+//   notes:      TestRunner<'a> from LIFETIMES.tsv; Jest as module w/ RacyCell RUNNER; extern JSMock__* fns need jsc.conv ABI; bun_test sibling-module API names guessed (ScopeFunctions/HookKind/StateData).
 // ──────────────────────────────────────────────────────────────────────────

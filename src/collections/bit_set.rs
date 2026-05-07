@@ -789,16 +789,21 @@ pub type DynShiftInt = u32;
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Don't modify this value.  Ideally it would go in const data so
-// modifications would cause a bus error, but the only way
-// to discard a const qualifier is through ptrToInt, which
-// cannot currently round trip at comptime.
-static mut EMPTY_MASKS_DATA: [usize; 2] = [0, 0];
+// Never modified — the Zig comment about needing `static mut` was a Zig
+// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
+// `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
+// sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
+// forming a `*mut usize` to it remains a legally-mutable pointer target —
+// writing through a pointer derived from an immutable `static` would be UB
+// even if it never happens at runtime, and it lets `masks_slice_mut` form a
+// zero-length `&mut [usize]` without provenance hazards.
+static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::new([0, 0]);
 
 #[inline(always)]
 fn empty_masks_ptr() -> *mut usize {
     // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
-    unsafe { (&raw mut EMPTY_MASKS_DATA).cast::<usize>().add(1) }
+    // The `*mut` is never written through while pointing at this static.
+    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
 }
 
 impl Default for DynamicBitSetUnmanaged {

@@ -72,21 +72,22 @@ macro_rules! path_literal {
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
 /// `&'static Arena` per PORTING.md §AST crates. `bun_alloc::Arena` (=
 /// `bumpalo::Bump`) is `!Sync`, so `OnceLock`/`LazyLock` cannot hold it
-/// directly — guard a `static mut MaybeUninit` with `Once` instead so the
-/// allocation happens exactly once (PORTING.md §Forbidden bars `Box::leak`
-/// per call).
+/// directly — guard a `RacyCell<MaybeUninit>` with `Once` so the allocation
+/// happens exactly once (PORTING.md §Forbidden bars `Box::leak` per call).
 fn runner_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    static mut ARENA: ::core::mem::MaybeUninit<bun_alloc::Arena> =
-        ::core::mem::MaybeUninit::uninit();
+    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
+    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
+    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
+        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*(&raw mut ARENA)).write(bun_alloc::Arena::new()) };
+        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
     });
     // SAFETY: initialized exactly once above. `configure_env_for_run` is only
     // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
     // never observed concurrently.
-    unsafe { (*(&raw const ARENA)).assume_init_ref() }
+    unsafe { (*ARENA.get()).assume_init_ref() }
 }
 
 // Passthrough-arg shell escaping (run_command.zig:233-239 → shell.zig
@@ -220,13 +221,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
         // PORT NOTE: Zig used `bun.once` over a module-level `var shell_buf`
         // (run_command.zig:73). Process-lifetime; written exactly once on the
-        // CLI thread.
-        static mut SHELL_BUF: PathBuffer = PathBuffer::ZEROED;
+        // CLI thread. PORTING.md §Global mutable state: scratch buffer behind
+        // a `Once` gate → RacyCell.
+        static SHELL_BUF: bun_core::RacyCell<PathBuffer> =
+            bun_core::RacyCell::new(PathBuffer::ZEROED);
         static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
         ONCE.call(|| {
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(SHELL_BUF) };
+            let buf = unsafe { &mut *SHELL_BUF.get() };
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
@@ -913,14 +916,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
         vm.env_loader().load_tracy();
 
-        // SAFETY: set once at startup before the HTTP thread spawns; only read
-        // on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, ::core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, ::core::sync::atomic::Ordering::Relaxed);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // Zig: `vm.main_is_html_entrypoint = (loader orelse
@@ -935,7 +934,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
-            (&raw mut RUN).write(Run {
+            RUN.get().write(Run {
                 ctx: std::ptr::from_mut::<ContextData>(ctx),
                 vm: vm_ptr,
                 entry_path: entry_ptr,
@@ -958,7 +957,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // to the static.
         #[allow(deprecated)]
         vm.global().vm().hold_api_lock(
-            (&raw mut RUN).cast::<c_void>(),
+            RUN.get().cast::<c_void>(),
             trampoline,
         );
 
@@ -1074,21 +1073,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
-        // SAFETY: set once at startup before the HTTP thread spawns; only read
-        // on that thread.
-        unsafe {
-            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http2_fetch;
-            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
-                ctx.runtime_options.experimental_http3_fetch;
-        }
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http2_fetch, ::core::sync::atomic::Ordering::Relaxed);
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI
+            .store(ctx.runtime_options.experimental_http3_fetch, ::core::sync::atomic::Ordering::Relaxed);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
-            (&raw mut RUN).write(Run {
+            RUN.get().write(Run {
                 ctx: std::ptr::from_mut::<ContextData>(ctx),
                 vm: vm_ptr,
                 entry_path: entry_ptr,
@@ -1104,7 +1099,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
         // the API-lock FFI call.
         #[allow(deprecated)]
-        vm.global().vm().hold_api_lock((&raw mut RUN).cast::<c_void>(), trampoline);
+        vm.global().vm().hold_api_lock(RUN.get().cast::<c_void>(), trampoline);
 
         // `Run::start` never returns; dead code for `?`-early-return type unify.
         Ok(())
@@ -1135,11 +1130,14 @@ pub struct Run {
 }
 
 // Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
-static mut RUN: Run = Run {
+// PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
+// `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
+// the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
+static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
     ctx: ::core::ptr::null_mut(),
     vm: ::core::ptr::null_mut(),
     entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),
-};
+});
 
 // PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
 // unhandled-rejection callback while `Run::start` holds `&mut self` (via the
@@ -1586,7 +1584,7 @@ impl RunCommand {
             
             // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
             // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-            // returns `&'static mut io::Writer`; cast to the raw pointer the
+            // returns the process-global writer; cast to the raw pointer the
             // trait expects.
             let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
@@ -1689,8 +1687,7 @@ impl RunCommand {
         optional_bun_path: &mut &[u8],
     ) -> Result<(), bun_core::Error> {
         // If we are already running as "node", the path should exist
-        // SAFETY: PRETEND_TO_BE_NODE is a process-startup flag (single-threaded write).
-        if unsafe { cli::PRETEND_TO_BE_NODE } {
+        if cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
 
@@ -2096,7 +2093,7 @@ impl RunCommand {
             // SAFETY: `DIRECT_LAUNCH_BUFFER` is a process-lifetime static used
             // single-threaded from CLI dispatch. The returned slice points into
             // it; we keep the borrow scoped until `try_launch` consumes it.
-            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
+            let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             let w = strings::to_nt_path(buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
@@ -2643,7 +2640,7 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf =
-                unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
+                unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_string::w!("\\??\\");
@@ -2725,7 +2722,7 @@ impl RunCommand {
         // during CLI startup (mod.rs:693).
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD } == Some(CommandTag::AutoCommand)
+            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -2984,7 +2981,7 @@ impl RunCommand {
     pub fn exec_as_if_node(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
-        debug_assert!(unsafe { crate::cli::PRETEND_TO_BE_NODE });
+        debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
@@ -3870,8 +3867,12 @@ pub enum BunXFastPath {}
 #[cfg(windows)]
 mod bunx_fast_path_buffers {
     use super::*;
-    pub static mut DIRECT_LAUNCH_BUFFER: WPathBuffer = [0; bun_paths::MAX_WPATH];
-    pub static mut ENVIRONMENT_BUFFER: [u16; 32768] = [0; 32768];
+    // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
+    // buffers (bunx fast-path runs once on the main thread) → RacyCell.
+    pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
+        bun_core::RacyCell::new([0; bun_paths::MAX_WPATH]);
+    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<[u16; 32768]> =
+        bun_core::RacyCell::new([0; 32768]);
 }
 
 impl BunXFastPath {
@@ -3963,7 +3964,7 @@ impl BunXFastPath {
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
-            unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
+            unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
         let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
         bun_core::scoped_log!(
@@ -4006,7 +4007,7 @@ impl BunXFastPath {
         ctx.passthrough = passthrough.to_vec();
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let env_buf = unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::ENVIRONMENT_BUFFER) };
+        let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
         let environment = match env.map.write_windows_env_block(env_buf) {
             Ok(env) => Some(env.as_ptr()),
             Err(_) => return,
@@ -4038,7 +4039,7 @@ impl BunXFastPath {
     ) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
-            unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
+            unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
         // SAFETY: WPathBuffer is `[u16; N]` — reinterpret as `[u8; 2N]`
         // for the UTF-16→UTF-8 transcoder's output buffer.
         let out_buf = unsafe {

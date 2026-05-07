@@ -132,21 +132,23 @@ pub mod lib_info {
     pub type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
     pub type GetaddrinfoAsyncCancel = unsafe extern "C" fn(*mut mach_port);
 
-    static mut HANDLE: Option<*mut c_void> = None;
-    static mut LOADED: bool = false;
+    // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
+    // bool→AtomicBool, ptr-option→RacyCell (Option<*mut> has no AtomicPtr niche).
+    static HANDLE: bun_core::RacyCell<Option<*mut c_void>> = bun_core::RacyCell::new(None);
+    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
     pub fn get_handle() -> Option<*mut c_void> {
         // SAFETY: single-threaded init on JS thread; matches Zig's unguarded statics.
         unsafe {
-            if LOADED {
-                return HANDLE;
+            if LOADED.load(core::sync::atomic::Ordering::Relaxed) {
+                return HANDLE.read();
             }
-            LOADED = true;
+            LOADED.store(true, core::sync::atomic::Ordering::Relaxed);
             let handle = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
             if handle.is_none() {
                 Output::debug("libinfo.dylib not found");
             }
-            HANDLE = handle;
+            HANDLE.write(handle);
             handle
         }
     }
@@ -1832,20 +1834,17 @@ impl GlobalData {
 pub mod internal {
     use super::*;
 
-    static mut MAX_DNS_TIME_TO_LIVE_SECONDS: Option<u32> = None;
+    // PORTING.md §Global mutable state: lazy env-var memo. Zig comments it as
+    // "racy, but it's okay because the number won't be invalid, just stale" —
+    // that's exactly an `OnceLock<u32>` (idempotent init, safe concurrent read).
+    static MAX_DNS_TIME_TO_LIVE_SECONDS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
     pub fn get_max_dns_time_to_live_seconds() -> u32 {
-        // This is racy, but it's okay because the number won't be invalid, just stale.
-        // SAFETY: see above.
-        unsafe {
-            MAX_DNS_TIME_TO_LIVE_SECONDS.unwrap_or_else(|| {
-                let value = env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
-                // Zig default for BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is 30.
-                let v = value.unwrap_or(30) as u32;
-                MAX_DNS_TIME_TO_LIVE_SECONDS = Some(v);
-                v
-            })
-        }
+        *MAX_DNS_TIME_TO_LIVE_SECONDS.get_or_init(|| {
+            let value = env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
+            // Zig default for BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is 30.
+            value.unwrap_or(30) as u32
+        })
     }
 
     // ───────────── Request ─────────────

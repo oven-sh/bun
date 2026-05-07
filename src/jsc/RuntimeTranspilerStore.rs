@@ -78,7 +78,10 @@ struct BunDebugHolder {
     dir: Option<Dir>,
 }
 static BUN_DEBUG_HOLDER_LOCK: Mutex = Mutex::new();
-static mut BUN_DEBUG_HOLDER: BunDebugHolder = BunDebugHolder { dir: None };
+// PORTING.md §Global mutable state: every access guarded by
+// `BUN_DEBUG_HOLDER_LOCK` → RacyCell (the mutex is the synchronization).
+static BUN_DEBUG_HOLDER: bun_core::RacyCell<BunDebugHolder> =
+    bun_core::RacyCell::new(BunDebugHolder { dir: None });
 
 pub fn dump_source_string_failiable(
     vm: *mut VirtualMachine,
@@ -95,7 +98,7 @@ pub fn dump_source_string_failiable(
 
     let _lock = BUN_DEBUG_HOLDER_LOCK.lock_guard();
     // SAFETY: every access to BUN_DEBUG_HOLDER is guarded by BUN_DEBUG_HOLDER_LOCK.
-    let holder = unsafe { &mut *ptr::addr_of_mut!(BUN_DEBUG_HOLDER) };
+    let holder = unsafe { &mut *BUN_DEBUG_HOLDER.get() };
 
     let mut path_buf = bun_paths::PathBuffer::default();
 

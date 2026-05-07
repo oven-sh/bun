@@ -72,15 +72,12 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub static mut INITIALIZED_STORE: bool = false;
+pub static INITIALIZED_STORE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 pub fn initialize_store() {
-    // SAFETY: single-threaded CLI init; mirrors Zig global mutable bool
-    unsafe {
-        if INITIALIZED_STORE {
-            return;
-        }
-        INITIALIZED_STORE = true;
+    if INITIALIZED_STORE.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        return;
     }
     js_ast::Expr::data_store_create();
     js_ast::Stmt::data_store_create();
@@ -101,13 +98,9 @@ impl Version {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
                 let mut out = Vec::new();
-                // SAFETY: START_TIME is a plain i128/i64 — viewing its bytes is sound
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        core::ptr::addr_of!(Cli::START_TIME).cast::<u8>(),
-                        core::mem::size_of::<i128>(),
-                    )
-                };
+                // SAFETY: written once during single-threaded startup.
+                let start_time = unsafe { Cli::START_TIME.read() };
+                let bytes = &start_time.to_ne_bytes()[..];
                 write!(
                     &mut out,
                     "bun-canary-timestamp-{}",
@@ -263,7 +256,7 @@ impl UpgradeCommand {
         // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so the
         // backing buffers are leaked (matches the Zig original which used
         // module-level static buffers).
-        let url_buf: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let url_buf: &mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         write!(
             url_buf,
             "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
@@ -307,8 +300,7 @@ impl UpgradeCommand {
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
 
-        let metadata_body: &'static mut MutableString =
-            Box::leak(Box::new(MutableString::init(2048)?));
+        let metadata_body = Box::leak(Box::new(MutableString::init(2048)?));
         let headers_buf: &'static [u8] = Box::leak(headers_buf.into_boxed_slice());
 
         // ensure very stable memory address

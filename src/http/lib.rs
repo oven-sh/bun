@@ -157,7 +157,7 @@ pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPa
 // the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
 // ═══════════════════════════════════════════════════════════════════════
 
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use bun_string::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
 
@@ -232,42 +232,40 @@ impl Default for Flags {
 pub static ASYNC_HTTP_ID_MONOTONIC: AtomicU32 = AtomicU32::new(0);
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
-/// thread spawns) and then only read on that thread, so no atomics needed.
-pub static mut EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI: bool = false;
+/// thread spawns) and then only read on that thread.
+pub static EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI: AtomicBool = AtomicBool::new(false);
 /// Set once at startup from `--experimental-http3-fetch`. Same threading
 /// rules as the http2 flag.
-pub static mut EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: bool = false;
+pub static EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: AtomicBool = AtomicBool::new(false);
 
 const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 
+/// Mirrors Zig's `bun.http.max_http_header_size`. The static is exported to
+/// C++ via `BUN_DEFAULT_MAX_HTTP_HEADER_SIZE`; `AtomicUsize` has the same
+/// size/alignment as `usize` so the symbol layout is unchanged.
 #[unsafe(export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE")]
-pub static mut MAX_HTTP_HEADER_SIZE: usize = 16 * 1024;
+pub static MAX_HTTP_HEADER_SIZE: AtomicUsize = AtomicUsize::new(16 * 1024);
 
-/// Safe accessor for the mutable global `MAX_HTTP_HEADER_SIZE`.
-///
-/// Mirrors Zig's `bun.http.max_http_header_size` reads. The static is exported
-/// to C++ via `BUN_DEFAULT_MAX_HTTP_HEADER_SIZE` so it must remain a plain
-/// `static mut usize`; this wrapper centralizes the `unsafe` for Rust callers.
+/// Safe accessor for `MAX_HTTP_HEADER_SIZE`.
 #[inline]
 pub fn max_http_header_size() -> usize {
-    // SAFETY: written only at startup (CLI parsing) or from the JS thread via
-    // `set_max_http_header_size`; reads on the JS / HTTP thread observe a
-    // consistent word-sized value.
-    unsafe { MAX_HTTP_HEADER_SIZE }
+    MAX_HTTP_HEADER_SIZE.load(Ordering::Relaxed)
 }
 
 /// Safe setter for `MAX_HTTP_HEADER_SIZE` (see [`max_http_header_size`]).
 #[inline]
 pub fn set_max_http_header_size(v: usize) {
-    // SAFETY: see `max_http_header_size`.
-    unsafe { MAX_HTTP_HEADER_SIZE = v }
+    MAX_HTTP_HEADER_SIZE.store(v, Ordering::Relaxed);
 }
 
-pub static mut OVERRIDDEN_DEFAULT_USER_AGENT: &'static [u8] = b"";
+/// Set once during single-threaded CLI parsing; read from the HTTP thread.
+pub static OVERRIDDEN_DEFAULT_USER_AGENT: bun_core::RacyCell<&'static [u8]> =
+    bun_core::RacyCell::new(b"");
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
-pub static mut TEMP_HOSTNAME: [u8; 8192] = [0; 8192];
+/// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
+pub static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::new([0; 8192]);
 
 const DEFAULT_REDIRECT_COUNT: i8 = 127;
 
@@ -291,7 +289,7 @@ pub fn cleanup(_force: bool) {
 /// `force_http1`) still carries an authoritative Alt-Svc for the origin.
 pub fn h3_alt_svc_enabled() -> bool {
     // SAFETY: set once at startup before HTTP thread spawns; only read thereafter.
-    let cli = unsafe { EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI };
+    let cli = EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.load(Ordering::Relaxed);
     cli || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT
         .get()
         .unwrap_or(false)
@@ -568,21 +566,22 @@ impl Drop for HTTPClient<'_> {
 }
 
 // ── HTTP-thread globals (single-threaded; initialized by HTTPThread::on_start) ──
-pub static mut HTTP_THREAD: Option<HTTPThread> = None;
+pub static HTTP_THREAD: bun_core::RacyCell<Option<HTTPThread>> = bun_core::RacyCell::new(None);
 
 #[inline]
 pub fn http_thread() -> &'static mut HTTPThread {
     // SAFETY: HTTP_THREAD is initialized before any HTTPClient runs and only
     // accessed from the single HTTP thread.
-    unsafe { HTTP_THREAD.as_mut().expect("http_thread initialized") }
+    unsafe { (*HTTP_THREAD.get()).as_mut().expect("http_thread initialized") }
 }
 #[inline]
 pub fn http_thread_mut() -> &'static mut HTTPThread { http_thread() }
 
 // TODO: this needs to be freed when Worker Threads are implemented
-// TODO(port): static mutable map; wrap in proper sync primitive in Phase B
-pub static mut SOCKET_ASYNC_HTTP_ABORT_TRACKER:
-    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>> = None;
+// HTTP-thread-only; `RacyCell` is the alias-safe static cell.
+pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER:
+    bun_core::RacyCell<Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>> =
+    bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Prelude: imports, constants, helper fns, and bridge impls the
@@ -592,7 +591,6 @@ pub static mut SOCKET_ASYNC_HTTP_ABORT_TRACKER:
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::offset_of;
-use std::sync::atomic::Ordering;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
@@ -689,7 +687,7 @@ const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRE
 
 fn get_user_agent_header() -> picohttp::Header {
     // SAFETY: OVERRIDDEN_DEFAULT_USER_AGENT is set once at startup before HTTP thread spawns
-    let ua = unsafe { OVERRIDDEN_DEFAULT_USER_AGENT };
+    let ua = unsafe { OVERRIDDEN_DEFAULT_USER_AGENT.read() };
     picohttp::Header::new(
         b"User-Agent",
         if !ua.is_empty() { ua } else { Global::user_agent.as_bytes() },
@@ -713,22 +711,26 @@ static COOKIE_HEADER_HASH: std::sync::LazyLock<u64> =
     std::sync::LazyLock::new(|| hash_header_name(b"Cookie"));
 
 // ── shared per-thread buffers ───────────────────────────────────────────
+// All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
+// is the alias-safe static cell per docs/PORTING.md §Global mutable state.
 const PRINT_EVERY: usize = 0;
-static mut PRINT_EVERY_I: usize = 0;
+static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
 const MAX_REQUEST_HEADERS: usize = 256;
-static mut SHARED_REQUEST_HEADERS_BUF: [picohttp::Header; MAX_REQUEST_HEADERS] =
-    [picohttp::Header::ZERO; MAX_REQUEST_HEADERS];
+static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
+    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static mut SHARED_RESPONSE_HEADERS_BUF: [picohttp::Header; 256] = [picohttp::Header::ZERO; 256];
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
+    bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
 // so we can avoid allocating a temporary buffer to copy the data in
-static mut SINGLE_PACKET_SMALL_BUFFER: [u8; 16 * 1024] = [0; 16 * 1024];
+static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
+    bun_core::RacyCell::new([0; 16 * 1024]);
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
@@ -854,10 +856,14 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn set_timeout_minutes(&self, minutes: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes) }
 }
 
+/// Raw pointer to the HTTP-thread abort tracker. Callers reborrow per-access —
+/// PORTING.md §Global mutable state.
 #[inline]
-fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+fn abort_tracker() -> *mut ArrayHashMap<u32, uws::AnySocket> {
     // SAFETY: same single-thread invariant as http_thread()
-    unsafe { SOCKET_ASYNC_HTTP_ABORT_TRACKER.get_or_insert_with(ArrayHashMap::new) }
+    unsafe {
+        (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) as *mut _
+    }
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
@@ -1319,13 +1325,15 @@ impl<'a> HTTPClient<'a> {
             } else {
                 uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
             };
-            let _ = abort_tracker().put(self.async_http_id, any);
+            // SAFETY: HTTP-thread only; per-statement reborrow.
+            let _ = unsafe { &mut *abort_tracker() }.put(self.async_http_id, any);
         }
     }
 
     pub fn unregister_abort_tracker(&mut self) {
         if self.signals.aborted.is_some() {
-            let _ = abort_tracker().swap_remove(&self.async_http_id);
+            // SAFETY: HTTP-thread only; per-statement reborrow.
+            let _ = unsafe { &mut *abort_tracker() }.swap_remove(&self.async_http_id);
         }
     }
 
@@ -1367,7 +1375,7 @@ impl<'a> HTTPClient<'a> {
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
                     // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                    let temp = unsafe { &mut TEMP_HOSTNAME };
+                    let temp = unsafe { &mut *TEMP_HOSTNAME.get() };
                     if raw_hostname.len() < temp.len() {
                         temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
                         temp[raw_hostname.len()] = 0;
@@ -1412,8 +1420,7 @@ impl<'a> HTTPClient<'a> {
             return false;
         }
         self.flags.force_http2
-            // SAFETY: set once at startup
-            || unsafe { EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI }
+            || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
             || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get().unwrap_or(false)
     }
 
@@ -1791,7 +1798,7 @@ impl<'a> HTTPClient<'a> {
         let header_names = header_entries.items_name();
         let header_values = header_entries.items_value();
         // SAFETY: shared buffer only accessed from single HTTP thread
-        let request_headers_buf = unsafe { &mut SHARED_REQUEST_HEADERS_BUF };
+        let request_headers_buf = unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() };
 
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
@@ -2145,7 +2152,8 @@ impl<'a> HTTPClient<'a> {
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
-                        if !ctx.connect(self, self.url.hostname, alt_port) {
+                        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+                        if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, alt_port) } {
                             self.fail(err!(ConnectionRefused));
                         }
                         self.complete_connecting_process();
@@ -2172,7 +2180,8 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             };
-            if !ctx.connect(self, self.url.hostname, self.url.get_port_auto()) {
+            // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+            if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, self.url.get_port_auto()) } {
                 self.fail(err!(ConnectionRefused));
             }
             self.complete_connecting_process();
@@ -2779,7 +2788,7 @@ impl<'a> HTTPClient<'a> {
             }
 
             // SAFETY: shared buffer only accessed from single HTTP thread
-            let shared_resp = unsafe { &mut SHARED_RESPONSE_HEADERS_BUF };
+            let shared_resp = unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() };
             let response = match picohttp::Response::parse_parts(to_read!(), shared_resp, Some(&mut amount_read))
             {
                 Ok(r) => r,
@@ -3112,7 +3121,7 @@ impl<'a> HTTPClient<'a> {
             // the cloned response can be stored in `HTTPResponseMetadata`.
             // Reclaimed by `Drop for HTTPResponseMetadata` (mirrors Zig
             // `deinit` freeing `response.headers.list`).
-            let headers_buf: &'static mut [picohttp::Header] = Box::leak(
+            let headers_buf = Box::leak(
                 vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
             );
             let cloned_response = response.clone(headers_buf, &mut builder);
@@ -3326,15 +3335,12 @@ impl<'a> HTTPClient<'a> {
         callback.run(async_http, result);
 
         if PRINT_EVERY > 0 {
-            // SAFETY: single-threaded HTTP thread
-            unsafe {
-                PRINT_EVERY_I += 1;
-                if PRINT_EVERY_I % PRINT_EVERY == 0 {
-                    Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
-                    Output::flush();
-                    // PERF(port): MimallocArena dump_thread_stats — dropped (no DEFAULT_ARENA in Rust)
-                    PRINT_EVERY_I = 0;
-                }
+            let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
+            if i % PRINT_EVERY == 0 {
+                Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
+                Output::flush();
+                // PERF(port): MimallocArena dump_thread_stats — dropped (no DEFAULT_ARENA in Rust)
+                PRINT_EVERY_I.store(0, Ordering::Relaxed);
             }
         }
     }
@@ -3717,8 +3723,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // SAFETY: SINGLE_PACKET_SMALL_BUFFER only accessed from HTTP thread
-        let small_len = unsafe { SINGLE_PACKET_SMALL_BUFFER.len() };
+        let small_len = 16 * 1024usize;
         if incoming_data.len() <= small_len && self.state.get_body_buffer().list.is_empty() {
             self.handle_response_body_chunked_encoding_from_single_packet(incoming_data)
         } else {
@@ -3825,7 +3830,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: reshaped for borrowck — raw ptr so later self.state.* compile.
         let decoder: *mut picohttp::phr_chunked_decoder = &raw mut self.state.chunked_decoder;
         // SAFETY: HTTP-thread-only static
-        let small = unsafe { &mut SINGLE_PACKET_SMALL_BUFFER };
+        let small = unsafe { &mut *SINGLE_PACKET_SMALL_BUFFER.get() };
         debug_assert!(incoming_data.len() <= small.len());
 
         // set consume_trailer to 1 to discard the trailing header

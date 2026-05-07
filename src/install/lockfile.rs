@@ -524,7 +524,7 @@ impl Lockfile {
     ) -> LoadResult<'a> {
         // Zig: `bun.assert(FileSystem.instance_loaded);`
         // SAFETY: read of a process-global flag; matches Zig's bare global read.
-        debug_assert!(unsafe { Fs::INSTANCE_LOADED });
+        debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let mut lockfile_format = LockfileFormat::Text;
         let file: File = 'file: {
@@ -1869,7 +1869,7 @@ impl Lockfile {
             }
             // Zig: `bun.assert(FileSystem.instance_loaded);`
             // SAFETY: read of a process-global flag; matches Zig's bare global read.
-            debug_assert!(unsafe { Fs::INSTANCE_LOADED });
+            debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
         }
 
         let bytes: Vec<u8> = 'bytes: {

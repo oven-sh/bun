@@ -458,14 +458,13 @@ pub extern "C" fn Request__setCookiesOnRequestContext(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Request__getUWSRequest(this: *mut Request) -> Option<&'static mut uws::Request> {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload)
+pub extern "C" fn Request__getUWSRequest(this: *mut Request) -> *mut uws::Request {
+    // SAFETY: called from C++ with a live Request* (m_ctx payload). C++ treats
+    // the returned pointer as borrowed for the request handler's lifetime.
     let this = unsafe { &mut *this };
-    // TODO(port): lifetime of returned uws::Request is tied to request_context, not 'static
     this.request_context
         .get_request()
-        // SAFETY: caller (C++) treats the pointer as borrowed for the request handler's lifetime.
-        .map(|p| unsafe { &mut *p })
+        .unwrap_or(core::ptr::null_mut())
 }
 
 #[unsafe(no_mangle)]

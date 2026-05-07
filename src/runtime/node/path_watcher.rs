@@ -51,8 +51,11 @@ macro_rules! log {
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
-// TODO(port): static mut — guarded by DEFAULT_MANAGER_MUTEX; consider OnceLock in Phase B
-static mut DEFAULT_MANAGER: Option<&'static PathWatcherManager> = None;
+// PORTING.md §Global mutable state: written under `DEFAULT_MANAGER_MUTEX`,
+// read after publish with the manager never freed. RacyCell over the
+// `Option<&'static>` — the mutex provides write-side synchronization.
+static DEFAULT_MANAGER: bun_core::RacyCell<Option<&'static PathWatcherManager>> =
+    bun_core::RacyCell::new(None);
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -108,7 +111,7 @@ impl PathWatcherManager {
         let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
         // SAFETY: DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX.
         unsafe {
-            if let Some(m) = DEFAULT_MANAGER {
+            if let Some(m) = DEFAULT_MANAGER.read() {
                 return Ok(m);
             }
         }
@@ -120,7 +123,7 @@ impl PathWatcherManager {
             return Err(e);
         }
         // SAFETY: holding DEFAULT_MANAGER_MUTEX.
-        unsafe { DEFAULT_MANAGER = Some(&*m) };
+        unsafe { DEFAULT_MANAGER.write(Some(&*m)) };
         Ok(&*m)
     }
 
@@ -1094,7 +1097,7 @@ impl Darwin {
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
         let watcher_ptr = ctx.cast::<PathWatcher>();
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
-        let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
+        let Some(manager) = (unsafe { DEFAULT_MANAGER.read() }) else { return };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex; see above.
         if unsafe { (*watcher_ptr).manager.is_none() } {
@@ -1115,7 +1118,7 @@ impl Darwin {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
         let watcher_ptr = ctx.cast::<PathWatcher>();
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
-        let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
+        let Some(manager) = (unsafe { DEFAULT_MANAGER.read() }) else { return };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex.
         if unsafe { (*watcher_ptr).manager.is_none() } {

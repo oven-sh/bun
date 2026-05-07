@@ -1776,8 +1776,9 @@ impl Package<u64> {
                             );
                             #[cfg(windows)]
                             {
+                                // SAFETY: thread-local scratch; single live borrow per thread.
                                 path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                    &mut path::relative_to_common_path_buf()[0..rel.len()],
+                                    &mut unsafe { &mut *path::relative_to_common_path_buf() }[0..rel.len()],
                                 );
                             }
                             break 'brk rel;

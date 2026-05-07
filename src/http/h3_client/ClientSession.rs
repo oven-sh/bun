@@ -233,7 +233,8 @@ impl ClientSession {
         // the client itself is alive. Formed only after detach() so its Unique tag
         // is not invalidated by detach()'s aliasing write.
         let client = unsafe { &mut *client_ptr.as_ptr() };
-        if !ctx.connect(client, &host, port) {
+        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+        if !unsafe { (*ctx.as_ptr()).connect(client, &host, port) } {
             client.fail_from_h2(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).

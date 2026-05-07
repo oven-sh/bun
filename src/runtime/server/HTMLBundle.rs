@@ -532,7 +532,7 @@ impl Route {
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
-                        // `Output.errorWriterBuffered()` → `&'static mut io::Writer`;
+                        // `Output.errorWriterBuffered()` → process-global writer;
                         // `Log::print` accepts it via the `*mut io::Writer`
                         // `IntoLogWrite` adapter and dispatches on
                         // `enable_ansi_colors_stderr` internally.

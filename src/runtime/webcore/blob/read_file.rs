@@ -544,7 +544,7 @@ impl ReadFile {
         // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
         // can reclaim via `Box::from_raw` with a matching layout.
-        let buf_slice: &'static mut [u8] = Box::leak(buf.into_boxed_slice());
+        let buf_slice = Box::leak(buf.into_boxed_slice());
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
@@ -1293,5 +1293,5 @@ impl<C: ReadFileCompletion> ReadFileUvHandler for C {
 //   source:     src/runtime/webcore/blob/read_file.zig (829 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      ReadFileRead.buf models Zig's owned `[]u8` as &'static mut + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
+//   notes:      ReadFileRead.buf models Zig's owned `[]u8` as a leaked slice + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
 // ──────────────────────────────────────────────────────────────────────────

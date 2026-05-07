@@ -31,21 +31,24 @@ pub struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// SAFETY: only ever accessed from the single HTTP thread.
-static mut INSTANCE: Option<NonNull<ClientContext>> = None;
+// PORTING.md §Global mutable state: HTTP-thread-only singleton; RacyCell
+// because access is confined to the single HTTP client thread.
+static INSTANCE: bun_core::RacyCell<Option<NonNull<ClientContext>>> =
+    bun_core::RacyCell::new(None);
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
-    pub fn get() -> Option<&'static mut ClientContext> {
+    /// Non-null pointer to the leaked process-lifetime singleton, if created.
+    /// Callers reborrow per-access — PORTING.md §Global mutable state.
+    pub fn get() -> Option<NonNull<ClientContext>> {
         // SAFETY: single-threaded access (HTTP thread only).
-        unsafe { INSTANCE.map(|p| &mut *p.as_ptr()) }
+        unsafe { INSTANCE.read() }
     }
 
-    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<&'static mut ClientContext> {
+    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
         // SAFETY: single-threaded access (HTTP thread only).
-        if let Some(i) = unsafe { INSTANCE } {
-            // SAFETY: INSTANCE points to a leaked Box that lives for the process.
-            return Some(unsafe { &mut *i.as_ptr() });
+        if let Some(i) = unsafe { INSTANCE.read() } {
+            return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
         // SAFETY: caller passes the live HTTP-thread uws loop.
@@ -62,14 +65,12 @@ impl ClientContext {
         // SAFETY: qctx is a fresh live us_quic_socket_context_t.
         callbacks::register(unsafe { &mut *qctx.as_ptr() });
 
-        let self_ = Box::leak(Box::new(ClientContext {
+        let self_ = NonNull::from(Box::leak(Box::new(ClientContext {
             qctx,
             sessions: Vec::new(),
-        }));
+        })));
         // SAFETY: single-threaded access (HTTP thread only).
-        unsafe {
-            INSTANCE = Some(NonNull::from(&mut *self_));
-        }
+        unsafe { INSTANCE.write(Some(self_)) };
         Some(self_)
     }
 
@@ -169,7 +170,8 @@ impl ClientContext {
         let Some(this) = Self::get() else {
             return false;
         };
-        for &s in this.sessions.iter() {
+        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+        for &s in unsafe { (*this.as_ptr()).sessions.iter() } {
             // SAFETY: registry only holds live sessions.
             if unsafe { (*s).abort_by_http_id(async_http_id) } {
                 return true;
@@ -182,7 +184,8 @@ impl ClientContext {
         let Some(this) = Self::get() else {
             return;
         };
-        for &s in this.sessions.iter() {
+        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+        for &s in unsafe { (*this.as_ptr()).sessions.iter() } {
             // SAFETY: registry only holds live sessions.
             unsafe { (*s).stream_body_by_http_id(async_http_id, ended) };
         }
@@ -194,7 +197,7 @@ impl ClientContext {
 //   source:     src/http/h3_client/ClientContext.zig (117 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      mutable global INSTANCE uses static mut (HTTP-thread-only);
+//   notes:      mutable global INSTANCE uses RacyCell (HTTP-thread-only);
 //               ConnectResult payloads are raw *mut per FFI; ClientSession
 //               registry storage stays raw *mut (FFI ext-slot back-ref).
 // ──────────────────────────────────────────────────────────────────────────

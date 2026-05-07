@@ -25,9 +25,12 @@ unsafe extern "C" {
 }
 
 // TODO(port): move to <area>_sys
+// `AtomicPtr<c_void>` is `#[repr(C)]` over `*mut c_void`, so the extern layout
+// matches libc's `char **environ`; on Windows we overwrite both at startup
+// before any thread reads them.
 unsafe extern "C" {
-    pub static mut _environ: *mut c_void;
-    pub static mut environ: *mut c_void;
+    pub static _environ: core::sync::atomic::AtomicPtr<c_void>;
+    pub static environ: core::sync::atomic::AtomicPtr<c_void>;
 }
 
 pub fn main() {
@@ -68,8 +71,9 @@ pub fn main() {
         bun_sys::windows::env::convert_env_to_wtf8();
         // SAFETY: single-threaded at this point; assigning the converted environ block.
         unsafe {
-            environ = bun_core::os_environ_ptr().cast::<c_void>();
-            _environ = bun_core::os_environ_ptr().cast::<c_void>();
+            let p = bun_core::os_environ_ptr().cast::<c_void>();
+            environ.store(p, core::sync::atomic::Ordering::Relaxed);
+            _environ.store(p, core::sync::atomic::Ordering::Relaxed);
         }
     }
 

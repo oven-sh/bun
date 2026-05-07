@@ -1117,7 +1117,7 @@ unsafe fn ipc_child_singleton_deinit() {
     // `Drop`; taking the `Option` runs them — equivalent to Zig `deinit()`.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
     unsafe {
-        (*core::ptr::addr_of_mut!(crate::node::node_cluster_binding::CHILD_SINGLETON)).take();
+        (*crate::node::node_cluster_binding::CHILD_SINGLETON.get()).take();
     }
 }
 
@@ -1929,7 +1929,7 @@ fn transpile_source_code_inner(
             let old_log = unsafe { (*jsc_vm).transpiler.log };
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                // TODO(port): lifetime — `Resolver.log` is `&'static mut Log`
+                // TODO(port): lifetime — `Resolver.log` is an unbounded `&mut Log`
                 // (Transpiler<'static>); `args.log` is `*mut Log`. Spec aliases
                 // freely; Rust would need `Resolver.log: *mut Log` first.
                 
@@ -3080,12 +3080,8 @@ fn get_hardcoded_module(
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !cfg!(debug_assertions) {
-                // SAFETY: plain `static mut` matching Zig's mutable global;
-                // only written during init on the JS thread (see
-                // `module_loader::set_is_allowed_to_use_internal_testing_apis`).
-                let allowed = unsafe {
-                    bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                };
+                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                    .load(core::sync::atomic::Ordering::Relaxed);
                 if !allowed {
                     return None;
                 }

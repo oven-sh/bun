@@ -231,7 +231,11 @@ mod live_workers {
     // `bun_threading` crate provides it.
     pub(super) static MUTEX: Mutex = Mutex::new();
     // TODO(port): std.DoublyLinkedList — intrusive, nodes are `WebWorker.live_{next,prev}`
-    pub(super) static mut HEAD: *mut WebWorker = core::ptr::null_mut();
+    // PORTING.md §Global mutable state: list head, every read/write is under
+    // `MUTEX` above. RacyCell so the slot itself is `Sync`; the mutex provides
+    // synchronization (Zig: plain `var head: ?*WebWorker`).
+    pub(super) static HEAD: bun_core::RacyCell<*mut WebWorker> =
+        bun_core::RacyCell::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
     /// `terminateAllAndWait` can futex-wait on it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);
@@ -240,12 +244,13 @@ mod live_workers {
         MUTEX.lock();
         // SAFETY: MUTEX held; `worker` is a valid heap allocation owned by C++.
         unsafe {
+            let head = HEAD.read();
             *(*worker).live_prev.get() = core::ptr::null_mut();
-            *(*worker).live_next.get() = HEAD;
-            if !HEAD.is_null() {
-                *(*HEAD).live_prev.get() = worker;
+            *(*worker).live_next.get() = head;
+            if !head.is_null() {
+                *(*head).live_prev.get() = worker;
             }
-            HEAD = worker;
+            HEAD.write(worker);
         }
         // fetch_add and wake MUST happen under MUTEX (matching the Zig
         // `defer mutex.unlock()` ordering) so that `terminate_all_and_wait`
@@ -274,7 +279,7 @@ mod live_workers {
             if !prev.is_null() {
                 *(*prev).live_next.get() = next;
             } else {
-                HEAD = next;
+                HEAD.write(next);
             }
             if !next.is_null() {
                 *(*next).live_prev.get() = prev;
@@ -325,7 +330,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
     loop {
         live_workers::MUTEX.lock();
         // SAFETY: MUTEX held while walking the intrusive list.
-        let mut it = unsafe { live_workers::HEAD };
+        let mut it = unsafe { live_workers::HEAD.read() };
         while !it.is_null() {
             // SAFETY: worker valid while registered (removed only in shutdown()).
             let w = unsafe { &*it };
@@ -829,6 +834,7 @@ impl WebWorker {
         if self.has_requested_terminate() {
             drop(temp_proxy_slots);
             self.shutdown();
+            return Ok(());
         }
 
         let vm = VirtualMachine::init_worker(

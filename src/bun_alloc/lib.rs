@@ -1019,7 +1019,7 @@ pub mod allocators {
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
 //   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> &'static mut BSSStringList<4096,129>
+//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
 //
 // The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
 // Returning `&'static mut` is the same aliasing contract as Zig's global
@@ -1488,7 +1488,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// taking space in the object file. We don't want to spend 1-2 MB on these structs.
 ///
 /// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
-/// `static mut INSTANCE` are not expressible on stable Rust. Phase B: instantiate per use-site
+/// a raw mutable INSTANCE static are not expressible on stable Rust. Phase B: instantiate per use-site
 /// via `macro_rules!` or pin concrete `COUNT` constants.
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub mutex: Mutex,
@@ -1593,14 +1593,15 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// Heap-allocate and initialize a fresh instance. The once-guard (Zig's
     /// `loaded` flag) is the *caller's* responsibility — use `bss_list!` for
     /// the canonical per-monomorphization singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // Zig: `default_allocator.create(Self)` — route through mimalloc.
         // SAFETY: FFI — mi_malloc returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit` → `impl Drop for BSSList` below (PORTING.md: never expose `pub fn deinit`).
@@ -1802,13 +1803,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_string_list!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: just frees `instance`. Handled by dropping the singleton Box in Phase B.
@@ -2063,13 +2065,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map_inner!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: `self.index.deinit(allocator)` then free instance.
@@ -2229,7 +2232,7 @@ pub struct BSSMap<
     // TODO(port): len = COUNT * ESTIMATED_KEY_LENGTH (generic_const_exprs).
     pub key_list_buffer: Box<[u8]>,
     pub key_list_buffer_used: usize,
-    // TODO(port): len = COUNT (generic_const_exprs); element type is `&'static mut [u8]`-ish.
+    // TODO(port): len = COUNT (generic_const_exprs); element type is a raw `*mut [u8]`-ish slice.
     pub key_list_slices: Box<[&'static [u8]]>,
     // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
     // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`
@@ -2263,13 +2266,14 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: `self.map.deinit()` then free instance — both handled by Drop.

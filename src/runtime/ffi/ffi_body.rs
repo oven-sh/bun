@@ -214,8 +214,12 @@ struct Offsets {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // Written once by C++ before any Rust read. C++ mutates these bytes, so a
+    // plain non-`mut` extern static would assert immutability to the optimizer
+    // (UB). `RacyCell<T>` is `#[repr(transparent)]` over `UnsafeCell<T>`, so
+    // the extern layout is identical to `Offsets`.
     #[link_name = "Bun__FFI__offsets"]
-    static mut BUN_FFI_OFFSETS: Offsets;
+    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }
@@ -321,7 +325,7 @@ impl Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*core::ptr::addr_of!(BUN_FFI_OFFSETS) }
+        unsafe { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -460,13 +464,17 @@ mod stdarg {
     #[cfg(target_os = "macos")]
     mod mac {
         use super::*;
+        use core::sync::atomic::{AtomicPtr, Ordering};
+        // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
+        // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
+        // identical and we only ever do a Relaxed word load.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
-            static mut FFI_STDINP: *mut c_void;
+            static FFI_STDINP: AtomicPtr<c_void>;
             #[link_name = "__stdoutp"]
-            static mut FFI_STDOUTP: *mut c_void;
+            static FFI_STDOUTP: AtomicPtr<c_void>;
             #[link_name = "__stderrp"]
-            static mut FFI_STDERRP: *mut c_void;
+            static FFI_STDERRP: AtomicPtr<c_void>;
         }
 
         pub fn inject(state: &mut TCC::State) {
@@ -474,9 +482,9 @@ mod stdarg {
             unsafe {
                 state
                     .add_symbols(&[
-                        ("__stdinp", FFI_STDINP),
-                        ("__stdoutp", FFI_STDOUTP),
-                        ("__stderrp", FFI_STDERRP),
+                        ("__stdinp", FFI_STDINP.load(Ordering::Relaxed)),
+                        ("__stdoutp", FFI_STDOUTP.load(Ordering::Relaxed)),
+                        ("__stderrp", FFI_STDERRP.load(Ordering::Relaxed)),
                     ])
                     .expect("Failed to add macos symbols");
             }
@@ -2023,8 +2031,11 @@ impl Default for Function {
     }
 }
 
-// TODO(port): mutable static — wrap in OnceLock or similar
-pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr().cast::<c_char>();
+// PORTING.md §Global mutable state: written once at startup with the
+// resolved tinycc lib dir; read by the FFI compile path. RacyCell over the
+// raw C-string pointer (no concurrent writers).
+pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> =
+    bun_core::RacyCell::new(b"\0".as_ptr().cast::<c_char>());
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

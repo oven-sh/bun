@@ -124,26 +124,39 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
 pub mod missing_source_map_note_info {
     use super::*;
 
-    // TODO(port): mutable statics — Zig used plain `pub var`; consider a Mutex-guarded cell in Phase B.
-    pub static mut STORAGE: PathBuffer = PathBuffer::ZEROED;
-    pub static mut PATH: Option<&'static [u8]> = None;
-    pub static mut SEEN_INVALID: bool = false;
+    // Zig used plain `pub var`; all access is from the single JS thread's
+    // error-reporting path, so `RacyCell` for the buffer + `AtomicBool` for the
+    // flag is sufficient (per docs/PORTING.md §Global mutable state).
+    pub static STORAGE: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
+    pub static PATH: bun_core::RacyCell<Option<&'static [u8]>> = bun_core::RacyCell::new(None);
+    pub static SEEN_INVALID: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    /// Record `path` into the static note buffer (caller must be on the JS thread).
+    ///
+    /// # Safety
+    /// JS-thread-only; no concurrent access to `STORAGE`/`PATH`.
+    pub(super) unsafe fn record(path: &[u8]) {
+        let storage = unsafe { &mut (&mut *STORAGE.get())[..path.len()] };
+        storage.copy_from_slice(path);
+        unsafe {
+            PATH.write(Some(core::slice::from_raw_parts(storage.as_ptr(), path.len())));
+        }
+    }
 
     pub fn print() {
-        // SAFETY: single-threaded access from the JS thread error-reporting path; matches Zig's unsynchronized `pub var`.
-        unsafe {
-            if SEEN_INVALID {
-                return;
-            }
-            if let Some(note) = PATH {
-                bun_core::note!(
-                    "missing sourcemaps for {}",
-                    bstr::BStr::new(note)
-                );
-                bun_core::note!(
-                    "consider bundling with '--sourcemap' to get unminified traces"
-                );
-            }
+        if SEEN_INVALID.load(core::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: single-threaded access from the JS thread error-reporting path.
+        if let Some(note) = unsafe { PATH.read() } {
+            bun_core::note!(
+                "missing sourcemaps for {}",
+                bstr::BStr::new(note)
+            );
+            bun_core::note!(
+                "consider bundling with '--sourcemap' to get unminified traces"
+            );
         }
     }
 }
@@ -469,13 +482,8 @@ impl SavedSourceMap {
             unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
-            unsafe {
-                let storage = &mut missing_source_map_note_info::STORAGE[..path.len()];
-                storage.copy_from_slice(path);
-                missing_source_map_note_info::PATH =
-                    Some(core::slice::from_raw_parts(storage.as_ptr(), path.len()));
-            }
+            // SAFETY: single-threaded JS-thread access.
+            unsafe { missing_source_map_note_info::record(path) };
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else if tag == Value::case::<BakeSourceProvider>() {
@@ -503,13 +511,8 @@ impl SavedSourceMap {
             unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
-            unsafe {
-                let storage = &mut missing_source_map_note_info::STORAGE[..path.len()];
-                storage.copy_from_slice(path);
-                missing_source_map_note_info::PATH =
-                    Some(core::slice::from_raw_parts(storage.as_ptr(), path.len()));
-            }
+            // SAFETY: single-threaded JS-thread access.
+            unsafe { missing_source_map_note_info::record(path) };
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else if tag == Value::case::<DevServerSourceProvider>() {
@@ -537,13 +540,8 @@ impl SavedSourceMap {
             unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
-            unsafe {
-                let storage = &mut missing_source_map_note_info::STORAGE[..path.len()];
-                storage.copy_from_slice(path);
-                missing_source_map_note_info::PATH =
-                    Some(core::slice::from_raw_parts(storage.as_ptr(), path.len()));
-            }
+            // SAFETY: single-threaded JS-thread access.
+            unsafe { missing_source_map_note_info::record(path) };
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else {

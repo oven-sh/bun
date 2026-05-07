@@ -106,10 +106,8 @@ pub fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // SAFETY: `Bun__Node__UseSystemCA` is a `#[unsafe(no_mangle)] static mut bool`
-    // written exactly once during CLI argv parsing (single-threaded startup)
-    // and only read afterwards. Mirrors Zig `pub export var` read.
-    let v = unsafe { crate::cli::Arguments::Bun__Node__UseSystemCA };
+    let v = crate::cli::Arguments::Bun__Node__UseSystemCA
+        .load(core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_boolean(v))
 }
 

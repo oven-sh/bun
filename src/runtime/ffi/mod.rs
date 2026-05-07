@@ -184,8 +184,14 @@ pub(crate) struct Offsets {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // Populated once by C++ via `Bun__FFI__ensureOffsetsAreLoaded`; Rust only
+    // reads after the `Once` below fires. C++ mutates these bytes, so a plain
+    // non-`mut` extern static would assert immutability to the optimizer (UB
+    // per the Rust reference). `RacyCell<T>` is `#[repr(transparent)]` over
+    // `UnsafeCell<T>`, so the linker sees the same `Offsets` layout while Rust
+    // sees interior mutability.
     #[link_name = "Bun__FFI__offsets"]
-    static mut BUN_FFI_OFFSETS: Offsets;
+    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }
@@ -199,7 +205,7 @@ impl Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*core::ptr::addr_of!(BUN_FFI_OFFSETS) }
+        unsafe { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -368,8 +374,11 @@ impl Default for Function {
     }
 }
 
-// TODO(port): mutable static — wrap in OnceLock or similar
-pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr().cast::<c_char>();
+// PORTING.md §Global mutable state: written once at startup with the
+// resolved tinycc lib dir; read by the FFI compile path. RacyCell over the
+// raw C-string pointer (no concurrent writers).
+pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> =
+    bun_core::RacyCell::new(b"\0".as_ptr().cast::<c_char>());
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

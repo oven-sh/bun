@@ -109,10 +109,8 @@ impl GarbageCollectionController {
         if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
             if let Some(parsed) = parse_int_c_int(val) {
                 if parsed >= 0 {
-                    // SAFETY: single-threaded init; mirrors Zig assignment to extern var
-                    unsafe {
-                        crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
-                    }
+                    crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
+                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
                 }
             }
         }

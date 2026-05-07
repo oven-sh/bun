@@ -87,7 +87,8 @@ unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         BStr::new(bun_string::slice_to_nul(&buf)),
     );
     if let Some(ctx) = ClientContext::get() {
-        ctx.unregister(session);
+        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+        unsafe { (*ctx.as_ptr()).unregister(session) };
     }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before

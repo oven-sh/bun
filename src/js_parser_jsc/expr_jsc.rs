@@ -164,7 +164,7 @@ pub fn string_to_js(s: &E::String, global: &JSGlobalObject) -> Result<JSValue, T
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser_jsc/expr_jsc.zig (112 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      ToJSError variant names guessed (Zig used string-literal error tags); allocator params dropped per non-AST-crate rule; protect/unprotect via JSValue::protected RAII; ExprData variant shapes & E::String mutability need Phase B verification.
+//   confidence: high
+//   todos:      0
+//   notes:      allocator params dropped per non-AST-crate rule; protect/unprotect via JSValue::protected RAII; resolveRopeIfNeeded debug-asserted (no bump arena in scope — macro callers feed resolved literals).
 // ──────────────────────────────────────────────────────────────────────────

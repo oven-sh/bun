@@ -968,12 +968,14 @@ impl WebWorker {
                 unsafe { (*vm).exit_handler.exit_code = 1 };
                 if vm_log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
-                    // SAFETY: `Str = &'static [u8]` lifetime lie (logger
-                    // TODO(port)); `Log::add_error` immediately dupes into an
-                    // owned `Msg` so the borrow does not actually escape.
-                    let text: &'static [u8] =
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(err.slice()) };
-                    bun_core::handle_oom(vm_log.add_error(None, bun_logger::Loc::EMPTY, text));
+                    // `Log::add_error` takes `impl IntoText`; pass an owned
+                    // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
+                    // to `err`, which is dropped immediately after).
+                    bun_core::handle_oom(vm_log.add_error(
+                        None,
+                        bun_logger::Loc::EMPTY,
+                        err.slice().to_vec(),
+                    ));
                 }
                 resolve_error.deref();
                 self.flush_logs(vm);

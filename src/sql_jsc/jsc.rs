@@ -295,6 +295,80 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_aio::KeepAlive;
 
+// ──────────────────────────────────────────────────────────────────────────
+// SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
+//
+// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache,
+// SSLConfig parser, Blob accessors) and *depends on* this crate, so direct
+// imports would cycle. Instead of Rust→Rust `extern "C"` shims (which let the
+// two sides disagree on pointee types — the previous local `EventLoopTimer` /
+// `SSLConfig` stubs were layout-incompatible with what `hw_exports.rs` wrote),
+// the low tier defines the fn-pointer table and `bun_runtime::jsc_hooks::
+// install_jsc_hooks()` registers a `&'static` instance. Every signature here
+// is checked by the compiler at the registration site.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct SqlRuntimeHooks {
+    /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
+    pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
+    /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
+    pub timer_heap: unsafe fn(*mut VirtualMachine) -> *mut c_void,
+    /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
+    pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
+    /// `Timer.All.remove`.
+    pub timer_remove: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
+    /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
+    pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
+    /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
+    pub ssl_ctx_get_or_create: unsafe fn(
+        cache: *mut c_void,
+        opts: &bun_uws::us_bun_socket_context_options_t,
+        err: &mut bun_uws::create_bun_socket_error_t,
+    ) -> *mut bun_uws::SslCtx,
+    /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
+    /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
+    /// or null when the value contained no TLS config / threw (caller checks
+    /// `global.has_exception()`).
+    pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
+    /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
+    pub ssl_config_free: unsafe fn(*mut c_void),
+    /// `SSLConfig::asUSocketsForClientVerification`.
+    pub ssl_config_as_usockets_client:
+        unsafe fn(*const c_void) -> bun_uws::us_bun_socket_context_options_t,
+    /// `SSLConfig.server_name` — null when unset.
+    pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
+    /// `SSLConfig.reject_unauthorized`.
+    pub ssl_config_reject_unauthorized: unsafe fn(*const c_void) -> i32,
+    /// `Blob::needsToReadFile`.
+    pub blob_needs_to_read_file: unsafe fn(*const c_void) -> bool,
+    /// `Blob::sharedView` — returns `(ptr, len)` borrowing the immutable store.
+    pub blob_shared_view: unsafe fn(*const c_void, out_len: *mut usize) -> *const u8,
+}
+
+static SQL_RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<SqlRuntimeHooks> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Called once from `bun_runtime::jsc_hooks::install_jsc_hooks()` before the
+/// first `VirtualMachine::init`.
+pub fn set_sql_runtime_hooks(hooks: &'static SqlRuntimeHooks) {
+    SQL_RUNTIME_HOOKS.store(
+        hooks as *const SqlRuntimeHooks as *mut SqlRuntimeHooks,
+        core::sync::atomic::Ordering::Release,
+    );
+}
+
+#[inline]
+fn hooks() -> &'static SqlRuntimeHooks {
+    let p = SQL_RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
+    debug_assert!(
+        !p.is_null(),
+        "SqlRuntimeHooks not registered — bun_runtime::install_jsc_hooks() must run before any SQL connection"
+    );
+    // SAFETY: registered once at startup with a `&'static` instance; never
+    // cleared, never mutated after publication.
+    unsafe { &*p }
+}
+
 /// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
 /// crate::postgres::PostgresSQLContext that the Zig RareData carried as
 /// value fields. The bun_jsc::rare_data::RareData slots for these are opaque
@@ -331,23 +405,22 @@ pub trait VirtualMachineSqlExt {
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
     fn sql_state(&mut self) -> &mut RareData {
-        // SAFETY: Bun__VM__rareData (bun_runtime/hw_exports.rs) returns
-        // &runtime_state().sql_rare; non-null on the JS thread once
-        // init_runtime_state has run.
-        unsafe { &mut *Bun__VM__rareData(self) }
+        // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
+        // the JS thread once `init_runtime_state` has run.
+        unsafe { &mut *(hooks().sql_rare)(self) }
     }
     #[inline]
     fn timer(&mut self) -> &mut TimerHeap {
-        // SAFETY: Bun__VM__timer (bun_runtime/hw_exports.rs) returns
-        // &runtime_state().timer; non-null after init_runtime_state.
-        unsafe { &mut *Bun__VM__timer(self) }
+        // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
+        // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
+        // `*mut c_void` so callers stay typed.
+        unsafe { &mut *((hooks().timer_heap)(self) as *mut TimerHeap) }
     }
     #[inline]
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: Bun__RareData__sslCtxCache (bun_runtime/hw_exports.rs)
-        // returns &runtime_state().ssl_ctx_cache; non-null after
-        // init_runtime_state.
-        unsafe { &mut *Bun__RareData__sslCtxCache(self as *mut _ as *mut c_void) }
+        // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
+        // after `init_runtime_state`.
+        unsafe { &mut *((hooks().ssl_ctx_cache)(self) as *mut SslCtxCache) }
     }
     #[inline]
     fn vm_ctx(&self) -> bun_aio::EventLoopCtx {

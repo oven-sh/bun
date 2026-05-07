@@ -8,7 +8,6 @@ use bun_logger as logger;
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::string::Builder as SemverBuilder;
 use bun_semver::String as SemverString;
-use bun_semver::string::Builder as SemverBuilder;
 use bun_str::strings;
 
 use super::{package::Package, StringBuilder};

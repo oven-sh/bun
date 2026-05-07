@@ -28,8 +28,6 @@ use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
 use bun_options_types::CommandTag::Tag as CommandTag;
 use bun_options_types::Context::ContextData;
 
-use crate::cli::command::{ContextData, Tag as CommandTag};
-
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::OfflineMode::OfflineMode;
 
@@ -854,8 +852,6 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                self.parse_install(&install_obj)?;
-
                 if let Some(expr) = expr_get(&install_obj, b"logLevel") {
                     self.load_log_level(&expr)?;
                 }
@@ -929,12 +925,6 @@ impl<'a> Parser<'a> {
                         self.add_error(depth.loc, b"Expected number")?;
                     }
                 }
-            }
-        }
-
-        if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
-            if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
-                self.parse_serve_static(&serve_obj)?;
             }
         }
 

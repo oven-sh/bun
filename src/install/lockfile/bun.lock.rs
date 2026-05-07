@@ -47,7 +47,7 @@ use super::{
     Package,
     tree,
 };
-use super::package::{Meta, PackageField, PackageSliceExt as _};
+use super::package::{Meta, PackageListExt as _, PackageSliceExt as _};
 use super::PackageIDSlice;
 
 /// `core::fmt::Write` → `bun_io::Write` bridge for callees that take
@@ -195,9 +195,9 @@ impl Stringifier {
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
-        // PORT NOTE: `tree::Iterator::init` is typed against the stub
-        // `crate::lockfile::Lockfile`; construct from raw buffer slices so the
-        // real `lockfile_real::Lockfile` works without the type unification.
+        // PORT NOTE: `from_slices` (vs `init(lockfile)`) is used so the iterator
+        // borrows only `buffers.{trees,hoisted_dependencies,dependencies,string_bytes}`;
+        // `overrides`/`catalogs` are mutated below while the iterator is still live.
         let mut pkgs_iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
             lockfile.buffers.hoisted_dependencies.as_slice(),
@@ -1332,11 +1332,7 @@ impl<T> PkgMap<T> {
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-    ) -> Result<&T, ResolveError>
-    where
-        T: Copy,
-    {
-        // TODO(port): return type — Zig returns `T` by value; using `&T` here. Adjust if T: !Copy callers need owned.
+    ) -> Result<&T, ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         path_buf[0..pkg_path.len()].copy_from_slice(pkg_path);

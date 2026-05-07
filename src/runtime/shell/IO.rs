@@ -159,6 +159,12 @@ impl OutKind {
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {
+                    // Spec (IO.zig:178) reads `val.writer.fd.get()` — an
+                    // optional that becomes empty once the fd has been handed
+                    // off to libuv. `IOWriter::fd()` (IOWriter.rs) encodes
+                    // that same state by returning `Fd::INVALID` after
+                    // hand-off, so the sentinel compare here is the port of
+                    // the optional unwrap, not a fresh invariant.
                     let fd = val.writer.fd();
                     if fd != bun_sys::Fd::INVALID {
                         Stdio::Fd(fd)

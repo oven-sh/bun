@@ -423,49 +423,11 @@ impl Cmd {
         let interp_ptr: *mut Interpreter = std::ptr::from_mut(interp);
         let shell: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
 
-        // ── which() lookup ────────────────────────────────────────────────
-        // Spec (Cmd.zig initSubproc 487-498): resolve argv[0] against $PATH /
-        // cwd; fall back to selfExePath() for "bun"/"bun-debug"; otherwise
-        // `writeFailingError("bun: command not found: {s}\n")`.
-        // PATH comes from `SpawnArgs::default` (the process env) at which()
-        // time — `fill_env` runs *after* resolution in the spec, so any
-        // `export PATH=` in the script affects the child's environment but
-        // not argv[0] lookup.
-        // SAFETY: VM-owned env loader outlives the spawn.
-        let path: &[u8] = unsafe { &*event_loop.env() }.get(b"PATH").unwrap_or(b"");
-        // SAFETY: `base.shell` outlives the Cmd node (held by Interpreter
-        // root or Pipeline parent until `child_done`).
+        // SAFETY: `base.shell` points at `interp.root_shell` (or a Subshell-
+        // owned env), a field disjoint from `interp.nodes` where this Cmd
+        // lives; accessed via raw backref per the NodeId-arena pattern used
+        // throughout this file.
         let cwd: Vec<u8> = unsafe { &*shell }.cwd().to_vec();
-        let resolved: Vec<u8> = {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, path, &cwd, &first_arg) {
-                Some(p) => p.as_bytes().to_vec(),
-                None => match matches!(first_arg.as_slice(), b"bun" | b"bun-debug")
-                    .then(bun_core::self_exe_path)
-                    .and_then(Result::ok)
-                {
-                    Some(p) => p.as_bytes().to_vec(),
-                    None => {
-                        log!("Cmd {} exec: command not found: {:?}", this, first_arg);
-                        return Self::write_failing_error(
-                            interp,
-                            this,
-                            format_args!(
-                                "bun: command not found: {}\n",
-                                bstr::BStr::new(&first_arg)
-                            ),
-                        );
-                    }
-                },
-            }
-        };
-        // Spec: replace argv[0] with the resolved (NUL-terminated) path.
-        {
-            let argv0 = &mut interp.as_cmd_mut(this).args[0];
-            argv0.clear();
-            argv0.extend_from_slice(&resolved);
-            argv0.push(0);
-        }
 
         // Pre-install `Exec::Subproc` so `cmd_parent` callbacks fired during
         // `spawn_async` (immediate-exit / pipe-close) see a valid `exec` slot.
@@ -500,11 +462,57 @@ impl Cmd {
         );
         spawn_args.cwd = &cwd;
 
-        // Fill env from export_env then cmd_local_env (spec: initSubproc
-        // 502-507). The `ShellExecEnv` is a separate heap allocation reached
-        // via `base.shell: *mut ShellExecEnv`, so it does not alias the
-        // `&mut Cmd` held by `spawn_args.cmd_parent`.
-        // SAFETY: `base.shell` outlives the Cmd; disjoint from `interp.nodes`.
+        // ── which() lookup ────────────────────────────────────────────────
+        // Spec (Cmd.zig initSubproc 487-498): resolve argv[0] against
+        // `spawn_args.PATH` / `spawn_args.cwd`; fall back to selfExePath()
+        // for "bun"/"bun-debug"; otherwise `writeFailingError(...)`.
+        // `spawn_args` is constructed first (matching spec order) so `path`
+        // carries the `_PATH_DEFPATH` fallback that `SpawnArgs::default`
+        // provides on POSIX when `PATH` is unset. `fill_env` runs *after*
+        // resolution in the spec, so any `export PATH=` in the script affects
+        // the child's environment but not argv[0] lookup.
+        let resolved: Option<Vec<u8>> = {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+                Some(p) => Some(p.as_bytes().to_vec()),
+                None => matches!(first_arg.as_slice(), b"bun" | b"bun-debug")
+                    .then(bun_core::self_exe_path)
+                    .and_then(Result::ok)
+                    .map(|p| p.as_bytes().to_vec()),
+            }
+        };
+        match resolved {
+            Some(r) => {
+                // Spec: replace argv[0] with the resolved (NUL-terminated)
+                // path. Mutated via `spawn_args.cmd_parent` — the live `&mut
+                // Cmd` borrow — rather than re-borrowing `interp`.
+                let argv0 = &mut spawn_args.cmd_parent.args[0];
+                argv0.clear();
+                argv0.extend_from_slice(&r);
+                argv0.push(0);
+            }
+            None => {
+                log!("Cmd {} exec: command not found: {:?}", this, first_arg);
+                drop(spawn_args);
+                drop(arena);
+                interp.as_cmd_mut(this).exec = Exec::None;
+                return Self::write_failing_error(
+                    interp,
+                    this,
+                    format_args!(
+                        "bun: command not found: {}\n",
+                        bstr::BStr::new(&first_arg)
+                    ),
+                );
+            }
+        }
+
+        // Fill the env from export_env then cmd_local_env (spec: initSubproc
+        // 502-507).
+        // SAFETY: `base.shell` points at `interp.root_shell` (or a Subshell-
+        // owned env), a field disjoint from `interp.nodes` where
+        // `spawn_args.cmd_parent: &mut Cmd` lives; accessed via raw backref
+        // per the NodeId-arena pattern used throughout this file.
         let shell_env = unsafe { &mut *shell };
         {
             let mut it = shell_env.export_env.iterator();
@@ -553,20 +561,19 @@ impl Cmd {
             return Self::write_failing_error(interp, this, format_args!("{}\n", e));
         }
 
-        {
-            let me = interp.as_cmd_mut(this);
-            match &mut me.exec {
-                Exec::Subproc(exec) => exec.child = child,
-                _ => unreachable!(),
-            }
-            me.spawn_arena_freed = true;
+        match &mut interp.as_cmd_mut(this).exec {
+            Exec::Subproc(exec) => exec.child = child,
+            _ => unreachable!(),
         }
-        drop(arena);
         // SAFETY: `child` is the freshly-boxed subprocess from `spawn_async`
         // (`Box::into_raw`), uniquely owned by this Cmd until `Cmd::deinit`
         // reclaims it.
         let sub = unsafe { &mut *child };
+        // Spec order (Cmd.zig 531-533): `subproc.ref()` precedes
+        // `spawn_arena_freed = true; arena.deinit()`.
         sub.r#ref();
+        interp.as_cmd_mut(this).spawn_arena_freed = true;
+        drop(arena);
 
         if did_exit_immediately {
             // Spec (Cmd.zig initSubproc 533-541): `watch()` failed → process
@@ -599,10 +606,12 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Spec: Cmd.zig `writeFailingError` — set state to `WaitingWriteErr` and
-    /// enqueue `args` on the *Cmd's* `io.stderr` (or, when stderr isn't an
-    /// `Fd`, append to the captured buffer and finish synchronously with exit
-    /// 1, mirroring `onIOWriterChunk`'s `.waiting_write_err` arm).
+    /// Spec: Cmd.zig `writeFailingError` → interpreter.zig
+    /// `writeFailingErrorFmt`. In the `.fd` arm, set state to
+    /// `WaitingWriteErr` (the `enqueueCb` callback) and enqueue `args` on the
+    /// Cmd's `io.stderr`; in the `.pipe`/`.ignore` arms, append to the
+    /// captured buffer and finish synchronously with exit 1 without touching
+    /// state (mirroring `onIOWriterChunk`'s `.waiting_write_err` arm).
     fn write_failing_error(
         interp: &mut Interpreter,
         this: NodeId,
@@ -612,17 +621,21 @@ impl Cmd {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        interp.as_cmd_mut(this).state = CmdState::WaitingWriteErr;
         if let IoOutKind::Fd(fd) = &interp.as_cmd(this).io.stderr {
+            let writer = fd.writer.clone();
+            let captured = fd.captured;
+            // Spec: `enqueueCb(ctx)` — only the `.fd` arm transitions state.
+            interp.as_cmd_mut(this).state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Cmd);
-            return fd.writer.enqueue(child, fd.captured, &buf);
+            return writer.enqueue(child, captured, &buf);
         }
         // No-IO path (`.pipe`/`.ignore`): append to the shell env's captured
         // stderr and finish synchronously with exit 1.
         if matches!(interp.as_cmd(this).io.stderr, IoOutKind::Pipe) {
             let shell = interp.as_cmd(this).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            let _ = unsafe { (*(*shell).buffered_stderr()).append_slice(&buf) };
+            // SAFETY: shell env outlives the Cmd node; disjoint from
+            // `interp.nodes` per the NodeId-arena backref pattern.
+            bun_core::handle_oom(unsafe { (*(*shell).buffered_stderr()).append_slice(&buf) });
         }
         let parent = interp.as_cmd(this).base.parent;
         interp.child_done(parent, this, 1)

@@ -23,6 +23,11 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
+    /// `bun_aio::poll_tag` constant for this process's `StaticPipeWriter`
+    /// `FilePoll` owner. Threaded down to `PosixBufferedWriterParent` so the
+    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll` can
+    /// recover the monomorphized `*mut PosixBufferedWriter<StaticPipeWriter<Self>>`.
+    const POLL_OWNER_TAG: u8;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);

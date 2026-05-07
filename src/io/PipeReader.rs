@@ -6,11 +6,17 @@ use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
-// CYCLEBREAK: FilePoll/EventLoopHandle are opaque vtable-backed handles in io
-// (T2); concrete types live in bun_aio (T3) / bun_jsc (T6). The uws Loop type
-// moves to bun_uws_sys (T0).
+// CYCLEBREAK: FilePoll/EventLoopHandle are opaque link-time-extern-backed
+// handles in io (T2); concrete types live in bun_aio (T3) / bun_event_loop
+// (T4). The uws Loop type moves to bun_uws_sys (T0).
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
 type Loop = bun_uws_sys::Loop;
+
+/// `bun_aio::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
+/// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
+/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
+/// from this constant. T2 cannot name `bun_aio`, so the value is mirrored.
+const BUFFERED_READER_POLL_TAG: u8 = 5;
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
@@ -266,7 +272,7 @@ impl PosixBufferedReader {
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = self as *mut _ as *mut c_void;
-        self.handle.set_owner(owner);
+        self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -276,7 +282,7 @@ impl PosixBufferedReader {
         self.vtable.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = self as *mut _ as *mut c_void;
-        self.handle.set_owner(owner);
+        self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -450,12 +456,12 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePoll::init(ev, fd, (), owner_ptr));
+            self.handle = PollOrFd::Poll(FilePoll::init(ev, fd, BUFFERED_READER_POLL_TAG, owner_ptr));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
         };
-        poll.set_owner(owner_ptr);
+        poll.set_owner(BUFFERED_READER_POLL_TAG, owner_ptr);
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);

@@ -251,21 +251,25 @@ pub fn to_throw(
             if let Some(received_message) = received_message_opt {
                 let expected_value_fmt = expected_value.to_fmt(&mut formatter);
                 let received_message_fmt = received_message.to_fmt(&mut formatter2);
-                return this.throw_fmt(
+                return this.throw(
                     global,
                     signature,
-                    concat!("\n\n", "Expected substring: <green>{}<r>\nReceived message: <red>{}<r>\n"),
-                    format_args!("{}{}", expected_value_fmt, received_message_fmt),
+                    format_args!(
+                        "\n\nExpected substring: <green>{}<r>\nReceived message: <red>{}<r>\n",
+                        expected_value_fmt, received_message_fmt,
+                    ),
                 );
             }
 
             let expected_fmt = expected_value.to_fmt(&mut formatter);
             let received_fmt = result.to_fmt(&mut formatter2);
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 signature,
-                concat!("\n\n", "Expected substring: <green>{}<r>\nReceived value: <red>{}<r>"),
-                format_args!("{}{}", expected_fmt, received_fmt),
+                format_args!(
+                    "\n\nExpected substring: <green>{}<r>\nReceived value: <red>{}<r>",
+                    expected_fmt, received_fmt,
+                ),
             );
         }
 

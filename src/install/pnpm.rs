@@ -451,8 +451,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             }
 
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            pkg_json_path.append(importer_path);
-            pkg_json_path.append(b"package.json");
+            let _ = pkg_json_path.append(importer_path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             let importer_pkg_json = match manager
                 .workspace_package_json_cache
@@ -506,7 +506,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         {
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            pkg_json_path.append(b"package.json");
+            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             let pkg_json = match manager
                 .workspace_package_json_cache
@@ -574,9 +574,9 @@ pub fn migrate_pnpm_lockfile<'a>(
                 ));
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                path_buf.append(path);
+                let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 let abs_path: Box<[u8]> = Box::from(path_buf.slice());
-                path_buf.append(b"package.json");
+                let _ = path_buf.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -695,13 +695,14 @@ pub fn migrate_pnpm_lockfile<'a>(
                             if dep.version.tag == dependency::VersionTag::Workspace {
                                 let mut link_path_buf =
                                     bun_paths::AutoAbsPath::init_top_level_dir();
-                                link_path_buf.append(workspace_path);
-                                link_path_buf.join(&[link_path]);
+                                let _ = link_path_buf.append(workspace_path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
                                     let mut workspace_path_buf =
                                         bun_paths::AutoAbsPath::init_top_level_dir();
-                                    workspace_path_buf.append(
+                                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                    let _ = workspace_path_buf.append(
                                         existing_workspace_path.slice(string_bytes!(lockfile)),
                                     );
 
@@ -729,7 +730,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                             };
 
                             let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
-                            abs_link_path.join(&[workspace_path, link_path]);
+                            let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
 
                             let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
                             if pkg_entry.found_existing {
@@ -986,7 +987,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 let ws = *dep.version.workspace();
                 let workspace_path = ws.slice(string_buf);
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                path_buf.join(&[workspace_path]);
+                let _ = path_buf.join(&[workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
                     continue;
@@ -1016,7 +1017,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]);
+                let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
                     continue;
@@ -1080,7 +1081,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]);
+                let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                     continue;
@@ -1126,7 +1127,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     let maybe_symlink_or_folder_or_workspace_path =
                         strings::without_prefix(version_without_suffix, b"link:");
                     let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                    path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]);
+                    let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                     if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
                         lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                         continue;
@@ -1575,8 +1576,8 @@ fn parse_append_importer_dependencies(
                 }
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                path_buf.append(path);
-                path_buf.append(b"package.json");
+                let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = path_buf.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -1632,7 +1633,7 @@ fn update_package_json_after_migration(
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    pkg_json_path.append(b"package.json");
+    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
     let bump = bun_alloc::Arena::new();
 
@@ -2051,7 +2052,7 @@ fn update_package_json_after_migration(
                 Err(_) => return Ok(()),
             };
         let _ = write_file.write_all(root_pkg_json.source.contents());
-        write_file.close();
+        let _ = write_file.close(); // close error is non-actionable (Zig parity: discarded)
     }
 
     Ok(())

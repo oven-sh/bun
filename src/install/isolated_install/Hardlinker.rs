@@ -213,7 +213,7 @@ impl Hardlinker {
                 // body. Capture `len()` and restore via `set_length()` after the
                 // body so the truncation runs on every exit, matching `defer`.
                 let dest_saved_len = self.dest.len();
-                self.dest.append(entry.path.as_bytes());
+                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {

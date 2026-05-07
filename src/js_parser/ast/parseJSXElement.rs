@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![warn(unused_must_use)]
 use crate::ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
 use crate::ast::expr::Data as ExprData;
 use crate::ast::p::P;

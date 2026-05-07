@@ -9,6 +9,7 @@
 //! type and so must stay in `bun_runtime`).
 
 #![allow(unused_imports, dead_code)]
+#![warn(unused_must_use)]
 
 // child module: src/runtime/api/bun/spawn/stdio.zig
 // NOTE: explicit #[path] required because the parent (`api.rs`) loads this file

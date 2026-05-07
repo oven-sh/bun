@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![warn(unused_must_use)]
 use bun_core::{self, err, Error};
 use bun_logger as logger;
 use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};

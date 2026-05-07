@@ -1,4 +1,5 @@
 #![allow(unused, dead_code, non_snake_case, private_interfaces)]
+#![warn(unused_must_use)]
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.

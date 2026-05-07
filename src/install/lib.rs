@@ -1,4 +1,5 @@
 #![allow(unused, nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────

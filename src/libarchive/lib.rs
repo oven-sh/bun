@@ -1,5 +1,6 @@
 // @link "../deps/libarchive.a"
 #![allow(unused, dead_code, clippy::all)]
+#![warn(unused_must_use)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase D: libarchive FFI surface is fully wired. Thin `extern "C"` wrappers

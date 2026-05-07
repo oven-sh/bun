@@ -194,7 +194,7 @@ pub fn list_objects(
 ) -> JsTerminatedResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
-    search_params.append_slice(b"?");
+    let _ = search_params.append_slice(b"?"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
     if let Some(continuation_token_ptr) = list_options.continuation_token {
         // SAFETY: `continuation_token` borrows from `list_options._continuation_token`
@@ -203,7 +203,8 @@ pub fn list_objects(
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
-        search_params.append_fmt(format_args!(
+        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_fmt(format_args!(
             "continuation-token={}",
             bstr::BStr::new(encoded)
         ));
@@ -216,17 +217,17 @@ pub fn list_objects(
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
         if list_options.continuation_token.is_some() {
-            search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded)));
+            let _ = search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         } else {
-            search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded)));
+            let _ = search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
     }
 
     if list_options.encoding_type.is_some() {
         if list_options.continuation_token.is_some() || list_options.delimiter.is_some() {
-            search_params.append_slice(b"&encoding-type=url");
+            let _ = search_params.append_slice(b"&encoding-type=url"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         } else {
-            search_params.append_slice(b"encoding-type=url");
+            let _ = search_params.append_slice(b"encoding-type=url"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
     }
 
@@ -235,9 +236,9 @@ pub fn list_objects(
             || list_options.delimiter.is_some()
             || list_options.encoding_type.is_some()
         {
-            search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner));
+            let _ = search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         } else {
-            search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner));
+            let _ = search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
     }
 
@@ -246,13 +247,13 @@ pub fn list_objects(
         || list_options.encoding_type.is_some()
         || list_options.fetch_owner.is_some()
     {
-        search_params.append_slice(b"&list-type=2");
+        let _ = search_params.append_slice(b"&list-type=2"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     } else {
-        search_params.append_slice(b"list-type=2");
+        let _ = search_params.append_slice(b"list-type=2"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     if let Some(max_keys) = list_options.max_keys {
-        search_params.append_fmt(format_args!("&max-keys={}", max_keys));
+        let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     if let Some(prefix_ptr) = list_options.prefix {
@@ -260,7 +261,7 @@ pub fn list_objects(
         let prefix = unsafe { &*prefix_ptr };
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
-        search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded)));
+        let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     if let Some(start_after_ptr) = list_options.start_after {
@@ -269,7 +270,7 @@ pub fn list_objects(
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded =
             encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
-        search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded)));
+        let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     let result = match this.sign_request::<true>(

@@ -1,5 +1,6 @@
 #![feature(allocator_api)]
 #![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
+#![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Phase B-2 un-gate: pieces that do not transitively need the JS-AST
 // (`Expr`/`E::Object`/`Rope`) or the schema (`BunInstall`/`NpmRegistry`)

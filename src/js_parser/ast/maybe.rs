@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 use bun_logger as logger;

@@ -333,7 +333,7 @@ impl Execution {
     }
 
     pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        group_begin!();
+        let _g = group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
@@ -368,7 +368,7 @@ impl Execution {
         global_this: &JSGlobalObject,
         data: RefDataValue,
     ) -> JsResult<StepResult> {
-        group_begin!();
+        let _g = group_begin!();
         let buntest = buntest_strong.get();
         let buntest_ptr = NonNull::from(&mut *buntest);
         let this = &mut buntest.execution;
@@ -473,7 +473,7 @@ impl Execution {
         &mut self,
         data: &RefDataValue,
     ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
-        group_begin!();
+        let _g = group_begin!();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
@@ -534,7 +534,7 @@ impl Execution {
         sequence_ptr: NonNull<ExecutionSequence>,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
-        group_begin!();
+        let _g = group_begin!();
 
         // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
         // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
@@ -655,7 +655,7 @@ impl Execution {
             return;
         }
 
-        group_begin!();
+        let _g = group_begin!();
         if entry.timeout != 0 {
             group_log::log(format_args!("-> entry.timeout: {}", entry.timeout));
             entry.timespec = Timespec::ms_from_now_force_real_time(entry.timeout as i64);
@@ -797,7 +797,7 @@ impl Execution {
         &mut self,
         user_data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
-        group_begin!();
+        let _g = group_begin!();
 
         let Some((sequence_ptr, _group_ptr)) =
             self.get_current_and_valid_execution_sequence(user_data)
@@ -845,7 +845,7 @@ pub fn step_group(
     global_this: &JSGlobalObject,
     now: &mut Timespec,
 ) -> JsResult<StepResult> {
-    group_begin!();
+    let _g = group_begin!();
     let buntest = buntest_strong.get();
     let this = &mut buntest.execution;
 
@@ -985,7 +985,7 @@ fn step_sequence_one(
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
-    group_begin!();
+    let _g = group_begin!();
     let buntest = buntest_strong.get();
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;

@@ -1,4 +1,5 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![warn(unused_must_use)]
 //! `bun_sourcemap` — B-2 un-gated.
 //!
 //! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,

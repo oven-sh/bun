@@ -1,4 +1,5 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![warn(unused_must_use)]
 //! `bun_sys` — B-1 minimal compiling surface.
 //! Full Phase-A draft (5500 lines, all syscall wrappers) preserved in
 //! `lib_draft_b1.rs` on disk for B-2 move-in reference. Draft module dropped
@@ -2789,7 +2790,7 @@ impl File {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         #[cfg(unix)]
-        self.close();
+        let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
         result
     }
     /// `File.getEndPos()` — file size via fstat.

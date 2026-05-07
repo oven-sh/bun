@@ -4,6 +4,7 @@
 //! functions become inherent methods on it.
 
 #![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
+#![warn(unused_must_use)]
 
 // ═══════════════════════════════════════════════════════════════════════
 // B-1 GATE-AND-STUB
@@ -2350,7 +2351,7 @@ impl<'a> HTTPClient<'a> {
             if amount < to_send_len {
                 // we could not send all pending data so we need to buffer the extra data
                 if !data.is_empty() {
-                    buffer.write(data);
+                    let _ = buffer.write(data); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
                 // failed to send everything so we have backpressure
                 return Ok(true);
@@ -2735,7 +2736,7 @@ impl<'a> HTTPClient<'a> {
             let to_copy = incoming_data;
             if !to_copy.is_empty() {
                 // this one will probably be another chunk, so we leave a little extra room
-                self.state.response_message_buffer.append(to_copy);
+                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             }
         }
 

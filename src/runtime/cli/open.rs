@@ -199,7 +199,7 @@ impl Editor {
                 // (bun_sys::File::open / bun_sys::access). Zig used std.fs directly here.
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
                     bun_sys::Result::Ok(opened) => {
-                        opened.close();
+                        let _ = opened.close(); // close error is non-actionable (Zig parity: discarded)
                         if let Some(out) = out {
                             *out = path.as_bytes();
                         }

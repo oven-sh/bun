@@ -879,7 +879,7 @@ fn get_ast(
             let html = match bun_md::root::render_to_html(&source.contents) {
                 Ok(h) => h,
                 Err(_) => {
-                    log.add_error(Some(source), Loc::EMPTY, b"Failed to render markdown to HTML");
+                    let _ = log.add_error(Some(source), Loc::EMPTY, b"Failed to render markdown to HTML"); // logger OOM-only (Zig: catch unreachable)
                     return Err(err!("ParserError"));
                 }
             };
@@ -895,7 +895,8 @@ fn get_ast(
 
         Loader::SqliteEmbedded | Loader::Sqlite => {
             if !topts.target.is_bun() {
-                log.add_error(
+                // logger OOM-only (Zig: catch unreachable)
+                let _ = log.add_error(
                     Some(source),
                     Loc::EMPTY,
                     b"To use the \"sqlite\" loader, set target to \"bun\"",
@@ -989,7 +990,8 @@ fn get_ast(
         Loader::Napi => {
             // (dap-eval-cb "source.contents.ptr")
             if topts.target == options::Target::Browser {
-                log.add_error(
+                // logger OOM-only (Zig: catch unreachable)
+                let _ = log.add_error(
                     Some(source),
                     Loc::EMPTY,
                     b"Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
@@ -1973,7 +1975,7 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
                 // a second `&mut` via `&mut *args.context` while `&mut self`
                 // is live would be aliased-`&mut` UB.
                 self.log.errors += 1;
-                self.log.add_msg(msg);
+                let _ = self.log.add_msg(msg); // logger OOM-only (Zig: catch unreachable)
                 return Err(err!("InvalidNativePlugin"));
             }
 

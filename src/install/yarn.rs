@@ -710,7 +710,7 @@ pub fn migrate_yarn_lockfile<'a>(
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            package_json_fd.close();
+            let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
         // package_json_fd closed on drop / explicit close below
@@ -728,7 +728,7 @@ pub fn migrate_yarn_lockfile<'a>(
                 package_json_contents.as_slice(),
             );
         };
-        package_json_fd.close();
+        let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
 
         // PORT NOTE: Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
         // port spells the 8 option flags out as const generics (stable Rust has

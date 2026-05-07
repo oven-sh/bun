@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use crate::ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use crate::ast::p::P;

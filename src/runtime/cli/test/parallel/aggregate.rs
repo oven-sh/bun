@@ -67,9 +67,9 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     for &idx in &coord.crashed_files {
         let rel = coord.rel_path(idx);
         body.extend_from_slice(b"  <testsuite name=\"");
-        test_command::escape_xml(rel, &mut body);
+        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
         body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
-        test_command::escape_xml(rel, &mut body);
+        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
         body.extend_from_slice(
             b"\">\n\
               \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
@@ -230,7 +230,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", fc.da.count(), fc.lh());
                 }
                 let _ = File::write_all(&f, &w);
-                f.close();
+                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }

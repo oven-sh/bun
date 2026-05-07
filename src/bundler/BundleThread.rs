@@ -327,7 +327,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
         // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
-        unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
+        let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only (Zig: catch unreachable)
         completion.set_log(out_log);
 
         if run.is_ok() {

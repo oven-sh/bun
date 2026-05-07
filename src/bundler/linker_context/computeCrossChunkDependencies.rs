@@ -217,7 +217,7 @@ impl<'a> CrossChunkDependencies<'a> {
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if other_chunk_index as usize != chunk_index {
-                            chunk_meta.dynamic_imports.put(other_chunk_index, ());
+                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result (Zig: catch unreachable)
                         }
                     }
                 }
@@ -285,7 +285,7 @@ impl<'a> CrossChunkDependencies<'a> {
                     // be moved to a separate chunk than the use of a symbol even if
                     // the definition and use of that symbol are originally from the
                     // same source file.
-                    chunk_meta.imports.put(ref_to_use, ());
+                    let _ = chunk_meta.imports.put(ref_to_use, ()); // OOM-only Result (Zig: catch unreachable)
                 }
             }
         }
@@ -331,14 +331,15 @@ impl<'a> CrossChunkDependencies<'a> {
                             );
                         }
 
-                        chunk_meta.imports.put(target_ref, ());
+                        let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result (Zig: catch unreachable)
                     }
                 }
 
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
-                    chunk_meta
+                    // Zig parity: result intentionally discarded
+                    let _ = chunk_meta
                         .imports
                         .put(deps.exports_refs[chunk.entry_point.source_index() as usize], ());
                 }
@@ -346,7 +347,8 @@ impl<'a> CrossChunkDependencies<'a> {
                 // Include the wrapper if present
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if flags.wrap != WrapKind::None {
-                    chunk_meta
+                    // Zig parity: result intentionally discarded
+                    let _ = chunk_meta
                         .imports
                         .put(deps.wrapper_refs[chunk.entry_point.source_index() as usize], ());
                 }
@@ -535,7 +537,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         // SAFETY: `alias` points into the link-pass arena (see PORT NOTE above),
                         // which outlives `exports_to_other_chunks`; reborrow as &'static to match
                         // the map's value type.
-                        repr.exports_to_other_chunks.put(ref_, unsafe { &*alias });
+                        let _ = repr.exports_to_other_chunks.put(ref_, unsafe { &*alias }); // OOM-only Result (Zig: catch unreachable)
                         // PERF(port): was putAssumeCapacity — profile in Phase B
                     }
 

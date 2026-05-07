@@ -3,6 +3,7 @@
 //! Ported from `src/css/properties/properties.zig`.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 use crate as css;
 
 // ─── B-2 round 7 status ────────────────────────────────────────────────────

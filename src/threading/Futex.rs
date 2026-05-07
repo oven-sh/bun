@@ -12,6 +12,7 @@
 //! efficiently wait for cross-thread events or signals.
 
 #![allow(unused_imports, dead_code)]
+#![warn(unused_must_use)]
 
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};

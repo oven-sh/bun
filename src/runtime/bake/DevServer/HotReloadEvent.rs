@@ -32,5 +32,6 @@
 //! the single real type.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 pub use crate::bake::dev_server::HotReloadEvent;

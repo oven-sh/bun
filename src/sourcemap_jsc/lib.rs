@@ -1,4 +1,5 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![warn(unused_must_use)]
 //! B-2 un-gate: all four Phase-A draft modules are now compiled. Function bodies
 //! that depend on `bun_jsc`'s real (still-gated) method surface are individually
 //! re-gated with `` and a `// TODO(b2-blocked): bun_X::Y` marker so

@@ -27,6 +27,7 @@
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![allow(unused, nonstandard_style, static_mut_refs, unexpected_cfgs, clippy::all)]
+#![warn(unused_must_use)]
 
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;

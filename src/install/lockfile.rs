@@ -1943,7 +1943,7 @@ impl Lockfile {
 
         match file.write_all(&bytes) {
             sys::Result::Err(e) => {
-                file.close();
+                let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
                 let _ = sys::unlink(tmpname);
                 Output::err(e, "failed to write lockfile", format_args!(""));
                 Global::crash();
@@ -1960,7 +1960,7 @@ impl Lockfile {
             }
             match sys::fchmod(file.handle, filemode) {
                 sys::Result::Err(e) => {
-                    file.close();
+                    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
                     let _ = sys::unlink(tmpname);
                     Output::err(e, "failed to change lockfile permissions", format_args!(""));
                     Global::crash();

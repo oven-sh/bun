@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use core::ptr::NonNull;
 use std::io::Write as _;

@@ -19,6 +19,7 @@
 // deps land.
 
 #![allow(unused_imports, dead_code)]
+#![warn(unused_must_use)]
 
 use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;

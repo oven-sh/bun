@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code)]
+#![warn(unused_must_use)]
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix};
 

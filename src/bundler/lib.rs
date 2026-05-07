@@ -2,6 +2,7 @@
 #![feature(adt_const_params, allocator_api)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![warn(unused_must_use)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 //
 // B-1 gate-and-stub: all Phase-A draft modules are gated behind ``

@@ -2359,7 +2359,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     else {
         if target_line == 0 {
             // PERF(port): was assume_capacity
-            ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() });
+            let _ = ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
         return ranges;
     };
@@ -2388,7 +2388,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    ranges.push(first_newline_range);
+    let _ = ranges.push(first_newline_range); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
     if target_line == 0 {
         return ranges;
@@ -2423,10 +2423,10 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
         if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
             let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-            new_ranges.extend_from_slice(&ranges.as_slice()[1..]);
+            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             ranges = new_ranges;
         }
-        ranges.push(current_line_range);
+        let _ = ranges.push(current_line_range); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         if current_line >= target_line {
             return ranges;
@@ -2437,7 +2437,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
         let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-        new_ranges.extend_from_slice(&ranges.as_slice()[1..]);
+        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         ranges = new_ranges;
     }
 
@@ -2455,7 +2455,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
     }
     let mut results = BoundedArray::<&[u8], LINE_RANGE_COUNT>::default();
     for range in ranges.as_slice() {
-        results.push(&text[range.start as usize..range.end as usize]);
+        let _ = results.push(&text[range.start as usize..range.end as usize]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
     results.as_mut_slice().reverse();
     Some(results)

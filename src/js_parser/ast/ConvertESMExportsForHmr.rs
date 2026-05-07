@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;

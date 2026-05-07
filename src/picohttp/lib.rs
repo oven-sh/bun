@@ -1,4 +1,5 @@
 #![allow(unused, non_camel_case_types, non_snake_case)]
+#![warn(unused_must_use)]
 
 use core::ffi::c_int;
 use core::fmt;

@@ -924,7 +924,7 @@ impl BunTest {
     }
 
     pub fn add_result(&mut self, result: RefDataValue) {
-        self.result_queue.write_item(result);
+        let _ = self.result_queue.write_item(result); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         // PERF(port): was bun.handleOom — Vec/Deque push aborts on OOM
     }
 

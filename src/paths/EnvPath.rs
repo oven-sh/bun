@@ -115,11 +115,11 @@ pub struct PathComponentBuilder<'a> {
 
 impl<'a> PathComponentBuilder<'a> {
     pub fn append(&mut self, component: &[u8]) {
-        self.path_buf.append(component);
+        let _ = self.path_buf.append(component); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        self.path_buf.append_fmt(args);
+        let _ = self.path_buf.append_fmt(args); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
     pub fn apply(mut self) -> Result<(), AllocError> {

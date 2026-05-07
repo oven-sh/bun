@@ -442,11 +442,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&result).is_err() {
-            file.close();
+            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
             return unsafe { Self::finish(this) };
         }
-        file.close();
+        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         s.state = RegisterState::InstallingCrontab;
         // PORT NOTE: explicit deinit of old reader before reassign — Drop handles it.
@@ -567,11 +567,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&plist).is_err() {
-            file.close();
+            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write plist"));
             return unsafe { Self::finish(this) };
         }
-        file.close();
+        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         unsafe { Self::spawn_bootout(this) };
     }
@@ -831,11 +831,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&xml).is_err() {
-            file.close();
+            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp XML file"));
             return unsafe { Self::finish(this) };
         }
-        file.close();
+        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         let mut argv: [*const c_char; 9] = [
             b"schtasks\0".as_ptr().cast(),
@@ -1143,11 +1143,11 @@ impl CronRemoveJob {
             }
         };
         if file.write_all(&result).is_err() {
-            file.close();
+            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
             return unsafe { Self::finish(this) };
         }
-        file.close();
+        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         s.state = RemoveState::InstallingCrontab;
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();

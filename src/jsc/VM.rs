@@ -286,7 +286,7 @@ impl Drop for Lock<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/VM.zig (210 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      opaque FFI wrapper; `as_mut_ptr` helper added for &self→*mut; ExceptionValidationScope @src() & Lock RAII deferred to Phase B
+//   confidence: high
+//   notes:      opaque FFI wrapper; `as_mut_ptr` helper added for &self→*mut via UnsafeCell;
+//               Lock RAII via Drop mirrors Zig `defer api_lock.release()`.
 // ──────────────────────────────────────────────────────────────────────────

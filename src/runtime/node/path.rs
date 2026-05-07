@@ -623,14 +623,6 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
     }
 }
 
-// ─── gated: JSC bindings (basename) ─────────────────────────────────────────
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
-
-mod _basename_js {
-use super::*;
-#[allow(unused_imports)]
-use crate::jsc::bun_string_jsc as BunString;
-use crate::node::validators::validate_string;
 pub fn basename_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
@@ -705,7 +697,6 @@ pub fn basename(
         suffix_zslice.as_ref().map(|s| s.slice()),
     )
 }
-} // mod _basename_js
 
 /// Based on Node v21.6.1 path.posix.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1278
@@ -857,12 +848,6 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
     }
 }
 
-// ─── gated: JSC bindings (dirname) ──────────────────────────────────────────
-
-mod _dirname_js {
-use super::*;
-use crate::jsc::bun_string_jsc as BunString;
-use crate::node::validators::validate_string;
 pub fn dirname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],

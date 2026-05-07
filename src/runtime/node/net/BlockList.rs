@@ -157,7 +157,7 @@ impl BlockList {
             SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
         };
 
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Addr(address));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
@@ -201,7 +201,7 @@ impl BlockList {
                 ));
             }
         }
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Range { start, end });
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
@@ -242,7 +242,7 @@ impl BlockList {
             )?)
             .unwrap();
         }
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Subnet { network, prefix });
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
@@ -281,7 +281,7 @@ impl BlockList {
                 }
             }
         };
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         for item in this.da_rules.iter() {
             match item {
                 Rule::Addr(a) => {
@@ -349,7 +349,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(getter)]
     pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, this.da_rules.len())?;
 
@@ -395,7 +395,7 @@ impl BlockList {
         // codegen `WriteBytesFn` typedef (jsc.conv).
         write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
     ) {
-        let _guard = this.mutex.lock();
+        let _guard = this.mutex.lock_guard();
         this.ref_();
         let writer = StructuredCloneWriter { ctx, impl_: write_bytes };
         // Error = `!` (Zig: `error{}`), so no `?` needed.

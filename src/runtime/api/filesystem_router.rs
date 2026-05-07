@@ -563,7 +563,16 @@ impl FileSystemRouter {
                 .expect("oom");
         }
 
-        let url_path = match URLPath::parse(path.slice()) {
+        // SAFETY (self-ref construction prelude): `route` below borrows these bytes via
+        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
+        // `route`. Borrowck can't see that the allocation travels with the borrow, so we
+        // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
+        // never dropped on any path between here and `MatchedRoute::init` taking ownership
+        // (early returns above this point already dropped/replaced `path`).
+        let path_bytes: &[u8] = unsafe {
+            core::slice::from_raw_parts(path.slice().as_ptr(), path.slice().len())
+        };
+        let url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(

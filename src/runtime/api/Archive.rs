@@ -1520,7 +1520,7 @@ fn extract_to_disk_filtered(
                     let mut buf = [0u8; 64 * 1024];
                     while remaining > 0 {
                         let to_read = remaining.min(buf.len());
-                        let read = archive_ref.read_data(&mut buf[..to_read]);
+                        let read = archive.read_data(&mut buf[..to_read]);
                         if read <= 0 {
                             write_success = false;
                             break;

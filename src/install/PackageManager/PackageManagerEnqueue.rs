@@ -263,8 +263,13 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
+    // PORT NOTE: reshaped for borrowck — `path` borrows `this.lockfile`; rebind
+    // through the raw root so `&mut PackageManager` is reachable for the call.
+    let this_ptr: *mut PackageManager = this;
+    // SAFETY: `path` is a slice into `lockfile.buffers.string_bytes`;
+    // `enqueue_local_tarball` only reads it (copied into the filename store).
     let task = enqueue_local_tarball(
-        this,
+        unsafe { &mut *this_ptr },
         task_id,
         dependency_id,
         alias,

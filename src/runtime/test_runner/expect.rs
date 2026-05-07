@@ -774,13 +774,9 @@ impl Expect {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — capture as raw ptr so the
-        // guard does not hold a `&Self` borrow across the `&mut self` calls below.
-        let this_ptr: *mut Self = this;
-        let _post = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the wrapper's m_ctx; alive for the duration of the host call.
-            unsafe { (*this_ptr).post_match(global_this) }
-        });
+        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&mut Self`
+        // borrow and re-lends it via DerefMut; `post_match` runs on every exit.
+        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -1553,7 +1549,7 @@ impl Expect {
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
+        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
@@ -1626,7 +1622,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
+        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1645,7 +1641,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
+        scopeguard::defer! { global_this.bun_vm().auto_garbage_collect() };
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();

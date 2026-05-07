@@ -54,6 +54,60 @@ pub struct StatWatcherScheduler {
 type WatcherQueue = UnboundedQueue<StatWatcher, { core::mem::offset_of!(StatWatcher, next) }>;
 // TODO(port): UnboundedQueue(StatWatcher, .next) — intrusive link via field offset
 
+/// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts a ref
+/// taken elsewhere (e.g. by [`StatWatcherScheduler::set_interval`]) and
+/// releases it on Drop. Replaces Zig `defer this.deref()`.
+#[must_use = "dropping immediately releases the adopted ref"]
+struct SchedulerRefGuard(*mut StatWatcherScheduler);
+
+impl SchedulerRefGuard {
+    /// Take ownership of a ref the caller already holds (no bump).
+    ///
+    /// # Safety
+    /// `ptr` must point to a live `StatWatcherScheduler` and the caller must
+    /// own one outstanding ref, which is transferred to the returned guard.
+    #[inline]
+    unsafe fn adopt(ptr: *mut StatWatcherScheduler) -> Self {
+        Self(ptr)
+    }
+}
+
+impl Drop for SchedulerRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
+        unsafe { StatWatcherScheduler::deref(self.0) };
+    }
+}
+
+/// RAII owner of one outstanding [`StatWatcher`] ref. Adopts a ref taken
+/// elsewhere (e.g. by `InitialStatTask::create_and_schedule` or
+/// [`StatWatcher::restat`]) and releases it on Drop. Replaces Zig
+/// `defer this.deref()`. Holds a raw pointer so no `&`/`&mut StatWatcher` is
+/// live across the potential free in `deref`.
+#[must_use = "dropping immediately releases the adopted ref"]
+struct WatcherRefGuard(*mut StatWatcher);
+
+impl WatcherRefGuard {
+    /// Take ownership of a ref the caller already holds (no bump).
+    ///
+    /// # Safety
+    /// `ptr` must point to a live `StatWatcher` and the caller must own one
+    /// outstanding ref, which is transferred to the returned guard.
+    #[inline]
+    unsafe fn adopt(ptr: *mut StatWatcher) -> Self {
+        Self(ptr)
+    }
+}
+
+impl Drop for WatcherRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
+        unsafe { StatWatcher::deref(self.0) };
+    }
+}
+
 impl StatWatcherScheduler {
     pub fn ref_(&self) {
         // TODO(port): IntrusiveArc::ref_ — ThreadSafeRefCount.ref

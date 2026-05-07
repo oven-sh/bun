@@ -8,7 +8,7 @@ use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RefCount, RefCounted, ScopedRef};
 use crate::webcore::ReadableStream;
 use bun_sys;
 

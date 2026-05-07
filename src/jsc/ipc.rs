@@ -1828,7 +1828,8 @@ fn handle_ipc_message(
             }
         }
     } else {
-        send_queue.owner.handle_ipc_message(message, JSValue::UNDEFINED);
+        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+        unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
     }
 }
 
@@ -2303,22 +2304,12 @@ pub fn ipc_serialize(
     message: JSValue,
     handle: JSValue,
 ) -> JsResult<JSValue> {
-    // TODO(port): move to jsc_sys
-    unsafe extern "C" {
-        fn IPCSerialize(
-            global_object: *const JSGlobalObject,
-            message: JSValue,
-            handle: JSValue,
-        ) -> JSValue;
-    }
-    // TODO(port): bun.cpp.IPCSerialize — verify exception-aware wrapper shape
-    // SAFETY: FFI call into C++ binding; global_object is a valid &JSGlobalObject borrowed for
-    // the call duration, and JSValue args are Copy stack values kept alive by conservative scan.
-    let r = unsafe { IPCSerialize(global_object, message, handle) };
-    if r.is_empty() {
-        return Err(JsError::Thrown);
-    }
-    Ok(r)
+    // SAFETY: FFI call into C++ binding; `global_object` is a valid &JSGlobalObject borrowed
+    // for the call duration, and JSValue args are Copy stack values kept alive by conservative
+    // scan. `from_js_host_call` checks `global.has_exception()` for the `.zero` return path.
+    crate::from_js_host_call(global_object, || unsafe {
+        IPCSerialize(global_object, message, handle)
+    })
 }
 
 pub fn ipc_parse(
@@ -2327,23 +2318,10 @@ pub fn ipc_parse(
     serialized: JSValue,
     fd: JSValue,
 ) -> JsResult<JSValue> {
-    // TODO(port): move to jsc_sys
-    unsafe extern "C" {
-        fn IPCParse(
-            global_object: *const JSGlobalObject,
-            target: JSValue,
-            serialized: JSValue,
-            fd: JSValue,
-        ) -> JSValue;
-    }
-    // TODO(port): bun.cpp.IPCParse — verify exception-aware wrapper shape
-    // SAFETY: FFI call into C++ binding; global_object is a valid &JSGlobalObject borrowed for
-    // the call duration, and JSValue args are Copy stack values kept alive by conservative scan.
-    let r = unsafe { IPCParse(global_object, target, serialized, fd) };
-    if r.is_empty() {
-        return Err(JsError::Thrown);
-    }
-    Ok(r)
+    // SAFETY: see `ipc_serialize`.
+    crate::from_js_host_call(global_object, || unsafe {
+        IPCParse(global_object, target, serialized, fd)
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -785,22 +785,22 @@ impl WebWorker {
         // Proxy-env values may be RefCountedEnvValue bytes owned by the parent's
         // proxy_env_storage. We need a consistent snapshot of (storage slots +
         // env.map entries) so every slice we copy is backed by a ref we hold.
-        // The parent's storage.lock serialises against Bun__setEnvValue on the
-        // main thread — it covers both the slot swap and the map.put, so
-        // cloneFrom and cloneWithAllocator see the same state.
-        let mut temp_proxy_storage = jsc::rare_data::ProxyEnvStorage::default();
+        // The parent's `proxy_env_storage` mutex serialises against
+        // `Bun__setEnvValue` on the main thread — it covers both the slot swap
+        // and the env-map `put`, so `clone_from` and `clone_with_allocator`
+        // see the same state.
+        let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
         let map = Box::leak(Box::new(bun_dotenv::Map::default()));
         {
-            let parent_storage = &parent.proxy_env_storage;
-            parent_storage.lock.lock();
-            temp_proxy_storage.clone_from(parent_storage);
+            let parent_slots = parent.proxy_env_storage.lock();
+            temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+            // Guard held — the mutex doubles as the env-map serialisation point.
             *map = unsafe { &*(*parent.transpiler.env).map }.clone_with_allocator()?;
-            parent_storage.lock.unlock();
         }
         // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_storage.sync_into(map);
+        temp_proxy_slots.sync_into(map);
 
         let loader = Box::leak(Box::new(bun_dotenv::Loader::init(map)));
 
@@ -809,7 +809,7 @@ impl WebWorker {
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
-            drop(temp_proxy_storage);
+            drop(temp_proxy_slots);
             self.shutdown();
         }
 
@@ -836,8 +836,10 @@ impl WebWorker {
             // SAFETY: arena initialised above; worker-thread only field.
             vm_ref.arena = unsafe { (*self.arena.get()).as_mut() }.map(NonNull::from);
 
-            // Move the pre-cloned proxy storage into the worker VM.
-            vm_ref.proxy_env_storage = core::mem::take(&mut temp_proxy_storage);
+            // Move the pre-cloned proxy slots into the worker VM. The worker's
+            // own `proxy_env_storage` mutex hasn't been published yet, so this
+            // uncontended lock is purely structural.
+            *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);

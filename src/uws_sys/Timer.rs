@@ -92,10 +92,15 @@ impl Timer {
     pub fn as_<T>(&mut self) -> T {
         unsafe {
             // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot
-            // (`*?*anyopaque`) as `*?T`, deref, unwrap. Caller guarantees the slot
-            // holds a valid Option<T> bit-pattern (T is expected to be a pointer-like).
-            let slot: *mut Option<T> = us_timer_ext(self).cast();
-            slot.read().expect("unreachable")
+            // (`*?*anyopaque`) as `*?T`, deref, unwrap. The slot was allocated
+            // with `size_of::<T>()` and written via [`set`] as a bare `T`, so
+            // read it as `T` directly. Zig's `?*T` is one word with a null
+            // niche, but Rust's `Option<*mut T>` is two words — wrapping in
+            // `Option<T>` here over-reads and misinterprets the bytes. Callers
+            // pass pointer-ish `T` and tolerate a (debug-asserted) null read
+            // exactly as Zig's `.?` would.
+            let slot: *mut T = us_timer_ext(self).cast();
+            slot.read()
         }
     }
 }

@@ -428,7 +428,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             let importer_pkg_json = match manager
                 .workspace_package_json_cache
                 .get_with_path(log, pkg_json_path.slice(), Default::default())
-                .unwrap_result()
+                .unwrap()
             {
                 Ok(j) => j,
                 Err(_) => return Err(invalid_pnpm_lockfile()),

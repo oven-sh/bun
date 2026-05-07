@@ -1159,44 +1159,40 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn leave_block_impl(ptr: *mut c_void, block_type: md::BlockType, _: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn leave_block_impl(&mut self, block_type: md::BlockType, _: u32) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
         }
 
-        let callback = self_.get_block_callback(block_type);
+        let callback = self.get_block_callback(block_type);
         // PORT NOTE: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
-        let saved = if self_.stack.len() > 1 {
+        let saved = if self.stack.len() > 1 {
             CallbackStackEntry {
                 buffer: Vec::new(),
-                block_type: self_.stack.last().unwrap().block_type,
-                data: self_.stack.last().unwrap().data,
-                flags: self_.stack.last().unwrap().flags,
-                child_index: self_.stack.last().unwrap().child_index,
-                detail: self_.stack.last().unwrap().detail.clone(),
+                block_type: self.stack.last().unwrap().block_type,
+                data: self.stack.last().unwrap().data,
+                flags: self.stack.last().unwrap().flags,
+                child_index: self.stack.last().unwrap().child_index,
+                detail: self.stack.last().unwrap().detail.clone(),
             }
         } else {
             CallbackStackEntry::default()
         };
-        let meta = self_.create_block_meta(block_type, saved.data, saved.flags)?;
-        self_.pop_and_callback(callback, meta)?;
+        let meta = self.create_block_meta(block_type, saved.data, saved.flags)?;
+        self.pop_and_callback(callback, meta)?;
 
         if block_type == md::BlockType::H {
-            self_.heading_tracker.clear_after_heading();
+            self.heading_tracker.clear_after_heading();
         }
         Ok(())
     }
 
-    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
         // SAFETY: `detail` borrows from `src_text`, which outlives every
         // `CallbackStackEntry` (the stack is fully drained before `src_text`
@@ -1205,51 +1201,47 @@ impl<'a> JsCallbackRenderer<'a> {
         // as `ParseStackEntry` above.
         let detail: md::SpanDetail<'static> =
             unsafe { core::mem::transmute::<md::SpanDetail<'_>, md::SpanDetail<'static>>(detail) };
-        self_.stack.push(CallbackStackEntry {
+        self.stack.push(CallbackStackEntry {
             detail,
             ..Default::default()
         });
         Ok(())
     }
 
-    fn leave_span_impl(ptr: *mut c_void, span_type: md::SpanType) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn leave_span_impl(&mut self, span_type: md::SpanType) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
 
-        let callback = self_.get_span_callback(span_type);
-        let detail = if self_.stack.len() > 1 {
-            self_.stack.last().unwrap().detail.clone()
+        let callback = self.get_span_callback(span_type);
+        let detail = if self.stack.len() > 1 {
+            self.stack.last().unwrap().detail.clone()
         } else {
             md::SpanDetail::default()
         };
-        let meta = self_.create_span_meta(span_type, &detail)?;
-        self_.pop_and_callback(callback, meta)?;
+        let meta = self.create_span_meta(span_type, &detail)?;
+        self.pop_and_callback(callback, meta)?;
         Ok(())
     }
 
-    fn text_impl(ptr: *mut c_void, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn text_impl(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
 
         // Track plain text for slug generation when inside a heading
-        self_.heading_tracker.track_text(text_type, content);
+        self.heading_tracker.track_text(text_type, content);
 
         match text_type {
-            md::TextType::NullChar => self_.append_to_top(b"\xEF\xBF\xBD")?,
-            md::TextType::Br => self_.append_to_top(b"\n")?,
-            md::TextType::Softbr => self_.append_to_top(b"\n")?,
-            md::TextType::Entity => self_.decode_and_append_entity(content)?,
+            md::TextType::NullChar => self.append_to_top(b"\xEF\xBF\xBD")?,
+            md::TextType::Br => self.append_to_top(b"\n")?,
+            md::TextType::Softbr => self.append_to_top(b"\n")?,
+            md::TextType::Entity => self.decode_and_append_entity(content)?,
             _ => {
-                if !self_.callbacks.text.is_empty() {
-                    self_.call_text_callback(content)?;
+                if !self.callbacks.text.is_empty() {
+                    self.call_text_callback(content)?;
                 } else {
-                    self_.append_to_top(content)?;
+                    self.append_to_top(content)?;
                 }
             }
         }

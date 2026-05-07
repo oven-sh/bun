@@ -356,28 +356,25 @@ impl Listener {
             &this_ref.group as *const _ as *const c_void,
             size_of::<uws::SocketGroup>(),
         );
-        let listener_allocated = core::cell::Cell::new(true);
-        let cleanup = scopeguard::guard((), |()| {
-            if listener_allocated.get() {
-                // SAFETY: this is still the sole owner on the error path
-                let this_ref = unsafe { &mut *this };
-                if let Some(c) = this_ref.secure_ctx {
-                    // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
-                    unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-                }
-                // protos: Box drops automatically when Listener is dropped below
-                bun_core::asan::unregister_root_region(
-                    &this_ref.group as *const _ as *const c_void,
-                    size_of::<uws::SocketGroup>(),
-                );
-                // SAFETY: group was init'd above; not concurrently walked.
-                unsafe { uws::SocketGroup::destroy(&mut this_ref.group) };
-                // SAFETY: reclaim the Box we leaked via into_raw
-                drop(unsafe { Box::from_raw(this) });
+        // errdefer: on any early return below, tear down the half-built Listener.
+        // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
+        let cleanup = scopeguard::guard(this, |this| {
+            // SAFETY: this is still the sole owner on the error path
+            let this_ref = unsafe { &mut *this };
+            if let Some(c) = this_ref.secure_ctx {
+                // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
+                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
+            // protos: Box drops automatically when Listener is dropped below
+            bun_core::asan::unregister_root_region(
+                &this_ref.group as *const _ as *const c_void,
+                size_of::<uws::SocketGroup>(),
+            );
+            // SAFETY: group was init'd above; not concurrently walked.
+            unsafe { uws::SocketGroup::destroy(&mut this_ref.group) };
+            // SAFETY: reclaim the Box we leaked via into_raw
+            drop(unsafe { Box::from_raw(this) });
         });
-        // TODO(port): errdefer — `cleanup` closure above approximates the Zig errdefer; verify
-        // borrow scoping in Phase B (captures `listener_allocated` + raw `this`).
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;

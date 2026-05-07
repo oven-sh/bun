@@ -1279,6 +1279,19 @@ pub enum ClearMode {
     Teardown,
 }
 
+/// RAII owner for one intrusive refcount on a [`CronJob`]. Dropping calls
+/// [`CronJob::deref`], which may free `*self.0` — callers must not hold a live
+/// `&`/`&mut CronJob` across the guard's drop point. Construct via
+/// [`CronJob::ref_guard`].
+struct CronJobDerefOnDrop(*mut CronJob);
+impl Drop for CronJobDerefOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // pointer with at least one outstanding ref owned by this guard.
+        CronJob::deref(self.0);
+    }
+}
+
 impl CronJob {
     /// `#[JsClass]` requires a `constructor`; the JS class is not directly
     /// constructible (`noConstructor` in .classes.ts) so this always throws.

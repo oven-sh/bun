@@ -1325,13 +1325,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let url = this.alloc_github_url(dep);
             // url is Box<[u8]>; dropped at scope end (Zig had `defer allocator.free(url)`)
             let task_id = Task::Id::for_tarball(&url);
-            let entry = this
-                .task_queue
-                .get_or_put_context(task_id, ())
-                .expect("unreachable");
-            if !entry.found_existing {
-                *entry.value_ptr = TaskCallbackList::default();
-            }
 
             if cfg!(debug_assertions) {
                 bun_output::scoped_log!(
@@ -1350,7 +1343,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             } else {
                 TaskCallbackContext::Dependency(id)
             };
-            entry.value_ptr.push(ctx);
+            // PORT NOTE: reshaped for borrowck — `entry` mutably borrows
+            // `this.task_queue`; scope it tightly so the calls below can
+            // reborrow `*this`.
+            {
+                let entry = this
+                    .task_queue
+                    .get_or_put_context(task_id, ())
+                    .expect("unreachable");
+                if !entry.found_existing {
+                    *entry.value_ptr = TaskCallbackList::default();
+                }
+                entry.value_ptr.push(ctx);
+            }
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -1373,7 +1378,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 None,
                 crate::network_task::Authorization::NoAuthorization,
             )? {
-                enqueue_network_task(this, network_task);
+                // PORT NOTE: reshaped for borrowck — see `enqueue_tarball_for_download`.
+                let nt: *mut NetworkTask = network_task;
+                enqueue_network_task(this, nt);
             }
             Ok(())
         }
@@ -1387,7 +1394,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 name_hash,
                 name,
                 dependency,
-                version,
+                version.clone(),
                 dependency.behavior,
                 id,
                 resolution,

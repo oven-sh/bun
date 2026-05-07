@@ -2707,11 +2707,6 @@ fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
     }
 }
 
-// TODO(b2-blocked): `sync` runner depends on bun_str::StringBuilder,
-// bun_crash_handler::reset_on_posix, ParentDeathWatchdog::push_sync_pgid,
-// posix_spawn::wait4 shape, and the JobControl tcsetpgrp dance — un-gate
-// alongside `bun.spawnSync` callers.
-
 pub mod sync {
     use super::*;
 

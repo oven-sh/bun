@@ -4044,7 +4044,12 @@ pub struct Resolver<'a> {
     pub caches: CacheSet,
     pub generation: Generation,
 
-    pub package_manager: Option<NonNull<PackageManager>>, // TODO(port): lifetime
+    /// Auto-install backend. `bun_install::PackageManager` implements
+    /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
+    /// below `bun_install` in the dep graph. Set by `bun_install` (or lazily
+    /// via [`INIT_AUTO_INSTALLER`]); when `None`, [`use_package_manager`] is
+    /// `false` and the auto-install path is unreachable.
+    pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Spec resolver.zig:477 `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is

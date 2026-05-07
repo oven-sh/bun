@@ -52,10 +52,14 @@ pub mod static_pipe_writer;
 pub use bun_event_loop::EventLoopHandle;
 
 pub use process::{
-    spawn_process, spawn_sys, Dup2, Exited, ExtraPipe, PidT, Poller, Process,
+    spawn_process, Dup2, Exited, ExtraPipe, PidT, Poller, Process,
     ProcessExitHandler, ProcessExitVTable, Rusage, SignalCodeExt, SpawnOptions,
     SpawnProcessResult, Status, StdioKind, WaiterThread,
 };
+/// Compat re-export: the `process::spawn_sys` shim module was dissolved into
+/// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
+/// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.
+pub use bun_sys as spawn_sys;
 
 #[cfg(unix)]
 pub use process::{

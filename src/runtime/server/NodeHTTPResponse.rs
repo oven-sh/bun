@@ -1694,9 +1694,7 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         if arguments.len == 0 {
-            return Err(global_object
-                .err(ErrorCode::ERR_MISSING_ARGS, format_args!("cork requires at least 1 argument"))
-                .throw());
+            return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
         }
 
         if !arguments.ptr[0].is_callable() {
@@ -1896,8 +1894,9 @@ pub extern "C" fn NodeHTTPResponse__setTimeout(
         return false;
     }
 
-    // PERF(port): @intCast — bounded by min(255).
-    let secs = (seconds.to_int32().max(0) as c_uint).min(255) as u8;
+    // Zig `seconds.to(c_uint)` is ECMAScript ToUint32 — same bit pattern as
+    // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
+    let secs = (seconds.to_int32() as c_uint).min(255) as u8;
     this.raw_response.as_ref().unwrap().timeout(secs);
     true
 }

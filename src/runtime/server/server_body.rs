@@ -579,14 +579,17 @@ impl AnyRoute {
 
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else { return Ok(None); };
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers.as_ref(), |fh| {
-            if let Some(h) = fh { h.deref(); }
+        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
+            // SAFETY: `create_from_js` returned a +1-ref C++ FetchHeaders; release it.
+            if let Some(h) = fh { unsafe { (*h.as_ptr()).deref(); } }
         });
         if init_ctx.global.has_exception() {
             return Err(JsError::Thrown);
         }
 
-        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
+        // SAFETY: `fetch_headers` is a live +1-ref C++ FetchHeaders for this scope.
+        let headers_ref = fetch_headers.map(|p| unsafe { &*p.as_ptr() });
+        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));

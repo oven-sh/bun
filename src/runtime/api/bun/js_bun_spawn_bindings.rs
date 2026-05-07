@@ -608,11 +608,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 let mut new_path: &[u8] = b"";
                 // SAFETY: get_object() returns a non-null *mut JSObject when Some.
-                append_envp_from_js(global_this, unsafe { &*object }, &mut env_array, &mut new_path)?;
+                append_envp_from_js(
+                    global_this,
+                    unsafe { &*object },
+                    &mut env_array,
+                    &mut new_path,
+                    &mut cstr_storage,
+                )?;
                 path = new_path;
             }
 
-            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv)?;
+            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv, &mut cstr_storage)?;
 
             if let Some(stdio_val) = args.get(global_this, "stdio")? {
                 if !stdio_val.is_empty_or_undefined_or_null() {
@@ -831,7 +837,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
         } else {
-            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv)?;
+            get_argv(global_this, cmd_value, path, cwd, &mut argv0, &mut argv, &mut cstr_storage)?;
         }
     }
 
@@ -1873,11 +1879,16 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
+/// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
+/// into `envp` (and, for `PATH=`, sliced into `*path`). The Zig original used a
+/// bump arena freed at the end of `spawnMaybeSync`; the caller's `Vec<ZBox>`
+/// plays the same role and is dropped after `spawn_process` returns.
 pub fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<Option<*const c_char>>,
     path: &mut &[u8],
+    storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
     let mut object_iter = JSPropertyIterator::init(
         global_this,

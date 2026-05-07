@@ -305,17 +305,12 @@ impl Expect {
         // → default signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
             // TODO(port): comptime fmt-string concatenation with autoFormatLabel; reconstruct in Phase B
-            let _ = (&chain, &matcher_name, &matcher_params, message_fmt);
-            global_this.throw_pretty(
-                "<d>expect(<r><red>received<r><d>).<r>{}{}({})\n\n{}",
-                format_args!("{chain}{matcher_name}({matcher_params})\n\n{message_args}"),
-            )
+            let _ = message_fmt;
+            global_this.throw_pretty(format_args!(
+                "<d>expect(<r><red>received<r><d>).<r>{chain}{matcher_name}<d>(<r>{matcher_params}<d>)<r>\n\n{message_args}",
+            ))
         } else {
-            // TODO(port): comptime fmt-string concatenation
-            global_this.throw_pretty(
-                "{}\n\n{}",
-                format_args!("{custom_label}\n\n{message_args}"),
-            )
+            global_this.throw_pretty(format_args!("{custom_label}\n\n{message_args}"))
         }
     }
 
@@ -685,9 +680,9 @@ impl Expect {
         // call sites, so render at runtime. Revisit with const_format if the
         // matcher set ever passes literal-only fmt strings.
         Err(if self.custom_label.is_empty() {
-            global_this.throw_pretty("{}{}", format_args!("{}{}", signature, args))
+            global_this.throw_pretty(format_args!("{signature}{args}"))
         } else {
-            global_this.throw_pretty("{}\n{}", format_args!("{}{}", self.custom_label, args))
+            global_this.throw_pretty(format_args!("{}{args}", self.custom_label))
         })
     }
 
@@ -1059,7 +1054,7 @@ impl Expect {
                     global_this: Some(global_this),
                     ..Default::default()
                 };
-                return Err(global_this.throw_pretty(signature, format_args!("\n\n{}\n", diff_format)));
+                return Err(global_this.throw_pretty(format_args!("{signature}\n\n{diff_format}\n")));
             }
         } else {
             needs_write = true;

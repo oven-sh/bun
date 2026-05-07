@@ -413,8 +413,11 @@ pub fn upload(
 }
 
 /// returns a writable stream that writes to the s3 path
+///
+/// Takes ownership of one `credentials` ref (adopted directly into the
+/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`.
 pub fn writable_stream(
-    this: &mut S3Credentials,
+    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     global_this: &JSGlobalObject,
     options: MultiPartUploadOptions,
@@ -478,9 +481,7 @@ pub fn writable_stream(
     }
 
     let proxy_url = proxy.unwrap_or(b"");
-    // ref the credentials — `IntrusiveRc::init_ref` bumps the intrusive count and wraps.
-    // SAFETY: `this` points to a live heap-allocated `S3Credentials` (intrusive-refcounted).
-    let credentials = unsafe { bun_ptr::IntrusiveRc::init_ref(this as *mut S3Credentials) };
+    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): `global_this` outlives the task (it owns the VM/heap that owns the
     // JS objects which keep the task alive); transmute the borrow to `'static` for storage in
     // the heap-allocated MultiPartUpload, matching the Zig pointer field.
@@ -719,8 +720,12 @@ impl Drop for S3UploadStreamWrapper {
 }
 
 /// consumes the readable stream and upload to s3
+///
+/// Takes ownership of one `credentials` ref (adopted directly into the
+/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
+/// early-return path the ref is explicitly released.
 pub fn upload_stream(
-    this: &mut S3Credentials,
+    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,

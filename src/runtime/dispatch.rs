@@ -46,6 +46,7 @@ use crate::api::archive::{BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExt
 
 use crate::shell::builtins::{cp::ShellCpTask, ls::ShellLsTask, mkdir::ShellMkdirTask,
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask}, rm::ShellRmTask, touch::ShellTouchTask};
+use crate::shell::interpreter::ShellTask;
 use crate::shell::states::r#async::Async as ShellAsync;
 use crate::shell::io_writer::{IOWriter as ShellIOWriter, Poll as ShellBufferedWriterPoll};
 use crate::shell::dispatch_tasks::{

@@ -42,12 +42,12 @@ pub struct PathWatcherManager {
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
     // process-global, so we spell the borrow as `'static`.
     // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.
-    vm: &'static jsc::VirtualMachine,
+    vm: &'static jsc::VirtualMachineRef,
     deinit_on_last_watcher: bool,
 }
 
 impl PathWatcherManager {
-    pub fn init(vm: &'static jsc::VirtualMachine) -> *mut PathWatcherManager {
+    pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         Box::into_raw(Box::new(PathWatcherManager {
             watchers: ArrayHashMap::default(),
             vm,
@@ -434,7 +434,7 @@ impl PathWatcher {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn watch(
-    vm: &'static jsc::VirtualMachine,
+    vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
     // PORT NOTE: Zig takes `comptime callback` / `comptime updateEnd` and `@compileError`s if they

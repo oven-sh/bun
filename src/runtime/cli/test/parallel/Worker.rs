@@ -444,9 +444,11 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
     unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         unsafe { WorkerPipe::on_reader_error(&mut *this, err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*(*this).worker).coord).vm.uv_loop().cast() }
+        // `vm.uv_loop()` is `*mut bun_aio::Loop` on every target (uv on
+        // Windows, us_loop on POSIX) — exactly the trait's nominal.
+        unsafe { (*(*(*this).worker).coord).vm.uv_loop() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass

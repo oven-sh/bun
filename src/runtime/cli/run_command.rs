@@ -1849,8 +1849,8 @@ impl RunCommand {
                     std::ptr::null_mut(),
                 ) == 0
                 {
-                    match sys::windows::get_last_error() {
-                        sys::windows::Error::ALREADY_EXISTS => {}
+                    match sys::windows::get_last_win32_error() {
+                        sys::windows::Win32Error::ALREADY_EXISTS => {}
                         _ => {
                             {
                                 debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);

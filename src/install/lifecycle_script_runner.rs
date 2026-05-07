@@ -19,10 +19,11 @@ use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_aio::Loop` (= `uv_loop_t` on Windows). Alias the uws type so the
-// inherent `loop_()` matches the trait.
-use bun_uws::Loop as AsyncLoop;
+// `bun_aio::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// on Windows. The inherent `loop_()` projects through the uws wrapper
+// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
+// `BufferedReaderParent::loop_` expects.
+use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -317,11 +318,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn loop_(&self) -> *mut AsyncLoop {
         // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_aio::Loop` *is* `PosixLoop`; on Windows `bun_aio::Loop` *is*
-        // `WindowsLoop` — both are the uws wrapper type, so this is an
-        // identity cast on every platform. Callers that need the inner
-        // `uv::Loop` on Windows project `.uv_loop` themselves.
-        self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
+        // `bun_aio::Loop` *is* `PosixLoop` (identity). On Windows the uws
+        // wrapper (`WindowsLoop`) embeds the `*mut uv_loop_t` as a field —
+        // project it so the `BufferedReaderParent::loop_` consumer (which
+        // feeds `uv_fs_read`/`Source::open`) sees a real `uv_loop_t*`.
+        #[cfg(not(windows))]
+        { self.manager_mut().event_loop.r#loop() as *mut AsyncLoop }
+        #[cfg(windows)]
+        // SAFETY: `r#loop()` returns the live `us_loop` allocated by
+        // `us_create_loop`; `uv_loop` is set once in C at construction.
+        { unsafe { (*self.manager_mut().event_loop.r#loop()).uv_loop } }
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {

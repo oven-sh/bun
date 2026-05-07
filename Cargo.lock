@@ -1316,6 +1316,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_windows_sys",
  "const_format",
  "enum-map",
  "enumset",

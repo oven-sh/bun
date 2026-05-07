@@ -22,7 +22,8 @@ use bun_sys::windows::libuv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
-use bun_jsc::EventLoop;
+// `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
+use bun_jsc::event_loop::EventLoop;
 use bun_threading::{WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);

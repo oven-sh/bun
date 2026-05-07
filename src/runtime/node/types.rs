@@ -876,7 +876,7 @@ impl PathLikeExt for PathLike {
                     // resolveCWDWithExternalBufZ would just memcpy it, making the
                     // temporary allocation unnecessary.
                     buf[0..4].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
-                    let n = bun_paths::normalize_buf(sliced, &mut buf[4..], bun_paths::Style::Windows).len();
+                    let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(sliced, &mut buf[4..]).len();
                     buf[4 + n] = 0;
                     // SAFETY: buf[4+n] == 0 written above.
                     return unsafe { ZStr::from_raw(buf.as_ptr(), 4 + n) };
@@ -951,7 +951,7 @@ impl PathLikeExt for PathLike {
         #[cfg(windows)]
         {
             let s = self.slice();
-            let b = bun_paths::path_buffer_pool().get();
+            let mut b = bun_paths::path_buffer_pool::get();
             // RAII guard puts back on Drop.
 
             // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
@@ -963,26 +963,29 @@ impl PathLikeExt for PathLike {
                 && bun_paths::is_sep_any(s[3])
             {
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — alignment asserted by @alignCast in Zig.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(buf) };
+                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, s);
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
+                // `buf` is the scratch for cwd-resolution; `b` is the pooled
+                // scratch for normalisation; final wide path lands back in `buf`.
                 let resolve = path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(buf, s)
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
-                let normal = path_handler::normalize_buf(resolve, &mut *b, bun_paths::Style::Windows);
+                let normal = path_handler::resolve_path::normalize_buf::<bun_paths::platform::Windows>(resolve, &mut b[..]);
+                // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(buf) };
+                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, normal);
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(buf) };
+                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, b".");
             }
-            let normal = path_handler::normalize_string_buf(s, &mut *b, true, bun_paths::Style::Windows, false);
+            let normal = path_handler::resolve_path::normalize_string_buf::<true, bun_paths::platform::Windows, false>(s, &mut b[..]);
             // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(buf) };
+            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
             return strings::to_kernel32_path(buf_u16, normal);
         }
 

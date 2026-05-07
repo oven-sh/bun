@@ -1345,10 +1345,14 @@ impl BlobExt for Blob {
                     }
 
                     if let Some(rare) = global_this.bun_vm().rare_data.as_ref() {
-                        if rare.stdout_store.as_ref().is_some_and(|s| Arc::ptr_eq(s, &store)) {
+                        // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
+                        // (type-erased `*Blob.Store`); compare on raw pointer
+                        // identity exactly like the POSIX arm below.
+                        let store_ptr = store.as_ptr().cast::<c_void>();
+                        if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
-                        if rare.stderr_store.as_ref().is_some_and(|s| Arc::ptr_eq(s, &store)) {
+                        if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
                     }

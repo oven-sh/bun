@@ -179,6 +179,33 @@ pub fn from_slice_boxed<T: Copy>(default: &[T]) -> Box<[T]> {
     Box::<[T]>::from(default)
 }
 
+// ─── std.mem.bytesAsSlice / sliceAsBytes ─────────────────────────────────────
+/// Zig `std.mem.bytesAsSlice(T, bytes)` for `&mut [u8]` → `&mut [T]`.
+///
+/// SAFETY (caller-upheld):
+/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()` (Zig spells this as
+///   `@alignCast`; we `debug_assert!` it),
+/// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
+///   must be a valid `T` (callers use `u16`/`u32` only),
+/// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
+///   reinterpreted view, matching Zig's `bytesAsSlice` semantics.
+#[inline]
+pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
+    debug_assert!(bytes.as_ptr().cast::<T>().is_aligned());
+    let len = bytes.len() / core::mem::size_of::<T>();
+    // SAFETY: alignment + validity preconditions documented above.
+    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
+}
+
+/// Same as [`bytes_as_slice_mut`] — alias kept for call sites ported from
+/// `bun.reinterpretSlice(T, &buf)` (Zig) which is spelled differently but is
+/// identical to `std.mem.bytesAsSlice` for the `&mut [u8]` → `&mut [T]` shape.
+#[inline]
+pub unsafe fn reinterpret_slice<T>(bytes: &mut [u8]) -> &mut [T] {
+    // SAFETY: forwarded to bytes_as_slice_mut; caller upholds its contract.
+    unsafe { bytes_as_slice_mut::<T>(bytes) }
+}
+
 // ─── Unaligned<T> ─────────────────────────────────────────────────────────────
 /// Port of Zig's `align(1) T` element type. Rust references and slices require
 /// natural alignment for `T`; producing a `&[u16]` from an odd address is
@@ -836,6 +863,30 @@ impl Fd {
         }
     }
 
+    /// Zig `FD.makeLibUVOwned` (`fd.zig`): on Windows, convert a system-kind
+    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
+    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
+    /// On POSIX this is the identity (libuv fd == posix fd).
+    ///
+    /// Returns `Err(())` (= Zig's `error.SystemFdQuotaExceeded`) when
+    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
+    /// the original handle (see `make_libuv_owned_for_syscall`).
+    #[inline]
+    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
+        debug_assert!(self.is_valid());
+        #[cfg(not(windows))]
+        { Ok(self) }
+        #[cfg(windows)]
+        match self.kind() {
+            FdKind::Uv => Ok(self),
+            FdKind::System => {
+                // SAFETY: FFI; `uv_open_osfhandle` wraps `_open_osfhandle(h, 0)`.
+                let crt_fd = unsafe { fd::uv_open_osfhandle(self.native()) };
+                if crt_fd == -1 { Err(()) } else { Ok(Fd::from_uv(crt_fd)) }
+            }
+        }
+    }
+
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
@@ -1004,6 +1055,10 @@ pub mod fd {
     unsafe extern "C" {
         // libuv: convert C-runtime fd → OS HANDLE.
         pub fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
+        /// libuv: `_open_osfhandle(os_fd, 0)` — wraps a HANDLE in a CRT fd so
+        /// libuv `uv_fs_*` (which speak `uv_file == int`) can use it. Returns
+        /// `-1` on `EMFILE` (CRT fd table full).
+        pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
     unsafe extern "system" {

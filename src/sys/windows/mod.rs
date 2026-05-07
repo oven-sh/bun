@@ -173,11 +173,40 @@ pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_WRITE_THROUGH;
 pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
+pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
+pub use bun_windows_sys::FILE_BASIC_INFORMATION;
+pub use bun_windows_sys::STANDARD_RIGHTS_READ;
+pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
+pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
+pub use bun_windows_sys::{
+    CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+};
+pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
+pub use bun_windows_sys::{
+    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
+    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_DIRECTORY,
+    SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
+};
 pub use bun_windows_sys::user32;
 pub use bun_windows_sys::advapi32;
+// Stdio handle helpers (live in `bun_core::windows_sys` so the no-dep core can
+// resolve PEB stdio at startup; re-export here for the `sys::windows::*` path).
+pub use bun_core::windows_sys::{GetStdHandle, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+
+/// `std.os.windows.fromSysTime` — convert a 64-bit Windows `FILETIME`
+/// (100-ns intervals since 1601-01-01 UTC, as projected in
+/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into the same
+/// nanosecond clock `bun_core::time::nano_timestamp()` reports — i.e. ns
+/// since the 1601 epoch. This is `nt_time * 100`; the 1601→1970 epoch shift
+/// is *not* applied because `nano_timestamp()` on Windows is also FILETIME-
+/// derived (`GetSystemTimePreciseAsFileTime() * 100`).
+#[inline]
+pub const fn from_sys_time(nt_time: i64) -> i128 {
+    nt_time as i128 * 100
+}
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
@@ -3411,6 +3440,31 @@ pub fn get_last_errno() -> E {
 pub fn get_last_error() -> bun_core::Error {
     bun_core::errno_to_zig_err(get_last_errno() as i32)
 }
+
+/// Zig: `std.os.windows.kernel32.GetLastError()` as `Win32Error` — raw
+/// `DWORD` error truncated to the documented 16-bit code space. Callers that
+/// want the POSIX-style `bun_core::Error` should use [`get_last_error`].
+#[inline]
+pub fn get_last_win32_error() -> Win32Error {
+    // SAFETY: GetLastError has no preconditions.
+    Win32Error(unsafe { kernel32::GetLastError() } as u16)
+}
+
+/// Zig: `@tagName(bun.windows.getLastError())` — for `Output.debug` only.
+#[inline]
+pub fn get_last_error_tag() -> impl core::fmt::Display {
+    // `Win32Error` derives `Debug`; route through that for a printable token.
+    struct D(Win32Error);
+    impl core::fmt::Display for D {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    D(get_last_win32_error())
+}
+
+/// `bun.windows.Error` — Zig alias for `Win32Error`.
+pub type Error = Win32Error;
 
 pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     use bun_windows_sys::ntstatus::*;

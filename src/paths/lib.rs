@@ -242,6 +242,9 @@ pub fn stem(p: &[u8]) -> &[u8] {
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_core::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE};
+/// Zig spells the wide-path capacity `bun.MAX_WPATH` (`libuv.zig` uses the same
+/// alias); keep both names so ported call sites resolve without churn.
+pub const MAX_WPATH: usize = PATH_MAX_WIDE;
 
 #[cfg(windows)]
 pub type OSPathChar = u16;
@@ -279,6 +282,7 @@ pub use resolve_path::{Platform, PlatformT, platform};
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place,
+    join_abs_string_buf,
     dirname_w,
     is_drive_letter,
     is_drive_letter_t,

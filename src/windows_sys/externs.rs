@@ -46,6 +46,26 @@ pub struct COORD {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct SMALL_RECT {
+    pub Left: i16,
+    pub Top: i16,
+    pub Right: i16,
+    pub Bottom: i16,
+}
+
+/// `CONSOLE_SCREEN_BUFFER_INFO` (`wincon.h`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct CONSOLE_SCREEN_BUFFER_INFO {
+    pub dwSize: COORD,
+    pub dwCursorPosition: COORD,
+    pub wAttributes: u16,
+    pub srWindow: SMALL_RECT,
+    pub dwMaximumWindowSize: COORD,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct FILETIME {
     pub dwLowDateTime: DWORD,
     pub dwHighDateTime: DWORD,
@@ -181,6 +201,19 @@ pub const TRUNCATE_EXISTING: DWORD = 5;
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
 pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
+pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
+
+// `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
+pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
+pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
+pub const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
+pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
+pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
+pub const PIPE_WAIT: DWORD = 0x0000_0000;
+
+/// `CreateSymbolicLinkW` dwFlags (`winbase.h`).
+pub const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
+pub const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: DWORD = 0x2;
 
 /// `FILE_BASIC_INFORMATION` (`wdm.h`) — output of `NtQueryAttributesFile`.
 #[repr(C)]
@@ -338,6 +371,15 @@ pub mod ntdll {
             Length: ULONG,
             FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
+        /// `NtQueryInformationFile` (`ntifs.h`) — generic counterpart to
+        /// `NtSetInformationFile`; populates `FileInformation` per `class`.
+        pub fn NtQueryInformationFile(
+            FileHandle: HANDLE,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FileInformation: *mut c_void,
+            Length: ULONG,
+            FileInformationClass: FILE_INFORMATION_CLASS,
+        ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
         // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
@@ -396,6 +438,25 @@ pub mod kernel32 {
             HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
             Add: BOOL,
         ) -> BOOL;
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// `GetConsoleScreenBufferInfo` (`wincon.h`).
+        pub fn GetConsoleScreenBufferInfo(
+            hConsoleOutput: HANDLE,
+            lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
+        ) -> BOOL;
+        /// `CreateNamedPipeW` (`winbase.h`).
+        pub fn CreateNamedPipeW(
+            lpName: LPCWSTR,
+            dwOpenMode: DWORD,
+            dwPipeMode: DWORD,
+            nMaxInstances: DWORD,
+            nOutBufferSize: DWORD,
+            nInBufferSize: DWORD,
+            nDefaultTimeOut: DWORD,
+            lpSecurityAttributes: *mut c_void,
+        ) -> HANDLE;
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves
     // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.
@@ -1023,6 +1084,11 @@ unsafe extern "system" {
         cbJobObjectInformationLength: DWORD,
     ) -> BOOL;
 
+    pub fn CreateJobObjectW(
+        lpJobAttributes: *mut c_void, // *mut SECURITY_ATTRIBUTES
+        lpName: LPCWSTR,
+    ) -> HANDLE;
+
     pub fn OpenProcess(
         dwDesiredAccess: DWORD,
         bInheritHandle: BOOL,
@@ -1036,6 +1102,56 @@ unsafe extern "C" {
         pcbBuffer: LPDWORD,
     ) -> BOOL;
 }
+
+// ── Job Object structures (`winnt.h`) ─────────────────────────────────────
+/// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
+pub const JobObjectExtendedLimitInformation: DWORD = 9;
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — kill all job processes when the
+/// last job handle closes.
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    pub PerProcessUserTimeLimit: LARGE_INTEGER,
+    pub PerJobUserTimeLimit: LARGE_INTEGER,
+    pub LimitFlags: DWORD,
+    pub MinimumWorkingSetSize: usize,
+    pub MaximumWorkingSetSize: usize,
+    pub ActiveProcessLimit: DWORD,
+    pub Affinity: usize,
+    pub PriorityClass: DWORD,
+    pub SchedulingClass: DWORD,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct IO_COUNTERS {
+    pub ReadOperationCount: u64,
+    pub WriteOperationCount: u64,
+    pub OtherOperationCount: u64,
+    pub ReadTransferCount: u64,
+    pub WriteTransferCount: u64,
+    pub OtherTransferCount: u64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    pub BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    pub IoInfo: IO_COUNTERS,
+    pub ProcessMemoryLimit: usize,
+    pub JobMemoryLimit: usize,
+    pub PeakProcessMemoryUsed: usize,
+    pub PeakJobMemoryUsed: usize,
+}
+
+// ── Console ctrl-handler dwCtrlType values (`wincon.h`) ───────────────────
+pub const CTRL_C_EVENT: DWORD = 0;
+pub const CTRL_BREAK_EVENT: DWORD = 1;
+pub const CTRL_CLOSE_EVENT: DWORD = 2;
+pub const CTRL_LOGOFF_EVENT: DWORD = 5;
+pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
 #[link(name = "kernel32")]
 unsafe extern "system" {

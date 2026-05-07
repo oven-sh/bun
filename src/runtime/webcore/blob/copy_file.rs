@@ -942,7 +942,7 @@ pub struct CopyFileWindows<'a> {
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
     // Phase B: likely *const jsc::EventLoop.
-    pub event_loop: &'a jsc::EventLoop,
+    pub event_loop: &'a jsc::event_loop::EventLoop,
 
     pub size: SizeType,
 
@@ -1193,7 +1193,7 @@ impl<'a> CopyFileWindows<'a> {
     pub fn init(
         destination_file_store: StoreRef,
         source_file_store: StoreRef,
-        event_loop: &'a jsc::EventLoop,
+        event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
@@ -1699,7 +1699,7 @@ extern "C" fn on_mkdirp_complete_concurrent(
         bun_sys::Result::Ok(()) => None,
     };
     this.event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::new::<CopyFileWindows, _>(CopyFileWindows::on_mkdirp_complete, this),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, CopyFileWindows::on_mkdirp_complete),
     ));
 }
 

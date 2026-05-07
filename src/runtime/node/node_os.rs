@@ -144,10 +144,27 @@ pub mod gen_ {
     use bun_jsc::host_fn;
 
     // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
-    // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape); on every target
-    // Bun ships, that is the C calling convention.
-    // TODO(port): jsc.conv ABI — windows-x64 wants `extern "sysv64"` (tracked
-    // in `bun_jsc::host_fn::JsHostFn`).
+    // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape) — `jsc.conv` is
+    // the System V ABI on Windows-x64 and the C ABI everywhere else, matching
+    // `bun_jsc::host_fn::JsHostFn`. Rust forbids macros in the `extern "<abi>"`
+    // string position, so cfg-duplicate the block.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsHomedir(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsHostname(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsLoadavg(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsNetworkInterfaces(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsRelease(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsTotalmem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsUptime(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsUserInfo(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsVersion(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsSetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
         fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;

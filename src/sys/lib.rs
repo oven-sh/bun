@@ -4178,7 +4178,7 @@ impl Default for NtCreateFileOptions {
 /// PORT NOTE: u16-only here; the u8 entry points pre-convert via
 /// `bun_str::strings::paths::to_nt_path` and call this with the resulting wide slice.
 #[cfg(windows)]
-fn normalize_path_windows<'a>(
+pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
     path: &[u16],
     buf: &'a mut [u16],
@@ -4475,6 +4475,14 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
     open_file_at_windows_nt_path(dir_fd, norm, opts)
+}
+/// sys.zig `openFileAtWindowsA` — UTF-8 entry point: convert to NT wide path
+/// then defer to [`open_file_at_windows`].
+#[cfg(windows)]
+pub fn open_file_at_windows_a(dir_fd: Fd, path: &[u8], opts: NtCreateFileOptions) -> Maybe<Fd> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let nt = bun_str::strings::paths::to_nt_path(&mut wbuf.0[..], path);
+    open_file_at_windows(dir_fd, nt.as_slice(), opts)
 }
 
 /// sys.zig:1608 `openatWindowsTMaybeNormalize` — POSIX-flag → NtCreateFile

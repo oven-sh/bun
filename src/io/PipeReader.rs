@@ -10,7 +10,14 @@ use bun_sys::{self as sys, Fd};
 // handles in io (T2); concrete types live in bun_aio (T3) / bun_event_loop
 // (T4). The uws Loop type moves to bun_uws_sys (T0).
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
+// `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
+// `uv_loop_t` (`bun_aio::Loop` is the cfg-aliased nominal that picks the
+// right one). `BufferedReaderParent::loop_` returns this so callers in T3+
+// can hand it to libuv/uws without a cross-crate cast.
+#[cfg(not(windows))]
 type Loop = bun_uws_sys::Loop;
+#[cfg(windows)]
+type Loop = bun_sys::windows::libuv::Loop;
 
 /// `bun_aio::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag

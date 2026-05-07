@@ -133,54 +133,11 @@ pub struct WIN32_FIND_DATAW {
     pub cAlternateFileName: [WCHAR; 14],
 }
 
-// Socket address types (ws2def.h). Kept as plain `#[repr(C)]` POD so they
-// match `std.os.linux.sockaddr.{in,in6}` layout exactly (which is what the
-// Zig binding used).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct sockaddr {
-    pub sa_family: c_ushort,
-    pub sa_data: [u8; 14],
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct sockaddr_in {
-    pub sin_family: c_ushort,
-    pub sin_port: c_ushort,
-    pub sin_addr: [u8; 4],
-    pub sin_zero: [u8; 8],
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct sockaddr_in6 {
-    pub sin6_family: c_ushort,
-    pub sin6_port: c_ushort,
-    pub sin6_flowinfo: u32,
-    pub sin6_addr: [u8; 16],
-    pub sin6_scope_id: u32,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct sockaddr_storage {
-    pub ss_family: c_ushort,
-    _pad1: [u8; 6],
-    _align: i64,
-    _pad2: [u8; 112],
-}
-
-/// `addrinfo` (`ws2tcpip.h` / `std.os.windows.ws2_32.addrinfo`).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct addrinfo {
-    pub ai_flags: c_int,
-    pub ai_family: c_int,
-    pub ai_socktype: c_int,
-    pub ai_protocol: c_int,
-    pub ai_addrlen: usize,
-    pub ai_canonname: *mut c_char,
-    pub ai_addr: *mut sockaddr,
-    pub ai_next: *mut addrinfo,
-}
+// Socket address types (ws2def.h). The canonical `#[repr(C)]` definitions live
+// in `bun_windows_sys::ws2_32` so the same nominal type flows through libuv,
+// uws, and the runtime — keeps `set_membership(&sockaddr_storage)` etc. from
+// becoming a cross-crate type mismatch.
+pub use bun_windows_sys::ws2_32::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
 
 // ──────────────────────────────────────────────────────────────────────────
 // libuv scalar typedefs.

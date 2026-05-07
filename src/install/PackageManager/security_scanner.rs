@@ -7,10 +7,10 @@ use bstr::BStr;
 
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_aio::Loop` (= `uv_loop_t` on Windows). Alias the uws type so the
-// inherent `loop_()` matches the trait; the `Pipe::init` call site projects
-// `.uv_loop` to reach the inner libuv loop.
-use bun_uws::Loop as AsyncLoop;
+// `bun_aio::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
+// on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+use bun_aio::Loop as AsyncLoop;
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
@@ -1212,10 +1212,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             // schedules uv_close + frees the allocation.
             unsafe { uv::Pipe::close_and_destroy(p) };
         });
-        // SAFETY: *pipe was just Box::into_raw'd above and is non-null;
-        // `self.loop_()` is the live `WindowsLoop*` whose `.uv_loop` is the
-        // libuv loop handle Pipe::init expects.
-        let uv_loop = unsafe { (*self.loop_()).uv_loop };
+        // `self.loop_()` already projects to the libuv `uv_loop_t*` on
+        // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
+        let uv_loop = self.loop_();
+        // SAFETY: *pipe was just Box::into_raw'd above and is non-null.
         if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
             return Err(e.into());
         }
@@ -1420,11 +1420,16 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn loop_(&mut self) -> *mut AsyncLoop {
-        // `bun_aio::Loop` is the platform's uws-wrapper (`PosixLoop` /
-        // `WindowsLoop`), so this is an identity cast on every target.
-        // Windows callers that need the inner `uv::Loop` project `.uv_loop`
-        // themselves at the FFI boundary (see `init_windows`).
-        self.manager.event_loop.loop_().cast()
+        // POSIX: `bun_aio::Loop` is `PosixLoop` — identity cast. Windows: the
+        // uws wrapper (`WindowsLoop`) stores the real `*mut uv_loop_t` in its
+        // `uv_loop` field; project it so `BufferedReaderParent` consumers
+        // (which feed `uv_fs_*` / `Source::open`) get a libuv loop directly.
+        #[cfg(not(windows))]
+        { self.manager.event_loop.loop_().cast() }
+        #[cfg(windows)]
+        // SAFETY: `loop_()` returns the live `us_loop`; `uv_loop` is set once
+        // in C at construction and never null afterwards.
+        { unsafe { (*self.manager.event_loop.loop_()).uv_loop } }
     }
 
     pub fn on_reader_done(&mut self) {

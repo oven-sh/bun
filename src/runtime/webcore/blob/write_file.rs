@@ -539,7 +539,9 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_aio::{self as aio, KeepAlive};
-    use bun_jsc::{ConcurrentTask, EventLoop, ManagedTask};
+    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (Zig-style namespace
+    // re-exports); the structs live one level deeper.
+    use bun_jsc::{ConcurrentTask, event_loop::EventLoop, ManagedTask::ManagedTask};
     use bun_sys::windows::libuv as uv;
     use bun_sys::ReturnCodeExt as _;
 
@@ -840,7 +842,7 @@ mod windows_impl {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
             unsafe {
                 (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows, _>(Self::on_mkdirp_complete, self),
+                    ManagedTask::new::<WriteFileWindows>(self, Self::on_mkdirp_complete),
                 ));
             }
         }

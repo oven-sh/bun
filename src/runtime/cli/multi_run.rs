@@ -94,10 +94,15 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
         bun_io::EventLoopHandle(unsafe { (*this).event_loop_ptr() } as *mut c_void)
     }
 
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is `*mut bun_uws::Loop`;
-        // cast through c_void to the sys-level handle.
-        unsafe { (*(*this).event_loop_ptr()).loop_ as *mut c_void as *mut bun_uws_sys::Loop }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+        // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is the
+        // platform's uws wrapper; on POSIX `bun_aio::Loop` *is* that wrapper
+        // (identity cast); on Windows project the embedded `uv_loop_t*`.
+        #[cfg(not(windows))]
+        { unsafe { (*(*this).event_loop_ptr()).loop_ as *mut c_void as *mut bun_aio::Loop } }
+        #[cfg(windows)]
+        // SAFETY: `loop_` is the live `us_loop`; `uv_loop` set once at init.
+        { unsafe { (*(*(*this).event_loop_ptr()).loop_).uv_loop } }
     }
 }
 

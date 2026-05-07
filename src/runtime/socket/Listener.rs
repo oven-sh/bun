@@ -990,22 +990,214 @@ impl Listener {
 
         #[cfg(windows)]
         {
+            use bun_sys::FdExt as _;
+            use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
+
             let mut buf = PathBuffer::uninit();
-            let mut pipe_name: Option<&[u8]> = None;
+            // PORT NOTE: reshaped for borrowck — `normalize_pipe_name` borrows
+            // `buf` for the returned slice; store length and re-borrow after the
+            // `connection` match drops.
+            let mut pipe_name_len: Option<usize> = None;
             let is_named_pipe = match &mut connection {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
                 UnixOrHost::Unix(slice) => {
-                    pipe_name = normalize_pipe_name(slice, buf.as_mut_slice());
-                    pipe_name.is_some()
+                    match normalize_pipe_name(slice, buf.as_mut_slice()) {
+                        Some(name) => {
+                            pipe_name_len = Some(name.len());
+                            true
+                        }
+                        None => false,
+                    }
                 }
-                UnixOrHost::Fd(_fd) => {
-                    todo!("blocked_on: uv::uv_guess_handle / Windows named-pipe fd detection")
+                UnixOrHost::Fd(fd) => {
+                    let uvfd = fd.uv();
+                    // SAFETY: FFI — `uv_guess_handle` is total over any int.
+                    let fd_type = unsafe { uv::uv_guess_handle(uvfd) };
+                    if fd_type == uv::HandleType::NamedPipe {
+                        true
+                    } else if fd_type == uv::HandleType::Unknown {
+                        // is not a libuv fd, check if it's a named pipe
+                        let osfd: uv::uv_os_fd_t = uvfd as usize as uv::uv_os_fd_t;
+                        if bun_sys::windows::GetFileType(osfd) == bun_sys::windows::FILE_TYPE_PIPE {
+                            // yay its a named pipe lets make it a libuv fd
+                            *fd = Fd::from_native(osfd)
+                                .make_lib_uv_owned()
+                                .unwrap_or_else(|_| panic!("failed to allocate file descriptor"));
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 }
                 _ => false,
             };
             if is_named_pipe {
-                let _ = (default_data, prev_maybe_tcp, prev_maybe_tls, pipe_name);
-                todo!("blocked_on: WindowsNamedPipeContext::connect/open — Windows named-pipe connect path");
+                default_data.ensure_still_alive();
+
+                // PORT NOTE: by-value move of Handlers — see `listen()` for rationale.
+                // SAFETY: socket_config.handlers is valid; we forget socket_config below.
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let mut ssl_taken = socket_config.ssl.take();
+                core::mem::forget(socket_config);
+
+                let mut handlers_box = Box::new(handlers_moved);
+                handlers_box.mode = SocketMode::Client;
+                let handlers_ptr: *mut Handlers = Box::into_raw(handlers_box);
+
+                let promise = jsc::JSPromise::create(global);
+                let promise_value = promise.to_js();
+                // SAFETY: handlers_ptr was just Box::into_raw'd; exclusive access.
+                unsafe { (*handlers_ptr).promise.set(global, promise_value) };
+
+                if ssl_enabled {
+                    let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
+                        // SAFETY: caller passes a live TLSSocket
+                        let prev = unsafe { &mut *prev_ptr };
+                        if let Some(prev_handlers) = prev.handlers {
+                            // SAFETY: prev_handlers was Box::into_raw'd
+                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                        }
+                        debug_assert!(!prev.this_value.is_empty());
+                        prev.handlers = NonNull::new(handlers_ptr);
+                        debug_assert!(matches!(prev.socket.socket, uws::InternalSocket::Detached));
+                        // Free old resources before reassignment to prevent memory leaks
+                        // when sockets are reused for reconnection (common with MongoDB driver)
+                        prev.connection = Some(connection);
+                        if prev.flags.contains(SocketFlags::OWNED_PROTOS) {
+                            prev.protos = None;
+                        }
+                        prev.protos = ssl_taken.as_mut().and_then(|s| s.take_protos());
+                        prev.server_name = ssl_taken.as_mut().and_then(|s| s.take_server_name());
+                        prev_ptr
+                    } else {
+                        TLSSocket::new(TLSSocket {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: NonNull::new(handlers_ptr),
+                            socket: uws::NewSocketHandler::<true>::DETACHED,
+                            connection: Some(connection),
+                            protos: ssl_taken.as_mut().and_then(|s| s.take_protos()),
+                            server_name: ssl_taken.as_mut().and_then(|s| s.take_server_name()),
+                            owned_ssl_ctx: None,
+                            flags: SocketFlags::default(),
+                            this_value: jsc::JsRef::empty(),
+                            poll_ref: KeepAlive::init(),
+                            ref_pollref_on_connect: true,
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: 0,
+                            native_callback: crate::socket::NativeCallbacks::None,
+                            twin: None,
+                        })
+                    };
+                    // SAFETY: tls is a valid heap pointer
+                    let tls_ref = unsafe { &mut *tls };
+                    TLSSocket::data_set_cached(tls_ref.get_this_value(global), global, default_data);
+                    tls_ref.poll_ref.ref_(vm_event_loop_ctx());
+                    tls_ref.ref_();
+
+                    // Transfer the borrowed CTX into the pipe's SSLWrapper. From
+                    // here it owns the ref on every path (initWithCTX adopts on
+                    // success, initTLSWrapper frees on failure), so null our local
+                    // before the call so the errdefer above can't double-free.
+                    let ctx_for_pipe =
+                        core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
+                    // PORT NOTE: re-borrow connection from the socket field — `connection`
+                    // was moved into `tls` above (single allocation in Zig, aliased read).
+                    let named_pipe_result = match tls_ref.connection.as_ref().unwrap() {
+                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                            global,
+                            &buf[..pipe_name_len.unwrap()],
+                            ssl_taken.take(),
+                            ctx_for_pipe,
+                            PipeSocketType::Tls(tls),
+                        ),
+                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                            global,
+                            *fd,
+                            ssl_taken.take(),
+                            ctx_for_pipe,
+                            PipeSocketType::Tls(tls),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    let named_pipe = match named_pipe_result {
+                        Ok(p) => p,
+                        Err(_) => return Ok(promise_value),
+                    };
+                    tls_ref.socket = uws::NewSocketHandler {
+                        socket: uws::InternalSocket::Pipe(named_pipe.cast::<c_void>()),
+                    };
+                } else {
+                    let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
+                        // SAFETY: caller passes a live TCPSocket
+                        let prev = unsafe { &mut *prev_ptr };
+                        debug_assert!(!prev.this_value.is_empty());
+                        if let Some(prev_handlers) = prev.handlers {
+                            // SAFETY: prev_handlers was Box::into_raw'd
+                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                        }
+                        prev.handlers = NonNull::new(handlers_ptr);
+                        debug_assert!(matches!(prev.socket.socket, uws::InternalSocket::Detached));
+                        // Adopt `connection` (heap-owned for .unix) so the socket's
+                        // deinit frees it; matches the TLS arm above and the
+                        // non-pipe arm below. Previously `.connection = null`
+                        // dropped the duped pipe-path bytes on the floor.
+                        prev.connection = Some(connection);
+                        debug_assert!(prev.protos.is_none());
+                        debug_assert!(prev.server_name.is_none());
+                        prev_ptr
+                    } else {
+                        TCPSocket::new(TCPSocket {
+                            ref_count: bun_ptr::RefCount::init(),
+                            handlers: NonNull::new(handlers_ptr),
+                            socket: uws::NewSocketHandler::<false>::DETACHED,
+                            connection: Some(connection),
+                            protos: None,
+                            server_name: None,
+                            owned_ssl_ctx: None,
+                            flags: SocketFlags::default(),
+                            this_value: jsc::JsRef::empty(),
+                            poll_ref: KeepAlive::init(),
+                            ref_pollref_on_connect: true,
+                            buffered_data_for_node_net: Default::default(),
+                            bytes_written: 0,
+                            native_callback: crate::socket::NativeCallbacks::None,
+                            twin: None,
+                        })
+                    };
+                    // SAFETY: tcp is a valid heap pointer
+                    let tcp_ref = unsafe { &mut *tcp };
+                    tcp_ref.ref_();
+                    TCPSocket::data_set_cached(tcp_ref.get_this_value(global), global, default_data);
+                    tcp_ref.poll_ref.ref_(vm_event_loop_ctx());
+
+                    let named_pipe_result = match tcp_ref.connection.as_ref().unwrap() {
+                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                            global,
+                            &buf[..pipe_name_len.unwrap()],
+                            None,
+                            None,
+                            PipeSocketType::Tcp(tcp),
+                        ),
+                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                            global,
+                            *fd,
+                            None,
+                            None,
+                            PipeSocketType::Tcp(tcp),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    let named_pipe = match named_pipe_result {
+                        Ok(p) => p,
+                        Err(_) => return Ok(promise_value),
+                    };
+                    tcp_ref.socket = uws::NewSocketHandler {
+                        socket: uws::InternalSocket::Pipe(named_pipe.cast::<c_void>()),
+                    };
+                }
+                return Ok(promise_value);
             }
         }
 

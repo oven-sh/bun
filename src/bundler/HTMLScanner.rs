@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 use bun_collections::{BabyList, BoundedArray};
 use bun_logger::{Loc, Log, Range, Source};

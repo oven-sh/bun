@@ -462,7 +462,15 @@ impl HTMLRewriterLoader {
         webcore::Sink::init(self)
     }
 
-    fn write_bytes<const DEINIT: bool>(&mut self, bytes: ByteList) -> Option<bun_sys::Error> {
+    // PORT NOTE: takes `ManuallyDrop<ByteList>` so the `DEINIT=false`
+    // (Temporary / TemporaryAndDone — borrowed) instantiation can NEVER drop
+    // caller-owned bytes, on either the error or success path. The Zig spec
+    // (html_rewriter.zig:346-356) does not deinit on the error path at all —
+    // matched here exactly: only `DEINIT && success` frees.
+    fn write_bytes<const DEINIT: bool>(
+        &mut self,
+        mut bytes: core::mem::ManuallyDrop<ByteList>,
+    ) -> Option<bun_sys::Error> {
         // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
         if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes.slice()) }.is_err() {
             return Some(bun_sys::Error {
@@ -474,11 +482,8 @@ impl HTMLRewriterLoader {
         }
         if DEINIT {
             // PERF(port): was comptime monomorphization — profile in Phase B
-            drop(bytes);
-        } else {
-            // Borrowed `Temporary` payload — leak the BabyList header so Drop
-            // doesn't free caller-owned bytes.
-            core::mem::forget(bytes);
+            // SAFETY: `bytes` is not used again on this path.
+            unsafe { core::mem::ManuallyDrop::drop(&mut bytes) };
         }
         None
     }
@@ -487,32 +492,28 @@ impl HTMLRewriterLoader {
         match data {
             StreamResult::Owned(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<true>(bytes) {
+                if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
                     return Writable::Err(err);
                 }
                 Writable::Owned(len)
             }
             StreamResult::OwnedAndDone(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<true>(bytes) {
+                if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
                     return Writable::Err(err);
                 }
                 Writable::OwnedAndDone(len)
             }
             StreamResult::TemporaryAndDone(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) =
-                    self.write_bytes::<false>(core::mem::ManuallyDrop::into_inner(bytes))
-                {
+                if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) =
-                    self.write_bytes::<false>(core::mem::ManuallyDrop::into_inner(bytes))
-                {
+                if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::Temporary(len)
@@ -1222,7 +1223,11 @@ where
     }
 
     if !result.is_undefined_or_null() {
-        if result.is_any_error() {
+        // PORT NOTE: spec is `result.isError() or result.isAggregateError(global)`
+        // (html_rewriter.zig:964) — NOT `isAnyError`, which has different
+        // coverage (Exception cells / `Symbol.error` vs cross-realm
+        // AggregateError).
+        if result.is_error() || result.is_aggregate_error(global) {
             return true;
         }
 

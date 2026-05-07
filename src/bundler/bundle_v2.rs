@@ -5757,8 +5757,7 @@ impl<'a> BundleV2<'a> {
                 // `should_add_watcher(&self)` so the column borrow is released.
                 let source_path = this.graph.input_files.items_source()[source_index as usize]
                     .path
-                    .text
-                    .clone();
+                    .text;
                 let loader = this.graph.input_files.items_loader()[source_index as usize];
                 if this.should_add_watcher(&source_path) {
                     let _ = bun_watcher.add_file(

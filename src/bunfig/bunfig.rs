@@ -18,6 +18,7 @@ use bun_interchange::toml::TOML;
 use bun_logger as logger;
 use bun_logger::js_ast::{expr::Data as ExprData, E, Expr, ExprTag};
 
+use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::schema::api;
 use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
 use bun_options_types::Context::MacroOptions;
@@ -1346,16 +1347,22 @@ mod install_registry_serve {
 
         pub(super) fn phase_a_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
             // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
-            // The helper methods below (`expect*`, `add_error`, `parse_registry`)
-            // take `&mut self` but never touch `self.ctx.install`, so route the
-            // install borrow through a raw pointer to sidestep the overlap —
-            // same pattern as `Bunfig::parse` for `ctx.log`.
-            let install_ptr: *mut api::BunInstall =
-                self.ctx.install.as_deref_mut().unwrap() as *mut _;
-            // SAFETY: sole writer for the duration of this call; no callee
-            // below reaches `self.ctx.install`.
-            let install: &mut api::BunInstall = unsafe { &mut *install_ptr };
+            // The helper methods (`expect*`, `add_error`, `parse_registry`) take
+            // `&mut self`, which under Stacked Borrows would invalidate any
+            // long-lived `&mut` derived from `self.ctx.install`. Move the box
+            // out so the install borrow is provably disjoint from `self`, then
+            // restore it on every exit path.
+            let mut install = self.ctx.install.take().expect("install slot primed");
+            let result = self.phase_a_install_inner(&mut install, install_obj);
+            self.ctx.install = Some(install);
+            result
+        }
 
+        fn phase_a_install_inner(
+            &mut self,
+            install: &mut api::BunInstall,
+            install_obj: &Expr,
+        ) -> Result<(), bun_core::Error> {
             if let Some(cafile) = expr_get(install_obj, b"cafile") {
                 install.cafile = match expr_as_string(&cafile, self.bump) {
                     Some(s) => Some(s.into()),
@@ -1594,13 +1601,28 @@ mod install_registry_serve {
                 }
             }
 
+            // bunfig.zig:824-839 — remap PnpmMatcher errors so callers (and the
+            // crash handler's `"Invalid Bunfig"` match) see the canonical
+            // bunfig error; only OOM passes through unchanged.
+            let remap = |e: FromExprError| -> bun_core::Error {
+                match e {
+                    FromExprError::OutOfMemory => err!(OutOfMemory),
+                    FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
+                        err!("Invalid Bunfig")
+                    }
+                }
+            };
             if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
-                install.public_hoist_pattern =
-                    Some(api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)?);
+                install.public_hoist_pattern = Some(
+                    api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
+                        .map_err(remap)?,
+                );
             }
             if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
-                install.hoist_pattern =
-                    Some(api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)?);
+                install.hoist_pattern = Some(
+                    api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
+                        .map_err(remap)?,
+                );
             }
 
             Ok(())

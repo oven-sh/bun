@@ -1629,6 +1629,24 @@ impl Map {
         self.map.iterator()
     }
 
+    /// Shared-borrow iteration over `(key, value)` pairs in insertion order.
+    /// Zig: `pub fn iterator(this: *const Map) HashTable.Iterator` — Zig's
+    /// iterator does not require exclusive access; this is the `&self`
+    /// surface for callers (e.g. shell `EnvMapIter`) that only read entries.
+    #[inline]
+    pub fn iter(
+        &self,
+    ) -> core::iter::Zip<core::slice::Iter<'_, Box<[u8]>>, core::slice::Iter<'_, HashTableValue>>
+    {
+        self.map.iter()
+    }
+
+    /// Zig: `this.map.map.unmanaged.entries.len`.
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.map.count()
+    }
+
     #[inline]
     pub fn init() -> Map {
         Map { map: HashTable::default() }

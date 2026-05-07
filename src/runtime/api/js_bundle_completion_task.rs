@@ -41,7 +41,7 @@ use bun_threading::WorkPool;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::output_file_jsc::OutputFileJsc as _;
-use crate::node::node_fs::{args as fs_args, NodeFS};
+use crate::node::node_fs::{self, args as fs_args, NodeFS};
 use crate::node::types::{
     Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
 };
@@ -244,6 +244,17 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
+        /// `defer { if root_dir != cwd, root_dir.close() }` — Zig captures
+        /// `root_dir` by reference; the POSIX path reassigns it.
+        struct DirGuard(Dir);
+        impl Drop for DirGuard {
+            fn drop(&mut self) {
+                if self.0.fd != Fd::cwd() {
+                    self.0.close();
+                }
+            }
+        }
+
         // PORT NOTE: reshaped for borrowck — `self.config` is reborrowed for
         // every field projection so the `&mut self` receiver stays usable for
         // `self.env` below.
@@ -264,30 +275,36 @@ impl JSBundleCompletionTask {
             return CompileResult::fail(CompileErrorReason::NoEntryPoint);
         };
 
-        let outbuf = paths::path_buffer_pool::get();
+        let mut outbuf = paths::path_buffer_pool::get();
         // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
         // initialized during VM startup before any `Bun.build` is reachable.
         let top_level_dir =
             unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir };
 
-        // Always get an absolute path for the outfile to ensure it works correctly with PE metadata operations
-        let outdir_slice = &self.config.outdir.list;
-        let outfile_slice = &compile_options.outfile.list;
-        let joined: &[u8] = if !outdir_slice.is_empty() {
-            join_abs_string_buf::<platform::Auto>(
-                top_level_dir,
-                &mut **outbuf,
-                &[outdir_slice, outfile_slice],
-            )
-        } else if paths::is_absolute(outfile_slice) {
-            outfile_slice
-        } else {
-            // For relative paths, ensure we make them absolute relative to the current working directory
-            join_abs_string_buf::<platform::Auto>(top_level_dir, &mut **outbuf, &[outfile_slice])
-        };
-
-        // Add .exe extension for Windows targets if not already present
-        let full_outfile_path: Box<[u8]> =
+        // Always get an absolute path for the outfile to ensure it works
+        // correctly with PE metadata operations.
+        // Add .exe extension for Windows targets if not already present.
+        // PORT NOTE: collapsed to a single owned `Box<[u8]>` so the
+        // `&mut outbuf` borrow ends before the rest of `self` is touched.
+        let full_outfile_path: Box<[u8]> = {
+            let outdir_slice = &self.config.outdir.list;
+            let outfile_slice = &compile_options.outfile.list;
+            let joined: &[u8] = if !outdir_slice.is_empty() {
+                join_abs_string_buf::<platform::Auto>(
+                    top_level_dir,
+                    &mut outbuf[..],
+                    &[outdir_slice, outfile_slice],
+                )
+            } else if paths::is_absolute(outfile_slice) {
+                outfile_slice
+            } else {
+                // For relative paths, ensure we make them absolute relative to the current working directory
+                join_abs_string_buf::<platform::Auto>(
+                    top_level_dir,
+                    &mut outbuf[..],
+                    &[outfile_slice],
+                )
+            };
             if compile_options.compile_target.os == OperatingSystem::Windows
                 && !joined.ends_with(b".exe")
             {
@@ -297,7 +314,8 @@ impl JSBundleCompletionTask {
                 v.into_boxed_slice()
             } else {
                 Box::from(joined)
-            };
+            }
+        };
 
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);

@@ -247,7 +247,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         this
     }
 
-    #[bin_jsc::host_fn(method)]
+    #[bun_jsc::host_fn(method)]
     pub fn js_set_handlers(
         _this: &mut Self,
         global_this: &JSGlobalObject,

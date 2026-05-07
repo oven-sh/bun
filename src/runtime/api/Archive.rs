@@ -158,28 +158,28 @@ impl Archive {
 
         {
             formatter.indent_inc();
-            // `defer formatter.indent -|= 1;`
-            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
-
-            formatter.write_indent(writer).map_err(fmt_err)?;
-            write!(
-                writer,
-                "{}",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
-            )
-            .map_err(fmt_err)?;
-            formatter
-                .print_as::<W, ENABLE_ANSI_COLORS>(
-                    jsc::FormatTag::Double,
+            // `defer formatter.indent -|= 1;` — must fire on the error path too.
+            // scopeguard can't hold `&mut F` while the body also borrows
+            // `formatter`, so collect the result and restore before `?`.
+            let body: Result<(), bun_core::Error> = (|| {
+                formatter.write_indent(writer).map_err(fmt_err)?;
+                write!(
                     writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
-                    jsc::JSType::NumberObject,
+                    "{}",
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
                 )
-                .map_err(|_| bun_core::err!("JSError"))?;
-
+                .map_err(fmt_err)?;
+                formatter
+                    .print_as::<W, ENABLE_ANSI_COLORS>(
+                        jsc::FormatTag::Double,
+                        writer,
+                        JSValue::js_number(f64::from(count_files_in_archive(data))),
+                        jsc::JSType::NumberObject,
+                    )
+                    .map_err(|_| bun_core::err!("JSError"))
+            })();
             formatter.indent_dec();
+            body?;
         }
         writer.write_str("\n").map_err(fmt_err)?;
         formatter.write_indent(writer).map_err(fmt_err)?;

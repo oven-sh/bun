@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_collections::BabyList;
-use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck, Timespec, TimespecMockMode, ZBox};
+use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::{MaxBuf, MaxBufOwnerVTable};
@@ -15,7 +15,7 @@ use bun_jsc::{JsClass as _, SysErrorJsc as _};
 use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
@@ -194,6 +194,41 @@ unsafe fn subprocess_maxbuf_on_overflow(owner: NonNull<()>, this: NonNull<MaxBuf
 static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
     on_overflow: subprocess_maxbuf_on_overflow,
 };
+
+/// `IPC.SendQueue` owner dispatch for the parent-side `Subprocess`. The Zig
+/// code stored `.{ .subprocess = subprocess }` and switched on the union tag;
+/// the Rust port routes through this static vtable so `bun_jsc::ipc` stays
+/// type-erased over `bun_runtime` types.
+static SUBPROCESS_IPC_OWNER_VTABLE: IPC::SendQueueOwnerVTable = IPC::SendQueueOwnerVTable {
+    global_this: |ptr| {
+        // SAFETY: `ptr` was set from a live `*mut Subprocess` in `SendQueue::init`
+        // below; the SendQueue is stored inline in `Subprocess.ipc_data` and
+        // dropped before the Subprocess is freed.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).global_this }
+    },
+    handle_ipc_close: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_close() }
+    },
+    handle_ipc_message: |ptr, msg, handle| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_message(msg, handle) }
+    },
+    this_jsvalue: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).this_value.try_get() }
+            .unwrap_or(JSValue::ZERO)
+    },
+};
+
+#[inline]
+fn subprocess_ipc_owner(subprocess: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
+    IPC::SendQueueOwner {
+        ptr: subprocess.cast(),
+        kind: IPC::SendQueueOwnerKind::Subprocess,
+        vtable: &SUBPROCESS_IPC_OWNER_VTABLE,
+    }
+}
 
 bun_output::declare_scope!(Subprocess, hidden);
 
@@ -844,6 +879,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
+    // Owns the `K=V\0` storage when inheriting the parent env (Zig used the
+    // bump arena; here the struct is the arena and lives until spawn returns).
+    let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
     if !override_env && env_array.is_empty() {
         // SAFETY: `transpiler.env` is the per-VM DotEnv loader (set during init,
         // valid for VM lifetime); `.map` is its `&mut Map` slot.
@@ -1198,8 +1236,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdio_pipes: core::mem::take(&mut spawned_extra_pipes),
         ipc_data: None,
         flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
-        // PORT NOTE: `bun_core::SignalCode` (repr(u8) enum) → `bun_sys::SignalCode(u8)`.
-        kill_signal: bun_sys::SignalCode(kill_signal as u8),
+        kill_signal,
         stderr_maxbuf: None,
         stdout_maxbuf: None,
         terminal: existing_terminal

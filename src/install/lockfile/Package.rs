@@ -23,7 +23,7 @@ use crate::{
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest,
 };
-use crate::bun_json::ExprAccessors;
+use crate::bun_json::{Expr, ExprAccessors, ExprData};
 use crate::dependency::Behavior;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -163,12 +163,19 @@ pub trait ResolverContext {
     // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
     // directly when `ResolverContext == GitResolver`. Trait methods so non-git
     // resolvers don't need the fields; default impls are dead code (gated on
-    // `IS_GIT_RESOLVER`).
-    fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
-        unreachable!("ResolverContext::resolution called on non-git resolver")
+    // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
+    // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
+    // documents the invariant without panicking in release.
+    fn resolution(&self) -> &ResolutionType<u64> {
+        debug_assert!(false, "ResolverContext::resolution called on non-git resolver");
+        // SAFETY: unreachable in practice; never dereferenced when the
+        // `IS_GIT_RESOLVER` gate is false.
+        const EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
+        &EMPTY
     }
     fn dep_id(&self) -> install::DependencyID {
-        unreachable!("ResolverContext::dep_id called on non-git resolver")
+        debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
+        0
     }
     fn new_name(&self) -> &[u8] { b"" }
     fn set_new_name(&mut self, _name: Vec<u8>) {}
@@ -1596,7 +1603,7 @@ impl Package<u64> {
         let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(Output::error_writer());
+                let _ = log.print(Output::error_writer() as *mut _);
                 Output::pretty_errorln(format_args!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
@@ -2053,7 +2060,7 @@ impl Package<u64> {
                 resolver.set_new_name(
                     Repository::create_dependency_name_from_version_literal(
                         &repo,
-                        lockfile,
+                        string_builder.lockfile,
                         resolver.dep_id(),
                     ),
                 );
@@ -2369,7 +2376,7 @@ impl Package<u64> {
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(lockfile, json, &mut string_builder);
+            lockfile.overrides.parse_count(json, &mut string_builder);
 
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 lockfile
@@ -2489,12 +2496,10 @@ impl Package<u64> {
 
                                 self.bin = Bin {
                                     tag: bin::Tag::NamedFile,
-                                    value: bin::Value {
-                                        named_file: [
-                                            string_builder.append::<String>(bin_name),
-                                            string_builder.append::<String>(value),
-                                        ],
-                                    },
+                                    value: bin::Value::init_named_file([
+                                        string_builder.append::<String>(bin_name),
+                                        string_builder.append::<String>(value),
+                                    ]),
                                     ..Default::default()
                                 };
                             }

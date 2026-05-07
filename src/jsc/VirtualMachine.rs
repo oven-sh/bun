@@ -732,12 +732,14 @@ impl VirtualMachine {
         self.macro_mode = true;
         // TODO(b2-cycle): self.transpiler.options.target = .bun_macro / no_macros
         // — `bun_bundler::options` is gated.
+        self.transpiler_store.enabled = false;
     }
 
     pub fn disable_macro_mode(&mut self) {
         self.macro_mode = false;
         self.event_loop = &mut self.regular_event_loop;
         // TODO(b2-cycle): self.transpiler.options.target = .bun
+        self.transpiler_store.enabled = true;
     }
 
     pub fn prepare_loop(&mut self) {}
@@ -1403,6 +1405,9 @@ impl VirtualMachine {
         {
             vm_ref.debug_thread_id = std::thread::current().id();
         }
+
+        vm_ref.transpiler_store =
+            crate::runtime_transpiler_store::RuntimeTranspilerStore::init();
 
         // Event-loop wiring (self-pointers).
         vm_ref.regular_event_loop = EventLoop::default();
@@ -2367,8 +2372,7 @@ impl VirtualMachine {
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
             .unwrap_or(false)
         {
-            // TODO(b2): `transpiler_store` is a `()` placeholder; flip
-            // `.enabled = false` once `RuntimeTranspilerStore` un-gates.
+            self.transpiler_store.enabled = false;
         }
 
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {

@@ -247,6 +247,19 @@ impl JSValue {
         // SAFETY: `self` is a cell.
         unsafe { JSC__JSValue__isAnyError(self) }
     }
+    /// `JSValue.isError()` (JSValue.zig:999) — true iff this is an
+    /// `ErrorInstance` cell (does NOT match `Exception`).
+    #[inline] pub fn is_error(self) -> bool {
+        self.is_cell() && self.js_type() == JSType::ErrorInstance
+    }
+    /// `JSValue.isAggregateError(globalObject)` (JSValue.zig:2194).
+    #[inline] pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
+        unsafe extern "C" {
+            fn JSC__JSValue__isAggregateError(this: JSValue, global: *const JSGlobalObject) -> bool;
+        }
+        // SAFETY: pure FFI predicate; `global` is live.
+        unsafe { JSC__JSValue__isAggregateError(self, global) }
+    }
     /// `JSValue.isTerminationException()` (JSValue.zig:1182) — true if this
     /// value is the VM's termination-exception sentinel.
     #[inline] pub fn is_termination_exception(self) -> bool {
@@ -582,6 +595,38 @@ impl JSValue {
         property_name: &'static str,
     ) -> JsResult<E> {
         E::from_js_value(self, global, property_name)
+    }
+    /// `JSValue.getOptionalEnum` (JSValue.zig:1748) — fetch `property_name`
+    /// from `self`, return `None` if missing/undefined/null, else map the
+    /// string value to `E` via [`FromJsEnum`]. Uses [`fast_get`] when the
+    /// property is one of the C++-side `BuiltinName`s.
+    pub fn get_optional_enum<E: FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Option<E>> {
+        let prop = if let Some(builtin) = BuiltinName::get(property_name.as_bytes()) {
+            self.fast_get(global, builtin)?
+        } else {
+            self.get(global, property_name)?
+        };
+        match prop {
+            Some(v) if !v.is_empty_or_undefined_or_null() => {
+                Ok(Some(E::from_js_value(v, global, property_name)?))
+            }
+            _ => Ok(None),
+        }
+    }
+    /// `JSValue.implementsToString` (JSValue.zig:1608) — true iff `self` is an
+    /// object with a callable `toString` property. Safe on any `JSValue`.
+    pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
+        if !self.is_object() {
+            return Ok(false);
+        }
+        let Some(function) = self.fast_get(global, BuiltinName::toString)? else {
+            return Ok(false);
+        };
+        Ok(function.is_cell() && function.is_callable())
     }
     pub fn as_string(self) -> *mut JSString {
         debug_assert!(self.is_string());
@@ -953,6 +998,21 @@ impl JSValue {
         unsafe { JSC__JSValue__putIndex(self, global, i, out) };
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
+    /// `JSValue.putBunStringOneOrArray` (JSValue.zig) — put `key`/`value` into
+    /// `self`. If `key` is already present on the object, create an array for
+    /// the values (used by FrameworkRouter catch-all params).
+    pub fn put_bun_string_one_or_array(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_string::String,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; `key` is a valid `*const bun.String` for the call.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__upsertBunStringArray(self, global, key, value)
+        })
+    }
+
 
     /// `JSValue.push` (JSValue.zig:404) — append to an array-typed JS value.
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
@@ -1199,6 +1259,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
+    fn JSC__JSValue__upsertBunStringArray(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue) -> JSValue;
     fn JSC__JSValue__push(this: JSValue, global: *const JSGlobalObject, value: JSValue);
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
     fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;

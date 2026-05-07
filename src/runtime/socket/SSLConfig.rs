@@ -8,6 +8,10 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJ
 use bun_uws as uws;
 use bun_wyhash::Wyhash;
 
+use crate::node::fs as node_fs;
+use crate::webcore::Blob;
+use crate::webcore::blob::store::Data as StoreData;
+
 // ──────────────────────────────────────────────────────────────────────────
 // SSLConfig
 // ──────────────────────────────────────────────────────────────────────────
@@ -100,6 +104,74 @@ impl SSLConfig {
     pub fn raw_ptr(maybe_shared: Option<&SharedPtr>) -> Option<*const SSLConfig> {
         maybe_shared.map(|s| Arc::as_ptr(s))
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ReadFromBlobError
+// ──────────────────────────────────────────────────────────────────────────
+
+// PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+// `std::error::Error`/`Display`. Manual `From<JsError>` instead.
+#[derive(Debug)]
+pub enum ReadFromBlobError {
+    Js(JsError),
+    NullStore,
+    NotAFile,
+    EmptyFile,
+}
+
+impl From<JsError> for ReadFromBlobError {
+    #[inline]
+    fn from(e: JsError) -> Self {
+        ReadFromBlobError::Js(e)
+    }
+}
+
+/// Convert a `ZBox` (NUL-terminated owned byte buffer) into a `CString`
+/// without re-allocating. Matches Zig `toOwnedSliceZ` semantics (no
+/// interior-NUL check).
+#[inline]
+fn zbox_into_cstring(z: bun_core::ZBox) -> CString {
+    // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
+    // (including the sentinel) to `CString` without re-allocating.
+    unsafe { CString::from_vec_with_nul_unchecked(z.into_vec_with_nul()) }
+}
+
+fn read_from_blob(
+    global: &JSGlobalObject,
+    blob: &Blob,
+) -> Result<CString, ReadFromBlobError> {
+    let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
+    let file = match &store.data {
+        StoreData::File(f) => f,
+        _ => return Err(ReadFromBlobError::NotAFile),
+    };
+    let mut fs = node_fs::NodeFS::default();
+    let read_args = node_fs::args::ReadFile {
+        path: file.pathlike.clone(),
+        ..Default::default()
+    };
+    let maybe = fs.read_file_with_options(
+        &read_args,
+        node_fs::Flavor::Sync,
+        node_fs::ReadFileStringType::NullTerminated,
+    );
+    let result = match maybe {
+        Ok(result) => result,
+        Err(err) => {
+            return Err(global.throw_value(err.to_js(global)).into());
+        }
+    };
+    // `read_file_with_options(NullTerminated)` transfers ownership of the
+    // returned buffer to the caller, so we can return it directly without
+    // duplicating.
+    let node_fs::ret::ReadFileWithOptions::NullTerminated(zbox) = result else {
+        unreachable!("ReadFileStringType::NullTerminated always yields the NullTerminated variant");
+    };
+    if zbox.is_empty() {
+        return Err(ReadFromBlobError::EmptyFile);
+    }
+    Ok(zbox_into_cstring(zbox))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

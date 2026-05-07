@@ -19,8 +19,12 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
 };
+use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_string::ZigString;
 use crate::webcore::Blob;
+use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
+use crate::webcore::blob::store as blob_store;
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_str::{self as strings, ZStr};
 use bun_core::ZBox;
 use bun_sys as sys;
@@ -28,14 +32,6 @@ use bun_sys as sys;
 use super::codecs_body as codecs;
 use super::exif;
 use super::thumbhash;
-
-// TODO(port): `crate::webcore::blob::ReadBytesResult` lives in Blob.rs's
-// private `_jsc_gated` module — local stand-in until that's `pub use`-d.
-// Shape mirrors the gated enum so the body of `on_read_bytes` type-checks.
-pub enum ReadBytesResult {
-    Ok(Vec<u8>),
-    Err(sys::Error),
-}
 
 // ─── local shims for upstream-missing methods (see PORTING notes) ───────────
 
@@ -115,17 +111,34 @@ impl GetOptionalEnum for JSValue {
 // re-exports are provided by `#[bun_jsc::JsClass]` codegen — see PORTING.md
 // §JSC types. `js.sourceJSSetCached` / `js.sourceJSGetCached` are likewise
 // codegen'd cached-property accessors on the wrapper.
-// TODO(port): the cached-slot accessors are emitted by `.classes.ts` codegen
-// (Image.classes.ts → `sourceJS` cached value) but the Rust codegen doesn't
-// surface them yet. Stubbed here so call sites type-check.
+//
+// The Rust class codegen emits the same C-ABI symbols as the C++ side
+// (`ImagePrototype__sourceJS{Set,Get}CachedValue`); declare them here so the
+// pipeline doesn't depend on whether `crate::generated_classes::Image` and
+// this `Image` are unified yet.
+unsafe extern "C" {
+    fn ImagePrototype__sourceJSSetCachedValue(
+        this_value: JSValue,
+        global: *mut JSGlobalObject,
+        value: JSValue,
+    );
+    fn ImagePrototype__sourceJSGetCachedValue(this_value: JSValue) -> JSValue;
+}
 impl Image {
+    /// `Image.sourceJS` cached-value setter (GC-visited via WriteBarrier).
     #[inline]
-    fn source_js_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSSetCached)")
+    fn source_js_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: C++ stores `value` into the JSImage wrapper's `m_sourceJS`
+        // WriteBarrier slot; both pointers are live JS-heap objects.
+        unsafe { ImagePrototype__sourceJSSetCachedValue(this, global.as_mut_ptr(), value) }
     }
+    /// `Image.sourceJS` cached-value getter; `None` when never set.
     #[inline]
-    fn source_js_get_cached(_this: JSValue) -> Option<JSValue> {
-        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSGetCached)")
+    fn source_js_get_cached(this: JSValue) -> Option<JSValue> {
+        // SAFETY: C++ reads the wrapper's `m_sourceJS` slot; returns `.zero`
+        // (encoded empty) if it was never set.
+        let v = unsafe { ImagePrototype__sourceJSGetCachedValue(this) };
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 
@@ -1113,8 +1126,16 @@ impl Image {
             self.this_ref.set_strong(this_value, global);
         }
         self.pending_tasks += 1;
-        let _ = job;
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
+        let task = ConcurrentPromiseTask::<PipelineTask<'_>>::create_on_js_thread(global, job);
+        let promise_value = task.promise.value();
+        // Ownership transfers to the WorkPool / event-loop dispatch
+        // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
+        // intrusive `task` field into the work-pool queue. The worker thread
+        // touches `ctx`/`task` only; `promise` was read above on this thread.
+        unsafe { (*raw).schedule() };
+        Ok(promise_value)
     }
 
     /// Run the full pipeline on the *current* thread. Used when an `Image` is
@@ -1147,9 +1168,21 @@ impl Image {
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
-            // TODO(port): Blob store/pathlike field access — verify shape.
-            let _ = blob;
-            todo!("blocked_on: webcore::blob::Store data/file/pathlike field shape");
+            if let Some(store) = &blob.store {
+                if let blob_store::Data::File(file) = &store.data {
+                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                        let p = ZBox::from_bytes(path.slice());
+                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
+                        self.source = Source::Path(p);
+                    } else {
+                        return Err(global.throw(REFUSE));
+                    }
+                } else {
+                    return Err(global.throw(REFUSE));
+                }
+            } else {
+                return Err(global.throw(REFUSE));
+            }
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
@@ -1251,16 +1284,20 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // TODO(port): `read_bytes_to_handler` takes `&mut H: ReadBytesHandler`;
-        // BlobReadChain needs to impl that trait + ownership reshuffle (Box vs &mut).
-        let _ = (blob, chain);
-        todo!("blocked_on: webcore::blob::ReadBytesHandler impl for BlobReadChain");
-        #[allow(unreachable_code)]
+        // `read_bytes_to_handler` stores the handler pointer and calls
+        // `on_read_bytes` on the JS thread (sync for in-memory, async for
+        // file/S3). Ownership of the chain transfers there; the trait impl
+        // below reconstructs the Box and frees it.
+        let raw = Box::into_raw(chain);
+        // SAFETY: `raw` is freshly leaked and uniquely owned by the read
+        // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
+        blob.read_bytes_to_handler(unsafe { &mut *raw }, global)
+            .map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    pub fn on_read_bytes(self: Box<Self>, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread.
@@ -1320,18 +1357,37 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, Ok(e.to_js(global)));
+                let _ = outer.reject(global, Ok(e.to_error_instance(global)));
             }
         }
     }
 }
 
-// TODO(port): the real `ConcurrentPromiseTask<'a, Ctx>` and its
-// `ConcurrentPromiseTaskContext` trait live in `bun_jsc`'s private `_gated`
-// module (src/jsc/ConcurrentPromiseTask.rs). Until those are re-exported the
-// public alias degrades to the bare context so `mod.rs`'s `pub use` resolves.
-// blocked_on: jsc::ConcurrentPromiseTask / jsc::ConcurrentPromiseTaskContext
-pub type AsyncImageTask<'a> = PipelineTask<'a>;
+impl<'a> ReadBytesHandler for BlobReadChain<'a> {
+    fn on_read_bytes(&mut self, result: ReadBytesResult) {
+        // SAFETY: `self` is the `&mut *Box::into_raw(chain)` handed to
+        // `read_bytes_to_handler` in `start()`; we are the sole consumer on
+        // the JS thread. Reconstruct the Box so the body can move fields out
+        // and free the allocation (mirrors Zig `bun.destroy(self)`).
+        let boxed = unsafe { Box::from_raw(self as *mut Self) };
+        boxed.on_read_bytes_impl(result);
+    }
+}
+
+/// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop
+/// dispatch sees (`task_tag::AsyncImageTask`).
+pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
+
+impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+    #[inline]
+    fn run(&mut self) {
+        PipelineTask::run(self)
+    }
+    #[inline]
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+        PipelineTask::then(self, promise)
+    }
+}
 
 pub struct PipelineTask<'a> {
     image: *mut Image,
@@ -1626,8 +1682,10 @@ impl<'a> PipelineTask<'a> {
     }
 
     /// Back on the JS thread.
-    pub fn then(mut self: Box<Self>, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        // `defer self.deinit()` → handled by `Drop for PipelineTask` at scope exit.
+    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+        // `defer self.deinit()` → handled by `Drop for PipelineTask` when the
+        // owning `ConcurrentPromiseTask` Box is destroyed by the event-loop
+        // dispatch (`run_from_js` → `destroy`), immediately after this returns.
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
         // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids
@@ -1693,8 +1751,11 @@ impl<'a> PipelineTask<'a> {
                     let mut blob = Blob::init(owned, global);
                     blob.content_type = format.mime().as_bytes() as *const [u8];
                     blob.content_type_was_set = true;
-                    let _ = (promise, blob);
-                    todo!("blocked_on: webcore::blob::Blob::to_js (ambiguous inherent impls)");
+                    // UFCS to pick the consuming `JsClass::to_js(self, _)`
+                    // (heap-promotes via `Blob::new`) over the inherent
+                    // `Blob::to_js(&mut self, _)` that expects an
+                    // already-heap-allocated receiver.
+                    promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                 }
                 tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                     // PERF(port): was comptime tag dispatch — profile in Phase B.

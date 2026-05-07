@@ -33,6 +33,53 @@ pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> 
     unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
+// ── FromJsEnum impls (Zig: `JSValue.toEnum` → `Enum.Map.fromJS`) ───────────
+// These live here (not in `http_types/`) because `FromJsEnum` names `JSValue`
+// / `JSGlobalObject`. Each impl mirrors `JSValue.toEnumFromMap` (JSValue.zig:1703):
+// non-string → "<prop> must be a string"; unknown string → "<prop> must be one of …".
+
+impl FromJsEnum for FetchRedirect {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        if !v.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("{prop} must be a string")));
+        }
+        match bun_http_types::FetchRedirect::MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{prop} must be one of 'follow', 'manual' or 'error'"
+            ))),
+        }
+    }
+}
+
+impl FromJsEnum for FetchCacheMode {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        if !v.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("{prop} must be a string")));
+        }
+        match FetchCacheMode::MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{prop} must be one of 'default', 'no-store', 'reload', 'no-cache', 'force-cache' or 'only-if-cached'"
+            ))),
+        }
+    }
+}
+
+impl FromJsEnum for FetchRequestMode {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        if !v.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("{prop} must be a string")));
+        }
+        match FetchRequestMode::MAP.from_js(global, v)? {
+            Some(e) => Ok(e),
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{prop} must be one of 'same-origin', 'no-cors', 'cors' or 'navigate'"
+            ))),
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `FromJsEnum` impls — orphan-rule home for `bun_http_types` enums × `bun_jsc`
 // trait. Powers `JSValue::get_optional_enum::<FetchRedirect>()` etc. in

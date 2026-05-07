@@ -318,13 +318,17 @@ pub mod ast {
         Subshell(*const Subshell),
     }
 
+    // `RedirectFlags` / `IoKind` are pure bitflags + Copy enum (no arena
+    // lifetime), so we re-export the real definitions from the gated parser
+    // module instead of duplicating them.
+    pub use super::shell_body::ast::{IoKind, RedirectFlags};
+
     #[repr(C)]
     pub struct Cmd {
         pub assigns: *const [Assign],
         pub name_and_args: *const [Atom],
         pub redirect_file: Option<Redirect>,
-        // TODO(b2-blocked): `redirect: RedirectFlags` — needed by
-        // Builtin::init redirect handling and Cmd::initRedirections.
+        pub redirect: RedirectFlags,
     }
 
     #[repr(C)]

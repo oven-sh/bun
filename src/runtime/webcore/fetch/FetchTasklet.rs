@@ -1388,6 +1388,9 @@ impl FetchTasklet {
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries =
             bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
+        // PORT NOTE: `url` is moved into `AsyncHTTP::init`; capture the one
+        // post-move query (`is_http()`, debug-assert only) up front.
+        let url_is_http = url.is_http();
 
         fetch_tasklet.http = Some(Box::new(AsyncHTTP::init(
             fetch_options.method,
@@ -1454,7 +1457,7 @@ impl FetchTasklet {
         fetch_tasklet.signal_store.header_progress.store(true, Ordering::Relaxed);
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
-            debug_assert!(url.is_http());
+            debug_assert!(url_is_http);
             debug_assert!(fetch_options.proxy.is_none());
             fetch_tasklet.http.as_mut().unwrap().request_body = http::HTTPRequestBody::Sendfile(*sendfile);
         }

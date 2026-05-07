@@ -5919,15 +5919,8 @@ impl<'a> BundleV2<'a> {
                 // un-defer barrel records that are now needed.
                 // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
 
-                // For files with use directives, index and prepare the other side.
-                if result.use_directive != crate::UseDirective::None
-                    && if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
-                        (result.use_directive == crate::UseDirective::Client) == (result_ast_target == Target::Browser)
-                    } else {
-                        (result.use_directive == crate::UseDirective::Client) != (result_ast_target == Target::Browser)
-                    }
-                {
-                    if result.use_directive == crate::UseDirective::Server {
+                if let Some(named_exports) = scb_named_exports {
+                    if result_use_directive == crate::UseDirective::Server {
                         bun_core::todo_panic!("\"use server\"");
                     }
 

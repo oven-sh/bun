@@ -21,15 +21,14 @@ use bun_logger::js_ast::{expr::Data as ExprData, E, Expr, ExprTag};
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::schema::api;
 use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
-use bun_options_types::Context::MacroOptions;
+use bun_options_types::Context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::GlobalCache::GlobalCache;
 use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
 
 use bun_options_types::CommandTag::Tag as CommandTag;
 use bun_options_types::Context::ContextData;
 
-pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
-pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
+use crate::cli::command::{ContextData, Tag as CommandTag};
 
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::OfflineMode::OfflineMode;
@@ -855,16 +854,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                // TODO(b2-blocked): api::BunInstall fields (peechy codegen) —
-                // cafile, ca, exact, registry, scopes, dryRun, production,
-                // frozenLockfile, saveTextLockfile, concurrentScripts,
-                // ignoreScripts, linker, globalStore, lockfile.*, optional,
-                // peer, dev, globalDir, globalBinDir, cache.*,
-                // linkWorkspacePackages, security.scanner, minimumReleaseAge,
-                // minimumReleaseAgeExcludes, publicHoistPattern, hoistPattern.
-                // Full body preserved in the gated `phase_a_install` block below.
-                
-                { self.phase_a_install(&install_obj)?; }
+                self.parse_install(&install_obj)?;
 
                 if let Some(expr) = expr_get(&install_obj, b"logLevel") {
                     self.load_log_level(&expr)?;
@@ -942,13 +932,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // TODO(b2-blocked): api::TransformOptions.serve_* fields (peechy codegen)
-        // — `[serve.static]` plugins/hmr/minify/define/publicPath/env handled in
-        // the gated `phase_a_serve_static` block.
-        
         if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
             if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
-                self.phase_a_serve_static(&serve_obj)?;
+                self.parse_serve_static(&serve_obj)?;
             }
         }
 

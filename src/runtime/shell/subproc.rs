@@ -8,7 +8,6 @@ use bun_alloc::Arena;
 use bun_aio::Loop as AsyncLoop;
 use bun_collections::ByteList;
 use bun_core::Output;
-use bun_dotenv::Map as DotEnvMap;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
@@ -1289,13 +1288,6 @@ impl<'a> SpawnArgs<'a> {
             out.stdio[2] = Stdio::Pipe;
         }
         out
-    }
-
-    pub fn fill_env_from_process(&mut self, global_this: &JSGlobalObject) {
-        // TODO(port): Zig calls self.fill_env(globalThis, &env_iter, false) but fill_env
-        // takes *bun.shell.EnvMap.Iterator, not EnvMapIter — type mismatch in original Zig
-        // (dead code under lazy compilation). Mirrored as TODO.
-        let _ = global_this;
     }
 
     /// `object_iter` should be a some type with the following fields:

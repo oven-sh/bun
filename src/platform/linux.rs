@@ -75,8 +75,8 @@ static RWF_BOOL: AtomicU8 = AtomicU8::new(RWFFlagSupport::Unknown as u8);
 
 impl RWFFlagSupport {
     pub fn is_linux_kernel_version_with_buggy_rwf_nonblock() -> bool {
-        bun_core::linux_kernel_version().major == 5
-            && matches!(bun_core::linux_kernel_version().minor, 9 | 10)
+        let v = bun_core::linux_kernel_version();
+        v.major == 5 && matches!(v.minor, 9 | 10)
     }
 
     pub fn disable() {
@@ -105,7 +105,7 @@ impl RWFFlagSupport {
                 true
             }
             RWFFlagSupport::Supported => true,
-            _ => false,
+            RWFFlagSupport::Unsupported => false,
         }
     }
 }

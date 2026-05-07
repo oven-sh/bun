@@ -2,6 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
     StringJsc as _, SysErrorJsc as _,
@@ -198,6 +199,9 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
 }
 
 impl<'a> WalkTask<'a> {
+    // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
+    // allocation). With the global mimalloc allocator `Box::new` is infallible
+    // (panics on OOM), so the Rust port returns the boxed task directly.
     pub fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
@@ -213,12 +217,14 @@ impl<'a> WalkTask<'a> {
         });
         AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
     }
+}
 
-    pub fn run(&mut self) {
+impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    fn run(&mut self) {
+        // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
         let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
             decr_pending_activity_flag(hpa);
         });
-        // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
         let result = match self.walker.walk() {
             Ok(r) => r,
             Err(err) => {
@@ -249,8 +255,8 @@ impl<'a> WalkTask<'a> {
 
         let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
             Ok(v) => v,
-            Err(e) => return promise.reject(self.global, Err(e)),
             // PORT NOTE: `error.JSError` → pass the JsError through; reject() pulls the pending exception.
+            Err(e) => return promise.reject(self.global, Err(e)),
         };
         promise.resolve(self.global, js_strings)
     }

@@ -145,6 +145,22 @@ mod codegen_js {
             Gen::onclose_set_cached(this, global, val)
         }
     }
+
+    cached_slot!(onconnect_get_cached, onconnect_set_cached,
+        RedisClientPrototype__onconnectGetCachedValue,
+        RedisClientPrototype__onconnectSetCachedValue);
+    cached_slot!(onclose_get_cached, onclose_set_cached,
+        RedisClientPrototype__oncloseGetCachedValue,
+        RedisClientPrototype__oncloseSetCachedValue);
+    cached_slot!(connection_promise_get_cached, connection_promise_set_cached,
+        RedisClientPrototype__connectionPromiseGetCachedValue,
+        RedisClientPrototype__connectionPromiseSetCachedValue);
+    cached_slot!(hello_get_cached, hello_set_cached,
+        RedisClientPrototype__helloGetCachedValue,
+        RedisClientPrototype__helloSetCachedValue);
+    cached_slot!(subscription_callback_map_get_cached, subscription_callback_map_set_cached,
+        RedisClientPrototype__subscriptionCallbackMapGetCachedValue,
+        RedisClientPrototype__subscriptionCallbackMapSetCachedValue);
 }
 
 impl SubscriptionCtx {
@@ -520,7 +536,7 @@ impl JSValkeyClient {
             }
 
             if strings::strings::contains(url_byte_slice, b"://") {
-                break 'get_url match <URL as UrlShim>::from_utf8(url_byte_slice) {
+                break 'get_url match URL::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
                         return Err(global_object.throw_invalid_arguments("Invalid URL format"))
@@ -543,14 +559,16 @@ impl JSValkeyClient {
                 break 'get_url_slice &fallback_url_buf[..written];
             };
 
-            match <URL as UrlShim>::from_utf8(corrected_url) {
+            match URL::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => return Err(global_object.throw_invalid_arguments("Invalid URL format")),
             }
         };
         // SAFETY: `from_string`/`from_utf8` returns a heap-allocated URL we own.
-        let parsed_url = unsafe { parsed_url.as_ref() };
-        // `defer parsed_url.deinit();` — TODO(port): URL leaks here until Drop is wired.
+        let parsed_url_ref = unsafe { parsed_url.as_ref() };
+        // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
+        let _parsed_url_drop = scopeguard::guard(parsed_url, |p| unsafe { URL::deinit(p) });
+        let parsed_url = parsed_url_ref;
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();

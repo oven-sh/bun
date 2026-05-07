@@ -10,7 +10,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc};
-use bun_str::{self as strings, String as BunString, ZStr};
+use bun_str::{self as strings, String as BunString, OwnedString, ZStr};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
 use bun_jsc::URL;
@@ -62,15 +62,17 @@ fn throw_invalid_argument_property_value(
     expected: &str,
     value: JSValue,
 ) -> JsError {
+    // `defer actual.deref()` → OwnedString releases the +1 from determine_specific_type
     let actual = match global.determine_specific_type(value) {
-        Ok(s) => s,
+        Ok(s) => OwnedString::new(s),
         Err(e) => return e,
     };
     global
         .err(
             bun_jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!(
-                "The property \"{argname}\" is invalid. Expected {expected}, received {actual}"
+                "The property \"{argname}\" is invalid. Expected {expected}, received {}",
+                actual.get(),
             ),
         )
         .throw()
@@ -198,11 +200,12 @@ impl Options {
                 .err(bun_jsc::ErrorCode::SOCKET_BAD_PORT, format_args!("The \"options.port\" argument must be a valid IP port number."))
                 .throw();
         };
-        // `defer ty.deref()` → BunString drops at scope exit
+        // `defer ty.deref()` → OwnedString releases the +1 from determine_specific_type
+        let ty = OwnedString::new(ty);
         global
             .err(
                 bun_jsc::ErrorCode::SOCKET_BAD_PORT,
-                format_args!("The \"options.port\" argument must be a valid IP port number. Got {}.", ty),
+                format_args!("The \"options.port\" argument must be a valid IP port number. Got {}.", ty.get()),
             )
             .throw()
     }
@@ -220,34 +223,34 @@ impl SocketAddress {
     // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
     // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let input = {
+        // `defer input.deref()` → OwnedString releases the +1 from BunString::from_js
+        let input: OwnedString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
                 return Err(global.throw_invalid_argument_type_value("input", "string", input_arg));
             }
-            BunString::from_js(input_arg, global)?
+            OwnedString::new(BunString::from_js(input_arg, global)?)
         };
-        // `defer input.deref()` → drops at scope exit
 
         const PREFIX: &str = "http://";
         // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile in Phase B
-        let url_str = if input.is_8bit() {
+        // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
+        let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
             let (str, to_chars) = BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
             to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+            OwnedString::new(str)
         } else {
             let from_chars = input.utf16();
             let (str, to_chars) = BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
             // bun.strings.literal(u16, "http://")
             to_chars[..PREFIX.len()].copy_from_slice(bun_str::w!("http://"));
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+            OwnedString::new(str)
         };
-        // `defer url_str.deref()` → drops at scope exit
 
-        let Some(url_ptr) = <URL as UrlExt>::from_string(url_str) else {
+        let Some(url_ptr) = <URL as UrlExt>::from_string(url_str.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         // `defer url.deinit()`
@@ -269,14 +272,29 @@ impl SocketAddress {
         let paddr = host.latin1(); // presentation address
         // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
         // `ares_inet_pton` (already linked) to fill the sockaddr in place.
+        // `std.net.Ip6Address.parse` accepts a `%scope` suffix and populates
+        // `scope_id`; `ares_inet_pton` does not, so we strip and parse it here.
+        // (WHATWG URL host parsing rejects zone identifiers, so in practice
+        // `URL::host_()` should not yield one — handled defensively.)
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
-            let inner = &paddr[1..paddr.len() - 1];
+            let mut inner = &paddr[1..paddr.len() - 1];
+            let mut scope_id: u32 = 0;
+            if let Some(pct) = inner.iter().position(|&b| b == b'%') {
+                let zone = &inner[pct + 1..];
+                inner = &inner[..pct];
+                // Numeric zone → scope_id directly (matches std.net.Ip6Address.parse).
+                // Non-numeric zone would require if_nametoindex; treat as invalid here.
+                scope_id = match core::str::from_utf8(zone).ok().and_then(|s| s.parse::<u32>().ok()) {
+                    Some(id) => id,
+                    None => return Ok(JSValue::UNDEFINED),
+                };
+            }
             let mut sin6 = inet::sockaddr_in6 {
                 family: AF::INET6.int(),
                 port: port_.to_be(),
                 flowinfo: 0,
                 addr: [0u8; 16],
-                scope_id: 0,
+                scope_id,
                 ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
             };
             if !pton_noerr(inet::AF_INET6, inner, (&mut sin6.addr) as *mut _ as *mut c_void) {

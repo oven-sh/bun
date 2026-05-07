@@ -9,13 +9,11 @@ use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_sys::{self as sys, Error as SysError};
 
-// TODO(b2-blocked): ArrayBufferSink.rs is not yet wired into webcore (depends on
-// gated `streams::Start::ArrayBufferSink` variant). Stub here so
-// `crate::webcore::sink::ArrayBufferSink` resolves for gated consumers.
-#[derive(Debug, Default)]
-pub struct ArrayBufferSink;
+// PORT NOTE: re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
+// resolves to the full type (with `bytes`/`signal`/`destroy`) for Body.rs.
+pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
-// PORT NOTE: `JsSinkAbi` impl for the stub so `JSSink<ArrayBufferSink>` /
+// PORT NOTE: `JsSinkAbi` impl so `JSSink<ArrayBufferSink>` /
 // `SinkSignal<ArrayBufferSink>` resolve for Body.rs. The extern symbols are the
 // codegen-emitted `ArrayBufferSink__*` C++ glue (same shape as FileSink's).
 #[allow(non_snake_case)]

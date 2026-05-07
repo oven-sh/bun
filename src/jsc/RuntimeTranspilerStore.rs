@@ -210,7 +210,10 @@ impl Taskable for RuntimeTranspilerStore {
 
 impl RuntimeTranspilerStore {
     pub fn init() -> RuntimeTranspilerStore {
-        RuntimeTranspilerStore::default()
+        // PORT NOTE: Zig passed `bun.typedAllocator(TranspilerJob)` to
+        // `Store.init`; the Rust HiveArrayFallback uses the global mimalloc
+        // (PORTING.md §Allocators), so the allocator arg drops.
+        Self::default()
     }
 
     pub fn run_from_js_thread(
@@ -374,6 +377,30 @@ unsafe impl unbounded_queue::Node for TranspilerJob {
     #[inline]
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
         unsafe { (*item).next.store(ptr, ordering) }
+    }
+}
+
+// SAFETY: `next` is the intrusive link field; all four accessors target it.
+// Atomicity is provided by reinterpreting the `*mut` slot as `AtomicPtr` (same
+// layout/align). The queue only touches `next` while it owns the node.
+unsafe impl bun_threading::unbounded_queue::Node for TranspilerJob {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr; }
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .load(ordering)
+        }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .store(ptr, ordering)
+        }
     }
 }
 

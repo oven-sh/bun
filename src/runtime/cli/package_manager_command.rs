@@ -248,6 +248,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         // command's duration (mirrors Zig's `*PackageManager`).
         let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
+        // PORT NOTE: reshaped for borrowck — `pm: &'static mut PackageManager`;
+        // many Zig call sites alias `pm` and `pm.lockfile` simultaneously. Hold a
+        // raw pointer for those re-entry points (Zig's `*PackageManager` is raw).
+        let pm_ptr: *mut PackageManager = pm;
+
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
@@ -303,16 +308,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             } else {
                 None
             };
-            PmViewCommand::view(
-                pm,
-                if pm.options.positionals.len() > 1 {
-                    pm.options.positionals[1]
-                } else {
-                    b""
-                },
-                property_path,
-                pm.options.json_output,
-            )?;
+            let spec = if pm.options.positionals.len() > 1 {
+                pm.options.positionals[1]
+            } else {
+                b"".as_slice()
+            };
+            let json_output = pm.options.json_output;
+            PmViewCommand::view(pm, spec, property_path, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             // SAFETY: `FileSystem::instance()` is initialised during
@@ -357,6 +359,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
             drop(load_lockfile);
 
+            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
+            let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
@@ -383,6 +387,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
             drop(load_lockfile);
 
+            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
+            let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
@@ -808,7 +814,7 @@ fn print_node_modules_folder_structure(
             more_packages[depth] = false;
         }
 
-        let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
+        let package_id = lockfile.buffers.resolutions[dependency_id as usize];
 
         if package_id as usize >= lockfile.packages.len() {
             // in case we are loading from a binary lockfile with invalid package ids

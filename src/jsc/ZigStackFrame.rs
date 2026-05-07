@@ -36,6 +36,14 @@ impl Drop for ZigStackFrame {
 }
 
 impl ZigStackFrame {
+    /// Explicit deref of owned strings — kept distinct from `Drop` because
+    /// frames are also held in C++-owned buffers (`ZigStackTrace.frames_ptr`)
+    /// where Rust never runs `Drop`; `ZigException::deinit` calls this directly.
+    pub fn deinit(&mut self) {
+        self.function_name.deref();
+        self.source_url.deref();
+    }
+
     pub fn to_api(
         &self,
         root_path: &[u8],

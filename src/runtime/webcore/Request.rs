@@ -804,13 +804,16 @@ impl Request {
     }
 
     pub fn finalize_without_deinit(&mut self) {
-        // headers.deref() / signal.unref() → handled by Arc Drop when set to None
+        // headers.deref() → HeadersRef::Drop when set to None
         self.headers = None;
 
         self.url.deref();
         self.url = BunString::empty();
 
-        self.signal = None;
+        if let Some(signal) = self.signal.take() {
+            // SAFETY: `self.signal` held a +1-ref'd live AbortSignal*.
+            unsafe { signal.as_ref().unref() };
+        }
         // internal_event_callback.deinit() → Drop on Strong inside; explicit take to match timing
         self.internal_event_callback = InternalJSEventCallback::default();
     }

@@ -390,6 +390,15 @@ impl WhyCommand {
 
         let glob = GlobPattern::init(package_pattern);
 
+        // PORT NOTE: Zig `MultiArrayList<Package>.get(pkg_idx)` returns a row
+        // copy. The Rust column-backed `PackageList` exposes
+        // `items_name()` / `items_dependencies()` / … directly, so we read
+        // columns by index instead of materialising a `Package` row.
+        let pkg_names = packages.items_name();
+        let pkg_dependencies = packages.items_dependencies();
+        let pkg_resolutions = packages.items_resolutions();
+        let pkg_resolution = packages.items_resolution();
+
         for pkg_idx in 0..packages.len() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
@@ -495,10 +504,12 @@ impl WhyCommand {
                 } else {
                     let mut ctx_data = TreeContext::init(string_bytes, top_only, &all_dependents);
                     // PORT NOTE: reshaped for borrowck — Zig sorted via mutable
-                    // `dependents.items` while also holding `&all_dependents` in ctx_data.
-                    // Clone the slice to sort independently.
+                    // `dependents.items` while also holding `&all_dependents` in
+                    // ctx_data. Clone the slice to sort independently.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
                     sorted.sort_by(cmp_dependents);
+
+                    let mut ctx_data = TreeContext::init(string_bytes, top_only, &all_dependents);
 
                     let len = sorted.len();
                     for (dep_idx, dep) in sorted.iter().enumerate() {

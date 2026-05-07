@@ -249,8 +249,10 @@ pub use crate::__cli_concat_params as concat_params;
 pub static mut START_TIME: i128 = 0;
 
 #[allow(non_upper_case_globals)]
-// TODO(port): mutable static Option<&[u8]>; written from C++ side (process.title)
-pub static mut Bun__Node__ProcessTitle: Option<&'static [u8]> = None;
+// PORT NOTE: Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
+// `process.title = "..."` (set_title) drops the previous value instead of
+// leaking. Guarded by `node::process::TITLE_MUTEX`.
+pub static mut Bun__Node__ProcessTitle: Option<Box<[u8]>> = None;
 
 thread_local! {
     pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };

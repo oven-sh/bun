@@ -24,6 +24,7 @@ use super::{
 // Zig's `PackageJSONEditor` is a file-namespace struct; the Rust port exposes
 // its functions directly on the `package_json_editor` module.
 use super::package_json_editor as PackageJSONEditor;
+use super::patch_package::{do_patch_commit, prepare_patch};
 use super::command_line_arguments::CommandLineArguments;
 use super::update_request::Array as UpdateRequestArray;
 
@@ -32,7 +33,6 @@ pub fn update_package_json_and_install_with_manager(
     ctx: Command::Context,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let mut update_requests = UpdateRequestArray::with_capacity(64);
     // `defer update_requests.deinit(manager.allocator)` — handled by Drop.
 
@@ -118,7 +118,6 @@ fn update_package_json_and_install_with_manager_with_updates(
     subcommand: Subcommand,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let log_level = manager.options.log_level;
     // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     if unsafe { (*manager.log).errors } > 0 {
@@ -188,13 +187,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     // If there originally was a newline at the end of their package.json, preserve it
     // so that we don't cause unnecessary diffs in their git history.
     // https://github.com/oven-sh/bun/issues/1375
-    let preserve_trailing_newline_at_eof_for_package_json = !current_package_json
-        .source
-        .contents
-        .is_empty()
-        && current_package_json.source.contents
-            [current_package_json.source.contents.len() - 1]
-            == b'\n';
+    let preserve_trailing_newline_at_eof_for_package_json =
+        current_package_json.source.contents.last() == Some(&b'\n');
 
     if subcommand == Subcommand::Remove {
         if !current_package_json_root.data.is_e_object() {
@@ -268,7 +262,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                                             new_len = 0;
                                         }
 
-                                        any_changes = true;
+                                            any_changes = true;
+                                        }
                                     }
                                 }
                                 i += 1;
@@ -379,14 +374,13 @@ fn update_package_json_and_install_with_manager_with_updates(
         js_printer::PrintJsonOptions {
             indent: current_package_json_indent,
             mangled_props: None,
-            ..Default::default()
         },
     ) {
         Ok(n) => n,
-        Err(err) => {
+        Err(e) => {
             Output::pretty_errorln(format_args!(
                 "package.json failed to write due to error {}",
-                err.name(),
+                e.name(),
             ));
             Global::crash();
         }
@@ -493,14 +487,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                 js_printer::PrintJsonOptions {
                     indent: root_package_json.indentation,
                     mangled_props: None,
-                    ..Default::default()
                 },
             ) {
                 Ok(n) => n,
-                Err(err) => {
+                Err(e) => {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
-                        err.name(),
+                        e.name(),
                     ));
                     Global::crash();
                 }
@@ -550,13 +543,14 @@ fn update_package_json_and_install_with_manager_with_updates(
             Err(err) => {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to parse due to error {}",
-                    err.name(),
+                    e.name(),
                 ));
                 Global::crash();
             }
         };
 
         if updates.is_empty() {
+            let exact_versions = manager.options.enable.exact_versions();
             PackageJSONEditor::edit_update_no_args(
                 manager,
                 &mut new_package_json,
@@ -596,14 +590,13 @@ fn update_package_json_and_install_with_manager_with_updates(
             js_printer::PrintJsonOptions {
                 indent: current_package_json_indent,
                 mangled_props: None,
-                ..Default::default()
             },
         ) {
             Ok(n) => n,
-            Err(err) => {
+            Err(e) => {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
-                    err.name(),
+                    e.name(),
                 ));
                 Global::crash();
             }
@@ -619,6 +612,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
+                    let log = unsafe { &mut *manager.log };
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
                         .get_with_path(
@@ -630,7 +624,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         .unwrap()
                     {
                         Ok(e) => e,
-                        Err(err) => {
+                        Err(e) => {
                             Output::err(
                                 err,
                                 "failed to read/parse package.json at '{s}'",
@@ -691,18 +685,19 @@ fn update_package_json_and_install_with_manager_with_updates(
                     let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
                     offset_buf[..request.name.len()].copy_from_slice(request.name);
                     let _ = cwd.delete_tree(
-                        &node_modules_buf[..b"node_modules/".len() + request.name.len()],
+                        &node_modules_buf[..PREFIX.len() + request.name.len()],
                     );
                 }
             }
 
             // This is where we clean dangling symlinks
             // This could be slow if there are a lot of symlinks
-            match bun_sys::open_dir_for_iteration(cwd.fd, manager.options.bin_path.as_bytes()) {
+            match bun_sys::open_dir_for_iteration(cwd, manager.options.bin_path.as_bytes()) {
                 Ok(node_modules_bin) => {
                     // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
                     let mut iter = bun_sys::iterate_dir(node_modules_bin);
-                    'iterator: while let Some(entry) = iter.next().ok().flatten() {
+                    'iterator: loop {
+                        let Ok(Some(entry)) = iter.next() else { break };
                         match entry.kind {
                             bun_sys::EntryKind::SymLink => {
                                 // any symlinks which we are unable to open are assumed to be dangling
@@ -783,8 +778,8 @@ pub fn update_package_json_and_install_and_cli(
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,
-            Err(err) => {
-                if err == bun_core::err!("MissingPackageJSON") {
+            Err(e) => {
+                if e == bun_core::err!("MissingPackageJSON") {
                     match subcommand {
                         Subcommand::Update => {
                             Output::pretty_errorln(format_args!(
@@ -811,7 +806,7 @@ pub fn update_package_json_and_install_and_cli(
                     }
                 }
 
-                return Err(err);
+                return Err(e);
             }
         }
     };
@@ -1019,7 +1014,6 @@ pub fn update_package_json_and_install(
     ctx: Command::Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match` in Phase B.

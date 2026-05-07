@@ -315,8 +315,6 @@ pub mod bun_object {
         #[cfg(not(feature = "css"))]
         BunObject_callback_color => super::color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
         BunObject_callback_deflateSync => JSZlib::deflate_sync,
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
@@ -346,6 +344,25 @@ pub mod bun_object {
         BunObject_callback_zstdDecompressSync => JSZstd::decompress_sync,
         BunObject_callback_zstdCompress => JSZstd::compress,
         BunObject_callback_zstdDecompress => JSZstd::decompress,
+    }
+    // `createParsedShellScript` / `createShellInterpreter` are pre-wrapped
+    // `JSHostFn` constants (MarkedArgumentBuffer-shimmed), so re-export the
+    // raw extern symbol directly instead of re-wrapping.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn BunObject_callback_createParsedShellScript(
+        g: *mut JSGlobalObject,
+        f: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC always passes valid pointers here.
+        unsafe { (crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT)(g, f) }
+    }
+    #[unsafe(no_mangle)]
+    pub extern "C" fn BunObject_callback_createShellInterpreter(
+        g: *mut JSGlobalObject,
+        f: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC always passes valid pointers here.
+        bun_jsc::to_js_host_fn(crate::shell::interpreter::Interpreter::create_shell_interpreter)(g, f)
     }
     // --- Callbacks ---
 

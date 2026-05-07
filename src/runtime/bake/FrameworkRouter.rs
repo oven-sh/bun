@@ -714,12 +714,14 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
-// PORT NOTE: `bake::FileSystemRouterType` derives `Clone` (Zig copied the struct
-// by value), so `Style` must be `Clone` as well. `bun_jsc::Strong` is a unique
-// GC handle with `Drop` and intentionally has no `Clone` — duplicating it would
-// double-free. The built-in styles are trivially copyable; the JS-defined arm
-// defers until upstream grows a safe clone (or we re-create from the held
-// `JSValue`, which needs a `&JSGlobalObject` we don't have here).
+// PORT NOTE: Zig copies `Style` by value (bitwise), which for the
+// `.javascript_defined` arm shallow-copies the `jsc.Strong.Optional` pointer —
+// both copies alias the same C++ StrongRef and only one `deinit()` is ever
+// called. In Rust `Strong` has `Drop`, so a bitwise copy would double-free.
+// The built-in styles are trivially copyable; the JS-defined arm is an
+// unimplemented feature in the Zig source as well (`Style.parse` does
+// `@panic("TODO: customizable Style")`), so cloning it is unreachable today.
+// Mirror the Zig `@panic` message instead of inventing unsafe aliasing.
 impl Clone for Style {
     fn clone(&self) -> Self {
         match self {
@@ -727,7 +729,8 @@ impl Clone for Style {
             Style::NextjsAppUi => Style::NextjsAppUi,
             Style::NextjsAppRoutes => Style::NextjsAppRoutes,
             Style::JavascriptDefined(_) => {
-                todo!("blocked_on: bun_jsc::Strong::clone")
+                // Matches Zig `Style.parse`: `@panic("TODO: customizable Style")`.
+                panic!("TODO: customizable Style")
             }
         }
     }
@@ -1533,27 +1536,6 @@ fn writer_splat_bytes_all(
     Ok(())
 }
 
-/// Local extension shim — `JSValue::putBunStringOneOrArray` exists in
-/// `JSValue.zig` but not yet in `bun_jsc`. Stubbed until upstream lands.
-trait JsValuePutOneOrArray {
-    fn put_bun_string_one_or_array(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_str::String,
-        value: JSValue,
-    ) -> JsResult<JSValue>;
-}
-impl JsValuePutOneOrArray for JSValue {
-    fn put_bun_string_one_or_array(
-        self,
-        _global: &JSGlobalObject,
-        _key: &bun_str::String,
-        _value: JSValue,
-    ) -> JsResult<JSValue> {
-        todo!("blocked_on: bun_jsc::JSValue::put_bun_string_one_or_array")
-    }
-}
-
 /// Interface for connecting FrameworkRouter to another codebase
 // PORT NOTE: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
 // generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
@@ -1914,15 +1896,23 @@ impl JSFrameworkRouter {
         });
 
         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-        let _resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
-        // TODO(port): borrowck — Zig calls `jsfr.router.scan(.init(0), &vm.transpiler.resolver,
-        // InsertionContext.wrap(jsfr))`, which needs `&mut jsfr.router` and
-        // `&mut *jsfr as &mut dyn InsertionHandler` simultaneously. The handler only touches
-        // `files`/`stored_parse_errors`, so the regions are disjoint at runtime; needs a
-        // split-field reshape (move `router` out, scan, move back) in Phase B.
-        todo!("blocked_on: borrowck — JSFrameworkRouter::constructor split-borrow of router/self");
-        #[allow(unreachable_code)]
+        let resolver = unsafe { &mut (*global.bun_vm()).transpiler.resolver };
+        // PORT NOTE: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
+        // insertion-context. The handler only touches `files`/`stored_parse_errors`, so
+        // split-borrow those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
+            let JSFrameworkRouter {
+                router,
+                files,
+                stored_parse_errors,
+            } = &mut *jsfr;
+            let mut ctx = JSFrameworkRouterScanCtx {
+                files,
+                stored_parse_errors,
+            };
+            router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
+        }
+
         if !jsfr.stored_parse_errors.is_empty() {
             let arr = JSValue::create_empty_array(global, jsfr.stored_parse_errors.len())?;
             for (i, item) in jsfr.stored_parse_errors.iter().enumerate() {
@@ -1945,7 +1935,6 @@ impl JSFrameworkRouter {
         }
 
         Ok(jsfr)
-        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2162,7 +2151,17 @@ impl fmt::Write for ByteFmtWriter<'_> {
     }
 }
 
-impl InsertionHandler for JSFrameworkRouter {
+// PORT NOTE: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
+// needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.
+// The handler only touches `files` / `stored_parse_errors`, so we split-borrow those two
+// fields into a dedicated context struct instead of implementing the trait on
+// `JSFrameworkRouter` itself.
+struct JSFrameworkRouterScanCtx<'a> {
+    files: &'a mut Vec<bun_str::String>,
+    stored_parse_errors: &'a mut Vec<StoredParseError>,
+}
+
+impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
@@ -2190,8 +2189,8 @@ impl InsertionHandler for JSFrameworkRouter {
         _other_id: OpaqueFileId,
         _file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        // TODO(port): Zig's wrap() panics if onRouterCollisionError is undeclared on T.
-        // JSFrameworkRouter does NOT define it, so this would have panicked at comptime in Zig.
+        // Zig's `InsertionContext.wrap()` emits `@panic("TODO: onRouterCollisionError for " ++ @typeName(T))`
+        // when `T` does not declare `onRouterCollisionError`. JSFrameworkRouter does not declare it.
         panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
     }
 }

@@ -6,6 +6,7 @@ use bun_install::{Lockfile, PackageManager, PackageNameHash};
 use bun_install::dependency::{self, Behavior, Dependency};
 use bun_logger as logger;
 use bun_output::{declare_scope, scoped_log};
+use bun_semver::string::Builder as SemverBuilder;
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
 use bun_str::strings;
@@ -53,7 +54,7 @@ impl OverrideMap {
 
     pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
         for dep in self.map.values() {
-            dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
+            dep.count(string_buf, builder);
         }
     }
 
@@ -69,10 +70,9 @@ impl OverrideMap {
         new.map.ensure_total_capacity(self.map.count())?;
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
-            new.map.put_assume_capacity(
-                *k,
-                v.clone_in(pm, old_lockfile.buffers.string_bytes.as_slice(), new_builder)?,
-            );
+            // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile in Phase B
+            new.map
+                .put_assume_capacity(*k, v.clone_in(pm, old_string_buf, new_builder)?);
         }
 
         Ok(new)
@@ -177,7 +177,7 @@ impl OverrideMap {
                             if value_obj.properties.len > 1 {
                                 log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
                             }
-                            break 'value Some(dot.expr);
+                            break 'value dot.expr;
                         } else {
                             log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
                             break 'value None;
@@ -190,7 +190,6 @@ impl OverrideMap {
                 log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
                 None
             };
-            let Some(value) = value else { continue };
 
             let version_str = value.as_utf8_string_literal().unwrap();
             if version_str.starts_with(b"patch:") {
@@ -320,7 +319,9 @@ pub fn parse_override_value(
         let ref_name = &value[1..];
         // This is fine for this string to not share the string pool, because it's only used for .eql()
         let ref_name_str = SemverString::init(ref_name, ref_name);
-        let pkg_deps: &[Dependency] = root_package.dependencies.get(lockfile.buffers.dependencies.as_slice());
+        let pkg_deps: &[Dependency] = root_package
+            .dependencies
+            .get(lockfile.buffers.dependencies.as_slice());
         for dep in pkg_deps {
             if dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.as_slice(), ref_name) {
                 return Ok(Some(dep.clone()));
@@ -345,7 +346,7 @@ pub fn parse_override_value(
     let name_hash = SemverBuilder::string_hash(key);
     let name = builder.append_with_hash::<SemverString>(key, name_hash);
 
-    let version = match Dependency::parse(
+    let version = match dependency::parse(
         name,
         name_hash,
         literal_sliced.slice,

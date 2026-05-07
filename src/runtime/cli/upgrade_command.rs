@@ -38,9 +38,9 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 #[inline]
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
-        loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
-        )),
+        loop_: bun_event_loop::EventLoopHandle::init_mini(
+            bun_event_loop::MiniEventLoop::init_global(None, None),
+        ),
         ..Default::default()
     }
 }
@@ -1038,10 +1038,10 @@ impl UpgradeCommand {
                     // Zig's `catch |err|` arm: any spawn-time failure (allocator/OOM
                     // surfaces as `bun_core::Error`, posix_spawn surfaces as
                     // `bun_sys::Error`) → same diagnostic + cleanup.
-                    let err_name: &'static str = match spawned {
+                    let err_name: &'static [u8] = match spawned {
                         Ok(Ok(r)) => break 'spawn r,
                         Ok(Err(sys_err)) => sys_err.name(),
-                        Err(core_err) => core_err.name(),
+                        Err(core_err) => core_err.name().as_bytes(),
                     };
 
                     let _delete_guard = scopeguard::guard((), |_| {
@@ -1051,7 +1051,7 @@ impl UpgradeCommand {
                     // Zig matched `error.FileNotFound`; the bun.sys spawn path tags
                     // it as ENOENT. Accept both to keep snapshot parity across
                     // the std→bun.sys mapping.
-                    if err_name == "FileNotFound" || err_name == "ENOENT" {
+                    if err_name == b"FileNotFound" || err_name == b"ENOENT" {
                         // Zig: std.fs.cwd().access(exe, .{}) — we already chdir'd to tmpdir
                         if sys::exists(exe) {
                             // On systems like NixOS, the FileNotFound is actually the system-wide linker,
@@ -1070,7 +1070,7 @@ impl UpgradeCommand {
 
                     Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> Failed to verify Bun (code: {})<r>",
-                        err_name
+                        bstr::BStr::new(err_name)
                     ));
                     Global::exit(1);
                 };

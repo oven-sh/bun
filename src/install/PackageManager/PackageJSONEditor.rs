@@ -1114,7 +1114,9 @@ pub fn edit(
                                 v
                             };
 
-                            let _ = alias_at_index;
+                            // `alias_at_index` is set above only as a side effect of
+                            // computing `version_literal`; the Zig original never reads it.
+                            drop(alias_at_index);
 
                             if entry.value.is_alias {
                                 let dep_literal = &entry.value.original_version_literal;

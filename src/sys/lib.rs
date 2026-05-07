@@ -1412,7 +1412,13 @@ mod posix_impl {
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
+    #[inline]
     pub fn mkdir_recursive_at(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
+        mkdir_recursive_at_mode(dir, sub_path, 0o755)
+    }
+    /// `mkdir_recursive_at` with an explicit `mode` for created directories
+    /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
+    pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
         // PERF(port): Zig leaves the buffer `undefined`; zero-fill here for
         // simplicity. Stack-local, no heap.
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
@@ -1437,7 +1443,7 @@ mod posix_impl {
             // SAFETY: buf[0..=peel] is NUL-terminated (initial buf[end]=0 or a
             // peeled '/' overwritten below).
             let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
-            match mkdirat(dir, z, 0o755) {
+            match mkdirat(dir, z, mode) {
                 Ok(()) => break,
                 Err(e) if e.get_errno() == E::EEXIST => break,
                 Err(e) if e.get_errno() == E::ENOENT => {
@@ -1463,7 +1469,7 @@ mod posix_impl {
             let next_end = if nuls_len > 0 { nuls[nuls_len - 1] as usize } else { end };
             // SAFETY: buf[next_end] == 0 (still un-restored or the original sentinel).
             let z = unsafe { ZStr::from_raw(buf.as_ptr(), next_end) };
-            match mkdirat(dir, z, 0o755) {
+            match mkdirat(dir, z, mode) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == E::EEXIST => {}
                 Err(e) => return Err(e),
@@ -2272,7 +2278,11 @@ mod windows_impl {
     pub fn unlinkat(dir: Fd, path: &ZStr) -> Maybe<()> {
         unlinkat_with_flags(dir, path, 0)
     }
+    #[inline]
     pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
+        mkdir_recursive_at_mode(dir, sub, 0o777)
+    }
+    pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
         // Port of `bun.makePath` — split on sep and create each component.
         let mut buf = bun_core::PathBuffer::default();
         let mut n = 0usize;
@@ -2284,7 +2294,7 @@ mod windows_impl {
             buf.0[n] = 0;
             // SAFETY: NUL-terminated above; `n` bytes valid in `buf`.
             let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), n) };
-            match mkdirat(dir, z, 0o777) {
+            match mkdirat(dir, z, mode) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == E::EEXIST => {}
                 Err(e) => return Err(e),

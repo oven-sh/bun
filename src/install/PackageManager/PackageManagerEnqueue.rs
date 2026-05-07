@@ -344,18 +344,22 @@ pub fn enqueue_parse_npm_package(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
-        *task = Task::Task {
-            package_manager: this,
+        task.write(Task::Task {
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
-            request: crate::package_manager_task::Request::PackageManifest {
-                network: network_task,
-                name,
+            request: crate::package_manager_task::Request {
+                package_manifest: ManuallyDrop::new(crate::package_manager_task::PackageManifestRequest {
+                    // SAFETY: `network_task` is a freshly-vended pool slot; the
+                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
+                    network: &mut *network_task,
+                    name,
+                }),
             },
             id: task_id,
             // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
             ..Task::uninit()
-        };
+        });
         &mut (*task).threadpool_task
     }
 }
@@ -385,17 +389,22 @@ pub fn enqueue_package_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
+    let package = this.lockfile.packages.get(package_id);
 
-    if let Some(task) = run_tasks::generate_network_task_for_tarball(this,
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(
+        this,
         task_id,
         url,
         is_required,
         dependency_id,
-        this.lockfile.packages.get(package_id),
+        package,
         patch_name_and_version_hash,
         crate::network_task::Authorization::AllowAuthorization,
     )? {
-        task.schedule(&mut this.network_tarball_batch);
+        // PORT NOTE: reshaped for borrowck — see `enqueue_tarball_for_download`.
+        let task: *mut NetworkTask = task;
+        // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
+        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
         if this.network_tarball_batch.len > 0 {
             let _ = this.schedule_tasks();
         }
@@ -436,7 +445,7 @@ pub fn enqueue_dependency_to_root(
         let dummy = Dependency {
             name: SemverString::init(name, name),
             name_hash: Semver::string::Builder::string_hash(name),
-            version: *version,
+            version: version.clone(),
             behavior,
         };
         dummy.count_with_different_buffers(name, version_buf, &mut builder);
@@ -445,8 +454,15 @@ pub fn enqueue_dependency_to_root(
             return DependencyToEnqueue::Failure(err.into());
         }
 
+        // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
+        // takes `&mut PackageManager`; `builder` already borrows
+        // `this.lockfile`. Detach `builder` via a raw pointer for the call
+        // (Zig passes both freely).
+        let builder_ptr: *mut Lockfile::StringBuilder<'_> = &mut builder;
+        // SAFETY: `builder` borrows `this.lockfile.buffers.string_bytes`;
+        // `clone_with_different_buffers` does not touch `this.lockfile`.
         let dep = dummy
-            .clone_with_different_buffers(this, name, version_buf, &mut builder)
+            .clone_with_different_buffers(this, name, version_buf, unsafe { &mut *builder_ptr })
             .expect("unreachable");
         builder.clamp();
         let index = this.lockfile.buffers.dependencies.len();
@@ -464,7 +480,7 @@ pub fn enqueue_dependency_to_root(
         // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
         // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
         // would invalidate a pointer taken directly into it.
-        let dependency = this.lockfile.buffers.dependencies[dep_id as usize];
+        let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         if let Err(err) = enqueue_dependency_with_main_and_success_fn(
             this,
             dep_id,
@@ -497,17 +513,15 @@ pub fn enqueue_dependency_to_root(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
-                        if let Err(err) = run_tasks(manager,
-                            (),
-                            (),
-                            PackageManager::RunTasksCallbacks {
-                                on_extract: (),
-                                on_resolve: (),
-                                on_package_manifest_error: (),
-                                on_package_download_error: (),
-                            },
+                        // Zig: `runTasks(void, {}, .{ .onExtract = {}, ... }, false, log_level)`
+                        // — all callbacks `void`. `VoidRunTasksCallbacks` (below)
+                        // mirrors that with `Ctx = ()` and every `HAS_* = false`.
+                        let log_level = manager.options.log_level;
+                        if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
+                            manager,
+                            &mut (),
                             false,
-                            manager.options.log_level,
+                            log_level,
                         ) {
                             self.err = Some(err);
                             return true;
@@ -564,6 +578,14 @@ pub fn enqueue_dependency_to_root(
     }
 }
 
+/// Mirrors Zig's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
+/// by `enqueueDependencyToRoot`: `Ctx = void`, every `on*` is `{}` so the
+/// `HAS_*` const-gates compile out the callback paths.
+struct VoidRunTasksCallbacks;
+impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
+    type Ctx = ();
+}
+
 pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     if this.network_task_fifo.writable_length() == 0 {
         this.flush_network_queue();
@@ -573,12 +595,13 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
+pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
-        (&*task as *const PatchTask) as usize,
-        <&'static str>::from(&task.callback)
+        task as usize,
+        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        unsafe { (*task).callback.tag_name() }
     );
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
@@ -589,14 +612,16 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask>) {
+pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
-        (&*task as *const PatchTask) as usize,
-        <&'static str>::from(&task.callback)
+        task as usize,
+        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        unsafe { (*task).callback.tag_name() }
     );
-    task.pre = true;
+    // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+    unsafe { (*task).pre = true };
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
     }
@@ -670,7 +695,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.value.npm.is_alias)
         {
-            if let Some(new) = this.lockfile.overrides.get(&name_hash) {
+            if let Some(new) = this.lockfile.overrides.get(name_hash) {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
@@ -679,19 +704,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
 
                 (name, name_hash) =
-                    update_name_and_name_hash_from_version_replacement(this.lockfile, name, name_hash, new);
+                    update_name_and_name_hash_from_version_replacement(&this.lockfile, name, name_hash, new.clone());
 
                 if new.tag == dependency::version::Tag::Catalog {
                     if let Some(catalog_dep) =
-                        this.lockfile.catalogs.get(this.lockfile, &new.value.catalog, &name)
+                        this.lockfile.catalogs.get(&this.lockfile, new.value.catalog, name)
                     {
+                        let v = catalog_dep.version.clone();
                         (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                            this.lockfile,
+                            &this.lockfile,
                             name,
                             name_hash,
-                            catalog_dep.version,
+                            v.clone(),
                         );
-                        break 'version catalog_dep.version;
+                        break 'version v;
                     }
                 }
 
@@ -701,18 +727,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
             if dependency.version.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
-                    this.lockfile,
-                    &dependency.version.value.catalog,
-                    &name,
+                    &this.lockfile,
+                    dependency.version.value.catalog,
+                    name,
                 ) {
+                    let v = catalog_dep.version.clone();
                     (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                        this.lockfile,
+                        &this.lockfile,
                         name,
                         name_hash,
-                        catalog_dep.version,
+                        v.clone(),
                     );
 
-                    break 'version catalog_dep.version;
+                    break 'version v;
                 }
             }
         }
@@ -898,7 +925,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if get_preinstall_state(this, result.package.meta.id)
                                         == install::PreinstallState::Extract
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::Extracting,
                                         );
@@ -906,20 +934,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
-                                    if matches!(patch_task.callback, PatchTaskCallback::CalcHash(..))
+                                    // SAFETY: `patch_task` is a non-null `Box::into_raw`.
+                                    let cb = unsafe { &(*patch_task).callback };
+                                    if cb.is_calc_hash()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::CalcPatchHash
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
                                         enqueue_patch_task(this, patch_task);
-                                    } else if matches!(patch_task.callback, PatchTaskCallback::Apply(..))
+                                    } else if cb.is_apply()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
                                     {
-                                        set_preinstall_state(this, 
+                                        set_preinstall_state(
+                                            this,
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );
@@ -967,9 +999,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
+                                    // PORT NOTE: reshaped for borrowck — `this.manifests`
+                                    // borrows `*this`; pass `*mut PackageManager` for the
+                                    // disk-load callback (Zig passes the aliased `*this`).
+                                    let scope = this.scope_for_package_name(name_str);
+                                    let this_ptr: *mut PackageManager = this;
                                     if let Some(manifest) = this.manifests.by_name_hash_allow_expired(
-                                        this,
-                                        this.scope_for_package_name(name_str),
+                                        this_ptr,
+                                        scope,
                                         name_hash,
                                         &mut expired,
                                         ManifestLoad::LoadFromMemoryFallbackToDisk,
@@ -996,7 +1033,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         .as_ref()
                                                         .unwrap()
                                                         .should_exclude_from_age_filter(
-                                                            &this.options.minimum_release_age_excludes,
+                                                            this.options.minimum_release_age_excludes,
                                                         )
                                                         && Npm::PackageManifest::is_package_version_too_recent(
                                                             find_result.package, min_age_ms,
@@ -1059,21 +1096,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 let network_task = this.get_network_task();
                                 // SAFETY: network_task is a freshly acquired pool slot
                                 unsafe {
-                                    *network_task = NetworkTask {
-                                        package_manager: this,
+                                    network_task.write(NetworkTask {
+                                        package_manager: (this as *mut PackageManager).cast(),
                                         // TODO(port): `callback: undefined` in Zig
                                         callback: core::mem::zeroed(),
                                         task_id,
                                         // allocator dropped — global mimalloc
-                                        ..NetworkTask::uninit()
-                                    };
+                                        ..NetworkTask::default()
+                                    });
                                 }
 
+                                let scope = this.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
                                 unsafe {
                                     (*network_task).for_manifest(
                                         name_str,
-                                        this.scope_for_package_name(name_str),
+                                        scope,
                                         loaded_manifest.as_ref(),
                                         dependency.behavior.is_optional(),
                                         needs_extended_manifest,

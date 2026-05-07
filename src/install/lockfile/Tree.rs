@@ -731,7 +731,7 @@ impl Tree {
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
-                if dependency.behavior.is_bundled() {
+                if dep_behavior.is_bundled() {
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: true,
@@ -739,12 +739,12 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    if dependency.behavior.is_optional_peer() {
+                    if dep_behavior.is_optional_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
                             hoist_root_id,
                             pkg_id,
-                            &dependency,
+                            dep_id,
                             builder,
                         )?;
                     }
@@ -764,7 +764,7 @@ impl Tree {
                     next_id,
                     hoist_root_id,
                     pkg_id,
-                    &dependency,
+                    dep_id,
                     builder,
                 )?
             };
@@ -777,11 +777,11 @@ impl Tree {
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
                     if cfg!(debug_assertions) {
-                        debug_assert!(!builder.pending_optional_peers.contains_key(&dependency.name_hash));
+                        debug_assert!(!builder.pending_optional_peers.contains_key(&dep_name_hash));
                     }
 
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -800,7 +800,7 @@ impl Tree {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -838,7 +838,7 @@ impl Tree {
                     // later if it's possible to resolve it.
                     let entry = builder
                         .pending_optional_peers
-                        .get_or_put(dependency.name_hash)?;
+                        .get_or_put(dep_name_hash)?;
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }
@@ -890,15 +890,20 @@ impl Tree {
     // `trees: &mut [Tree]`, `dependency_lists: &mut [...]`, and `builder: &mut Builder`
     // simultaneously, which overlaps mutable borrows. The body never mutates `self`, `trees`,
     // or `dependency_lists`, so we take `self_id: Id` by value and re-derive read-only views
-    // from `builder.list` on each access. The only long-lived `&mut` is `builder`.
+    // from `builder.list` on each access. `dependency` is passed by id and re-derived from
+    // `builder.dependencies` (a `&'a [Dependency]` field, copied out so the borrow detaches
+    // from `builder`). The only long-lived `&mut` is `builder`.
     fn hoist_dependency<const AS_DEFINED: bool, const METHOD: BuilderMethod>(
         self_id: Id,
         hoist_root_id: Id,
         package_id: PackageID,
-        dependency: &Dependency,
+        input_dep_id: DependencyID,
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<HoistDependencyResult, SubtreeError> {
-        // TODO(port): narrow error set
+        // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
+        let deps: &[Dependency] = builder.dependencies;
+        let dependency: &Dependency = &deps[input_dep_id as usize];
+
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
         let this_dependencies_len = this
@@ -910,7 +915,7 @@ impl Tree {
             let dep_id = this
                 .dependencies
                 .get(builder.list.items_dependencies()[self_id as usize].as_slice())[i];
-            let dep = &builder.dependencies[dep_id as usize];
+            let dep = &deps[dep_id as usize];
             if dep.name_hash != dependency.name_hash {
                 continue;
             }
@@ -1018,7 +1023,7 @@ impl Tree {
                 this.parent,
                 hoist_root_id,
                 package_id,
-                dependency,
+                input_dep_id,
                 builder,
             )
             .expect("unreachable");

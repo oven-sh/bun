@@ -1069,8 +1069,27 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             );
         }
 
-        tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
-        Ok(())
+    #[cfg(unix)]
+    {
+        let _ = sys::fchmod(
+            tmpfile.fd,
+            // chmod 666,
+            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+        );
+    }
+
+    tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
+    Ok(())
+}
+
+/// `bun_io::Write` adapter for `bun_sys::File` — port of Zig
+/// `std.fs.File.writerStreaming(&buf).interface`. `bun_sys` doesn't depend on
+/// `bun_io`, so the impl lives here next to its sole caller.
+struct FileSink(File);
+impl bun_io::Write for FileSink {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.0.write_all(buf).map_err(Error::from)
     }
 }
 

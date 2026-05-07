@@ -14,6 +14,8 @@ use crate::server::WebSocketServerHandler;
 
 bun_core::declare_scope!(WebSocketServer, visible);
 
+bun_output::declare_scope!(WebSocketServer, visible);
+
 // PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper
 // outlives any stack frame. LIFETIMES.tsv says BORROW_PARAM but the handler
 // lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
@@ -135,6 +137,13 @@ pub mod js {
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data);
 }
 
+unsafe extern "C" {
+    fn ServerWebSocket__create(
+        global: *mut JSGlobalObject,
+        ptr: *mut ServerWebSocket,
+    ) -> JSValue;
+}
+
 impl ServerWebSocket {
     #[inline]
     fn websocket(&self) -> AnyWebSocket {
@@ -198,8 +207,7 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        // PORT NOTE: reshaped for borrowck — handler is &'a, mutate via interior mutability or raw in Phase B
-        // TODO(port): handler.active_connections is mutated through a shared ref; needs Cell/Atomic
+        // PORT NOTE: reshaped for borrowck — handler is &'a, mutate via interior helper
         handler.active_connections_saturating_add(1);
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
@@ -536,9 +544,8 @@ impl ServerWebSocket {
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is
-    // emitted by `#[bun_jsc::JsClass]` codegen, which calls `<Self>::constructor`
-    // directly. The bare `host_fn` expansion generates a free-function call that
-    // doesn't resolve inside an `impl` block.
+    // emitted by `generated_classes.rs`, which calls `<Self>::constructor`
+    // directly.
     pub fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
@@ -1652,7 +1659,7 @@ impl ServerWebSocket {
 // Zig: `WebSocketBehavior.Wrap(ServerType, @This(), ssl)` duck-types `@This()`
 // for `onOpen`/`onMessage`/etc. via `@hasDecl`. Rust needs an explicit trait
 // impl; delegate straight to the inherent methods above.
-impl bun_uws_sys::web_socket::WebSocketHandler for ServerWebSocket {
+impl WebSocketHandler for ServerWebSocket {
     #[inline(always)]
     fn on_open(&mut self, ws: AnyWebSocket) {
         ServerWebSocket::on_open(self, ws)

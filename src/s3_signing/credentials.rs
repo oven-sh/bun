@@ -181,19 +181,13 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 }
 
 #[inline]
-fn boring_engine() -> Option<&'static mut bun_sha_hmac::sha::ffi::ENGINE> {
+fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
     let p = BORING_ENGINE_HOOK.load(Ordering::Relaxed);
     if p.is_null() {
-        return None;
+        return core::ptr::null_mut();
     }
     // SAFETY: hook registered by bun_runtime::init() with matching signature.
-    let eng = unsafe { core::mem::transmute::<*mut (), BoringEngineFn>(p)() };
-    if eng.is_null() {
-        None
-    } else {
-        // SAFETY: ENGINE lives for process lifetime once initialized.
-        Some(unsafe { &mut *eng })
-    }
+    unsafe { core::mem::transmute::<*mut (), BoringEngineFn>(p)() }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

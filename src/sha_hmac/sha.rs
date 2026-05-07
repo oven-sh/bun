@@ -32,12 +32,11 @@ pub mod ffi {
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 
-    /// Opaque `struct engine_st` (`typedef ... ENGINE`).
-    #[repr(C)]
-    pub struct ENGINE {
-        _p: [u8; 0],
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
-    }
+    /// Opaque `struct engine_st` (`typedef ... ENGINE`). Re-exported from
+    /// `bun_boringssl_sys` so callers in higher crates that already hold a
+    /// `*mut bun_boringssl_sys::ENGINE` (e.g. `RareData::boring_engine()`) can
+    /// pass it to `evp::*::hash` without a cross-crate opaque-type mismatch.
+    pub use bun_boringssl_sys::ENGINE;
 
     /// `struct env_md_ctx_st` — laid out to match
     /// `vendor/boringssl/include/openssl/digest.h` so it can live by-value on
@@ -218,15 +217,10 @@ macro_rules! new_evp {
             pub fn hash(
                 bytes: &[u8],
                 out: &mut [u8; $digest_size],
-                engine: Option<&mut ffi::ENGINE>,
+                engine: *mut ffi::ENGINE,
             ) {
                 // SAFETY: see `init()` re: md getter.
                 let md = unsafe { ffi::$md_fn() };
-
-                let engine_ptr = match engine {
-                    Some(e) => e as *mut ffi::ENGINE,
-                    None => ptr::null_mut(),
-                };
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
                 let rc: c_int = unsafe {
@@ -236,7 +230,7 @@ macro_rules! new_evp {
                         out.as_mut_ptr(),
                         ptr::null_mut(),
                         md,
-                        engine_ptr,
+                        engine,
                     )
                 };
                 debug_assert!(rc == 1);

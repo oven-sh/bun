@@ -2410,9 +2410,10 @@ impl BlobExt for Blob {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
-            let out = BunString::clone_utf16(unsafe {
+            // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            let out = OwnedString::new(BunString::clone_utf16(unsafe {
                 core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-            });
+            }));
             return out.to_js(global);
         }
 
@@ -2476,7 +2477,9 @@ impl BlobExt for Blob {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
                 if buf.len() != raw_slice.len() {
-                    let out = BunString::clone_latin1(buf);
+                    // +1 WTF ref; `OwnedString` releases it on scope exit
+                    // (Zig: `defer { free; out.deref() }`).
+                    let out = OwnedString::new(BunString::clone_latin1(buf));
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                     return out.to_js(global);
@@ -2563,9 +2566,10 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
-            let mut out = BunString::clone_utf16(unsafe {
+            // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            let mut out = OwnedString::new(BunString::clone_utf16(unsafe {
                 core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
-            });
+            }));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -6047,8 +6051,9 @@ impl Internal {
             self.bytes = Vec::new();
             return Ok(return_value);
         } else if bytes_without_bom.len() != self.bytes.len() {
-            // If there was a UTF8 BOM, we clone it
-            let out = BunString::clone_latin1(&self.bytes[3..]);
+            // If there was a UTF8 BOM, we clone it.
+            // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            let out = OwnedString::new(BunString::clone_latin1(&self.bytes[3..]));
             self.bytes = Vec::new();
             return jsc::StringJsc::to_js(&out, global_this);
         } else {

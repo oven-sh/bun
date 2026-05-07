@@ -158,10 +158,6 @@ impl ReadableStream {
         Ok(())
     }
 
-    // TODO(b2-blocked): ByteBlobLoader/ByteStream method bodies (`to_any_blob`,
-    // `parent`) gated until those modules are un-stubbed. FileReader path
-    // additionally needs `Blob::init_with_store`.
-    
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) {
             return None;
@@ -183,8 +179,9 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
+                    // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
+                    // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
-                    blob.store.as_ref().unwrap().ref_();
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started);
                     self.done(global_this);
@@ -214,11 +211,8 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            // TODO(b2-blocked): ByteBlobLoader/ByteStream are stubbed; un-gate once `parent()` lands.
-            
             Source::Blob(source) => unsafe { (*source).parent().cancel() },
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
-            
             Source::Bytes(source) => unsafe { (*source).parent().cancel() },
             _ => {}
         }
@@ -311,11 +305,6 @@ impl ReadableStream {
         })
     }
 
-    // TODO(b2-blocked): FileReader/ByteBlobLoader construction — `from_blob_copy_ref`
-    // and the helpers below build a `NewSource<FileReader>` with field-level inits
-    // (`event_loop`, `lazy`, `reader.from`) and reach into `blob::StoreData::S3`.
-    // FileReader's body is still being ported; un-gate together.
-    
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
         // Zig: `bytes: []u8` — owned slice; accept Vec<u8> / Box<[u8]> alike.
@@ -327,7 +316,6 @@ impl ReadableStream {
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
-    
     pub fn from_blob_copy_ref(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -367,12 +355,13 @@ impl ReadableStream {
                         } else {
                             None
                         },
+                        // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`
+                        // after the raw `.lazy = .{ .blob = store }` assignment.
                         lazy: webcore::file_reader::Lazy::Blob(store.clone()),
                         ..Default::default()
                     },
                     ..Default::default()
                 });
-                store.ref_();
                 // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
                 // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
                 unsafe { &mut *reader }.to_readable_stream(global_this)
@@ -404,7 +393,6 @@ impl ReadableStream {
         }
     }
 
-    
     pub fn from_file_blob_with_offset(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -423,12 +411,12 @@ impl ReadableStream {
                             unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
                         ),
                         start_offset: Some(offset),
+                        // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
                         lazy: webcore::file_reader::Lazy::Blob(store.clone()),
                         ..Default::default()
                     },
                     ..Default::default()
                 });
-                store.ref_();
                 // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
                 // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
                 unsafe { &mut *reader }.to_readable_stream(global_this)
@@ -437,7 +425,6 @@ impl ReadableStream {
         }
     }
 
-    
     pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
         _parent: P,

@@ -462,23 +462,6 @@ pub mod E {
             close_brace_loc: Loc::EMPTY,
         };
 
-        /// Shallow field-copy (Zig copies the struct bytes; `BabyList` is a
-        /// thin ptr+len+cap and aliasing it matches `data.e_object.*`). The
-        /// caller is expected to write the mutated copy back via
-        /// `Expr::init`/`put`, mirroring update_interactive_command.zig's
-        /// `var obj = ...e_object.*; obj.put(...); parent.put("k", Expr.allocate(obj))`.
-        #[inline]
-        pub fn shallow_clone(&self) -> Self {
-            Self {
-                properties: self.properties.shallow_clone(),
-                comma_after_spread: self.comma_after_spread,
-                is_single_line: self.is_single_line,
-                is_parenthesized: self.is_parenthesized,
-                was_originally_macro: self.was_originally_macro,
-                close_brace_loc: self.close_brace_loc,
-            }
-        }
-
         pub fn get(&self, key: &[u8]) -> Option<Expr> {
             self.as_property(key).map(|q| q.expr)
         }

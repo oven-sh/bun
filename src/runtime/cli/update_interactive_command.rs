@@ -2314,6 +2314,30 @@ pub fn edit_catalog_definitions(
     Ok(())
 }
 
+/// Find the `StoreRef<E::Object>` for `package_json[.workspaces].<key>`, or
+/// `None` if absent / not an object. Mirrors the labeled-block lookup in
+/// updateDefaultCatalog/updateNamedCatalog.
+fn find_catalog_object(
+    package_json: &Expr,
+    key: &[u8],
+) -> Option<js_ast::StoreRef<E::Object>> {
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
+        if workspaces_query.expr.is_object() {
+            if let Some(q) = workspaces_query.expr.as_property(key) {
+                if let Some(o) = q.expr.data.e_object() {
+                    return Some(o);
+                }
+            }
+        }
+    }
+    if let Some(q) = package_json.as_property(key) {
+        if let Some(o) = q.expr.data.e_object() {
+            return Some(o);
+        }
+    }
+    None
+}
+
 fn update_default_catalog(
     bump: &Bump,
     package_json: &mut Expr,
@@ -2322,23 +2346,22 @@ fn update_default_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
-    let mut catalog_obj: E::Object = 'brk: {
-        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-            if workspaces_query.expr.is_object() {
-                if let Some(catalog_query) = workspaces_query.expr.as_property(b"catalog") {
-                    if let Some(o) = catalog_query.expr.data.e_object() {
-                        break 'brk o.shallow_clone();
-                    }
-                }
-            }
+    // PORT NOTE: reshaped — Zig copies `data.e_object.*` (struct bytes,
+    // aliasing the `BabyList` ptr) and writes the mutated copy back via
+    // `parent.put("catalog", Expr.allocate(obj))`. Rust `BabyList<T>` has a
+    // `Drop` that frees its buffer, so a shallow copy would double-free.
+    // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
+    // is `Copy + DerefMut`); the parent already points at it, so re-`put` of
+    // the same key is a no-op overwrite.
+    let mut fresh_obj = E::Object::default();
+    let existing = find_catalog_object(package_json, b"catalog");
+    let catalog_obj: &mut E::Object = match existing {
+        Some(mut o) => {
+            // SAFETY: `StoreRef` derefs into the live arena slot for the
+            // duration of this fn; no other `&mut` to it is live.
+            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
         }
-        // Fallback to root-level catalog
-        if let Some(catalog_query) = package_json.as_property(b"catalog") {
-            if let Some(o) = catalog_query.expr.data.e_object() {
-                break 'brk o.shallow_clone();
-            }
-        }
-        E::Object::default()
+        None => &mut fresh_obj,
     };
 
     // Get original version to preserve prefix if it exists
@@ -2357,13 +2380,18 @@ fn update_default_catalog(
         .put(bump, leak_dup(package_name), new_expr)
         .map_err(|_| bun_core::err!("OutOfMemory"))?;
 
+    if existing.is_some() {
+        // Mutated in place; parent already references this object.
+        return Ok(());
+    }
+
     // Check if we need to update under workspaces.catalog or root-level catalog
     if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
             if workspaces_query.expr.as_property(b"catalog").is_some() {
                 // Update under workspaces.catalog
                 ws_obj
-                    .put(bump, b"catalog", Expr::init(catalog_obj, Loc::EMPTY))
+                    .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 return Ok(());
             }
@@ -2373,7 +2401,7 @@ fn update_default_catalog(
     // Otherwise update at root level
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalog", Expr::init(catalog_obj, Loc::EMPTY))
+            .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
             .map_err(|_| bun_core::err!("OutOfMemory"))?;
     }
     Ok(())
@@ -2388,33 +2416,29 @@ fn update_named_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
-    let mut catalogs_obj: E::Object = 'brk: {
-        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-            if workspaces_query.expr.is_object() {
-                if let Some(catalogs_query) = workspaces_query.expr.as_property(b"catalogs") {
-                    if let Some(o) = catalogs_query.expr.data.e_object() {
-                        break 'brk o.shallow_clone();
-                    }
-                }
-            }
+    // PORT NOTE: reshaped — see `update_default_catalog` for the
+    // shallow-copy-vs-in-place rationale.
+    let mut fresh_catalogs = E::Object::default();
+    let existing_catalogs = find_catalog_object(package_json, b"catalogs");
+    let catalogs_obj: &mut E::Object = match existing_catalogs {
+        Some(mut o) => {
+            // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
+            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
         }
-        // Fallback to root-level catalogs
-        if let Some(catalogs_query) = package_json.as_property(b"catalogs") {
-            if let Some(o) = catalogs_query.expr.data.e_object() {
-                break 'brk o.shallow_clone();
-            }
-        }
-        E::Object::default()
+        None => &mut fresh_catalogs,
     };
 
     // Get or create the specific catalog
-    let mut catalog_obj: E::Object = 'brk: {
-        if let Some(catalog_query) = catalogs_obj.get(catalog_name) {
-            if let Some(o) = catalog_query.data.e_object() {
-                break 'brk o.shallow_clone();
-            }
+    let mut fresh_catalog = E::Object::default();
+    let existing_catalog: Option<js_ast::StoreRef<E::Object>> = catalogs_obj
+        .get(catalog_name)
+        .and_then(|e| e.data.e_object());
+    let catalog_obj: &mut E::Object = match existing_catalog {
+        Some(mut o) => {
+            // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
+            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
         }
-        E::Object::default()
+        None => &mut fresh_catalog,
     };
 
     // Get original version to preserve prefix if it exists
@@ -2434,9 +2458,16 @@ fn update_named_catalog(
         .map_err(|_| bun_core::err!("OutOfMemory"))?;
 
     // Update the catalog in catalogs object
-    catalogs_obj
-        .put(bump, leak_dup(catalog_name), Expr::init(catalog_obj, Loc::EMPTY))
-        .map_err(|_| bun_core::err!("OutOfMemory"))?;
+    if existing_catalog.is_none() {
+        catalogs_obj
+            .put(bump, leak_dup(catalog_name), Expr::init(fresh_catalog, Loc::EMPTY))
+            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+    }
+
+    if existing_catalogs.is_some() {
+        // Mutated in place; parent already references this object.
+        return Ok(());
+    }
 
     // Check if we need to update under workspaces.catalogs or root-level catalogs
     if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
@@ -2444,7 +2475,7 @@ fn update_named_catalog(
             if workspaces_query.expr.as_property(b"catalogs").is_some() {
                 // Update under workspaces.catalogs
                 ws_obj
-                    .put(bump, b"catalogs", Expr::init(catalogs_obj, Loc::EMPTY))
+                    .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 return Ok(());
             }
@@ -2454,7 +2485,7 @@ fn update_named_catalog(
     // Otherwise update at root level
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalogs", Expr::init(catalogs_obj, Loc::EMPTY))
+            .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
             .map_err(|_| bun_core::err!("OutOfMemory"))?;
     }
     Ok(())

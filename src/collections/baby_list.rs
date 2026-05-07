@@ -496,6 +496,28 @@ impl<T> BabyList<T> {
         Ok(())
     }
 
+    /// Bitwise-alias the `(ptr, len, cap)` header without taking ownership.
+    ///
+    /// Mirrors Zig's struct-copy `list.*` semantics for the many call sites
+    /// that fork a `BabyList` view, mutate it, and write it back (e.g.
+    /// `var obj = e_object.*; obj.put(...);`). The returned list is tagged
+    /// `Origin::Borrowed` so its `Drop` is a no-op; the original retains
+    /// ownership of the allocation. Appending to either alias may leave the
+    /// other dangling — callers must uphold the same single-writer discipline
+    /// the Zig code already relies on.
+    #[inline]
+    pub fn shallow_clone(&self) -> Self {
+        Self {
+            ptr: self.ptr,
+            len: self.len,
+            cap: self.cap,
+            origin: Origin::Borrowed {
+                #[cfg(debug_assertions)]
+                trace: None,
+            },
+        }
+    }
+
     pub fn clone(&self) -> Result<Self, AllocError>
     where
         T: Clone,

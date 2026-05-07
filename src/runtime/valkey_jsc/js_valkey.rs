@@ -244,7 +244,7 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<Option<usize>> {
-        // TODO(port): narrow error set
+        
         let map = self.subscription_callback_map();
 
         let existing = map.get(global_object, channel_name)?;
@@ -297,7 +297,7 @@ impl SubscriptionCtx {
         let _guard = scopeguard::guard(parent_ptr, |p| unsafe {
             (*p).on_new_subscription_callback_insert();
         });
-        // TODO(port): the Zig used `defer` (always-run). scopeguard runs on drop, equivalent here.
+        // PORT NOTE: Zig `defer` ≡ scopeguard-on-drop here.
         let map = self.subscription_callback_map();
 
         let mut handlers_array: JSValue = JSValue::UNDEFINED;
@@ -400,7 +400,7 @@ impl SubscriptionCtx {
         Ok(self.parent().client.flags.finalized || !self.has_subscriptions(global_object)?)
     }
 
-    // TODO(port): cannot be Drop — takes global_object param. Exposed as explicit
+    // PORT NOTE: cannot be Drop — takes global_object param. Exposed as explicit
     // `close` per PORTING.md (never expose `pub fn deinit`).
     pub fn close(&mut self, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
@@ -556,7 +556,7 @@ impl JSValkeyClient {
                 use std::io::Write;
                 let mut cursor = &mut fallback_url_buf[..];
                 let start_len = cursor.len();
-                // TODO(port): bufPrintZ NUL-terminates; we don't need the NUL here since we
+                // PORT NOTE: bufPrintZ NUL-terminates; we don't need the NUL here since we
                 // immediately re-parse via fromUTF8.
                 if write!(&mut cursor, "valkey://").is_err()
                     || cursor.write_all(url_byte_slice).is_err()
@@ -709,7 +709,7 @@ impl JSValkeyClient {
 
         // SAFETY: _subscription_ctx is initialized later by `create()`.
         let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };
-        // TODO(port): Zig used `undefined` for _subscription_ctx; using zeroed POD here.
+        // PORT NOTE: Zig used `undefined` for _subscription_ctx; using zeroed POD here.
 
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
@@ -943,7 +943,7 @@ impl JSValkeyClient {
     }
 
     pub fn get_or_create_subscription_ctx(&mut self) -> JsResult<&mut SubscriptionCtx> {
-        // TODO(port): Zig treats _subscription_ctx as Optional here but the field is not
+        // PORT NOTE: Zig treats _subscription_ctx as Optional here but the field is not
         // optional in the struct definition above. Original:
         //   `if (this._subscription_ctx) |*ctx| { return ctx; }`
         // Preserve the return-existing intent so we don't unconditionally reinit.
@@ -1531,7 +1531,7 @@ impl JSValkeyClient {
             // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
             // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
             // in run() keep it alive across the task hop, exactly as the Zig does.
-            // TODO(port): LIFETIMES.tsv lists this as SHARED; update to BACKREF.
+            // PORT NOTE: LIFETIMES.tsv lists this as SHARED; update to BACKREF.
             ctx: *mut JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1597,7 +1597,7 @@ impl JSValkeyClient {
     }
 
     fn connect(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+        
         self.client.flags.needs_to_open_socket = false;
 
         self.ref_();
@@ -1700,7 +1700,7 @@ impl JSValkeyClient {
         _this_value: JSValue,
         command: &Command,
     ) -> Result<*mut JSPromise, bun_core::Error> {
-        // TODO(port): narrow error set
+        
         if self.client.flags.needs_to_open_socket {
             #[cold]
             fn cold() {}
@@ -2122,7 +2122,7 @@ impl Options {
         global_object: &JSGlobalObject,
         options_obj: JSValue,
     ) -> JsResult<valkey::Options> {
-        // TODO(port): narrow error set
+        
         let mut this = valkey::Options {
             enable_auto_pipelining: !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
                 .get()

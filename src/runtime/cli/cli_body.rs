@@ -802,7 +802,7 @@ pub mod command {
                     .collect();
 
                 let entry_name = graph.entry_point().name.to_vec();
-                bun_bun_js::Run::boot_standalone(ctx, &entry_name, graph)?;
+                run_command::boot_standalone(ctx, &entry_name, graph)?;
                 return Ok(());
             }
         }
@@ -1294,10 +1294,10 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 Output::flush();
             }
             Tag::PatchCommand => {
-                pm_print_help(bun_install::Subcommand::Patch);
+                pm_print_help(PmSubcommand::Patch);
             }
             Tag::PatchCommitCommand => {
-                pm_print_help(bun_install::Subcommand::PatchCommit);
+                pm_print_help(PmSubcommand::PatchCommit);
             }
             Tag::ExecCommand => {
                 Output::pretty(format_args!(
@@ -1379,11 +1379,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         }
     }
 
-    /// Local shim for `bun_install::PackageManager::CommandLineArguments::print_help`.
-    /// The real impl lives in `bun_install` behind the `package_manager_real`
-    /// public stub yet.
-    fn pm_print_help(_subcommand: bun_install::Subcommand) {
-        todo!("blocked_on: bun_install::package_manager::CommandLineArguments::print_help")
+    /// Forward to `bun_install::PackageManager::CommandLineArguments::print_help`.
+    /// Typed against `package_manager_real::Subcommand` (the variant-complete
+    /// enum) until the stub `bun_install::Subcommand` unifies (reconciler-6).
+    #[inline]
+    fn pm_print_help(subcommand: PmSubcommand) {
+        bun_install::package_manager_real::CommandLineArguments::print_help(subcommand);
     }
 
     fn bun_eval_print(ctx: Context) -> Result<(), bun_core::Error> {
@@ -1426,8 +1427,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
             }
         }
 
-        let _ = (&ctx.log, &ctx.args.entry_points[0]);
-        todo!("blocked_on: bun_install::lockfile::Printer::print (Format::Yarn)");
+        bun_install::lockfile::Printer::print(
+            ctx.log,
+            &ctx.args.entry_points[0],
+            bun_install::lockfile_real::PrinterFormat::Yarn,
+        )
     }
 
     fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {

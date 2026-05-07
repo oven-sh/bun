@@ -342,13 +342,11 @@ impl ErrorReportRequest {
             write_i32_le(&mut out, frame.position.line.one_based());
             write_i32_le(&mut out, frame.position.column.one_based());
 
-            // SAFETY: function_name is Tag::ZigString or Tag::Empty.
-            let function_name: &[u8] = unsafe { frame.function_name.value.zig.slice() };
+            let function_name: &[u8] = frame.function_name.byte_slice();
             write_u32_le(&mut out, function_name.len() as u32);
             out.extend_from_slice(function_name);
 
-            // SAFETY: source_url is Tag::ZigString.
-            let src_to_write: &[u8] = unsafe { frame.source_url.value.zig.slice() };
+            let src_to_write: &[u8] = frame.source_url.byte_slice();
             if strings::has_prefix_comptime(src_to_write, b"/") {
                 let mut relative_path_buf = path_buffer_pool::get();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);
@@ -391,7 +389,7 @@ impl ErrorReportRequest {
             r,
             &crate::webcore::blob::Any::from_array_list(out),
             InitFromBytesOptions {
-                mime_type: Some(&bun_http_types::mime_type::OTHER),
+                mime_type: Some(&bun_http_types::MimeType::OTHER),
                 server: dev.server,
                 ..Default::default()
             },

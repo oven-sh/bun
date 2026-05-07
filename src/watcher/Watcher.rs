@@ -201,7 +201,7 @@ impl Watcher {
             thread_lock: ThreadLock::init_unlocked(),
         });
 
-        this.platform.init(fs.top_level_dir)?;
+        this.platform.init(top_level_dir)?;
 
         // Initialize trace file if BUN_WATCHER_TRACE env var is set
         WatcherTrace::init();
@@ -725,9 +725,7 @@ impl Watcher {
 
     #[inline]
     fn top_level_dir(&self) -> &[u8] {
-        // SAFETY: `fs` points to the process-lifetime FileSystem singleton
-        // passed to `init()`; never freed while a Watcher exists.
-        unsafe { (*self.fs).top_level_dir }
+        self.cwd
     }
 
     pub fn append_file<const CLONE_FILE_PATH: bool>(

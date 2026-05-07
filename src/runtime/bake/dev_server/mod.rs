@@ -766,18 +766,110 @@ impl HotReloadEvent {
         let _ = self.files.get_or_put(file_path);
     }
 
-    /// `HotReloadEvent.appendDir` — full body (with sub-path NUL-join into
-    /// `extra_files`) lives in the gated draft.
-    pub fn append_dir(&mut self, dir_path: &[u8], _maybe_sub_path: Option<&[u8]>) {
+    /// `HotReloadEvent.appendDir` — HotReloadEvent.zig:58.
+    pub fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+        if dir_path.is_empty() {
+            return;
+        }
         let _ = self.dirs.get_or_put(dir_path);
-        // TODO(b2): handle `maybe_sub_path` once `extra_files` consumer is un-gated.
+
+        let Some(sub_path) = maybe_sub_path else { return };
+        if sub_path.is_empty() {
+            return;
+        }
+
+        let ends_with_sep = bun_paths::is_sep_any(dir_path[dir_path.len() - 1]);
+        // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile in Phase B
+        self.extra_files.extend_from_slice(if ends_with_sep {
+            &dir_path[0..dir_path.len() - 1]
+        } else {
+            dir_path
+        });
+        self.extra_files.push(bun_paths::SEP);
+        self.extra_files.extend_from_slice(sub_path);
+        self.extra_files.push(0);
     }
 
-    /// Spec DevServer.zig `HotReloadEvent.run` — main-thread side of the
-    /// watcher → DevServer hand-off. Full body lives in the gated draft
-    /// (calls `DevServer::on_hot_reload_event` which touches the bundler).
-    pub fn run(_this: &mut HotReloadEvent) {
-        todo!("blocked_on: bake::DevServer::on_hot_reload_event")
+    /// `HotReloadEvent.run` — HotReloadEvent.zig:173. Main-thread side of the
+    /// watcher → DevServer hand-off.
+    pub fn run(first: &mut HotReloadEvent) {
+        // SAFETY: `owner` is a BACKREF to the DevServer that owns the WatcherAtomics array
+        // containing this event; DevServer outlives all HotReloadEvents it holds.
+        let dev: *mut DevServer = first.owner as *mut DevServer;
+        // SAFETY: see above; `magic` read is non-aliasing.
+        debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
+        bun_core::scoped_log!(DevServer, "HMR Task start");
+        let _end_log = scopeguard::guard((), |_| {
+            bun_core::scoped_log!(DevServer, "HMR Task end");
+        });
+
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(first.debug_mutex.try_lock());
+            debug_assert!(first.contention_indicator.load(Ordering::SeqCst) == 0);
+        }
+
+        // SAFETY: `dev` is the unique BACKREF; this fn runs on the DevServer thread.
+        let dev_ref = unsafe { &mut *dev };
+
+        if dev_ref.current_bundle.is_some() {
+            dev_ref.next_bundle.reload_event = Some(first as *mut HotReloadEvent);
+            return;
+        }
+
+        // PERF(port): was stack-fallback allocator (4096 bytes) — profile in Phase B
+        let mut entry_points = EntryPointList::default();
+
+        first.process_file_list(dev_ref, &mut entry_points);
+
+        let timer = first.timer;
+
+        // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
+        // a pointer into `dev.watcher_atomics.events` while `dev_ref` is live;
+        // re-borrow each iteration to avoid aliasing UB.
+        let mut current: *mut HotReloadEvent = first as *mut HotReloadEvent;
+        loop {
+            // SAFETY: `current` always points at a live event owned by `dev.watcher_atomics`.
+            unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
+            // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
+            match unsafe { (*dev).watcher_atomics.recycle_event_from_dev_server(current) } {
+                Some(next) => {
+                    current = next;
+                    #[cfg(debug_assertions)]
+                    {
+                        // SAFETY: `current` is a live event we now exclusively own.
+                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
+                    }
+                }
+                None => break,
+            }
+        }
+
+        // SAFETY: `dev` is valid; re-borrow after the raw-ptr loop.
+        let dev_ref = unsafe { &mut *dev };
+
+        if entry_points.set.count() == 0 {
+            return;
+        }
+
+        match &mut dev_ref.testing_batch_events {
+            TestingBatchEvents::Disabled => {}
+            TestingBatchEvents::Enabled(ev) => {
+                bun_core::handle_oom(ev.append(&entry_points));
+                dev_ref.publish(
+                    HmrTopic::TestingWatchSynchronization,
+                    &[MessageId::TestingWatchSynchronization.char(), 1],
+                    bun_uws::Opcode::BINARY,
+                );
+                return;
+            }
+            TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
+        }
+
+        if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
+            // PORT NOTE: Zig `bun.handleErrorReturnTrace` has no Rust equivalent.
+            return;
+        }
     }
 }
 

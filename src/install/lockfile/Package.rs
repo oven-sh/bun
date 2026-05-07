@@ -2835,12 +2835,17 @@ impl Package<u64> {
 
         {
             let buf = lockfile.buffers.string_bytes.as_slice();
+            // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by`
+            // requires a total order (and panics since 1.81 when violated), so
+            // derive `Ordering::Equal` from the predicate symmetrically.
             package_dependencies[0..total_dependencies_count as usize]
                 .sort_by(|a, b| {
                     if Dependency::is_less_than(buf, a, b) {
                         core::cmp::Ordering::Less
-                    } else {
+                    } else if Dependency::is_less_than(buf, b, a) {
                         core::cmp::Ordering::Greater
+                    } else {
+                        core::cmp::Ordering::Equal
                     }
                 });
         }

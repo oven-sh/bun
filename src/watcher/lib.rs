@@ -49,13 +49,6 @@ pub use WatchItemKind as Kind;
 // These belong to higher-tier crates that don't yet expose a usable surface
 // to depend on. Watcher only stores/passes them through; never dereferenced.
 
-// TODO(b2-blocked): bun_fs::FileSystem
-/// Opaque forward-decl of `bun_fs::FileSystem`. Watcher only reads
-/// `top_level_dir`; full type lives upstream.
-pub struct FileSystem {
-    pub top_level_dir: &'static [u8],
-}
-
 // TODO(b2-blocked): bun_options_types::Loader
 /// Opaque forward-decl of `bun_options_types::Loader`. Watcher only stores
 /// the value in `WatchItem.loader` and passes it through.

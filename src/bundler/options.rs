@@ -1954,7 +1954,14 @@ pub struct BundleOptions<'a> {
     pub global_cache: GlobalCache,
     pub prefer_offline_install: bool,
     pub prefer_latest_install: bool,
-    pub install: Option<&'a api::BunInstall>,
+    /// Spec `options.zig:1753`: `?*const Api.BunInstall`. Stored as a raw
+    /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
+    /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
+    /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
+    /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
+    /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
+    /// erased `*const ()`) only reads through it.
+    pub install: Option<core::ptr::NonNull<api::BunInstall>>,
 
     pub inlining: bool,
     pub inline_entrypoint_import_meta_main: bool,

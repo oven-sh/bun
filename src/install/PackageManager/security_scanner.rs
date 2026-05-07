@@ -1098,8 +1098,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(e) = uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE).err_enum() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            // TODO(port): bun.errnoToZigErr(e) → map libuv errno to bun_core::Error.
-            return Err(bun_sys::errno_to_error(e));
+            return Err(bun_core::errno_to_zig_err(e as i32));
         }
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
@@ -1182,7 +1181,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        // TODO(port): `spawned: anytype` — concrete type is platform-dependent SpawnResult.
+        // PORT NOTE: Zig `spawned: anytype` — concrete type is the platform-dependent
+        // SpawnResult; Rust uses the unified `spawn::SpawnResult`.
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
         json_stdio_result: StdioResult,

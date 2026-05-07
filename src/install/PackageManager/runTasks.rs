@@ -294,18 +294,24 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id =
                         installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = installer.lockfile.buffers.dependencies[dep_id as usize];
+                    let dep = &installer.lockfile.buffers.dependencies[dep_id as usize];
                     let optional = dep.behavior.contains(Behavior::OPTIONAL);
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     // Zig: `list.*` — by-value copy of the List.
                     let list_val = unsafe { (*list).clone() };
-                    // PORT NOTE: split-borrow `command_ctx` / `manager` so the
-                    // `&mut PackageManager` receiver and the `&mut ContextData`
-                    // arg are disjoint fields of `*installer`.
-                    let spawn_res = installer.manager.spawn_package_lifecycle_scripts(
-                        &mut *installer.command_ctx,
+                    // PORT NOTE: `installer.manager` is the install-wide
+                    // `crate::PackageManager` (stub) — same global state Zig's
+                    // `installer.manager == manager`. Route through the
+                    // function-scope `manager` (real type) which carries
+                    // `spawn_package_lifecycle_scripts`, dereffing via the raw
+                    // provenance root so the two `&mut` don't alias.
+                    let command_ctx = installer.command_ctx;
+                    // SAFETY: see `_drain_guard` provenance note — `manager_ptr`
+                    // is the root tag for every body access to `manager`.
+                    let spawn_res = unsafe { &mut *manager_ptr }.spawn_package_lifecycle_scripts(
+                        command_ctx,
                         list_val,
                         optional,
                         false,

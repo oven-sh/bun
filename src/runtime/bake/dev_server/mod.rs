@@ -616,15 +616,141 @@ impl HotReloadEvent {
         (self.files.count() + self.dirs.count()) == 0
     }
 
-    /// `HotReloadEvent.processFileList` — full body in gated
-    /// `../DevServer/HotReloadEvent.rs` draft (depends on `IncrementalGraph`
-    /// invalidate + `DirectoryWatchStore` walk).
+    /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
+    /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
     pub fn process_file_list(
         &mut self,
-        _dev: *mut DevServer,
-        _entry_points: &mut crate::bake::dev_server_body::EntryPointList,
+        dev: &mut DevServer,
+        entry_points: &mut EntryPointList,
     ) {
-        todo!("blocked_on: dev_server::HotReloadEvent::process_file_list body un-gate")
+        dev.graph_safety_lock.lock();
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `dev` for the rest of the scope (Zig `defer` had no aliasing).
+        let lock_ptr: *mut ThreadLock = &mut dev.graph_safety_lock;
+        // SAFETY: `lock_ptr` points into `*dev`, which outlives `_g`.
+        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+
+        // First handle directories, because this may mutate `event.files`
+        if dev.directory_watchers.watches.count() > 0 {
+            for changed_dir_with_slash in self.dirs.keys() {
+                let changed_dir =
+                    bun_str::strings::paths::without_trailing_slash_windows_path(changed_dir_with_slash);
+
+                // Bust resolution cache, but since Bun does not watch all
+                // directories in a codebase, this only targets the following resolutions
+                // SAFETY: server_transpiler is initialized in DevServer::init before any
+                // HotReloadEvent can fire.
+                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
+                    .resolver
+                    .bust_dir_cache(changed_dir);
+
+                // if a directory watch exists for resolution failures, check those now.
+                if let Some(watcher_index) =
+                    dev.directory_watchers.watches.get_index(changed_dir)
+                {
+                    // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
+                    // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
+                    let mut new_chain: Option<u32> = None;
+                    let mut it: Option<u32> =
+                        Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
+
+                    while let Some(index) = it {
+                        // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
+                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
+                        let (source_file_path, specifier, next) = {
+                            let dep = &dev.directory_watchers.dependencies[index as usize];
+                            (dep.source_file_path, &*dep.specifier as *const [u8], dep.next)
+                        };
+                        it = next;
+
+                        // SAFETY: `source_file_path` is a live IncrementalGraph key slice
+                        // (BORROWED per `Dep` doc); `specifier` points into the dep's owned
+                        // `Box<[u8]>`, neither of which is mutated until after `resolve` returns.
+                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                            .resolver
+                            .resolve(
+                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                    unsafe { &*source_file_path },
+                                ),
+                                unsafe { &*specifier },
+                                bun_options_types::ImportKind::Stmt,
+                            )
+                            .is_ok();
+
+                        if resolved {
+                            // this resolution result is not preserved as passing it
+                            // into BundleV2 is too complicated. the resolution is
+                            // cached, anyways.
+                            // PORT NOTE: inlined `append_file` body for disjoint borrow
+                            // (`self.dirs.keys()` is held immutably across this loop).
+                            // SAFETY: server_graph keys not mutated between lookup and here.
+                            let _ = self.files.get_or_put(unsafe { &*source_file_path });
+                            dev.directory_watchers.free_dependency_index(index);
+                        } else {
+                            // rebuild a new linked list for unaffected files
+                            dev.directory_watchers.dependencies[index as usize].next = new_chain;
+                            new_chain = Some(index);
+                        }
+                    }
+
+                    if let Some(new_first_dep) = new_chain {
+                        dev.directory_watchers.watches.values_mut()[watcher_index].first_dep =
+                            new_first_dep;
+                    } else {
+                        // without any files to depend on this watcher is freed
+                        dev.directory_watchers.free_entry(watcher_index);
+                    }
+                }
+            }
+        }
+
+        let mut rest_extra: &[u8] = &self.extra_files;
+        while let Some(str_idx) = bun_str::strings::index_of_char(rest_extra, 0) {
+            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
+            rest_extra = &rest_extra[str_idx as usize + 1..];
+        }
+        if !rest_extra.is_empty() {
+            bun_core::handle_oom(self.files.put(rest_extra, ()));
+        }
+
+        let changed_file_paths = self.files.keys();
+        // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
+        bun_core::handle_oom(dev.server_graph.invalidate(changed_file_paths, entry_points));
+        bun_core::handle_oom(dev.client_graph.invalidate(changed_file_paths, entry_points));
+
+        if entry_points.set.count() == 0 {
+            bun_core::Output::debug_warn(format_args!("nothing to bundle"));
+            if !changed_file_paths.is_empty() {
+                bun_core::Output::debug_warn(format_args!(
+                    "modified files: {}",
+                    bun_core::fmt::fmt_slice(changed_file_paths, ", ")
+                ));
+            }
+            if self.dirs.count() > 0 {
+                bun_core::Output::debug_warn(format_args!(
+                    "modified dirs: {}",
+                    bun_core::fmt::fmt_slice(self.dirs.keys(), ", ")
+                ));
+            }
+
+            dev.publish(
+                HmrTopic::TestingWatchSynchronization,
+                &[MessageId::TestingWatchSynchronization.char(), 1],
+                bun_uws::Opcode::BINARY,
+            );
+            return;
+        }
+
+        if let Some(map) = &dev.has_tailwind_plugin_hack {
+            for abs_path in map.keys() {
+                let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
+                    continue;
+                };
+                if file.file_kind() == FileKind::Css {
+                    bun_core::handle_oom(entry_points.append_css(abs_path));
+                }
+            }
+        }
     }
 
     pub fn reset(&mut self) {

@@ -5,7 +5,11 @@ use bun_core::{Global, Output};
 use crate::bun_json::{Expr, ExprData};
 use bun_logger as logger;
 use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BYTES};
-// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
+// CYCLEBREAK: `FileSystem` lives in `bun_resolver::fs`, but bun_resolver
+// depends on bun_install. We import the opaque vtable seam re-export from
+// bun_sys (project-wide cycle break — `instance()`/`top_level_dir()` route
+// through a runtime-installed vtable). This is an import-path redirect, not
+// a type relocation.
 use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 use bun_semver::semver_query::Wildcard;

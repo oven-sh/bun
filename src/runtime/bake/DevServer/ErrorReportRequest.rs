@@ -172,9 +172,10 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // SAFETY: every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])` above), so `.value.zig.slice()` is sound.
-            let source_url: &[u8] = unsafe { frame.source_url.value.zig.slice() };
+            // PORT NOTE: Zig read `frame.source_url.value.ZigString.slice()` —
+            // every `source_url` here is `Tag::ZigString` (built via
+            // `String::init(&[u8])`), so `byte_slice()` is the equivalent view.
+            let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
             let Some(id) = parse_id(source_url, browser_url_origin) else {
@@ -193,18 +194,15 @@ impl ErrorReportRequest {
                             bstr::BStr::new(source_url),
                             id.get()
                         ));
-                        // SAFETY: gop.value_ptr points at the freshly-reserved slot.
-                        unsafe { gop.value_ptr.write(None) };
+                        *gop.value_ptr = None;
                         continue;
                     }
                     Some(psm) => {
-                        // SAFETY: gop.value_ptr points at the freshly-reserved slot.
-                        unsafe { gop.value_ptr.write(Some(psm)) };
+                        *gop.value_ptr = Some(psm);
                     }
                 }
             }
-            // SAFETY: slot was either pre-existing (initialized) or just written above.
-            let Some(result) = (unsafe { &*gop.value_ptr }) else {
+            let Some(result) = &*gop.value_ptr else {
                 continue;
             };
 
@@ -244,8 +242,7 @@ impl ErrorReportRequest {
                     frame.source_url = BunString::init(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
-                    // SAFETY: function_name is Tag::ZigString.
-                    if strings::eql(unsafe { frame.function_name.value.zig.slice() }, rel_path) {
+                    if strings::eql(frame.function_name.byte_slice(), rel_path) {
                         frame.function_name = BunString::EMPTY;
                     }
                     frame.remapped = true;
@@ -280,10 +277,10 @@ impl ErrorReportRequest {
             // Ensure that trimming will not remove ALL frames.
             let mut all_runtime = true;
             for frame in frames.iter() {
-                // SAFETY: source_url is Tag::ZigString — slice() yields the raw ptr.
+                // PORT NOTE: Zig compared `slice().ptr == runtime_name` —
+                // pointer-identity on the borrowed RUNTIME_NAME slice.
                 let is_runtime = frame.position.is_invalid()
-                    && unsafe { frame.source_url.value.zig.slice() }.as_ptr()
-                        == RUNTIME_NAME.as_ptr();
+                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
                 if !is_runtime {
                     all_runtime = false;
                     break;
@@ -298,10 +295,8 @@ impl ErrorReportRequest {
             // `Vec::retain` does the same in-place compaction with the same
             // relative order.
             frames.retain(|frame| {
-                // SAFETY: source_url is Tag::ZigString.
                 !(frame.position.is_invalid()
-                    && unsafe { frame.source_url.value.zig.slice() }.as_ptr()
-                        == RUNTIME_NAME.as_ptr())
+                    && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr())
             });
         }
 

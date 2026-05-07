@@ -9,7 +9,7 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
 use crate::watcher_trace as WatcherTrace;
-use crate::{FileSystem, Loader};
+use crate::Loader;
 
 #[cfg(target_os = "linux")]
 use crate::inotify_watcher as platform;
@@ -109,7 +109,9 @@ pub struct Watcher {
     pub watched_count: usize,
     pub mutex: Mutex,
 
-    pub fs: *const FileSystem,
+    // PORT NOTE: Zig stored `fs: *Fs.FileSystem` but only ever read
+    // `fs.top_level_dir`. Storing the slice directly avoids a forward-decl
+    // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
     pub watchloop_handle: Option<std::thread::ThreadId>,
     pub cwd: &'static [u8],
@@ -161,7 +163,7 @@ impl Watcher {
     ///     bundle_v2.bun_watcher = watcher;
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
-        fs: &'static FileSystem,
+        top_level_dir: &'static [u8],
     ) -> Result<Box<Watcher>, bun_core::Error> {
         fn on_file_update_wrapped<T: WatcherContext>(
             ctx_opaque: *mut (),
@@ -180,11 +182,10 @@ impl Watcher {
         }
 
         let mut this = Box::new(Watcher {
-            fs,
             watched_count: 0,
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
-            cwd: fs.top_level_dir,
+            cwd: top_level_dir,
             ctx: ctx as *mut (),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,

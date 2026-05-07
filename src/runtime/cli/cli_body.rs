@@ -731,16 +731,12 @@ pub mod command {
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {
-                    // TODO(port): `bun.bun_options_argc`, `bun.appendOptionsEnv`, and the
-                    // mutable `bun.argv = ...` setter are not yet ported in `bun_core`.
-                    // The `--compile` exec-argv splicing path is stubbed until those land.
-                    let bun_options_argc: usize = todo!("blocked_on: bun_core::bun_options_argc");
-                    #[allow(unreachable_code)]
+                    let bun_options_argc = bun::bun_options_argc();
                     if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
                         let original_argv_len = bun::argv().len();
                         let mut argv_list: Vec<&'static ZStr> = bun::argv().to_vec();
                         if !graph.compile_exec_argv.is_empty() {
-                            todo!("blocked_on: bun_core::append_options_env");
+                            bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
                         }
 
                         // Store the full argv including user arguments
@@ -1324,12 +1320,10 @@ Execute a shell script directly from Bun.
             | Tag::PublishCommand
             | Tag::AuditCommand => {
                 pm_print_help(match CMD {
-                    Tag::OutdatedCommand => bun_install::Subcommand::Outdated,
-                    Tag::UpdateInteractiveCommand => bun_install::Subcommand::Update,
-                    // Publish/Audit variants not yet present on bun_install::Subcommand stub.
-                    Tag::PublishCommand | Tag::AuditCommand => {
-                        todo!("blocked_on: bun_install::Subcommand::{{Publish,Audit}}")
-                    }
+                    Tag::OutdatedCommand => PmSubcommand::Outdated,
+                    Tag::UpdateInteractiveCommand => PmSubcommand::Update,
+                    Tag::PublishCommand => PmSubcommand::Publish,
+                    Tag::AuditCommand => PmSubcommand::Audit,
                     _ => unreachable!(),
                 });
             }

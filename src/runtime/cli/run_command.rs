@@ -923,6 +923,119 @@ impl RunCommand {
         // code kept so the type unifies with the `?`-early-return above.
         Ok(())
     }
+
+    /// Port of `bun_js.Run.bootStandalone` (src/bun.js.zig:27) — entry point for
+    /// `bun build --compile` executables. Mirrors [`boot`] but routes through
+    /// `VirtualMachine::init_with_module_graph` and applies the standalone
+    /// runtime flags from the embedded graph before entering `Run::start`.
+    pub(crate) fn boot_standalone(
+        ctx: &mut ContextData,
+        entry_path: &[u8],
+        graph: &mut bun_standalone_graph::Graph,
+    ) -> Result<(), bun_core::Error> {
+        use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
+
+        bun_jsc::initialize(false);
+        bun_analytics::Features::standalone_executable.inc();
+        bun_js_parser::Expr::data_store_create();
+        bun_js_parser::Stmt::data_store_create();
+
+        // Load bunfig.toml unless disabled by compile flags. Config loading
+        // with execArgv is handled earlier in `Command::start` via `init()`.
+        if !ctx.debug.loaded_bunfig
+            && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG)
+        {
+            arguments::load_config_path(
+                CommandTag::RunCommand,
+                true,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
+            )?;
+        }
+
+        let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
+            log: core::ptr::NonNull::new(ctx.log),
+            args: ctx.args.clone(),
+            graph: Some(core::ptr::NonNull::from(&mut *graph).cast()),
+            is_main_thread: true,
+            smol: ctx.runtime_options.smol,
+            // TODO(port): `dns_result_order` is `u8` here pending the
+            // `bun_runtime::api::dns::Resolver::Order` move-down (b2-cycle).
+            ..Default::default()
+        })?;
+        // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
+        // on this thread.
+        let vm = unsafe { &mut *vm_ptr };
+
+        vm.preload = std::mem::take(&mut ctx.preloads);
+        vm.argv = std::mem::take(&mut ctx.passthrough);
+
+        // Park `entry_path` in the process-lifetime arena (Zig: caller's
+        // `graph.entryPoint().name` is process-static; we copy to satisfy
+        // `vm.main: &'static [u8]` until that field is retyped to `Box<[u8]>`).
+        let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(entry_path);
+        vm.main = entry_path;
+
+        {
+            let b = &mut vm.transpiler;
+            b.options.install = ctx
+                .install
+                .as_deref()
+                .map(|p| unsafe { &*(p as *const api::BunInstall) });
+            b.resolver.opts.global_cache = ctx.debug.global_cache;
+            b.options.global_cache = ctx.debug.global_cache;
+            b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+            b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+            b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+            // TODO(port): `serve_plugins` / `bunfig_path` / `macros` map shapes
+            // still differ between `ContextData` and `BundleOptions`; wire once
+            // the field-shape drift is resolved (same as `boot()` above).
+
+            crate::run_main::apply_standalone_runtime_flags(b, graph);
+
+            if b.configure_defines().is_err() {
+                crate::run_main::fail_with_build_error(vm);
+            }
+        }
+
+        // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.
+        // TODO(port): `bun_http::AsyncHTTP::load_env` types against the
+        // resolver's env loader (`&DotEnvLoader`); `Transpiler::env` is still
+        // `Option<NonNull<..>>` here. Wire once the env-loader handle unifies.
+
+        vm.load_extra_env_and_source_code_printer();
+        vm.is_main_thread = true;
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+
+        // TODO(port): `bun.http.experimental_http{2,3}_client_from_cli` and
+        // `doPreconnect(ctx.runtime_options.preconnect)` — the http-client
+        // experimental flags live in `bun_http` statics not yet surfaced here.
+
+        // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
+        // written exactly once here on the main thread before the API-lock
+        // trampoline reads it, never freed (`global_exit` ends the process).
+        unsafe {
+            (&raw mut RUN).write(Run {
+                vm: vm_ptr,
+                entry_path,
+                eval_and_print: false,
+            });
+        }
+
+        extern "C" fn trampoline(ctx: *mut c_void) {
+            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
+            // opaque slot; the API lock is held for the full call.
+            let this = unsafe { &mut *(ctx as *mut Run) };
+            this.start();
+        }
+        // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
+        // the API-lock FFI call.
+        #[allow(deprecated)]
+        vm.global().vm().hold_api_lock((&raw mut RUN) as *mut c_void, trampoline);
+
+        // `Run::start` never returns; dead code for `?`-early-return type unify.
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

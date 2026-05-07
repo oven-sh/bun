@@ -1200,10 +1200,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
-        if let Err(e) = self.ipc_reader.start(ipc_read_fd, true) {
-            Output::err_generic("Failed to start security scanner IPC reader: {}", (e,));
-            return Err(err!("IPCReaderStartFailed"));
-        }
+        // Zig: `try this.ipc_reader.start(ipc_read_fd, true).unwrap()` — propagate silently.
+        self.ipc_reader
+            .start(ipc_read_fd, true)
+            .map_err(|e| e.to_zig_err())?;
 
         // PORT NOTE: `to_process` consumes `SpawnResult` by value in the
         // bun_spawn shape; reconstruct from the pid since the only field we
@@ -1270,9 +1270,9 @@ impl<'a> SecurityScanSubprocess<'a> {
     pub fn loop_(&mut self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            // TODO(port): Windows path needs `uv_loop` projection once
-            // `AnyEventLoop::loop_` returns the uv handle wrapper.
-            return self.manager.event_loop.loop_().cast();
+            // SAFETY: `event_loop.loop_()` returns the live UwsLoop wrapper; on
+            // Windows AsyncLoop is the inner `uv::Loop` reached via `.uv_loop`.
+            return unsafe { (*self.manager.event_loop.loop_()).uv_loop };
         }
         #[cfg(not(windows))]
         {
@@ -1295,23 +1295,17 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.stderr_data.extend_from_slice(chunk);
     }
 
-    pub fn get_read_buffer(&mut self) -> &mut [u8] {
-        // PORT NOTE: reshaped for borrowck — capture len/cap before mutable borrow.
+    pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
+        // PORT NOTE: Zig returns `unusedCapacitySlice()` (uninitialized spare
+        // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
+        // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
+        // into this region, never reads uninit bytes.
         let cap = self.ipc_data.capacity();
         let len = self.ipc_data.len();
         if cap - len < 4096 {
-            self.ipc_data
-                .reserve((cap + 4096).saturating_sub(self.ipc_data.len()));
+            self.ipc_data.reserve((cap + 4096).saturating_sub(len));
         }
-        // TODO(port): Zig returns unusedCapacitySlice() (uninitialized spare capacity as []u8).
-        // Vec::spare_capacity_mut returns &mut [MaybeUninit<u8>]; cast for now.
-        // SAFETY: caller (BufferedReader) only writes into this region, never reads uninit bytes.
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                self.ipc_data.as_mut_ptr().add(self.ipc_data.len()),
-                self.ipc_data.capacity() - self.ipc_data.len(),
-            )
-        }
+        self.ipc_data.spare_capacity_mut()
     }
 
     pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
@@ -1655,8 +1649,8 @@ fn parse_security_advisories_from_expr(
 
     let ExprData::EArray(array) = &advisories_expr.data else {
         Output::err_generic(
-            "Security scanner 'advisories' field must be an array",
-            (),
+            "Security scanner 'advisories' field must be an array, got: {}",
+            (<&str>::from(advisories_expr.data.tag()),),
         );
         return Err(err!("InvalidAdvisoriesFormat"));
     };
@@ -1664,8 +1658,8 @@ fn parse_security_advisories_from_expr(
     for (i, item) in array.items.slice().iter().enumerate() {
         if !matches!(item.data, ExprData::EObject(_)) {
             Output::err_generic(
-                "Security advisory at index {} must be an object",
-                (i,),
+                "Security advisory at index {} must be an object, got: {}",
+                (i, <&str>::from(item.data.tag())),
             );
             return Err(err!("InvalidAdvisoryFormat"));
         }

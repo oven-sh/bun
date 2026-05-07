@@ -1011,8 +1011,21 @@ impl ShellRmTask {
                 }
                 _ => {
                     let name = current.name.slice_u8();
-                    let file_path = self.buf_join(buf, &[path.as_bytes(), name]);
-                    self.remove_entry_file(dir_task, file_path, is_absolute, buf, &mut child_vtable)?;
+                    // PORT NOTE: reshaped for borrowck — Zig passed both the
+                    // joined slice (borrowing `buf`) and `buf` itself to
+                    // `removeEntryFile`. Copy the join into an owned ZBox so
+                    // `buf` is free to be re-borrowed by the vtable callback.
+                    let file_path = {
+                        let joined = self.buf_join(buf, &[path.as_bytes(), name]);
+                        ZBox::from_bytes(joined.as_bytes())
+                    };
+                    self.remove_entry_file(
+                        dir_task,
+                        file_path.as_zstr(),
+                        is_absolute,
+                        buf,
+                        &mut child_vtable,
+                    )?;
                 }
             }
         }

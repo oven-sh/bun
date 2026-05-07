@@ -338,7 +338,9 @@ impl Cp {
     ) -> Yield {
         // SAFETY: task was Box::into_raw'd in create(); reclaim.
         let mut task = unsafe { Box::from_raw(task) };
-        let output = core::mem::take(&mut task.verbose_output);
+        // Spec: cp.zig `task.takeOutput()`. The lock is uncontended here (all
+        // work-pool subtasks have finished) but the data lives inside it.
+        let output = core::mem::take(&mut *task.verbose_output.lock());
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
         if let Some(e) = task.err.take() {
@@ -469,8 +471,7 @@ impl ShellCpTask {
             src_absolute: None,
             tgt_absolute: None,
             cwd_path,
-            verbose_output_lock: parking_lot::Mutex::new(()),
-            verbose_output: Vec::new(),
+            verbose_output: parking_lot::Mutex::new(Vec::new()),
             err: None,
             task: ShellTask::new(evtloop),
         });
@@ -482,21 +483,23 @@ impl ShellCpTask {
 
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
     /// buffer (printed to stdout once the cp finishes). Called from work-pool
-    /// threads; serialised via `verbose_output_lock`.
-    fn on_copy_impl(&mut self, src: &[u8], dest: &[u8]) {
-        let _guard = self.verbose_output_lock.lock();
+    /// threads; serialised via `verbose_output`'s mutex.
+    fn on_copy_impl(&self, src: &[u8], dest: &[u8]) {
+        let mut out = self.verbose_output.lock();
         // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
-        self.verbose_output.reserve(src.len() + dest.len() + 5);
-        self.verbose_output.extend_from_slice(src);
-        self.verbose_output.extend_from_slice(b" -> ");
-        self.verbose_output.extend_from_slice(dest);
-        self.verbose_output.push(b'\n');
+        out.reserve(src.len() + dest.len() + 5);
+        out.extend_from_slice(src);
+        out.extend_from_slice(b" -> ");
+        out.extend_from_slice(dest);
+        out.push(b'\n');
     }
 
     /// Spec: cp.zig `cpOnCopy`. Called from the node:fs `NewAsyncCpTask<true>`
     /// work-pool thread for every successfully-copied file. Records the pair
     /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
-    pub fn cp_on_copy(&mut self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
+    /// Takes `&self` because subtasks fan out concurrently — the only mutated
+    /// state is the locked `verbose_output` buffer.
+    pub fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
         if !self.opts.verbose { return; }
         #[cfg(not(windows))]
         { self.on_copy_impl(src, dest); }

@@ -1590,34 +1590,61 @@ impl JSValkeyClient {
         let _d = deref_guard(self);
 
         let is_tls = self.client.tls != valkey::TLS::None;
-        // TODO(b2-blocked): `vm.rare_data().valkey_group(vm, ssl)` and
-        // `default_client_ssl_ctx()` / `ssl_ctx_cache()` exist on
-        // `bun_jsc::rare_data::RareData` but with const-generic / mut-receiver
-        // shapes that don't fit the type-erased `vm: *mut c_void` here. Restore
-        // once `ValkeyClient.vm` is typed.
-        let group: *mut uws::SocketGroup = {
-            let _ = is_tls;
-            todo!("blocked_on: bun_jsc::rare_data::RareData::valkey_group")
+        // PORT NOTE: `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
+        // is `&'static`. Cast through raw — the per-thread VM is single-owner
+        // on the JS thread, and `valkey_group` only touches the embedded
+        // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
+        // hold). Same pattern as `Bun__RareData__postgresGroup`.
+        let vm_ptr = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+        // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
+        // lazy-inits the box.
+        let group: *mut uws::SocketGroup = unsafe {
+            let rare = (*vm_ptr).rare_data() as *mut jsc::rare_data::RareData;
+            if is_tls {
+                (*rare).valkey_group::<true>(&*vm_ptr)
+            } else {
+                (*rare).valkey_group::<false>(&*vm_ptr)
+            }
         };
-        #[allow(unreachable_code)]
-        let ssl_ctx: Option<*mut uws::SslCtx> = match &mut self.client.tls {
+
+        // PORT NOTE: reshaped for borrowck — the Zig matched on `self.client.tls`
+        // and called `self.client_fail`/`on_valkey_close` from inside the arm.
+        // Populate `_secure` first, then handle the failure branch outside the
+        // borrow of `self.client.tls`.
+        let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.tls {
+            // Reuse across reconnect — the SSL_CTX is the only thing the
+            // old `_socket_ctx` cache existed to preserve.
+            if self._secure.is_none() {
+                let mut err = uws::create_bun_socket_error_t::none;
+                // Per-VM weak cache: a `duplicate()`'d client (or any
+                // other client with the same config) hits the same
+                // `SSL_CTX*` instead of rebuilding.
+                let state = crate::jsc_hooks::runtime_state();
+                debug_assert!(!state.is_null(), "RuntimeState not installed");
+                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
+                // stable address for the VM's lifetime, JS-thread-only.
+                let cache = unsafe { &mut (*state).ssl_ctx_cache };
+                self._secure = cache.get_or_create(custom, &mut err);
+            }
+            self._secure.is_none()
+        } else {
+            false
+        };
+        if tls_ctx_failed {
+            self.client.flags.enable_auto_reconnect = false;
+            self.client_fail(
+                b"Failed to create TLS context",
+                protocol::RedisError::ConnectionClosed,
+            )?;
+            self.client.on_valkey_close()?;
+            self.client.status = valkey::Status::Disconnected;
+            return Ok(());
+        }
+        let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.tls {
             valkey::TLS::None => None,
-            valkey::TLS::Enabled => {
-                todo!("blocked_on: bun_jsc::rare_data::RareData::default_client_ssl_ctx")
-            }
-            valkey::TLS::Custom(custom) => 'brk: {
-                // Reuse across reconnect — the SSL_CTX is the only thing the
-                // old `_socket_ctx` cache existed to preserve.
-                if self._secure.is_none() {
-                    let mut err = uws::create_bun_socket_error_t::none;
-                    // Per-VM weak cache: a `duplicate()`'d client (or any
-                    // other client with the same config) hits the same
-                    // `SSL_CTX*` instead of rebuilding.
-                    let _ = (custom, &mut err);
-                    todo!("blocked_on: bun_jsc::rare_data::RareData::ssl_ctx_cache");
-                }
-                break 'brk Some(self._secure.unwrap());
-            }
+            // SAFETY: `vm_ptr` is the live per-thread VM (see above).
+            valkey::TLS::Enabled => Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) }),
+            valkey::TLS::Custom(_) => Some(self._secure.unwrap()),
         };
 
         self.ref_();
@@ -1631,10 +1658,23 @@ impl JSValkeyClient {
             (*p).client.status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
         });
-        self.client.socket = self
-            .client
-            .address
-            .connect(self_ptr, group, ssl_ctx, is_tls)?;
+        // PORT NOTE: reshaped for borrowck — `address` is a field of `client`,
+        // and `connect` needs `*mut ValkeyClient` as the socket user-data. Go
+        // through a raw pointer; `Address::connect` only reads host/path bytes
+        // and forwards `client_ptr` opaquely (no overlapping write).
+        let client_ptr: *mut valkey::ValkeyClient = &mut self.client;
+        // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
+        // `SocketGroup` (stable for the VM's lifetime); `ssl_ctx` is a +1-ref
+        // BoringSSL `SSL_CTX*`.
+        let socket = unsafe {
+            (*client_ptr).address.connect(
+                client_ptr,
+                &mut *group,
+                ssl_ctx.map(|p| &mut *p),
+                is_tls,
+            )
+        }?;
+        self.client.socket = socket;
         // Disarm errdefers on success.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
         scopeguard::ScopeGuard::into_inner(errdefer_deref);

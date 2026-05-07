@@ -225,6 +225,19 @@ pub static mut SUPPORTED_METHOD: Method = if cfg!(target_os = "macos") {
     Method::Hardlink
 };
 
+impl PackageInstall<'_> {
+    /// Read accessor for the [`SUPPORTED_METHOD`] global (Zig:
+    /// `PackageInstall.supported_method`). Associated fn so cross-module
+    /// callers keep the `PackageInstall::supported_method()` call shape.
+    #[inline]
+    pub fn supported_method() -> Method {
+        // SAFETY: written only on the install main thread before/between reads
+        // (fall-back from clonefile/hardlink → copyfile); concurrent readers
+        // (isolated_install workers) seed an atomic from this once at startup.
+        unsafe { SUPPORTED_METHOD }
+    }
+}
+
 // ───────────────────────────── InstallDirState ─────────────────────────────
 
 struct InstallDirState {

@@ -69,12 +69,13 @@ fn write_indent_fmt(w: &mut FmtBridge<'_>, indent: &mut u32) -> core::fmt::Resul
     Ok(())
 }
 
-// PORT NOTE: Zig `String.arrayHashContext(lockfile, null)` constructs a context
-// keyed off the lockfile's string buffer. The Rust `ArrayHashMap` over
-// `bun_semver::String` keys hashes the handle directly (see CatalogMap), so the
-// context is unit; this shim drops the lockfile arg.
+/// Zig `String.arrayHashContext(lockfile, null)` — both arg and existing keys
+/// resolve against the lockfile's string buffer. Routed through the already-
+/// detached `StringBuf` to avoid borrowing `lockfile` at the call site.
 #[inline]
-fn string_array_hash_context(_lockfile: *const BinaryLockfile, _: Option<()>) -> () { () }
+fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
+    bun_semver::string::ArrayHashContext { arg_buf: buf, existing_buf: buf }
+}
 
 // TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
 // PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
@@ -336,7 +337,7 @@ impl Stringifier {
                         write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf))).ok();
                         match res.tag {
                             ResolutionTag::Workspace => {
-                                if let Some(workspace_version) = lockfile.workspace_versions.get(pkg_name_hash) {
+                                if let Some(workspace_version) = lockfile.workspace_versions.get(&pkg_name_hash) {
                                     write!(&mut temp_buf, "{}", workspace_version.fmt(buf)).ok();
                                 }
                             }
@@ -1576,18 +1577,17 @@ pub fn parse_into_binary_lockfile(
                 ..Default::default()
             };
 
-            // PORT NOTE: Zig threaded a `String.arrayHashContext(lockfile, null)`
-            // through `getOrPutContext`; the Rust `ArrayHashMap<String, _>` hashes
-            // the `String` handle directly, so the unit context is folded into
-            // plain `get_or_put`.
-            let _ = string_array_hash_context(lockfile, None);
-            let entry = lockfile.catalogs.default.get_or_put(dep_name)?;
+            let entry = lockfile.catalogs.default.get_or_put_adapted(
+                dep_name,
+                string_array_hash_context(string_buf.bytes.as_slice()),
+            )?;
 
             if entry.found_existing {
                 log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
                 return Err(ParseError::InvalidCatalogObject);
             }
 
+            *entry.key_ptr = dep_name;
             *entry.value_ptr = dep;
         }
     }
@@ -1660,14 +1660,17 @@ pub fn parse_into_binary_lockfile(
                     ..Default::default()
                 };
 
-                let _ = string_array_hash_context(lockfile, None);
-                let entry = group.get_or_put(dep_name)?;
+                let entry = group.get_or_put_adapted(
+                    dep_name,
+                    string_array_hash_context(string_buf.bytes.as_slice()),
+                )?;
 
                 if entry.found_existing {
                     log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
+                *entry.key_ptr = dep_name;
                 *entry.value_ptr = dep;
             }
         }

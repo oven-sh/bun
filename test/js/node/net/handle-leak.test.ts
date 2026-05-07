@@ -1,17 +1,21 @@
 import { expect } from "bun:test";
 import { isASAN, isWindows } from "harness";
+import { rmSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 
-const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
+// Unique per-process path so a stale socket left by an earlier killed run can't EADDRINUSE us.
+const listen_path = join(tmpdir(), `test-net-successful-connection-handle-leak-${process.pid}.sock`);
+rmSync(listen_path, { force: true });
 
-const { promise, resolve } = Promise.withResolvers();
+const { promise, resolve, reject } = Promise.withResolvers();
 const server = net
   .createServer()
   .listen(listen_path)
-  .on("listening", () => resolve());
+  .on("listening", () => resolve())
+  .on("error", e => reject(e));
 await promise;
 const address = server.address();
 console.log("server address", address);

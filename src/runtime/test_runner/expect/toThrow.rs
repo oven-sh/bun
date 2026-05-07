@@ -424,27 +424,24 @@ pub fn to_throw(
 
     if expected_value.is_empty() || expected_value.is_undefined() {
         let signature: &'static str = get_signature("toThrow", "", false);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            concat!("\n\n", "Received function did not throw\nReceived value: <red>{}<r>\n"),
-            format_args!("{}", result.to_fmt(&mut formatter)),
+            format_args!(
+                "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                result.to_fmt(&mut formatter),
+            ),
         );
     }
 
     let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
     if expected_value.is_string() {
-        let expected_fmt = concat!(
-            "\n\nExpected substring: <green>{}<r>\n\n",
-            "Received function did not throw\nReceived value: <red>{}<r>\n"
-        );
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            expected_fmt,
             format_args!(
-                "{}{}",
+                "\n\nExpected substring: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
                 expected_value.to_fmt(&mut formatter),
                 result.to_fmt(&mut formatter2),
             ),
@@ -452,16 +449,11 @@ pub fn to_throw(
     }
 
     if expected_value.is_reg_exp() {
-        let expected_fmt = concat!(
-            "\n\nExpected pattern: <green>{}<r>\n\n",
-            "Received function did not throw\nReceived value: <red>{}<r>\n"
-        );
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            expected_fmt,
             format_args!(
-                "{}{}",
+                "\n\nExpected pattern: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
                 expected_value.to_fmt(&mut formatter),
                 result.to_fmt(&mut formatter2),
             ),
@@ -469,34 +461,28 @@ pub fn to_throw(
     }
 
     if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-        let expected_fmt = concat!(
-            "\n\nExpected message: <green>{}<r>\n\n",
-            "Received function did not throw\nReceived value: <red>{}<r>\n"
-        );
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            expected_fmt,
             format_args!(
-                "{}{}",
+                "\n\nExpected message: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
                 expected_message.to_fmt(&mut formatter),
                 result.to_fmt(&mut formatter2),
             ),
         );
     }
 
-    let expected_fmt = concat!(
-        "\n\nExpected constructor: <green>{}<r>\n\n",
-        "Received function did not throw\nReceived value: <red>{}<r>\n"
-    );
     let mut expected_class = ZigString::EMPTY;
     expected_value.get_class_name(global, &mut expected_class)?;
-    return this.throw_fmt(
+    this.throw(
         global,
         signature,
-        expected_fmt,
-        format_args!("{}{}", expected_class, result.to_fmt(&mut formatter)),
-    );
+        format_args!(
+            "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            expected_class,
+            result.to_fmt(&mut formatter),
+        ),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────

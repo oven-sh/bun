@@ -4,7 +4,7 @@ use core::mem::size_of;
 
 use bun_aio::Closer;
 use bun_http::headers::{AnyBlobRef, AnyBlobVTable, Options as HeadersFromOptions};
-use bun_http::{Headers, Method};
+use bun_http::{Headers, HeadersExt, Method};
 use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
@@ -131,7 +131,9 @@ fn blob_body_ref(b: &Blob) -> AnyBlobRef<'_> {
 
 #[inline]
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    Headers::from(
+    // UFCS: bare `Headers::from` resolves to prelude `core::convert::From::from`;
+    // the two-arg vtable constructor lives on `HeadersExt`.
+    <Headers as HeadersExt>::from(
         fetch_headers.map(fetch_headers_ref),
         HeadersFromOptions { body: Some(blob_body_ref(blob)) },
     )
@@ -221,7 +223,7 @@ impl FileRoute {
                 );
                 if is_fd {
                     return Err(global.throw_todo(
-                        "Support serving files from a file descriptor. Please pass a path instead.",
+                        b"Support serving files from a file descriptor. Please pass a path instead.",
                     ));
                 }
 

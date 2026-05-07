@@ -679,7 +679,10 @@ impl TrustCommand {
             .pwrite_all(new_package_json_contents, 0)
             .map_err(bun_core::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        root_file.close();
+        // PORT NOTE: `File::close(self)` consumes; `root_file` is borrowed from
+        // `pm`. Close via the fd directly (matches Zig — `pm.root_package_json_file`
+        // is left holding the now-closed handle and never re-read).
+        let _ = bun_sys::close(root_file.handle);
 
         #[cfg(debug_assertions)]
         debug_assert!(total_scripts_ran > 0);

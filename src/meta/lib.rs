@@ -120,12 +120,12 @@ pub fn type_base_name(fullname: &'static str) -> &'static str {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ListContainerType {
     ArrayList,
-    BabyList,
+    Vec,
     SmallList,
 }
 
 // TODO(port): `looksLikeListContainerType(T)` inspects field names /
-// `@hasDecl` to classify a type as ArrayList/BabyList/SmallList and extract
+// `@hasDecl` to classify a type as ArrayList/Vec/SmallList and extract
 // its element type. Per PORTING.md §Comptime reflection, `@hasDecl` →
 // trait bound. Replace with:
 //
@@ -134,7 +134,7 @@ pub enum ListContainerType {
 //         const KIND: ListContainerType;
 //     }
 //
-// impl'd by `Vec<T>`, `bun_collections::BabyList<T>`,
+// impl'd by `Vec<T>`, `Vec<T>`,
 // `bun_collections::SmallList<T, N>`. Callers bound on `T: ListContainer`.
 
 // TODO(port): `Tagged(U, T)` — re-synthesize a `union` with a new tag type

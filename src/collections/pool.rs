@@ -503,10 +503,10 @@ where
     }
 
     fn destroy_node(node: *mut Node<T>) {
-        // TODO(port): Zig special-cased `Type != bun.ByteList` here to skip
-        // `bun.memory.deinit(&node.data)` for `ByteList` (a known leak the Zig
+        // TODO(port): Zig special-cased `Type != bun.Vec<u8>` here to skip
+        // `bun.memory.deinit(&node.data)` for `Vec<u8>` (a known leak the Zig
         // comment calls out). In Rust, dropping `T` is the moral equivalent of
-        // `bun.memory.deinit`. If `BabyList<u8>` (the `ByteList` port) must keep
+        // `bun.memory.deinit`. If `Vec<u8>` (the `Vec<u8>` port) must keep
         // leaking for compat, gate its `Drop` there — not here.
         //
         // SAFETY: `node` was created via `Box::into_raw` in `push`/`get` and

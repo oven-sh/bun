@@ -76,7 +76,7 @@ pub fn generate_code_for_lazy_export(
         panic!("Internal error: expected at least one part for lazy export");
     }
 
-    // SAFETY: `parts.ptr[1]` — BabyList raw indexing; using index 1 here.
+    // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
     let part: &mut Part = unsafe { &mut (*parts)[1] };
 
     // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.

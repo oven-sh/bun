@@ -8,6 +8,7 @@
 
 #![allow(clippy::collapsible_if, clippy::needless_return)]
 
+use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
 use std::io::Write as _;
@@ -183,7 +184,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(&*s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -437,8 +438,8 @@ impl<'a> Parser<'a> {
                 let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
                     continue;
                 };
-                keys.push(estring_to_owned(k, self.bump));
-                values.push(estring_to_owned(v, self.bump));
+                keys.push(estring_to_owned(&*k, self.bump));
+                values.push(estring_to_owned(&*v, self.bump));
             }
             self.ctx.args.define = Some(api::StringMap { keys, values });
         }
@@ -709,7 +710,7 @@ impl<'a> Parser<'a> {
                                     )?;
                                     return Ok(());
                                 }
-                                patterns.push(estring_to_owned(s, self.bump));
+                                patterns.push(estring_to_owned(&*s, self.bump));
                             }
                             self.ctx.test_options.concurrent_test_glob = Some(patterns);
                         }
@@ -744,7 +745,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(s, self.bump));
+                                    patterns.push(estring_to_owned(&*s, self.bump));
                                 }
                                 self.ctx.test_options.coverage.ignore_patterns = patterns;
                             }
@@ -784,7 +785,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(s, self.bump));
+                                    patterns.push(estring_to_owned(&*s, self.bump));
                                 }
                                 self.ctx.test_options.path_ignore_patterns = patterns;
                             }
@@ -995,7 +996,7 @@ impl<'a> Parser<'a> {
                         let ExprData::EString(k) = &key_expr.data else {
                             continue;
                         };
-                        let path = estring_to_owned(k, self.bump);
+                        let path = estring_to_owned(&*k, self.bump);
 
                         if !bun_resolver::is_package_path(&path) {
                             self.add_error(key_expr.loc, b"Expected package name")?;
@@ -1702,8 +1703,8 @@ impl<'a> Parser<'a> {
                 let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
                     continue;
                 };
-                keys.push(estring_to_owned(k, self.bump));
-                values.push(estring_to_owned(v, self.bump));
+                keys.push(estring_to_owned(&*k, self.bump));
+                values.push(estring_to_owned(&*v, self.bump));
             }
             self.ctx.args.serve_define = Some(api::StringMap { keys, values });
         }

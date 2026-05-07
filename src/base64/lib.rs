@@ -69,11 +69,11 @@ pub fn encode(destination: &mut [u8], source: &[u8]) -> usize {
 }
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was Vec<u8>
-    // TODO(port): narrow error set (Zig was `!bun.ByteList`; OOM now aborts)
+    // TODO(port): narrow error set (Zig was `!bun.Vec<u8>`; OOM now aborts)
     let len = encode_len(source);
     let mut destination = vec![0u8; len];
     let encoded_len = encode(&mut destination, source);
-    // PORT NOTE: Zig built ByteList from ptr/len/cap; here Vec already carries cap == len.
+    // PORT NOTE: Zig built Vec<u8> from ptr/len/cap; here Vec already carries cap == len.
     destination.truncate(encoded_len);
     destination
 }
@@ -957,5 +957,5 @@ pub fn wyhash_url_safe<'a>(
 //   source:     src/base64/base64.zig (558 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      comptime Codecs/mixed_decoder use LazyLock; SIMDUTFResult/BabyList field/ctor names guessed; defer-write reshaped to direct *wrote mutation
+//   notes:      comptime Codecs/mixed_decoder use LazyLock; SIMDUTFResult/Vec field/ctor names guessed; defer-write reshaped to direct *wrote mutation
 // ──────────────────────────────────────────────────────────────────────────

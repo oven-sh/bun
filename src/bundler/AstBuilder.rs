@@ -165,9 +165,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // SAFETY: `current_scope` is a live bump-arena allocation (set in `init`/`push_scope`)
         // and uniquely accessed here — `self.symbols` / `self.declared_symbols` are
         // disjoint from the arena `Scope`, and no other `&`/`&mut` to this `Scope` is live.
-        unsafe { &mut *self.current_scope }
-            .generated
-            .append(ref_)?;
+        unsafe { &mut *self.current_scope }.generated.push(ref_);
         self.declared_symbols.append(DeclaredSymbol {
             ref_,
             is_top_level: self.scopes.is_empty()
@@ -318,13 +316,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
         let module_scope_ref = unsafe { &*module_scope };
-        let generated_len = module_scope_ref.generated.len as usize;
+        let generated_len = module_scope_ref.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
         // PORT NOTE: reshaped — Zig grew `entries` then wrote keys/values columns
         // in lockstep + `reIndex`. Rust `ArrayHashMap` keeps keys/values in private
         // `Vec`s and rebuilds hashes on every `put_assume_capacity`, so a plain
         // pre-reserved insert loop is equivalent (and `re_index` is a no-op here).
-        // Zig shallow-copied a single `BabyList(u32){1}`; `BabyList` is move-only
+        // Zig shallow-copied a single `Vec(u32){1}`; `Vec` is move-only
         // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts

@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bun_js_parser as js_ast;
@@ -71,7 +72,7 @@ pub fn edit_patched_dependencies(
             patched_dependencies.is_parenthesized = obj.is_parenthesized;
             patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
-                patched_dependencies.properties.append(copy_property(p))?;
+                VecExt::append(&mut patched_dependencies.properties, copy_property(p))?;
             }
         }
     }
@@ -190,14 +191,14 @@ pub fn edit_trusted_dependencies(
         )
     };
 
-    if trusted_dependencies_to_add > 0 && new_trusted_deps.len > 0 {
+    if trusted_dependencies_to_add > 0 && new_trusted_deps.len_u32() > 0 {
         let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
         arr.items = new_trusted_deps;
         arr.alphabetize_strings();
     }
 
     if !matches!(package_json.data, js_ast::ExprData::EObject(_))
-        || package_json.data.e_object().expect("infallible: variant checked").properties.len == 0
+        || package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
     {
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
         root_properties.push(G::Property {
@@ -881,7 +882,7 @@ pub fn edit(
         {
             let obj = dependencies_object.data.e_object_mut().expect("infallible: variant checked");
             obj.properties = G::PropertyList::move_from_list(new_dependencies);
-            if obj.properties.len > 1 {
+            if obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
             }
         }
@@ -912,13 +913,13 @@ pub fn edit(
         if options.add_trusted_dependencies && trusted_dependencies_to_add > 0 {
             let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
             arr.items = new_trusted_deps;
-            if arr.items.len > 1 {
+            if arr.items.len_u32() > 1 {
                 arr.alphabetize_strings();
             }
         }
 
         if !matches!(current_package_json.data, js_ast::ExprData::EObject(_))
-            || current_package_json.data.e_object().expect("infallible: variant checked").properties.len == 0
+            || current_package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
         {
             let n = if options.add_trusted_dependencies { 2 } else { 1 };
             let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);

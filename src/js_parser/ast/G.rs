@@ -1,4 +1,4 @@
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_logger as logger;
 
 use crate::ast::base::Ref;
@@ -23,9 +23,9 @@ pub struct Decl {
     pub value: Option<ExprNodeIndex>,
 }
 
-// Zig: `pub const List = BabyList(Decl);` (nested decl) — inherent assoc types
+// Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
 // are nightly; free alias.
-pub type DeclList = BabyList<Decl>;
+pub type DeclList = Vec<Decl>;
 
 impl Default for Decl {
     fn default() -> Self {
@@ -144,13 +144,13 @@ pub struct Comment {
 }
 
 pub struct ClassStaticBlock {
-    pub stmts: BabyList<Stmt>,
+    pub stmts: Vec<Stmt>,
     pub loc: logger::Loc,
 }
 
 impl Default for ClassStaticBlock {
     fn default() -> Self {
-        Self { stmts: BabyList::default(), loc: logger::Loc::default() }
+        Self { stmts: Vec::default(), loc: logger::Loc::default() }
     }
 }
 
@@ -180,8 +180,8 @@ pub struct Property {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-// Zig: nested `pub const List = BabyList(Property);` — free alias.
-pub type PropertyList = BabyList<Property>;
+// Zig: nested `pub const List = Vec(Property);` — free alias.
+pub type PropertyList = Vec<Property>;
 
 impl Default for Property {
     fn default() -> Self {
@@ -207,7 +207,7 @@ impl Property {
             let csb_ref = unsafe { csb.as_ref() };
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
-                stmts: csb_ref.stmts.clone()?,
+                stmts: csb_ref.stmts.clone(),
             });
             class_static_block = Some(core::ptr::NonNull::from(new_block));
         }
@@ -219,7 +219,7 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Zig: `try this.ts_decorators.deepClone(allocator)` — BabyList<Expr> per-element deep clone.
+            // Zig: `try this.ts_decorators.deepClone(allocator)` — Vec<Expr> per-element deep clone.
             ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             key: match self.key {
                 Some(key) => Some(key.deep_clone(bump)?),
@@ -357,7 +357,7 @@ impl Default for Arg {
 impl Arg {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
-            // Zig: `try this.ts_decorators.deepClone(allocator)` — BabyList<Expr> per-element deep clone.
+            // Zig: `try this.ts_decorators.deepClone(allocator)` — Vec<Expr> per-element deep clone.
             ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             binding: self.binding,
             default: match self.default {

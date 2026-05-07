@@ -6,7 +6,7 @@
 use bun_collections::{VecExt, ByteVecExt};
 use core::fmt;
 
-use crate::shell::interpreter::{ByteList, OutputNeedsIOSafeGuard};
+use crate::shell::interpreter::{OutputNeedsIOSafeGuard};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
 
@@ -70,7 +70,7 @@ pub struct OutFd {
     pub writer: std::sync::Arc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.
-    pub captured: Option<*mut ByteList>,
+    pub captured: Option<*mut Vec<u8>>,
 }
 
 impl fmt::Display for OutKind {

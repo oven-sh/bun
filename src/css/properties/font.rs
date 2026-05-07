@@ -13,7 +13,7 @@
 //
 // Most `parse` / `to_css` *bodies* remain ``-gated below
 // because they bottom out on still-unported leaf surface (DeriveParse /
-// DeriveToCss proc-macros, EnumProperty derive over strum, BabyList::parse,
+// DeriveToCss proc-macros, EnumProperty derive over strum, Vec::parse,
 // parse_utility::parse_string, generics::is_compatible blanket). Each gate
 // carries a `blocked_on:` note so the next round can lift bodies as their
 // deps land.
@@ -821,7 +821,7 @@ impl Font {
             None
         };
 
-        // PORT NOTE: Zig `BabyList(FontFamily).parse` parsed a comma-separated
+        // PORT NOTE: Zig `Vec(FontFamily).parse` parsed a comma-separated
         // list and packed it; route through `parse_comma_separated` + move.
         let family = input
             .parse_comma_separated(FontFamily::parse)
@@ -1054,7 +1054,7 @@ impl FontHandler {
 
     
     // blocked_on: FontFamilyHashMap, PropertyHandlerContext::allocator(),
-    // BabyList::ordered_remove/insert/at, generics::is_compatible.
+    // Vec::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
@@ -1203,7 +1203,7 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
 ];
 
 
-// blocked_on: BabyList::insert allocator threading + arena Bump param.
+// blocked_on: Vec::insert allocator threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
     _family: Option<Vec<FontFamily>>,
@@ -1223,7 +1223,7 @@ fn compatible_font_family(
         // perform the inserts using the captured index.
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                // TODO(port): families.insert(allocator, idx, val) — BabyList::insert with arena
+                // TODO(port): families.insert(allocator, idx, val) — Vec::insert with arena
                 families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
             }
         }
@@ -1257,7 +1257,7 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
 //               flush bodies internally gated on DeriveParse/DeriveToCss proc-
 //               macros + EnumProperty from_ascii_case_insensitive impls +
 //               generics::IsCompatible blanket + parse_utility::parse_string +
-//               BabyList parse/insert allocator threading. FontFamily.FamilyName
+//               Vec parse/insert allocator threading. FontFamily.FamilyName
 //               is arena-owned *const [u8] (thread 'bump in Phase B; manual
 //               PartialEq/Clone compare/copy by content/pointer-shallow);
 //               FontHandler @field helpers expanded via macro_rules!.

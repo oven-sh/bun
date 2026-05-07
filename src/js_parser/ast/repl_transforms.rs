@@ -7,6 +7,7 @@
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_alloc::Arena as Bump;
+use bun_collections::VecExt;
 
 use bun_logger as logger;
 
@@ -106,7 +107,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                         let decls = unsafe {
                             G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut())
                         };
@@ -202,7 +203,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        // PORT NOTE: G::Class is non-Copy (owns a BabyList); the original
+                        // PORT NOTE: G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
                         let class_value = core::mem::take(&mut class.class);
                         let class_expr = self.new_expr(class_value, stmt.loc);
@@ -598,7 +599,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
         // PERF(port): was bun.handleOom(allocator.alloc(G.Property, 2)).
-        // G::Property is non-Copy (owns BabyList) → use bump Vec instead of alloc_slice_copy.
+        // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {
@@ -617,7 +618,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             value: Some(expr),
             ..Default::default()
         });
-        // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
         let prop_list =
             unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
         self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
@@ -706,7 +707,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         items.push(expr);
                     }
                 }
-                // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let item_list =
                     unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
                 self.new_expr(
@@ -739,7 +740,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         ..Default::default()
                     });
                 }
-                // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let prop_list =
                     unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
                 self.new_expr(
@@ -761,7 +762,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =
         bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
-    // SAFETY: bump-owned slice handed to BabyList::Borrowed; never grown.
+    // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
     unsafe { G::DeclList::from_bump_slice(slice) }
 }
 

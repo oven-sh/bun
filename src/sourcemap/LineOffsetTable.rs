@@ -76,7 +76,7 @@ impl MultiArrayElement for LineOffsetTable {
     type Field = LineOffsetTableField;
     const FIELD_COUNT: usize = 3;
     const ALIGN: usize = core::mem::align_of::<Vec<i32>>();
-    // sorted by alignment descending (BabyList has ptr → align 8; u32 align 4)
+    // sorted by alignment descending (Vec has ptr → align 8; u32 align 4)
     const SIZES_BYTES: &'static [usize] = &[
         core::mem::size_of::<Vec<i32>>(),
         core::mem::size_of::<u32>(),
@@ -167,8 +167,8 @@ impl LineOffsetTable {
         None
     }
 
-    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/BabyList.
-    // The Rust MultiArrayList/BabyList own their storage on the global mimalloc
+    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/Vec.
+    // The Rust MultiArrayList/Vec own their storage on the global mimalloc
     // heap (PORTING.md §allocators), so the allocator param is dropped.
     // TODO(port): callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
     // allocator in CodeCoverage.zig); revisit if an arena-backed MultiArrayList lands.
@@ -267,7 +267,7 @@ impl LineOffsetTable {
                     //
                     // PERF(port): Zig used a stack-fallback allocator for the scratch list and
                     // duped onto `allocator` only when stack-owned, then reset the fixed buffer.
-                    // Here the scratch is a heap Vec; we always dupe into a fresh BabyList
+                    // Here the scratch is a heap Vec; we always dupe into a fresh Vec
                     // (mirrors `allocator.dupe`) and `.clear()` to reuse capacity. Profile in
                     // Phase B.
                     let owned = columns_for_non_ascii.to_vec();
@@ -311,7 +311,7 @@ impl LineOffsetTable {
         }
         {
             // PERF(port): Zig checked stack_fallback.ownsSlice and duped onto `allocator` if so;
-            // here we always dupe the scratch Vec into a fresh BabyList.
+            // here we always dupe the scratch Vec into a fresh Vec.
             let owned = columns_for_non_ascii.to_vec();
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
@@ -332,5 +332,5 @@ impl LineOffsetTable {
 //   source:     src/sourcemap/LineOffsetTable.zig (232 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      generate() now takes &'bump Arena and threads it into MultiArrayList/BabyList (arena API assumed — wire in Phase B); stack-fallback scratch replaced by reusable Vec + bump.alloc_slice_copy (PERF-tagged); verify decode_wtf8_rune_t signature
+//   notes:      generate() now takes &'bump Arena and threads it into MultiArrayList/Vec (arena API assumed — wire in Phase B); stack-fallback scratch replaced by reusable Vec + bump.alloc_slice_copy (PERF-tagged); verify decode_wtf8_rune_t signature
 // ──────────────────────────────────────────────────────────────────────────

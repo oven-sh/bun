@@ -2128,7 +2128,7 @@ impl<'a> Drop for ValueBufferer<'a> {
             // PORT NOTE: Zig `wrapper.sink.destroy()` frees the JSSink wrapper
             // allocation (sink is at offset 0). In Rust the wrapper is a
             // `Box<JSSink<ArrayBufferSink>>`; dropping it frees the box and
-            // runs `ByteList`'s Drop — equivalent without the fragile
+            // runs `Vec<u8>`'s Drop — equivalent without the fragile
             // sub-field-pointer free.
             drop(buffer_stream);
         }
@@ -2308,7 +2308,7 @@ impl<'a> ValueBufferer<'a> {
         if let Some(mut wrapper) = self.js_sink.take() {
             wrapper.detach_self(self.global);
             // PORT NOTE: see `Drop` impl — dropping the Box frees the wrapper
-            // and runs `ByteList`'s Drop (≡ Zig `wrapper.sink.destroy()`).
+            // and runs `Vec<u8>`'s Drop (≡ Zig `wrapper.sink.destroy()`).
             drop(wrapper);
         }
         // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`

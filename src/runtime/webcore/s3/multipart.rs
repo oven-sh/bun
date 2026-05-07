@@ -155,7 +155,7 @@ pub struct MultiPartUpload {
     pub uploadid_buffer: MutableString,
 
     pub multipart_etags: Vec<UploadPartResult>,
-    pub multipart_upload_list: Vec<u8>, // was bun.ByteList
+    pub multipart_upload_list: Vec<u8>, // was bun.Vec<u8>
 
     pub state: State,
 

@@ -22,7 +22,7 @@ use bun_sys::{self as sys, Fd, E};
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter as _;
 
-use crate::shell::interpreter::{ByteList, EventLoopHandle, Interpreter, NodeId};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -101,13 +101,13 @@ pub struct Flags {
 }
 
 /// One queued chunk: which child enqueued it, how many bytes (in `buf`), how
-/// many of those have been written so far, and an optional `ByteList` to tee
+/// many of those have been written so far, and an optional `Vec<u8>` to tee
 /// into. Spec: IOWriter.zig `Writer`.
 struct Writer {
     ptr: ChildPtr,
     len: usize,
     written: usize,
-    bytelist: Option<*mut ByteList>,
+    bytelist: Option<*mut Vec<u8>>,
 }
 
 impl Writer {
@@ -890,7 +890,7 @@ impl IOWriter {
     pub fn enqueue(
         &self,
         child: ChildPtr,
-        bytelist: Option<*mut ByteList>,
+        bytelist: Option<*mut Vec<u8>>,
         buf: &[u8],
     ) -> Yield {
         if let Some(y) = self.handle_broken_pipe(child) {
@@ -909,7 +909,7 @@ impl IOWriter {
     pub fn enqueue_fmt_bltn(
         &self,
         child: ChildPtr,
-        bytelist: Option<*mut ByteList>,
+        bytelist: Option<*mut Vec<u8>>,
         kind: Option<crate::shell::builtin::Kind>,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -939,7 +939,7 @@ impl IOWriter {
     pub fn enqueue_fmt(
         &self,
         child: ChildPtr,
-        bytelist: Option<*mut ByteList>,
+        bytelist: Option<*mut Vec<u8>>,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         self.enqueue_fmt_bltn(child, bytelist, None, args)

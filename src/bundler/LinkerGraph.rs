@@ -178,8 +178,7 @@ impl LinkerGraph {
 
         self.ast.items_module_scope_mut()[source_index as usize]
             .generated
-            .append(ref_)
-                ;
+            .push(ref_);
         ref_
     }
 
@@ -603,14 +602,14 @@ impl LinkerGraph {
             // SAFETY: `Index` is `#[repr(transparent)]` over `u32`;
             // reinterpreting `[Index]` as `[u32]` is sound. The arena-allocated
             // slice is never freed individually (whole arena dropped with
-            // `BundleV2`), so a borrowed `BabyList` is correct.
+            // `BundleV2`), so a borrowed `Vec` is correct.
             self.stable_source_indices = unsafe { core::slice::from_raw_parts(stable_source_indices.as_ptr().cast::<u32>(), stable_source_indices.len()) }.to_vec();
         }
 
         {
             // PORT NOTE: Zig built a borrowed `Symbol.NestedList` over the
             // `ast.items(.symbols)` column then `clone`d it (memcpy). The Rust
-            // `BabyList::clone` requires `T: Clone` which `Symbol` does not
+            // `Vec::clone` requires `T: Clone` which `Symbol` does not
             // derive (it carries a raw `*const [u8]`), so spell out the
             // bitwise copy explicitly — `Symbol` has no `Drop` impl.
             let src_symbols: &[symbol::List] = self.ast.items_symbols();
@@ -703,7 +702,7 @@ impl LinkerGraph {
         Ok(())
     }
 
-    /// No-op: with `BabyList` replaced by `Vec` (cat-4, BABYLIST_REPLACEMENT.md),
+    /// No-op: with `Vec` replaced by `Vec` (cat-4, BABYLIST_REPLACEMENT.md),
     /// the parser hands the linker globally-owned `Vec`s directly — there is
     /// nothing to "transfer". Kept as an empty fn so the call site in
     /// `LinkerGraph::load` stays diff-stable; delete once that caller drops it.

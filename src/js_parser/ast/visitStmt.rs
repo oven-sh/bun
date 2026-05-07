@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code, unused_unsafe)]
+use bun_collections::VecExt;
 use bun_core::Error;
 use bun_logger as logger;
 use crate::parser::{
@@ -314,7 +315,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let name = p.load_name_from_ref(data.namespace_ref);
 
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
-        p.cur_scope().generated.append(data.namespace_ref).expect("oom");
+        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
         p.record_declared_symbol(data.namespace_ref);
 
         // SAFETY: arena-owned slice; valid for 'a.
@@ -335,7 +336,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let _name = p.load_name_from_ref(old_ref);
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
-                p.cur_scope().generated.append(ref_).expect("oom");
+                VecExt::append(&mut p.cur_scope().generated, ref_).expect("oom");
                 p.record_declared_symbol(ref_);
                 if j != i {
                     // SAFETY: indices in-bounds; ClauseItem is POD-ish.
@@ -359,7 +360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             for item in items.iter_mut() {
                 let _name = p.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
-                p.cur_scope().generated.append(ref_).expect("oom");
+                VecExt::append(&mut p.cur_scope().generated, ref_).expect("oom");
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = Some(ref_);
             }
@@ -378,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
-        p.cur_scope().generated.append(data.namespace_ref).expect("oom");
+        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
         p.record_declared_symbol(data.namespace_ref);
 
         // "export * as ns from 'path'"
@@ -500,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if should_emit_temp_var {
                     // declare a temporary ref for this
                     let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    p.cur_scope().generated.append(temp_id).expect("oom");
+                    VecExt::append(&mut p.cur_scope().generated, temp_id).expect("oom");
 
                     let value_expr = *expr;
                     stmts.push(Stmt::alloc(
@@ -532,8 +533,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     stmts.reserve(2);
 
                     let mut decls = G::DeclList::init_capacity(1).expect("oom");
-                    decls
-                        .append(G::Decl {
+                    VecExt::append(&mut decls, G::Decl {
                             binding: p.b(
                                 B::Identifier { r#ref: data.default_name.ref_.expect("infallible: ref bound") },
                                 data.default_name.loc,
@@ -680,7 +680,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         }
 
                                         let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                                        p.cur_scope().generated.append(temp_id).expect("oom");
+                                        VecExt::append(&mut p.cur_scope().generated, temp_id).expect("oom");
                                         break 'brk temp_id;
                                     };
 
@@ -1066,10 +1066,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         };
         // Spec (visitStmt.zig:724-727): drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
-        if data.decls.len > 0 && new_len == 0 {
+        if data.decls.len_u32() > 0 && new_len == 0 {
             return Ok(());
         }
-        data.decls.len = new_len as u32;
+        data.decls.truncate(new_len);
 
         // Handle being exported inside a namespace
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
@@ -1332,8 +1332,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
                                 };
-                                decls
-                                    .append(G::Decl {
+                                VecExt::append(&mut decls, G::Decl {
                                         binding: p.b(B::Identifier { r#ref: ref_ }, bin.left.loc),
                                         value: Some(bin.right),
                                     })
@@ -1691,7 +1690,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let local: &mut S::Local = &mut *local_ref;
                 if local.kind == S::Kind::KVar {
                     // Lower for-in variable initializers in case the output is used in strict mode
-                    if local.decls.len == 1 {
+                    if local.decls.len_u32() == 1 {
                         let decl: &mut G::Decl = &mut local.decls.slice_mut()[0];
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
@@ -1759,8 +1758,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
-                    first_decls
-                        .append(G::Decl {
+                    VecExt::append(&mut first_decls, G::Decl {
                             binding: p.b(B::Identifier { r#ref: id.r#ref }, loc),
                             value: Some(Expr::init_identifier(temp_ref, loc)),
                         })

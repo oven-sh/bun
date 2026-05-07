@@ -7,6 +7,7 @@
 // with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 
+use bun_collections::VecExt;
 use core::fmt;
 
 use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
@@ -247,7 +248,7 @@ use std::io::Write as _;
 
 use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{Global, Output};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_js_parser::E::Rope;
@@ -1154,7 +1155,7 @@ pub struct ConfigIterator<'a> {
 
 impl<'a> ConfigIterator<'a> {
     pub fn next(&mut self) -> Option<IniOption<ConfigItem>> {
-        if self.prop_idx >= self.config.properties.len as usize {
+        if self.prop_idx >= self.config.properties.len_u32() as usize {
             return None;
         }
         let prop_idx = self.prop_idx;
@@ -1228,7 +1229,7 @@ pub struct ScopeItem {
 
 impl<'a> ScopeIterator<'a> {
     pub fn next(&mut self) -> OOM<Option<IniOption<ScopeItem>>> {
-        if self.prop_idx >= self.config.properties.len as usize {
+        if self.prop_idx >= self.config.properties.len_u32() as usize {
             return Ok(None);
         }
         let prop_idx = self.prop_idx;
@@ -1387,7 +1388,7 @@ pub fn load_npmrc(
         if let Some(str_) = query.expr.as_utf8_string_literal() {
             install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
         } else if let ExprData::EArray(arr) = &query.expr.data {
-            let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len as usize);
+            let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
             for item in arr.items.slice() {
                 if let Some(s) = item.as_string_cloned(bump)? {
                     list.push(Box::<[u8]>::from(s));
@@ -1998,5 +1999,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, BabyList::at/len). Quoted-value JSON fast path in prepare_str() un-gated against bun_interchange::json::parse_utf8_impl — T2 result lifted to bun_js_parser::Expr inline for scalars; Array/Object stringify pending T2/T4 Expr unification. ScopeIterator::next inner registry-parse block + ScopeItem.registry field + handle_auth() un-gated against bun_api::{NpmRegistry,npm_registry::Parser} + bun_base64. load_npmrc_config stays gated on bun_core::output::ErrName-for-bun_sys::Error + Log::print/Output::error_writer() type bridge. load_npmrc stays gated on bun_js_parser::Expr accessor surface (as_property/get/as_bool/is_array/as_string/as_string_cloned) + PnpmMatcher::from_expr Expr-type unification (bun_logger::ast::Expr vs bun_js_parser::Expr).
+//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, Vec::at/len). Quoted-value JSON fast path in prepare_str() un-gated against bun_interchange::json::parse_utf8_impl — T2 result lifted to bun_js_parser::Expr inline for scalars; Array/Object stringify pending T2/T4 Expr unification. ScopeIterator::next inner registry-parse block + ScopeItem.registry field + handle_auth() un-gated against bun_api::{NpmRegistry,npm_registry::Parser} + bun_base64. load_npmrc_config stays gated on bun_core::output::ErrName-for-bun_sys::Error + Log::print/Output::error_writer() type bridge. load_npmrc stays gated on bun_js_parser::Expr accessor surface (as_property/get/as_bool/is_array/as_string/as_string_cloned) + PnpmMatcher::from_expr Expr-type unification (bun_logger::ast::Expr vs bun_js_parser::Expr).
 // ──────────────────────────────────────────────────────────────────────────

@@ -476,7 +476,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
         // param because every producer (`ByteStream::on_data` — the sole `Pipe`
         // call site) allocates with `bun.default_allocator`, which is the same
-        // global mimalloc that `ByteList::clear_and_free()` frees with. The
+        // global mimalloc that `Vec::<u8>::clear_and_free()` frees with. The
         // `defer { switch }` is hoisted to the tail below (after `end_pipe`)
         // since `StreamResult` has no `Drop` and `stream` is a stack local
         // independent of `self`.

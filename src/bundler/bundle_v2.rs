@@ -3044,7 +3044,7 @@ impl<'a> BundleV2<'a> {
                 /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
             }
 
-            module_scope.generated = module_scope.generated.clone()?;
+            module_scope.generated = module_scope.generated.clone();
         }
 
         // Some parts of the AST are owned by worker allocators at this point.
@@ -4657,7 +4657,7 @@ impl<'a> BundleV2<'a> {
             };
         }
 
-        // PORT NOTE: `Chunk: !Default` (BabyList fields). Allocate via Vec then
+        // PORT NOTE: `Chunk: !Default` (Vec fields). Allocate via Vec then
         // leak into the arena.
         let mut chunks: Vec<Chunk> = Vec::with_capacity(
             1 + start.css_entry_points.count() + html_files.count(),
@@ -6590,7 +6590,7 @@ impl CrossChunkImport {
             }
             import_items.slice_mut().sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
 
-            // Zig value-copies the BabyList header so both `result[_]` and the
+            // Zig value-copies the Vec header so both `result[_]` and the
             // map slot share the backing buffer; `rename_symbols_in_chunk`
             // re-reads `imports_from_other_chunks.values()` afterwards. Taking
             // would leave the map slot empty and break that consumer.

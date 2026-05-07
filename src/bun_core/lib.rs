@@ -245,7 +245,7 @@ pub mod strings {
 
     // ──────────────────────────────────────────────────────────────────────
     // Transcoding (from src/string/immutable/unicode.zig). Lives in T0 so
-    // collections::BabyList<u8> can call it without depending on bun_string.
+    // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
     use bun_simdutf_sys::simdutf;

@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
 use bun_logger as logger;
 use bun_string::strings;
@@ -263,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name).expect("unreachable");
             // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator.
-            // `Arg` is non-Copy (owns BabyList) → use fill_iter instead of alloc_slice_copy.
+            // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p
                 .allocator
@@ -760,7 +761,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
-        // PORT NOTE: BumpVec → BabyList. `into_bump_slice()` leaks into the arena (freed at
+        // PORT NOTE: BumpVec → Vec. `into_bump_slice()` leaks into the arena (freed at
         // arena reset, matching Zig's ListManaged on `p.allocator`).
         // SAFETY: arena slice; no growth methods will be called on the resulting list.
         let items_list = unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
@@ -856,7 +857,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self_errors.merge_into(errors.unwrap());
         }
 
-        // PORT NOTE: BumpVec → BabyList via arena slice; see pfx_t_open_bracket.
+        // PORT NOTE: BumpVec → Vec via arena slice; see pfx_t_open_bracket.
         // SAFETY: arena slice; no growth methods will be called on the resulting list.
         let properties_list =
             unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };

@@ -313,7 +313,7 @@ impl TrackRepeat {
             i.expect_comma()?;
 
             // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.BabyList(T).init(i.allocator)` — using default + push(alloc, ..) here
+            // TODO(port): Zig calls `bun.Vec(T).init(i.allocator)` — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 

@@ -1,4 +1,3 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 #[allow(unused_imports)]
@@ -220,7 +219,7 @@ use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
 // from `Option<NonNull<T>>` to `Option<&'static mut T>` so call sites can invoke
 // methods directly; the borrow is scoped by the caller's `scopeguard` + deref().
@@ -1749,7 +1748,7 @@ where
         let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
             sink: ResponseStream::<SSL_ENABLED, HTTP3> {
                 res: Some(raw_res),
-                buffer: ByteList::default(),
+                buffer: Vec::<u8>::default(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(this as *mut Self as *mut c_void),
                 global_this: global_this as *const _,
@@ -2832,8 +2831,8 @@ where
                 match unsafe { &mut *stream_ptr } {
                     WebCore::streams::Result::OwnedAndDone(owned)
                     | WebCore::streams::Result::Owned(owned) => {
-                        // BabyList::deinit → Drop in Rust.
-                        *owned = ByteList::default();
+                        // Vec::deinit → Drop in Rust.
+                        *owned = Vec::<u8>::default();
                     }
                     _ => unreachable!(),
                 }
@@ -3410,7 +3409,7 @@ where
 
             // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
             // wrapper; ownership of `chunk` stays with the caller.
-            let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(chunk) };
+            let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk) };
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;

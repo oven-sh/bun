@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_core::{prettyln, Global, Output};
 use bun_core::fmt as bun_fmt;
 use bun_http as http;
@@ -403,7 +404,7 @@ pub fn view(
     let mut dep_count: usize = 0;
     let dependencies_object = manifest.get_object(b"dependencies");
     if let Some(deps) = &dependencies_object {
-        dep_count = deps.data.e_object().expect("infallible: variant checked").properties.len as usize;
+        dep_count = deps.data.e_object().expect("infallible: variant checked").properties.len_u32() as usize;
     }
 
     prettyln!(

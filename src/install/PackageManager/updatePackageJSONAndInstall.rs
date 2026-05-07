@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -194,7 +195,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 (<&'static str>::from(subcommand),),
             );
             Global::crash();
-        } else if current_package_json_root.data.as_e_object().properties.len == 0 {
+        } else if current_package_json_root.data.as_e_object().properties.len_u32() == 0 {
             Output::err_generic(
                 "package.json is empty {{}}, so there's nothing to {s}!",
                 (<&'static str>::from(subcommand),),
@@ -273,11 +274,11 @@ fn update_package_json_and_install_with_manager_with_updates(
 
                             let changed = new_len != dependencies.len();
                             if changed {
-                                e_object.properties.len = new_len as u32;
+                                e_object.properties.truncate((new_len) as usize);
 
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
-                                if e_object.properties.len == 0 {
+                                if e_object.properties.len_u32() == 0 {
                                     // TODO: Theoretically we could change these two lines to
                                     // `.orderedRemove(query.i)`, but would that change user-facing
                                     // behavior?

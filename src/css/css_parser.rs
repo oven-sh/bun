@@ -845,8 +845,8 @@ pub type BundlerAtRule = DefaultAtRule;
 
 pub struct BundlerAtRuleParser<'a> {
     pub allocator: &'a Bump,
-    /// Raw pointer aliasing the same `BabyList` that `Parser.import_records`
-    /// points to (Zig passes one `*BabyList` to both — see `parseBundler`,
+    /// Raw pointer aliasing the same `Vec` that `Parser.import_records`
+    /// points to (Zig passes one `*Vec` to both — see `parseBundler`,
     /// css_parser.zig:3245). Both views are raw pointers sharing a single
     /// SharedRW provenance (see `parse_bundler`); each materialises a
     /// short-lived `&mut` only at the point of use, so accesses interleave
@@ -3050,7 +3050,7 @@ impl StyleSheet<BundlerAtRule> {
         // copy) to `parseWith`. Rust forbids both overlaps directly:
         // - `import_records`: derive a single raw `NonNull` from the unique
         //   borrow; both the at-rule parser and `Parser::new` store copies of
-        //   that raw pointer (matching Zig's `?*BabyList`). Neither holds a
+        //   that raw pointer (matching Zig's `?*Vec`). Neither holds a
         //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
         //   `add_import_record`/`state`/`reset` each create a fresh short-lived
         //   `&mut` from the shared SharedRW provenance — sound under SB.
@@ -3347,7 +3347,7 @@ pub struct Parser<'a> {
     pub at_start_of: Option<BlockType>,
     pub stop_before: Delimiters,
     pub flags: ParserOpts,
-    /// Stored as a raw `NonNull` (mirrors Zig's `?*BabyList(ImportRecord)`,
+    /// Stored as a raw `NonNull` (mirrors Zig's `?*Vec(ImportRecord)`,
     /// css_parser.zig:3808) because `BundlerAtRuleParser` holds an aliasing
     /// raw pointer to the same list. Keeping a long-lived `&'a mut` here would
     /// be invalidated under Stacked Borrows the moment `on_import_rule`

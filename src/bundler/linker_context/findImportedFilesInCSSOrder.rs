@@ -25,11 +25,11 @@ macro_rules! debug {
 }
 
 // PORT NOTE: Zig `entry.*` / `@memcpy` are bitwise copies of arena-backed
-// `CssImportOrder` values (the inner `BabyList`s point into bump arenas and are
-// never individually freed). Rust's `BabyList` has `Drop`, so a literal `*entry`
+// `CssImportOrder` values (the inner `Vec`s point into bump arenas and are
+// never individually freed). Rust's `Vec` has `Drop`, so a literal `*entry`
 // is not `Copy`. We replicate the Zig bitwise-copy semantics here; soundness
 // holds because (a) every `conditions` list that gets aliased is built via
-// `deep_clone_conditions` → `BabyList::init_capacity_in` (arena-backed,
+// `deep_clone_conditions` → `Vec::init_capacity_in` (arena-backed,
 // `Origin::Borrowed`, no-op `Drop`), and (b) `wip_order`/`order` shuffles use
 // `len`-truncation rather than `clear_retaining_capacity` so moved-from slots
 // are never dropped.
@@ -410,7 +410,7 @@ pub fn find_imported_files_in_css_order<'a>(
         // PORT NOTE: reshaped for borrowck — `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
-        // pointers into the BabyList buffer (Zig used the same pattern via
+        // pointers into the Vec buffer (Zig used the same pattern via
         // `*const` slice returns); `order.mut_(i)` only writes `.kind` and
         // never reallocates, so the conditions pointer stays valid.
         let order_ptr = order.as_mut_ptr();
@@ -1013,7 +1013,7 @@ pub use crate::ThreadPool;
 //   source:     src/bundler/linker_context/findImportedFilesInCSSOrder.zig (679 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      Heavy bitwise-copy of arena-backed CssImportOrder/BabyList
+//   notes:      Heavy bitwise-copy of arena-backed CssImportOrder/Vec
 //               values to mirror Zig `entry.*` / `@memcpy` semantics — sound
 //               because all aliased `conditions` lists allocate in the bump
 //               arena via `init_capacity_in` (`Origin::Borrowed`, no-op

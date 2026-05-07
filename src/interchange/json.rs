@@ -244,7 +244,7 @@ where
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 // PORT NOTE: Zig grew an `ArrayList(Expr)` in `list_allocator` and
-                // `moveFromList`-ed it. The Rust `BabyList` is `Vec`-backed (global
+                // `moveFromList`-ed it. The Rust `Vec` is `Vec`-backed (global
                 // allocator), so build a `Vec<Expr>` directly and hand it off.
                 let mut exprs: Vec<Expr> = Vec::new();
                 // errdefer exprs.deinit() — dropped automatically on `?`.
@@ -285,7 +285,7 @@ where
             T::TOpenBrace => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
-                // PORT NOTE: see TOpenBracket note — `BabyList` is `Vec`-backed.
+                // PORT NOTE: see TOpenBracket note — `Vec` is `Vec`-backed.
                 let mut properties: Vec<G::Property> = Vec::new();
                 // errdefer properties.deinit() — dropped automatically on `?`.
 

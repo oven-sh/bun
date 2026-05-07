@@ -9,7 +9,6 @@ use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::Pipe;
 use crate::webcore::{blob, readable_stream};
 
-type ByteList = Vec<u8>;
 
 bun_output::declare_scope!(ByteStream, visible);
 
@@ -73,7 +72,7 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn on_cancel(&mut self) { Self::on_cancel(self) }
     fn deinit_fn(&mut self) { Self::finalize(self) }
-    fn drain_internal_buffer(&mut self) -> bun_collections::ByteList { Self::drain(self) }
+    fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
     fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
     fn to_buffered_value(
         &mut self,
@@ -104,7 +103,7 @@ impl ByteStream {
 
         if self.has_received_last_chunk {
             let buffer = core::mem::take(&mut self.buffer);
-            return streams::Start::OwnedAndDone(ByteList::move_from_list(buffer));
+            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
         }
 
         if self.high_water_mark == 0 {
@@ -141,7 +140,7 @@ impl ByteStream {
         bun_jsc::mark_binding!();
         if self.done {
             // PORT NOTE: Zig frees `stream.owned.slice()` / `stream.owned_and_done.slice()` here
-            // via `allocator.free` when the variant is owned. In Rust the owned `ByteList`/`Vec`
+            // via `allocator.free` when the variant is owned. In Rust the owned `Vec<u8>`/`Vec`
             // payload drops implicitly at the `return` below — no explicit `drop` needed.
             self.has_received_last_chunk = stream.is_done();
 
@@ -195,7 +194,7 @@ impl ByteStream {
                         bun_output::scoped_log!(ByteStream, "ByteStream.onData owned_and_done and action.fulfill()");
 
                         // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
-                        // PORT NOTE: reshaped for borrowck — move the owned ByteList into `buffer`
+                        // PORT NOTE: reshaped for borrowck — move the owned Vec<u8> into `buffer`
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
                         self.buffer = owned.move_to_list_managed();
@@ -207,7 +206,7 @@ impl ByteStream {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData appendSlice and action.fulfill()");
 
                 self.buffer.extend_from_slice(stream.slice());
-                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `ByteList`
+                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `Vec<u8>`
                 // payload of `stream` is freed by its Drop glue at the explicit `drop` below
                 // (Temporary* variants are `ManuallyDrop` and so are left alone, matching Zig).
                 drop(stream);
@@ -215,7 +214,7 @@ impl ByteStream {
                 return action.fulfill(self.parent().global_this, &mut blob);
             } else {
                 self.buffer.extend_from_slice(stream.slice());
-                // Zig: `if owned* allocator.free(stream.slice())` — owned `ByteList` payload of
+                // Zig: `if owned* allocator.free(stream.slice())` — owned `Vec<u8>` payload of
                 // `stream` is freed by its Drop glue (Temporary* are `ManuallyDrop`, left alone).
                 drop(stream);
             }
@@ -318,7 +317,7 @@ impl ByteStream {
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
                 self.buffer.extend_from_slice(&owned.slice()[offset..]);
-                // Zig: `allocator.free(@constCast(base_address))` — `owned: ByteList` drops here.
+                // Zig: `allocator.free(@constCast(base_address))` — `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
                 if self.buffer_action.is_some() {
@@ -476,11 +475,11 @@ impl ByteStream {
         unsafe { self.parent().deinit() };
     }
 
-    pub fn drain(&mut self) -> ByteList {
+    pub fn drain(&mut self) -> Vec<u8> {
         if !self.buffer.is_empty() {
-            return ByteList::move_from_list(core::mem::take(&mut self.buffer));
+            return Vec::<u8>::move_from_list(core::mem::take(&mut self.buffer));
         }
-        ByteList::default()
+        Vec::<u8>::default()
     }
 
     pub fn to_any_blob(&mut self) -> Option<blob::Any> {

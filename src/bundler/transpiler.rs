@@ -1795,7 +1795,7 @@ impl<'a> Transpiler<'a> {
 
                 // PORT NOTE: reshaped — Zig `allocator.alloc(Part, 1)` returned
                 // an arena slice, but `Ast::from_parts` takes `Box<[Part]>`
-                // (BabyList owns its buffer). The single-part array is built on
+                // (Vec owns its buffer). The single-part array is built on
                 // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
                 let parts: Box<[js_ast::Part]> = 'parts: {
                     if this_parse.keep_json_and_toml_as_one_statement {

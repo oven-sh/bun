@@ -12,7 +12,7 @@
 use core::ptr::NonNull;
 use bun_alloc::ArenaVecExt as _;
 
-use bun_collections::{BabyList, HashMap};
+use bun_collections::{VecExt, HashMap};
 use bun_logger as logger;
 
 use crate::ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
@@ -98,7 +98,7 @@ fn prop_copy(p: &Property) -> Property {
 fn prop_full_copy(p: &Property) -> Property {
     // Same as `prop_copy` but preserves `ts_decorators` (used for the "keep
     // undecorated property as-is" path).
-    // SAFETY: BabyList is repr-compatible with a (ptr,len,cap,origin) POD; the
+    // SAFETY: Vec is repr-compatible with a (ptr,len,cap,origin) POD; the
     // arena owns the buffer for the parser lifetime. Shallow copy via read.
     let ts_decorators = unsafe { core::ptr::read(&p.ts_decorators) };
     Property {
@@ -163,7 +163,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ref_ = self.new_symbol(kind, name).expect("unreachable");
         // SAFETY: arena-owned Scope pointer valid for parser 'a; no aliasing &mut.
         let scope = unsafe { &mut *self.current_scope };
-        scope.generated.append(ref_).expect("unreachable");
+        VecExt::append(&mut scope.generated, ref_).expect("unreachable");
         ref_
     }
 
@@ -225,7 +225,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
         let stmts = bump.alloc_slice_copy(&[stmt]);
         // SAFETY: bump slice valid for 'a.
-        let stmts_list = unsafe { BabyList::<Stmt>::from_bump_slice(stmts) };
+        let stmts_list = unsafe { Vec::<Stmt>::from_bump_slice(stmts) };
         let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
         Property {
             kind: PropertyKind::ClassStaticBlock,
@@ -983,12 +983,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // Zig: `core::mem::take` on a BabyList. We can't move out of `&mut Class`;
+        // Zig: `core::mem::take` on a Vec. We can't move out of `&mut Class`;
         // shallow-read the list and replace with empty (arena owns the buffer).
-        // SAFETY: BabyList is POD; arena owns buffer for 'a.
+        // SAFETY: Vec is POD; arena owns buffer for 'a.
         let class_decorators: ExprNodeList = unsafe { core::ptr::read(&class.ts_decorators) };
         unsafe { core::ptr::write(&mut class.ts_decorators, ExprNodeList::default()) };
-        let class_decorators_len = class_decorators.len as usize;
+        let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
         if is_expr {
@@ -1038,7 +1038,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if prop.kind == PropertyKind::ClassStaticBlock {
                 continue;
             }
-            if prop.ts_decorators.len > 0 {
+            if prop.ts_decorators.len_u32() > 0 {
                 dec_counter += 1;
                 let dec_name: &'a [u8] = if dec_counter == 1 {
                     b"_dec"
@@ -1051,14 +1051,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let binding = p.b(B::Identifier { r#ref: dec_ref }, loc);
                     expr_var_decls.push(G::Decl { binding, value: None });
                 }
-                // SAFETY: shallow-reborrow arena BabyList.
+                // SAFETY: shallow-reborrow arena Vec.
                 let items: ExprNodeList = unsafe { core::ptr::read(&prop.ts_decorators) };
                 let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
-                && prop.ts_decorators.len > 0
+                && prop.ts_decorators.len_u32() > 0
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
@@ -1170,7 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if cprop.kind == PropertyKind::ClassStaticBlock {
                     continue;
                 }
-                if cprop.ts_decorators.len > 0 {
+                if cprop.ts_decorators.len_u32() > 0 {
                     has_any_decorated = true;
                     if cprop.key.is_some()
                         && matches!(
@@ -1196,7 +1196,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // SAFETY: same arena slice.
         let props_slice2: &mut [Property] = unsafe { slice_mut(class.properties) };
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
-            if prop.ts_decorators.len == 0 {
+            if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──
                 if lower_all_private
                     && prop.key.is_some()
@@ -1412,7 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let decorator_array = if let Some(dec_ref) = prop_dec_refs.get(&prop_idx).copied() {
                 p.use_ref(dec_ref, loc)
             } else {
-                // SAFETY: shallow-reborrow arena BabyList.
+                // SAFETY: shallow-reborrow arena Vec.
                 let items: ExprNodeList = unsafe { core::ptr::read(&prop.ts_decorators) };
                 p.new_expr(E::Array { items, ..Default::default() }, loc)
             };
@@ -2177,6 +2177,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   confidence: medium
 //   notes:      Phase-A raw-pointer arena slices (`*mut [T]`, `Str = &'static [u8]`)
 //               force several `unsafe { core::mem::transmute }` lifetime erasures
-//               and `core::ptr::read` shallow-copies of BabyList; revisit once
+//               and `core::ptr::read` shallow-copies of Vec; revisit once
 //               'bump is threaded through E/G/S.
 // ──────────────────────────────────────────────────────────────────────────

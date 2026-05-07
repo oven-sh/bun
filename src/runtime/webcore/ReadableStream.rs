@@ -1,4 +1,3 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -7,7 +6,7 @@ use crate::webcore::jsc::SysErrorJsc as _;
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_sys as syscall;
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 
 #[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
@@ -562,8 +561,8 @@ pub trait SourceContext: Sized {
     fn set_ref_unref(&mut self, _enable: bool) {}
 
     /// `drainInternalBuffer` — default returns empty (Zig: `?fn`, null ⇒ `.{}`).
-    fn drain_internal_buffer(&mut self) -> ByteList {
-        ByteList::default()
+    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+        Vec::<u8>::default()
     }
 
     /// `memoryCostFn` — default returns 0; `NewSource::memory_cost` adds `size_of::<Self>()`.
@@ -848,7 +847,7 @@ impl<C: SourceContext> NewSource<C> {
         self.pending_err.take()
     }
 
-    pub fn drain(&mut self) -> ByteList {
+    pub fn drain(&mut self) -> Vec<u8> {
         self.context.drain_internal_buffer()
     }
 
@@ -1107,7 +1106,7 @@ impl<C: SourceContext> NewSource<C> {
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
             // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
-            // `BabyList::Drop` so the same allocation isn't freed twice (once
+            // `Vec::Drop` so the same allocation isn't freed twice (once
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
             core::mem::forget(list);

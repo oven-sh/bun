@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::cell::Cell;

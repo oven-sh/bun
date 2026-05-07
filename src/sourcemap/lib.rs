@@ -1084,7 +1084,7 @@ pub fn parse_json(
         None => return Err(bun_core::err!("InvalidSourceMap")),
     };
 
-    if sources_content.items.len != sources_paths.items.len {
+    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
         return Err(bun_core::err!("InvalidSourceMap"));
     }
 
@@ -1093,7 +1093,7 @@ pub fn parse_json(
     // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
     // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len as usize);
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len_u32() as usize);
         for item in sources_paths.items.slice() {
             let Some(s) = item.data.as_e_string() else {
                 return Err(bun_core::err!("InvalidSourceMap"));
@@ -1130,7 +1130,7 @@ pub fn parse_json(
                 if let Some(names) = json.get(b"names") {
                     if let Some(arr) = names.data.as_e_array() {
                         let mut names_list: Vec<bun_semver::String> =
-                            Vec::with_capacity(arr.items.len as usize);
+                            Vec::with_capacity(arr.items.len_u32() as usize);
                         let mut names_buffer: Vec<u8> = Vec::new();
 
                         for item in arr.items.slice() {
@@ -1183,7 +1183,7 @@ pub fn parse_json(
 
     let content_slice: Option<Box<[u8]>> = if !matches!(hint, ParseUrlResultHint::MappingsOnly)
         && source_index.is_some()
-        && (source_index.unwrap() as usize) < sources_content.items.len as usize
+        && (source_index.unwrap() as usize) < sources_content.items.len_u32() as usize
     {
         'content: {
             let item = &sources_content.items.slice()[source_index.unwrap() as usize];

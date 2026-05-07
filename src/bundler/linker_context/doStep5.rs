@@ -500,7 +500,7 @@ impl LinkerContext<'_> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             export_ref = self.runtime_function(b"__export");
-            // PORT NOTE: `bumpalo::Vec` → `BabyList` via the global heap;
+            // PORT NOTE: `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own. PERF(port).
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());

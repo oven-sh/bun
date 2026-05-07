@@ -1,5 +1,6 @@
 //! Port of src/runtime/server/server.zig
 
+use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem;
 use core::ptr::NonNull;
@@ -486,7 +487,7 @@ pub mod BunInfo {
         ];
         let platform_expr = Expr::init(
             E::Object {
-                properties: G::PropertyList::move_from_list(platform_props),
+                properties: platform_props,
                 is_single_line: false,
                 ..E::Object::default()
             },
@@ -499,7 +500,7 @@ pub mod BunInfo {
         ];
         Ok(Expr::init(
             E::Object {
-                properties: G::PropertyList::move_from_list(root_props),
+                properties: root_props,
                 is_single_line: false,
                 ..E::Object::default()
             },

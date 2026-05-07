@@ -1,9 +1,8 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_http::HeadersExt as _;
 use bun_string::MutableString;
 #[allow(unused_imports)]
@@ -193,7 +192,7 @@ pub fn list_objects(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
 ) -> JsTerminatedResult<()> {
-    let mut search_params: ByteList = ByteList::default();
+    let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     search_params.append_slice(b"?");
 
@@ -1124,14 +1123,14 @@ pub fn readable_stream(
                     if has_more {
                         bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
                             // SAFETY: chunk.list is borrowed for the duration of on_data.
-                            unsafe { ByteList::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
+                            unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
                         ))?;
                         return Ok(());
                     }
 
                     bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
                         // SAFETY: chunk.list is borrowed for the duration of on_data.
-                        unsafe { ByteList::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
+                        unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
                     ))?;
                     return Ok(());
                 }

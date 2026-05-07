@@ -2356,8 +2356,8 @@ fn update_default_catalog(
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
     // PORT NOTE: reshaped — Zig copies `data.e_object.*` (struct bytes,
-    // aliasing the `BabyList` ptr) and writes the mutated copy back via
-    // `parent.put("catalog", Expr.allocate(obj))`. Rust `BabyList<T>` has a
+    // aliasing the `Vec` ptr) and writes the mutated copy back via
+    // `parent.put("catalog", Expr.allocate(obj))`. Rust `Vec<T>` has a
     // `Drop` that frees its buffer, so a shallow copy would double-free.
     // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
     // is `Copy + DerefMut`). Crucially, Zig's *placement* check is looser
@@ -2606,7 +2606,7 @@ fn preserve_version_prefix(
 //   notes:      Layering: `Expr`/`E` retargeted to `bun_logger::js_ast`
 //               (matches `WorkspacePackageJsonCacheEntry.root`), not the
 //               higher-tier `bun_js_parser::ast`. Catalog-edit fns reshaped
-//               to mutate `StoreRef<E::Object>` in place (Rust `BabyList<T>`
+//               to mutate `StoreRef<E::Object>` in place (Rust `Vec<T>`
 //               has Drop, so Zig's struct-copy `e_object.*` would
 //               double-free). `defer/errdefer` in `process_multi_select`
 //               reshaped to inline macro. `manager.log` is `*mut Log` —

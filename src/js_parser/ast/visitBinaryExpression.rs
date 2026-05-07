@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::ast::fold_string_addition::{fold_string_addition, FoldStringAdditionKind};
@@ -646,7 +647,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                 //    `import.meta.hot.data.etc ??= init()`
                 if let Some(dot) = e_.left.data.e_dot() {
                     if let Some(obj) = dot.target.data.e_object() {
-                        if obj.properties.len == 0 {
+                        if obj.properties.len_u32() == 0 {
                             if dot.name != b"__proto__" {
                                 return e_.right;
                             }

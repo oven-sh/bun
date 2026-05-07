@@ -679,7 +679,7 @@ impl NumberRenamer {
         // TODO(b2-blocked): bun_core::env_var::BUN_DUMP_SYMBOLS — typed accessor
         // not yet declared upstream; debug-only `symbols.dump()` call elided.
 
-        // PORT NOTE: Zig @memset(sliceAsBytes(names), 0) — BabyList::default() is already zeroed.
+        // PORT NOTE: Zig @memset(sliceAsBytes(names), 0) — Vec::default() is already zeroed.
 
         Ok(Box::new(NumberRenamer {
             symbols,
@@ -765,7 +765,7 @@ impl NumberRenamer {
         // TODO(port): defer cleanup of `s` if s != initial_scope — handled at end
 
         loop {
-            if scope.members.count() > 0 || scope.generated.len > 0 {
+            if scope.members.count() > 0 || scope.generated.len_u32() > 0 {
                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
                 // SAFETY: `new_child_scope` is a valid pool slot.
                 unsafe {
@@ -780,7 +780,7 @@ impl NumberRenamer {
                 self.assign_names_in_scope(unsafe { &mut *s }, scope, source_index, sorted);
             }
 
-            if scope.children.len == 1 {
+            if scope.children.len_u32() == 1 {
                 // SAFETY: children[0] is a valid arena-allocated `NonNull<Scope>` when len == 1.
                 scope = unsafe { &mut *scope.children.at(0).as_ptr() };
             } else {

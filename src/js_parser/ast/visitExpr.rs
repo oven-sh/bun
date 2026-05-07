@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+use bun_collections::VecExt;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -394,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 };
                 let is_key_after_spread =
                     e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
-                let children_count = e_.children.len;
+                let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
@@ -403,15 +404,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut args =
                         ExprNodeList::init_capacity(2 + children_count as usize).expect("oom");
                     // PERF(port): was assume_capacity
-                    args.append(tag).expect("oom");
+                    VecExt::append(&mut args, tag).expect("oom");
 
-                    let num_props = e_.properties.len;
+                    let num_props = e_.properties.len_u32();
                     if num_props > 0 {
                         // PORT NOTE: Zig duped the property slice into a fresh arena allocation
-                        // before wrapping in E.Object. PropertyList = BabyList<Property> here is
+                        // before wrapping in E.Object. PropertyList = Vec<Property> here is
                         // already arena-backed and the JSX node is consumed; reuse in place.
                         // PERF(port): was arena alloc + bun.copy — profile in Phase B
-                        args.append(p.new_expr(
+                        VecExt::append(&mut args, p.new_expr(
                             E::Object {
                                 properties: core::mem::take(&mut e_.properties),
                                 ..Default::default()
@@ -420,7 +421,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         ))
                         .expect("oom");
                     } else {
-                        args.append(p.new_expr(E::Null {}, expr.loc)).expect("oom");
+                        VecExt::append(&mut args, p.new_expr(E::Null {}, expr.loc)).expect("oom");
                     }
 
                     let children_elements = &e_.children.slice()[0..children_count as usize];
@@ -428,7 +429,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let arg = p.visit_expr(*child);
                         if !matches!(arg.data, Data::EMissing(..)) {
                             // PERF(port): was assume_capacity
-                            args.append(arg).expect("oom");
+                            VecExt::append(&mut args, arg).expect("oom");
                         }
                     }
 
@@ -477,7 +478,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // function jsxDEV(type, config, maybeKey, source, self) {
                 else if runtime == options::JSX::Runtime::Automatic {
                     // --- These must be done in all cases --
-                    // PORT NOTE: Zig reassigns `props` (a `*BabyList(G.Property)`) to point inside
+                    // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
                     // a spread object's properties via raw arena pointer. Track as a raw ptr here.
                     let mut props: *mut G::PropertyList = &mut e_.properties;
 
@@ -511,7 +512,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Data::EMissing(..)
                             ));
                         }
-                        e_.children.len = last_child;
+                        e_.children.truncate(last_child as usize);
                     }
 
                     // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
@@ -531,7 +532,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // jsx("div", {...foo})
                     // SAFETY: `props` is a live arena ptr at every step (either `&mut e_.properties`
                     // or `&mut <spread object>.properties` deeper in the same arena).
-                    while unsafe { &*props }.len == 1
+                    while unsafe { &*props }.len_u32() == 1
                         && unsafe { &*props }.slice()[0].kind == G::PropertyKind::Spread
                         && matches!(
                             unsafe { &*props }.slice()[0].value.unwrap().data,
@@ -552,38 +553,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
-                    let is_static_jsx = e_.children.len > 1
-                        || (e_.children.len == 1
+                    let is_static_jsx = e_.children.len_u32() > 1
+                        || (e_.children.len_u32() == 1
                             && matches!(e_.children.slice()[0].data, Data::ESpread(..)));
 
                     if is_static_jsx {
                         // Capture before `mem::take` zeroes `e_.children.len` (struct-literal
                         // fields evaluate in written order; spec reads original len).
-                        let children_single_line = e_.children.len < 2;
+                        let children_single_line = e_.children.len_u32() < 2;
                         // SAFETY: `props` arena-ptr; see note above.
-                        unsafe { &mut *props }
-                            .append(G::Property {
-                                key: Some(children_key),
-                                value: Some(p.new_expr(
-                                    E::Array {
-                                        items: core::mem::take(&mut e_.children),
-                                        is_single_line: children_single_line,
-                                        ..Default::default()
-                                    },
-                                    e_.close_tag_loc,
-                                )),
-                                ..Default::default()
-                            })
-                            .expect("oom");
-                    } else if e_.children.len == 1 {
+                        unsafe { &mut *props }.push(G::Property {
+                            key: Some(children_key),
+                            value: Some(p.new_expr(
+                                E::Array {
+                                    items: core::mem::take(&mut e_.children),
+                                    is_single_line: children_single_line,
+                                    ..Default::default()
+                                },
+                                e_.close_tag_loc,
+                            )),
+                            ..Default::default()
+                        });
+                    } else if e_.children.len_u32() == 1 {
                         // SAFETY: `props` arena-ptr; see note above.
-                        unsafe { &mut *props }
-                            .append(G::Property {
-                                key: Some(children_key),
-                                value: Some(e_.children.slice()[0]),
-                                ..Default::default()
-                            })
-                            .expect("oom");
+                        unsafe { &mut *props }.push(G::Property {
+                            key: Some(children_key),
+                            value: Some(e_.children.slice()[0]),
+                            ..Default::default()
+                        });
                     }
 
                     // Either:
@@ -595,9 +592,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         2usize + usize::from(maybe_key_value.is_some())
                     };
                     let mut args = ExprNodeList::init_capacity(args_len).expect("oom");
-                    args.append(tag).expect("oom");
+                    VecExt::append(&mut args, tag).expect("oom");
 
-                    args.append(p.new_expr(
+                    VecExt::append(&mut args, p.new_expr(
                         E::Object {
                             // SAFETY: `props` arena-ptr; see note above. Consume by move.
                             properties: core::mem::take(unsafe { &mut *props }),
@@ -608,10 +605,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .expect("oom");
 
                     if let Some(key) = maybe_key_value {
-                        args.append(key).expect("oom");
+                        VecExt::append(&mut args, key).expect("oom");
                     } else if p.options.jsx.development {
                         // if (maybeKey !== undefined)
-                        args.append(Expr {
+                        VecExt::append(&mut args, Expr {
                             loc: expr.loc,
                             data: Data::EUndefined(E::Undefined {}),
                         })
@@ -622,14 +619,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // is the return type of the first child an array?
                         // It's dynamic
                         // Else, it's static
-                        args.append(Expr {
+                        VecExt::append(&mut args, Expr {
                             loc: expr.loc,
                             data: Data::EBoolean(E::Boolean { value: is_static_jsx }),
                         })
                         .expect("oom");
 
-                        args.append(p.new_expr(E::Undefined {}, expr.loc)).expect("oom");
-                        args.append(Expr { data: prefill::data::THIS, loc: expr.loc })
+                        VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc)).expect("oom");
+                        VecExt::append(&mut args, Expr { data: prefill::data::THIS, loc: expr.loc })
                             .expect("oom");
                     }
 
@@ -1055,7 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     } else if let Some(array) = target.data.as_e_array() {
                         // [x][0] -> x
-                        if array.items.len == 1 && number.value == 0.0 {
+                        if array.items.len_u32() == 1 && number.value == 0.0 {
                             let inlined = *array.items.at(0);
                             if inlined.can_be_inlined_from_property_access() {
                                 return inlined;
@@ -1064,7 +1061,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         // ['a', 'b', 'c'][1] -> 'b'
                         let int: usize = number.value as usize;
-                        if int < array.items.len as usize && p.expr_can_be_removed_if_unused(&target)
+                        if int < array.items.len_u32() as usize && p.expr_can_be_removed_if_unused(&target)
                         {
                             let inlined = *array.items.at(int);
                             // ['a', , 'c'][1] -> undefined
@@ -1448,7 +1445,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
 
                     spread_item_count += if let Data::EArray(arr) = &spread.value.data {
-                        arr.items.len as usize
+                        arr.items.len_u32() as usize
                     } else {
                         0
                     };
@@ -1694,7 +1691,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.then_catch_chain = ThenCatchChain {
             next_target: e_.target.data,
-            has_multiple_args: e_.args.len >= 2,
+            has_multiple_args: e_.args.len_u32() >= 2,
             has_catch: matches!(
                 p.then_catch_chain.next_target,
                 Data::ECall(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _)
@@ -1861,7 +1858,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Heuristic: omit warnings inside try/catch blocks because presumably
             // the try/catch statement is there to handle the potential run-time
             // error from the unbundled require() call failing.
-            if e_.args.len == 1 {
+            if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
@@ -1900,7 +1897,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .expect("unreachable");
             }
 
-            if e_.args.len >= 1 {
+            if e_.args.len_u32() >= 1 {
                 p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require()")
                     .expect("unreachable");
             }
@@ -1918,7 +1915,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return p.new_expr(E::Null {}, expr.loc);
             }
 
-            if e_.args.len == 1 {
+            if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
                 match &first.data {
                     Data::EString(..) => {
@@ -1937,7 +1934,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            if e_.args.len >= 1 {
+            if e_.args.len_u32() >= 1 {
                 p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require.resolve()")
                     .expect("unreachable");
             }
@@ -2122,7 +2119,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // Implement constant folding for 'string'.charCodeAt(n)
-        if e_.args.len == 1 {
+        if e_.args.len_u32() == 1 {
             if let Some(dot) = e_.target.data.e_dot() {
                 if let Some(target_str) = dot.target.data.e_string() {
                     if !target_str.is_utf16 && dot.name == b"charCodeAt" {
@@ -2194,7 +2191,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // Validate: exactly one argument required
-        if e_.args.len != 1 {
+        if e_.args.len_u32() != 1 {
             p.log()
                 .add_error(
                     Some(p.source),

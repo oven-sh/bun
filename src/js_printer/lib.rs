@@ -4171,9 +4171,9 @@ where
             key: item_in.key,
             value: item_in.value,
             initializer: item_in.initializer,
-            // PERF(port): BabyList not Copy — re-slice instead of move.
+            // PERF(port): Vec not Copy — re-slice instead of move.
             ts_decorators: js_ast::ExprNodeList::default(),
-            // TODO(port): ts_decorators not used by the printer; BabyList is !Copy so omit the copy.
+            // TODO(port): ts_decorators not used by the printer; Vec is !Copy so omit the copy.
             ts_metadata: Default::default(),
             // TODO(port): ts_metadata not used by the printer; not Copy.
         };

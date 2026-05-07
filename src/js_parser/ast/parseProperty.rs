@@ -1,7 +1,7 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 use core::ptr::NonNull;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
@@ -484,9 +484,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.lexer.expect(T::TCloseBrace)?;
 
                             // PERF(port): was arena allocator.create — bump.alloc returns &'a mut T;
-                            // BabyList::from_slice copies the bump-backed StmtList into a heap-backed list
+                            // Vec::from_slice copies the bump-backed StmtList into a heap-backed list
                             // (Phase B: route ClassStaticBlock.stmts through arena slice directly).
-                            let stmt_list = BabyList::<Stmt>::from_slice(stmts.as_slice())?;
+                            let stmt_list = Vec::<Stmt>::from_slice(stmts.as_slice())?;
                             let block = p.allocator.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,
@@ -749,5 +749,5 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   source:     src/js_parser/ast/parseProperty.zig (591 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      Zig type-returning fn → inherent impl on P<const TS, J, SCAN_ONLY>; flags::Property as EnumSet (init via .insert/.into); FnOrArrowDataParse is Clone-only (saved via .clone()); G::Fn.args raw *mut [Arg] derefed under unsafe; ClassStaticBlock.stmts copies StmtList → BabyList (Phase B: arena-backed).
+//   notes:      Zig type-returning fn → inherent impl on P<const TS, J, SCAN_ONLY>; flags::Property as EnumSet (init via .insert/.into); FnOrArrowDataParse is Clone-only (saved via .clone()); G::Fn.args raw *mut [Arg] derefed under unsafe; ClassStaticBlock.stmts copies StmtList → Vec (Phase B: arena-backed).
 // ──────────────────────────────────────────────────────────────────────────

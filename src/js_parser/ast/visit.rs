@@ -3,6 +3,7 @@
 //! classes, and declarations. This is the second pass after parsing.
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_collections::VecExt;
 use crate::ast as js_ast;
 use crate::ast::{
     AssignTarget, Binding, BindingNodeIndex, Expr, ExprData, ExprNodeList, LocRef, Scope, Stmt,
@@ -228,7 +229,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         for arg in args.iter_mut() {
-            if arg.ts_decorators.len > 0 {
+            if arg.ts_decorators.len_u32() > 0 {
                 self.visit_ts_decorators(&mut arg.ts_decorators);
             }
 
@@ -243,7 +244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // PORT NOTE: Zig returned the list by value (`ExprNodeList` is a fat ptr there).
-    // `BabyList<Expr>` is not `Copy` in Rust; mutate in place instead.
+    // `Vec<Expr>` is not `Copy` in Rust; mutate in place instead.
     pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
             *dec = self.visit_expr(*dec);
@@ -509,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 }
                             }
                         }
-                        object.properties.len = end;
+                        object.properties.truncate(end as usize);
                     }
                 }
             }
@@ -519,8 +520,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let ExprData::EArray(mut array) = expr.data {
                     if array.was_originally_macro && !bound_array.has_spread {
                         let bound_items = bound_array.items();
-                        array.items.len = array.items.len.min(bound_items.len() as u32);
-                        let n = array.items.len as usize;
+                        let trunc_n = array.items.len().min(bound_items.len());
+                        array.items.truncate(trunc_n);
+                        let n = array.items.len_u32() as usize;
                         for (item, child_expr) in bound_items[..n]
                             .iter()
                             .zip(array.items.slice_mut().iter_mut())
@@ -932,14 +934,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Make it an error to use "arguments" in a static class block
                     self.vis_scope().forbid_arguments = true;
 
-                    // PERF(port): was BabyList::move_to_list_managed; Stmt is Copy.
+                    // PERF(port): was Vec::move_to_list_managed; Stmt is Copy.
                     let csb_stmts = csb.stmts.slice();
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.allocator);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
-                    // SAFETY: bump-arena slice; BabyList marked Borrowed (no growth, no free).
+                    // SAFETY: bump-arena slice; Vec marked Borrowed (no growth, no free).
                     csb.stmts = unsafe {
-                        bun_collections::BabyList::from_bump_slice(list.into_bump_slice_mut())
+                        Vec::from_bump_slice(list.into_bump_slice_mut())
                     };
                     self.pop_scope();
 
@@ -1474,8 +1476,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if let_decls.len() > 0 {
-                    // SAFETY: BumpVec → BabyList. `into_bump_slice_mut` leaks into the arena;
-                    // BabyList::Borrowed origin makes Drop a no-op.
+                    // SAFETY: BumpVec → Vec. `into_bump_slice_mut` leaks into the arena;
+                    // Vec::Borrowed origin makes Drop a no-op.
                     let decls =
                         unsafe { G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut()) };
                     let loc = decls.at(0).value.unwrap().loc;
@@ -1609,7 +1611,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     decls.swap(end, idx);
                                     end += 1;
                                 }
-                                local.decls.len = end as u32;
+                                local.decls.truncate(end);
                                 if any_decl_in_const_values {
                                     if end == 0 {
                                         *stmt = stmt.to_empty();
@@ -1691,7 +1693,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // "using" / "await using" declarations have disposal
                     // side-effects on scope exit, so they must not be
                     // removed by inlining their initializer into the use.
-                    if local.decls.len == 0
+                    if local.decls.len_u32() == 0
                         || local.kind == LocalKind::KVar
                         || local.kind.is_using()
                         || local.is_export
@@ -1701,7 +1703,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     // The variable must be initialized, since we will be substituting
                     // the value into the usage.
-                    let last_idx = (local.decls.len - 1) as usize;
+                    let last_idx = (local.decls.len_u32() - 1) as usize;
                     let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
                     let Some(replacement) = last.value else { break };
 
@@ -1721,15 +1723,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if symbol.use_count_estimate == 1
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
-                        match local.decls.len {
+                        match local.decls.len_u32() {
                             1 => {
-                                local.decls.len = 0;
+                                local.decls.clear();
                                 let new_len = output.len() - 1;
                                 output.truncate(new_len);
                                 continue 'inner;
                             }
                             _ => {
-                                local.decls.len -= 1;
+                                let n = local.decls.len() - 1;
+                                local.decls.truncate(n);
                                 continue 'inner;
                             }
                         }
@@ -1760,7 +1763,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // PORT NOTE: `BabyList::append_slice` requires `T: Clone`
+                                // PORT NOTE: `Vec::append_slice` requires `T: Clone`
                                 // but `G::Decl` lacks the derive (its fields are all
                                 // `Copy`). Per-element bitwise copy matches Zig
                                 // `appendSlice` semantics.
@@ -1769,13 +1772,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // (`from_bump_slice` → `Origin::Borrowed`); promote to a
                                 // global-heap buffer before growing it. In Zig both ends
                                 // are mimalloc so `appendSlice` just reallocs in place.
-                                prev_local.decls.transfer_ownership();
                                 for d in local.decls.slice() {
                                     // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local
-                                        .decls
-                                        .append(unsafe { core::ptr::read(d) })
-                                        .expect("oom");
+                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
                                 }
                                 continue;
                             }
@@ -1809,7 +1808,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             //
                             // This doesn't handle every case. Only the very simple one.
                             if let ExprData::EBinary(bin_assign) = s_expr.value.data {
-                                if prev_local.decls.len == 1
+                                if prev_local.decls.len_u32() == 1
                                     && bin_assign.op == OpCode::BinAssign
                                     // we can only do this with var because var is hoisted
                                     // the statement we are merging into may use the statement before its defined.

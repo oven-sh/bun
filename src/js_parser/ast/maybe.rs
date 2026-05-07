@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 use bun_logger as logger;
 use bun_string::strings;
@@ -144,9 +145,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         .expect("unreachable");
                                     let new_item = LocRef { loc: name_loc, ref_: Some(new_ref) };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
-                                    unsafe { &mut *p.module_scope }
-                                        .generated
-                                        .append(new_ref)
+                                    VecExt::append(&mut unsafe { &mut *p.module_scope }.generated, new_ref)
                                         .expect("unreachable");
 
                                     p.import_items_for_namespace
@@ -374,9 +373,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         .new_symbol(js_ast::symbol::Kind::Other, sym_name)
                                         .expect("unreachable");
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
-                                    unsafe { &mut *p.module_scope }
-                                        .generated
-                                        .append(new_ref)
+                                    VecExt::append(&mut unsafe { &mut *p.module_scope }.generated, new_ref)
                                         .expect("unreachable");
                                     p.commonjs_named_exports
                                         .put(
@@ -447,7 +444,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
-                            if obj.properties.len == 1
+                            if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
                                 && !identifier_opts.is_call_target()
@@ -598,9 +595,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             .new_symbol(js_ast::symbol::Kind::Other, sym_name)
                                             .expect("unreachable");
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
-                                        unsafe { &mut *p.module_scope }
-                                            .generated
-                                            .append(new_ref)
+                                        VecExt::append(&mut unsafe { &mut *p.module_scope }.generated, new_ref)
                                             .expect("unreachable");
                                         p.commonjs_named_exports
                                             .put(

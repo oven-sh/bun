@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
 use bun_core::{self, err};
 use bun_logger as logger;
@@ -71,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //   "@decorator export declare class Foo {}"
             //   "@decorator export declare abstract class Foo {}"
             //
-            // PORT NOTE: spec stores the BabyList<Expr> directly into `opts.ts_decorators.values`.
+            // PORT NOTE: spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
             // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
             // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
@@ -1710,7 +1711,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     js_ast::StmtData::SLocal(local) => {
                                         let mut _decls =
                                             bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
-                                                local.decls.len as usize,
+                                                local.decls.len_u32() as usize,
                                                 p.allocator,
                                             );
                                         for decl in local.decls.slice() {
@@ -1719,7 +1720,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                 &mut _decls,
                                             )?;
                                         }
-                                        // Leak into the bump arena and wrap as a borrowed BabyList.
+                                        // Leak into the bump arena and wrap as a borrowed Vec.
                                         let leaked: &'a mut [G::Decl] = _decls.into_bump_slice_mut();
                                         // SAFETY: arena-backed storage outlives the AST.
                                         decls = unsafe { G::DeclList::from_bump_slice(leaked) };
@@ -1727,7 +1728,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     _ => {}
                                 }
 
-                                if decls.len > 0 {
+                                if decls.len_u32() > 0 {
                                     return Ok(p.s(
                                         S::Local {
                                             kind: js_ast::LocalKind::KVar,

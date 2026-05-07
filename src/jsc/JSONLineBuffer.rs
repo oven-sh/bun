@@ -1,5 +1,4 @@
-use bun_collections::{VecExt, ByteVecExt};
-use bun_collections::ByteList; // bun.ByteList == BabyList<u8> (#[repr(C)] ptr+len+cap)
+use bun_collections::{ByteVecExt, VecExt};
 use bun_string::strings;
 
 /// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.
@@ -13,7 +12,7 @@ use bun_string::strings;
 /// Compaction only happens when head exceeds a threshold.
 #[derive(Default)]
 pub struct JSONLineBuffer {
-    pub data: ByteList,
+    pub data: Vec<u8>,
     /// Offset into data where unconsumed content starts.
     pub head: u32,
     /// Position of a known upcoming newline relative to head, if any.
@@ -121,7 +120,7 @@ impl JSONLineBuffer {
         if self.head as usize >= self.data.len() {
             // Free memory if capacity exceeds threshold, otherwise just reset
             if self.data.capacity() as u32 >= Self::COMPACTION_THRESHOLD {
-                self.data = ByteList::default();
+                self.data = Vec::<u8>::default();
             } else {
                 self.data.clear();
             }
@@ -157,12 +156,12 @@ impl JSONLineBuffer {
     }
 }
 
-// `pub fn deinit` dropped: ByteList's Drop frees the backing allocation (global mimalloc).
+// `pub fn deinit` dropped: Vec<u8>'s Drop frees the backing allocation (global mimalloc).
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/JSONLineBuffer.zig (135 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      Assumes bun_collections::ByteList exposes pub `ptr/len/cap` fields + slice()/write()/unused_capacity_slice()/ensure_unused_capacity() and impls Drop+Default; compact() uses ptr::copy for overlapping memmove.
+//   notes:      Assumes bun_collections::Vec<u8> exposes pub `ptr/len/cap` fields + slice()/write()/unused_capacity_slice()/ensure_unused_capacity() and impls Drop+Default; compact() uses ptr::copy for overlapping memmove.
 // ──────────────────────────────────────────────────────────────────────────

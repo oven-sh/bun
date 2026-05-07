@@ -1959,7 +1959,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the `&mut self` write call (raw slice, no aliasing through
             // `&self.buffered_data_for_node_net` while `write_maybe_corked`
             // holds `&mut self`).
-            // SAFETY: ptr/len snapshot a live BabyList allocation; `write_maybe_corked`
+            // SAFETY: ptr/len snapshot a live Vec allocation; `write_maybe_corked`
             // does not touch `buffered_data_for_node_net`.
             let buf_slice: &[u8] = unsafe {
                 core::slice::from_raw_parts(
@@ -2231,7 +2231,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.buffered_data_for_node_net.len() > 0 {
             // PORT NOTE: reshaped for borrowck — raw ptr/len snapshot so
             // `do_socket_write(&mut self, ..)` doesn't alias the field borrow.
-            // SAFETY: ptr/len snapshot a live BabyList allocation; `do_socket_write`
+            // SAFETY: ptr/len snapshot a live Vec allocation; `do_socket_write`
             // does not touch `buffered_data_for_node_net`.
             let buf_slice: &[u8] = unsafe {
                 core::slice::from_raw_parts(

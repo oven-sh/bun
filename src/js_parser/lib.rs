@@ -18,8 +18,7 @@
 
 use core::fmt;
 
-use bun_collections::{ArrayHashMap, BabyList, MultiArrayList, StringHashMap};
-use bun_collections::VecExt;
+use bun_collections::{ArrayHashMap, VecExt, MultiArrayList, StringHashMap};
 pub use bun_collections::VecExt as _VecExtReexport;
 use bun_core::Output;
 use bun_logger as logger;
@@ -270,9 +269,6 @@ pub use crate::ast::ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceSco
 
 pub use crate::ast::base::{Index, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
 
-pub use bun_collections::BabyList as BabyListAlias; // `pub const BabyList = bun.BabyList;`
-// TODO(port): Zig re-exports BabyList under the same name; Rust can't shadow
-// the `use` above. Callers should use `bun_collections::BabyList` directly.
 
 use crate::ast::symbol; // for symbol::Use, symbol::SlotNamespace
 
@@ -617,7 +613,7 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 // But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
-pub type ExprNodeList = BabyList<Expr>;
+pub type ExprNodeList = Vec<Expr>;
 
 // TODO(port): &'bump mut [Stmt] / &'bump mut [Binding] once 'bump is threaded.
 pub type StmtNodeList = *mut [Stmt];
@@ -2011,7 +2007,7 @@ pub use defines::{Define, DefineData};
 
 pub mod defines_full_draft {
     use bstr::BStr;
-    use bun_collections::{ArrayHashMap, StringHashMap};
+    use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
     use bun_logger as logger;
     use bun_string::strings;
 
@@ -2285,9 +2281,9 @@ pub mod defines_full_draft {
                 // SAFETY: `a` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*a.as_ptr() };
                 let mut items =
-                    bun_collections::BabyList::<expr::Expr>::init_capacity(src.items.len as usize)?;
+                    Vec::<expr::Expr>::init_capacity(src.items.len_u32() as usize)?;
                 for it in src.items.slice() {
-                    items.append(expr::Expr {
+                    VecExt::append(&mut items, expr::Expr {
                         loc: it.loc,
                         data: json_data_to_expr_data(it.data, bump)?,
                     })?;
@@ -2305,8 +2301,8 @@ pub mod defines_full_draft {
             J::EObject(o) => {
                 // SAFETY: `o` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*o.as_ptr() };
-                let mut properties = bun_collections::BabyList::<G::Property>::init_capacity(
-                    src.properties.len as usize,
+                let mut properties = Vec::<G::Property>::init_capacity(
+                    src.properties.len_u32() as usize,
                 )?;
                 for prop in src.properties.slice() {
                     let key = match &prop.key {
@@ -2323,7 +2319,7 @@ pub mod defines_full_draft {
                         }),
                         None => None,
                     };
-                    properties.append(G::Property { key, value, ..Default::default() })?;
+                    properties.push(G::Property { key, value, ..Default::default() });
                 }
                 let item = bump.alloc(E::Object {
                     properties,
@@ -2451,6 +2447,7 @@ pub mod defines_full_draft {
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
+    use bun_collections::VecExt;
     use crate::ast::base::Ref;
     use crate::ast::scope::Scope;
     use crate::ast::symbol::{self, Symbol, SlotNamespace, INVALID_NESTED_SCOPE_SLOT};

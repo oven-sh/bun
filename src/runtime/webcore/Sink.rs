@@ -1,8 +1,7 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 
-use bun_collections::{ByteList, TaggedPtrUnion};
+use bun_collections::{ByteVecExt, VecExt, TaggedPtrUnion};
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_string::strings;
@@ -178,7 +177,7 @@ pub struct UTF8Fallback;
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
 // TODO(b2-blocked): `bun_str::strings::{is_all_ascii, replace_latin1_with_utf8,
-// copy_utf16_into_utf8_impl, to_utf8_alloc}` + `ByteList::from_*` constructors
+// copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
 
 impl UTF8Fallback {
@@ -201,7 +200,7 @@ impl UTF8Fallback {
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
             // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(&buf[..str_.len()]) };
+            let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(&buf[..str_.len()]) };
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -222,14 +221,14 @@ impl UTF8Fallback {
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(
+                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
                         slice.into_boxed_slice(),
                     )),
                 )
             } else {
                 write_fn(
                     ctx,
-                    streams::Result::Owned(ByteList::from_owned_slice(slice.into_boxed_slice())),
+                    streams::Result::Owned(Vec::<u8>::from_owned_slice(slice.into_boxed_slice())),
                 )
             }
         }
@@ -254,7 +253,7 @@ impl UTF8Fallback {
             debug_assert!(copied.read as usize <= Self::STACK_SIZE);
             // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
             let borrowed =
-                unsafe { ByteList::from_borrowed_slice_dangerous(&buf[..copied.written as usize]) };
+                unsafe { Vec::<u8>::from_borrowed_slice_dangerous(&buf[..copied.written as usize]) };
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -273,14 +272,14 @@ impl UTF8Fallback {
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(
+                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
                         allocated.into_boxed_slice(),
                     )),
                 )
             } else {
                 write_fn(
                     ctx,
-                    streams::Result::Owned(ByteList::from_owned_slice(
+                    streams::Result::Owned(Vec::<u8>::from_owned_slice(
                         allocated.into_boxed_slice(),
                     )),
                 )
@@ -763,7 +762,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 return Ok(JSValue::js_number(0.0));
             }
             // SAFETY: borrowed view over GC-kept buffer for the duration of the call.
-            let data = unsafe { ByteList::from_borrowed_slice_dangerous(slice) };
+            let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(slice) };
             return Ok(this
                 .sink
                 .write_bytes(streams::Result::Temporary(data))
@@ -793,7 +792,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
             };
             // SAFETY: borrowed view over GC-kept JSString.
-            let data = unsafe { ByteList::from_borrowed_slice_dangerous(bytes) };
+            let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(bytes) };
             return Ok(this
                 .sink
                 .write_utf16(streams::Result::Temporary(data))
@@ -801,7 +800,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         // SAFETY: borrowed view over GC-kept JSString (Latin-1 path).
-        let data = unsafe { ByteList::from_borrowed_slice_dangerous(view.slice()) };
+        let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(view.slice()) };
         Ok(this
             .sink
             .write_latin1(streams::Result::Temporary(data))
@@ -938,7 +937,7 @@ macro_rules! js_sink {
             use ::bun_jsc::{JSGlobalObject, JSValue, CallFrame, JsResult};
             use ::crate::webcore::{streams, Blob};
             use ::bun_sys::{self as sys, Error as SysError};
-            use ::bun_collections::ByteList;
+            use ::bun_collections::{ByteVecExt, VecExt};
 
             #[repr(C)]
             pub struct ThisSink {
@@ -1211,7 +1210,7 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_bytes(streams::Result::Temporary(
-                            ByteList::from_borrowed_slice_dangerous(slice),
+                            Vec::<u8>::from_borrowed_slice_dangerous(slice),
                         ))
                         .to_js(global);
                 }
@@ -1241,14 +1240,14 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(
-                            ByteList::from_borrowed_slice_dangerous(bytes),
+                            Vec::<u8>::from_borrowed_slice_dangerous(bytes),
                         ))
                         .to_js(global);
                 }
 
                 this.sink
                     .write_latin1(streams::Result::Temporary(
-                        ByteList::from_borrowed_slice_dangerous(view.slice()),
+                        Vec::<u8>::from_borrowed_slice_dangerous(view.slice()),
                     ))
                     .to_js(global)
             }
@@ -1293,7 +1292,7 @@ macro_rules! js_sink {
                 let _keep_str = ::bun_jsc::EnsureStillAlive(str_.as_value());
                 if str_.is_16bit() {
                     // TODO(port): Zig passed `view.utf16SliceAligned()` directly into
-                    // `.temporary` (a ByteList) — relying on implicit slice coercion.
+                    // `.temporary` (a Vec<u8>) — relying on implicit slice coercion.
                     let utf16 = view.utf16_slice_aligned();
                     // SAFETY: reinterpreting &[u16] as &[u8] of double length.
                     let bytes = unsafe {
@@ -1302,14 +1301,14 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(
-                            ByteList::from_borrowed_slice_dangerous(bytes),
+                            Vec::<u8>::from_borrowed_slice_dangerous(bytes),
                         ))
                         .to_js(global);
                 }
 
                 this.sink
                     .write_latin1(streams::Result::Temporary(
-                        ByteList::from_borrowed_slice_dangerous(view.slice()),
+                        Vec::<u8>::from_borrowed_slice_dangerous(view.slice()),
                     ))
                     .to_js(global)
             }

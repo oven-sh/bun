@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::BabyList;
 use bun_core::{self, err, Error, Output};
 use bun_logger as logger;
 use bun_string::strings;
@@ -553,7 +552,7 @@ impl<'a> Parser<'a> {
         debug_assert!(p.symbols.len() == 0);
         let mut symbols_ = symbols;
         // PORT NOTE: Zig `moveToListManaged(allocator)` rebinds the same
-        // backing storage to an `ArrayList(allocator)`. The Rust BabyList
+        // backing storage to an `ArrayList(allocator)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
         p.symbols = bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.allocator);
@@ -565,8 +564,8 @@ impl<'a> Parser<'a> {
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.allocator.alloc_slice_fill_with(1, |_| expr);
-            // SAFETY: arena slice outlives the returned `Ast`; BabyList::Borrowed → no-op Drop.
-            let args = unsafe { BabyList::from_bump_slice(args_slice) };
+            // SAFETY: arena slice outlives the returned `Ast`; Vec::Borrowed → no-op Drop.
+            let args = unsafe { Vec::from_bump_slice(args_slice) };
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
@@ -973,7 +972,7 @@ impl<'a> Parser<'a> {
             for stmt in stmts.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SLocal(local) => {
-                        if (local.decls.len as usize) > 1 {
+                        if (local.decls.len_u32() as usize) > 1 {
                             for decl in local.decls.slice() {
                                 // PORT NOTE: `S::Local`/`Decl` are not `Copy`;
                                 // rebuild the struct instead of `**local`.
@@ -1177,9 +1176,7 @@ impl<'a> Parser<'a> {
                     remaining_stmts = rest;
 
                     // SAFETY: `module_scope` is a non-null arena pointer set by `prepare_for_visit_pass`.
-                    unsafe { &mut *p.module_scope }
-                        .generated
-                        .append(deferred_import.namespace.ref_.expect("infallible: ref bound"))
+                    VecExt::append(&mut unsafe { &mut *p.module_scope }.generated, deferred_import.namespace.ref_.expect("infallible: ref bound"))
                         .expect("oom");
 
                     import_part_stmts[0] = Stmt::alloc(
@@ -1364,7 +1361,7 @@ impl<'a> Parser<'a> {
                                     part.symbol_uses = Default::default();
                                     return Ok(js_ast::Result::Ast(js_ast::Ast {
                                         // SAFETY: borrow the arena/Vec-backed records as a
-                                        // BabyList view (matches `P::to_ast`); `p` is dropped
+                                        // Vec view (matches `P::to_ast`); `p` is dropped
                                         // immediately after this return so no double-ownership.
                                         import_records: unsafe {
                                             Vec::from_bump_slice(p.import_records.items_mut())
@@ -2152,7 +2149,7 @@ impl<'a> Parser<'a> {
             // `parts`' buffer above. `bumpalo::collections::Vec::drop` runs element
             // destructors, so we must logically empty the source vecs *before*
             // committing the new `parts` length to avoid any double-free window on
-            // `Part`'s heap-owning fields (BabyList / ArrayHashMap). The backing
+            // `Part`'s heap-owning fields (Vec / ArrayHashMap). The backing
             // storage itself is bump-allocated.
             unsafe {
                 before.set_len(0);

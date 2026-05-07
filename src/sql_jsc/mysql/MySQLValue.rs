@@ -446,7 +446,9 @@ impl Value {
                 }
 
                 if value.is_string() {
-                    let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
+                    let str = OwnedString::new(
+                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
+                    );
                     return Ok(Value::String(str.to_utf8()));
                 }
 
@@ -457,7 +459,7 @@ impl Value {
             }
 
             FieldType::MYSQL_TYPE_JSON => {
-                let mut str: BunString = BunString::empty();
+                let mut str = OwnedString::new(BunString::empty());
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 value
                     .json_stringify_fast(global_object, &mut str)
@@ -467,7 +469,9 @@ impl Value {
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
             _ => {
-                let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
+                let str = OwnedString::new(
+                    BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
+                );
                 Ok(Value::String(str.to_utf8()))
             }
         }

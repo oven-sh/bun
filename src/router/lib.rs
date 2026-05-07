@@ -2337,9 +2337,8 @@ mod tests {
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
 
             // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: see `TestResolver::fs` — opaque-handle cast to the ZST view.
-            let fs_opaque: &'static FileSystem =
-                unsafe { &*(fs as *const bun_sys::fs::FileSystem) };
+            // SAFETY: process-static singleton just initialized above.
+            let fs_opaque: &'static FileSystem = unsafe { &*fs };
             let mut router = Router::init(
                 fs_opaque,
                 RouteConfig {

@@ -2436,12 +2436,12 @@ impl PostgresSQLConnection {
                         let iteration_count = cont.iteration_count().map_err(pg_err)?;
 
                         // SAFETY: cont.s points into cont.data, which is alive for this match arm.
-                        let server_salt_decoded_base64 = match bun_base64::decode_alloc(unsafe { &*cont.s }) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return Err(AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64);
-                            }
-                        };
+                        let server_salt_decoded_base64 =
+                            bun_base64::decode_alloc(unsafe { &*cont.s }).map_err(|e| match e {
+                                bun_base64::DecodeAllocError::DecodingFailed => {
+                                    AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
+                                }
+                            })?;
                         sasl.compute_salted_password(&server_salt_decoded_base64, iteration_count, password)?;
                         drop(server_salt_decoded_base64);
 

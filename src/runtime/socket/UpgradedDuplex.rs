@@ -16,7 +16,7 @@ use core::ffi::{c_uint, c_void, CStr};
 use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{host_fn, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{host_fn, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional};
 use bun_uws::us_bun_verify_error_t;
 
 use super::ssl_wrapper::SSLWrapper;
@@ -24,16 +24,16 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTim
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
-pub struct UpgradedDuplex<'a> {
-    pub wrapper: Option<WrapperType<'a>>,
+pub struct UpgradedDuplex {
+    pub wrapper: Option<WrapperType>,
     pub origin: StrongOptional, // any duplex
-    // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
-    pub global: Option<&'a JSGlobalObject>,
+    // JSC_BORROW per LIFETIMES.tsv.
+    pub global: Option<GlobalRef>,
     pub ssl_error: CertError,
-    // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim. `Option` so the struct
-    // is zero-initializable (socket_body.rs `DuplexUpgradeContext` two-phase init
-    // builds this field as `zeroed()` before overwriting via `from()`).
-    pub vm: Option<&'a VirtualMachine>,
+    // JSC_BORROW per LIFETIMES.tsv. `Option` so the struct is zero-initializable
+    // (socket_body.rs `DuplexUpgradeContext` two-phase init builds this field as
+    // `zeroed()` before overwriting via `from()`).
+    pub vm: Option<&'static VirtualMachine>,
     pub handlers: Handlers,
     pub on_data_callback: StrongOptional,
     pub on_end_callback: StrongOptional,
@@ -53,7 +53,7 @@ pub struct CertError {
 }
 // Zig `CertError.deinit` only freed `code`/`reason`; `Box<CStr>` drops automatically — no explicit Drop needed.
 
-type WrapperType<'a> = SSLWrapper<*mut UpgradedDuplex<'a>>;
+type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
@@ -77,7 +77,7 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
-impl<'a> UpgradedDuplex<'a> {
+impl UpgradedDuplex {
     fn on_open(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
@@ -142,13 +142,13 @@ impl<'a> UpgradedDuplex<'a> {
 
         // Zig `JSValue.getFunction` — `.get()` + callable check (`catch return orelse return`).
         let name = if msg_more { "write" } else { "end" };
-        let write_or_end = match duplex.get(global, name) {
+        let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,
             _ => return,
         };
 
         if let Some(data) = data {
-            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, global) {
+            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
@@ -157,11 +157,11 @@ impl<'a> UpgradedDuplex<'a> {
             };
             buffer.ensure_still_alive();
 
-            if let Err(err) = write_or_end.call(global, duplex, &[buffer]) {
+            if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
                 (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
             }
         } else {
-            if let Err(err) = write_or_end.call(global, duplex, &[JSValue::NULL]) {
+            if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
                 (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
             }
         }
@@ -215,12 +215,11 @@ impl<'a> UpgradedDuplex<'a> {
         (self.handlers.on_timeout)(self.handlers.ctx);
     }
 
-    pub fn from(global: &'a JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex<'a> {
+    pub fn from(global: &JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex {
         UpgradedDuplex {
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; lifetime tied to `global: &'a`.
             vm: Some(global.bun_vm()),
             origin: StrongOptional::create(origin, global),
-            global: Some(global),
+            global: Some(GlobalRef::from(global)),
             wrapper: None,
             handlers,
             ssl_error: CertError::default(),
@@ -517,7 +516,7 @@ impl<'a> UpgradedDuplex<'a> {
     }
 }
 
-impl Drop for UpgradedDuplex<'_> {
+impl Drop for UpgradedDuplex {
     fn drop(&mut self) {
         self.teardown();
     }
@@ -621,49 +620,49 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 // these symbols via `extern "C"` so the low-tier socket dispatch can call into
 // the runtime without an upward crate dep. Signatures MUST match the
 // `unsafe extern "C"` block there. The `*const`/`*mut` opaque pointer is the
-// same allocation as `*mut UpgradedDuplex<'_>` (lifetime erased across FFI).
+// same allocation as `*mut UpgradedDuplex` (lifetime erased across FFI).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__ssl_error(this: *const c_void) -> us_bun_verify_error_t {
     // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).ssl_error() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).ssl_error() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__is_established(this: *const c_void) -> bool {
     // SAFETY: see `UpgradedDuplex__ssl_error`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).is_established() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).is_established() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__is_closed(this: *const c_void) -> bool {
     // SAFETY: see `UpgradedDuplex__ssl_error`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).is_closed() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).is_closed() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__is_shutdown(this: *const c_void) -> bool {
     // SAFETY: see `UpgradedDuplex__ssl_error`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).is_shutdown() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).is_shutdown() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
     // SAFETY: see `UpgradedDuplex__ssl_error`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).ssl().unwrap_or(core::ptr::null_mut()) }
+    unsafe { (*this.cast::<UpgradedDuplex>()).ssl().unwrap_or(core::ptr::null_mut()) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__set_timeout(this: *mut c_void, seconds: c_uint) {
     // SAFETY: `this` is a live `*mut UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).set_timeout(seconds) }
+    unsafe { (*this.cast::<UpgradedDuplex>()).set_timeout(seconds) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__flush(this: *mut c_void) {
     // SAFETY: see `UpgradedDuplex__set_timeout`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).flush() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).flush() }
 }
 
 #[unsafe(no_mangle)]
@@ -671,32 +670,32 @@ pub extern "C" fn UpgradedDuplex__encode_and_write(this: *mut c_void, ptr: *cons
     // SAFETY: `this` is a live `*mut UpgradedDuplex`; `ptr[..len]` is valid for reads
     // for the duration of the call (caller in uws_sys holds a `&[u8]`).
     let data = unsafe { core::slice::from_raw_parts(ptr, len) };
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).encode_and_write(data) }
+    unsafe { (*this.cast::<UpgradedDuplex>()).encode_and_write(data) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__raw_write(this: *mut c_void, ptr: *const u8, len: usize) -> i32 {
     // SAFETY: see `UpgradedDuplex__encode_and_write`.
     let data = unsafe { core::slice::from_raw_parts(ptr, len) };
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).raw_write(data) }
+    unsafe { (*this.cast::<UpgradedDuplex>()).raw_write(data) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__shutdown(this: *mut c_void) {
     // SAFETY: see `UpgradedDuplex__set_timeout`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).shutdown() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).shutdown() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__shutdown_read(this: *mut c_void) {
     // SAFETY: see `UpgradedDuplex__set_timeout`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).shutdown_read() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).shutdown_read() }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__close(this: *mut c_void) {
     // SAFETY: see `UpgradedDuplex__set_timeout`.
-    unsafe { (*this.cast::<UpgradedDuplex<'_>>()).close() }
+    unsafe { (*this.cast::<UpgradedDuplex>()).close() }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

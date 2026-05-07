@@ -14,9 +14,9 @@ use bun_core::{self as core_, analytics, fmt as bun_fmt, Global, Output};
 use bun_http::{self as http, Method, MimeType};
 use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
-    self as jsc, host_fn, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError,
-    VirtualMachine,
+    self as jsc, host_fn, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue,
+    JsError, JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _,
+    SystemError, VirtualMachine,
 };
 use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
 use crate::webcore::BlobExt;
@@ -1273,10 +1273,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
     #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
+    fn global(&self) -> GlobalRef {
         // SAFETY: `global_this` is set in `init()`; non-null and valid for the
         // server's lifetime (LIFETIMES.tsv: STATIC).
-        unsafe { &*self.global_this }
+        GlobalRef::from(unsafe { &*self.global_this })
     }
 
     /// `&mut` accessor for the live uws App. Only call from paths where the
@@ -1369,7 +1369,7 @@ where
             // `ServePlugins::init` (Box::into_raw); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
             // on this (single-threaded) JS thread for the call's duration.
-            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(global, callback) {
+            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
                 Err(JsError::Thrown) | Err(JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
@@ -1512,7 +1512,7 @@ where
             return Ok(JSValue::NULL);
         };
         crate::socket::socket_address::SocketAddress::create_dto(
-            self.global(),
+            &self.global(),
             &info.ip,
             u16::try_from(info.port).expect("int cast"),
             info.is_ipv6,
@@ -2083,7 +2083,7 @@ where
         if !route_list_value.is_empty() {
             if let Some(server_js_value) = self.js_value.try_get() {
                 if !server_js_value.is_empty() {
-                    Self::js_gc_route_list_set(server_js_value, self.global(), route_list_value);
+                    Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);
                 }
             }
         }
@@ -2254,9 +2254,9 @@ where
         let on_request = self.config.on_request.as_ref().unwrap().get();
         // SAFETY: `request` was just allocated via `Box::into_raw`; ownership
         // transfers to the JS wrapper inside `to_js`.
-        let request_value = unsafe { (*request).to_js(global_this) };
+        let request_value = unsafe { (*request).to_js(&global_this) };
         let response_value = match on_request.call(
-            global_this,
+            &global_this,
             self.js_value_assert_alive(),
             &[request_value],
         ) {
@@ -2299,7 +2299,7 @@ where
     }
 
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
-        let rc = self.get_all_closed_promise(self.global());
+        let rc = self.get_all_closed_promise(&self.global());
 
         if self.has_listener() {
             let abrupt = 'brk: {
@@ -2390,7 +2390,7 @@ where
                             return Ok(JSValue::NULL);
                         }
                     };
-                    return addr.into_dto(self.global());
+                    return addr.into_dto(&self.global());
                 }
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
@@ -2409,7 +2409,7 @@ where
                                 return Ok(JSValue::NULL);
                             }
                         };
-                        return addr.into_dto(self.global());
+                        return addr.into_dto(&self.global());
                     }
                 }
                 let _ = port;
@@ -2811,7 +2811,7 @@ where
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.set_request_body(NonNull::new(body_ptr));
 
-        let signal = AbortSignal::new(self.global());
+        let signal = AbortSignal::new(&self.global());
         ctx.set_signal(signal);
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
@@ -2911,8 +2911,8 @@ where
 
         Some(PreparedRequestFor {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(self.global()),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(self.global()) {
+                CreateJsRequest::Yes => request_object.to_js(&self.global()),
+                CreateJsRequest::Bake => match request_object.to_js_for_bake(&self.global()) {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(_) => return None,
@@ -3023,7 +3023,7 @@ where
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
-        let signal = AbortSignal::new(self.global());
+        let signal = AbortSignal::new(&self.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
@@ -3057,13 +3057,13 @@ where
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = self.global();
         let args = [
-            request_object.to_js(global),
+            request_object.to_js(&global),
             self.js_value_assert_alive(),
         ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match self.config.on_request.as_ref().unwrap().get().call(global, self.js_value_assert_alive(), &args) {
+        let response_value = match self.config.on_request.as_ref().unwrap().get().call(&global, self.js_value_assert_alive(), &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -3200,8 +3200,8 @@ where
         {
             let is_ssl = SSL;
             let global = self.global();
-            let node_socket = match jsc::from_js_host_call(global, || unsafe {
-                Bun__createNodeHTTPServerSocketForClientError(is_ssl, socket as *mut _ as *mut c_void, global)
+            let node_socket = match jsc::from_js_host_call(&global, || unsafe {
+                Bun__createNodeHTTPServerSocketForClientError(is_ssl, socket as *mut _ as *mut c_void, global.as_ptr())
             }) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -3211,14 +3211,14 @@ where
             }
 
             let error_code_value = JSValue::js_number(error_code as f64);
-            let raw_packet_value = match ArrayBuffer::create_buffer(global, raw_packet) {
+            let raw_packet_value = match ArrayBuffer::create_buffer(&global, raw_packet) {
                 Ok(v) => v,
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
             // SAFETY: event_loop() returns a live raw pointer tied to the global.
             let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
             if let Err(err) = callback.call(
-                global,
+                &global,
                 JSValue::UNDEFINED,
                 &[JSValue::from(is_ssl), node_socket, error_code_value, raw_packet_value],
             ) {

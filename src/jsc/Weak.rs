@@ -66,13 +66,13 @@ unsafe extern "C" {
     fn Bun__WeakRef__clear(this: *mut WeakImpl);
 }
 
-pub struct Weak<'a, T> {
+pub struct Weak<T> {
     r#ref: Option<NonNull<WeakImpl>>,
-    global_this: Option<&'a JSGlobalObject>,
+    global_this: Option<crate::GlobalRef>,
     _ctx: PhantomData<*mut T>,
 }
 
-impl<'a, T> Default for Weak<'a, T> {
+impl<T> Default for Weak<T> {
     fn default() -> Self {
         Self {
             r#ref: None,
@@ -82,7 +82,7 @@ impl<'a, T> Default for Weak<'a, T> {
     }
 }
 
-impl<'a, T> Weak<'a, T> {
+impl<T> Weak<T> {
     pub fn init() -> Self {
         Self::default()
     }
@@ -94,13 +94,13 @@ impl<'a, T> Weak<'a, T> {
         // PORT NOTE: Zig source (Weak.zig:50) calls `function.call(global, args)`
         // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
         function
-            .call(self.global_this.unwrap(), JSValue::UNDEFINED, args)
+            .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
             .unwrap_or(JSValue::ZERO)
     }
 
     pub fn create(
         value: JSValue,
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         ref_type: WeakRefType,
         ctx: &mut T,
     ) -> Self {
@@ -112,14 +112,14 @@ impl<'a, T> Weak<'a, T> {
                     ref_type,
                     Some(NonNull::from(ctx).cast::<c_void>()),
                 )),
-                global_this: Some(global_this),
+                global_this: Some(global_this.into()),
                 _ctx: PhantomData,
             };
         }
 
         Self {
             r#ref: None,
-            global_this: Some(global_this),
+            global_this: Some(global_this.into()),
             _ctx: PhantomData,
         }
     }
@@ -176,7 +176,7 @@ impl<'a, T> Weak<'a, T> {
     }
 }
 
-impl<'a, T> Drop for Weak<'a, T> {
+impl<T> Drop for Weak<T> {
     fn drop(&mut self) {
         let Some(r#ref) = self.r#ref else {
             return;

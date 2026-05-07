@@ -1973,11 +1973,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else {
         None
     };
-    // SAFETY: `global_this` is the thread-local Bun global; it outlives the
-    // `FetchTasklet`. `FetchTasklet::queue` stores it as `&'static`.
-    let global_static: &'static JSGlobalObject =
-        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
-
     let fetch_options = FetchOptions {
         method,
         url: url_static,
@@ -1993,7 +1988,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_static),
+        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take().map(|z| Box::<[u8]>::from(z.as_bytes())),
         upgraded_connection,
@@ -2009,7 +2004,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
 
     let _ = FetchTasklet::queue(
-        global_static,
+        global_this,
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

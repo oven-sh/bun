@@ -19,7 +19,7 @@ use bun_aio::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSFunction, JSGlobalObject, JSObject,
+    self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSPromise, JSValue, JsRef, JsResult,
 };
 use bun_jsc::event_loop::EventLoop;
@@ -148,8 +148,8 @@ trait CronJobBase: Sized {
 
 pub struct CronRegisterJob {
     promise: jsc::JSPromiseStrong,
-    // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    global: &'static JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
+    global: GlobalRef,
     poll: KeepAlive,
 
     bun_exe: &'static ZStr,
@@ -346,13 +346,13 @@ impl CronRegisterJob {
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
-                this_ref.global,
+                &this_ref.global,
                 Ok(this_ref
                     .global
                     .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -730,8 +730,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
         let job = Box::into_raw(Box::new(CronRegisterJob {
             promise: jsc::JSPromiseStrong::init(global),
-            // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
-            global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
+            global: GlobalRef::from(global),
             poll: KeepAlive::default(),
             bun_exe,
             abs_path,
@@ -879,8 +878,8 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 
 pub struct CronRemoveJob {
     promise: jsc::JSPromiseStrong,
-    // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    global: &'static JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
+    global: GlobalRef,
     poll: KeepAlive,
     title: ZString,
 
@@ -1066,13 +1065,13 @@ impl CronRemoveJob {
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
-                this_ref.global,
+                &this_ref.global,
                 Ok(this_ref
                     .global
                     .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -1207,8 +1206,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
         let job = Box::into_raw(Box::new(CronRemoveJob {
             promise: jsc::JSPromiseStrong::init(global),
-            // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
-            global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
+            global: GlobalRef::from(global),
             poll: KeepAlive::default(),
             title: ZString::from_bytes(title_slice.slice()),
             state: RemoveState::ReadingCrontab,
@@ -1293,8 +1291,8 @@ pub struct CronJob {
     ref_count: Cell<u32>,
     // pub: `dispatch::container_of!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
     pub event_loop_timer: EventLoopTimer,
-    // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    global: &'static JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
+    global: GlobalRef,
     parsed: CronExpression,
     poll_ref: KeepAlive,
     this_value: JsRef,
@@ -1478,7 +1476,7 @@ impl CronJob {
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
         let from_ms = now_ms.max(self.last_next_ms);
-        let next_ms = match self.parsed.next(self.global, from_ms) {
+        let next_ms = match self.parsed.next(&self.global, from_ms) {
             Ok(Some(v)) => v,
             _ => return None,
         };
@@ -1548,7 +1546,7 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire = true;
-        let result = match cb.call(this_ref.global, js_this, &[]) {
+        let result = match cb.call(&this_ref.global, js_this, &[]) {
             Ok(v) => {
                 this_ref.in_fire = false;
                 v
@@ -1588,9 +1586,9 @@ impl CronJob {
                 jsc::js_promise::Status::Pending => {
                     this_ref.ref_();
                     this_ref.pending_ref = true;
-                    js::pending_promise_set_cached(js_this, this_ref.global, result);
+                    js::pending_promise_set_cached(js_this, &this_ref.global, result);
                     result.then(
-                        this_ref.global,
+                        &this_ref.global,
                         this,
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
@@ -1600,7 +1598,7 @@ impl CronJob {
                     // the VM status and run the same recovery the Zig `catch`
                     // ran — otherwise `pending_ref` and the `ref_()` above leak.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
-                        js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
+                        js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
                         Self::release_pending_ref(this);
                         Self::schedule_next(this, vm);
                     }
@@ -1684,8 +1682,7 @@ impl CronJob {
         let job = Box::into_raw(Box::new(CronJob {
             ref_count: Cell::new(1),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
-            // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
-            global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
+            global: GlobalRef::from(global),
             parsed,
             poll_ref: KeepAlive::default(),
             this_value: JsRef::empty(),
@@ -1749,7 +1746,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = this_ref.global.bun_vm();
     if let Some(js_this) = this_ref.this_value.try_get() {
-        js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
+        js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
     Ok(JSValue::UNDEFINED)
@@ -1768,7 +1765,7 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this_ref.this_value.try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
-        js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
+        js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }
     // SAFETY: `vm.global` is live for the per-thread VM; raw deref decouples
     // the borrow from `vm` so `unhandled_rejection(&mut self, ...)` can reborrow.

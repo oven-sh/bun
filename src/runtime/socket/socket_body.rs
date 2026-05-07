@@ -35,14 +35,14 @@ use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers}
 // surfaced in `bun_uws` — shim it locally over the type-erased
 // `InternalSocket::UpgradedDuplex(*mut c_void)` variant.
 trait SocketHandlerFromDuplex {
-    fn from_duplex(duplex: &mut UpgradedDuplex<'static>) -> Self;
+    fn from_duplex(duplex: &mut UpgradedDuplex) -> Self;
 }
 impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
     #[inline]
-    fn from_duplex(duplex: &mut UpgradedDuplex<'static>) -> Self {
+    fn from_duplex(duplex: &mut UpgradedDuplex) -> Self {
         Self {
             socket: uws::InternalSocket::UpgradedDuplex(
-                duplex as *mut UpgradedDuplex<'static> as *mut c_void,
+                duplex as *mut UpgradedDuplex as *mut c_void,
             ),
         }
     }
@@ -684,7 +684,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
         // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
+        let this_value = self.get_this_value(&global);
         // SAFETY: re-derived after any prior reborrow; `call_error_handler`
         // takes `&self` so no exclusive borrow escapes the call.
         let _ = unsafe { (*handlers).call_error_handler(this_value, &[this_value, err_value]) };
@@ -732,8 +732,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
-        if let Err(err) = callback.call(global, this_value, &[this_value]) {
+        let this_value = self.get_this_value(&global);
+        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             // SAFETY: re-derived after the reentrant call; no `&mut Handlers`
             // outlives `callback.call`.
             let _ = unsafe {
@@ -772,8 +772,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
-        if let Err(err) = callback.call(global, this_value, &[this_value]) {
+        let this_value = self.get_this_value(&global);
+        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             // SAFETY: re-derived after reentrant call.
             let _ = unsafe {
                 (*handlers).call_error_handler(this_value, &[this_value, global.take_error(err)])
@@ -912,22 +912,22 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let js_promise: *mut jsc::JSPromise = promise.as_promise().unwrap();
                 // SAFETY: `as_promise` returned non-null; promise lives for this call.
                 let err_value =
-                    err.to_error_instance_with_async_stack(global, unsafe { &*js_promise });
+                    err.to_error_instance_with_async_stack(&global, unsafe { &*js_promise });
                 // SAFETY: same — `reject` takes &mut self.
-                unsafe { (*js_promise).reject(global, Ok(err_value)) }?;
+                unsafe { (*js_promise).reject(&global, Ok(err_value)) }?;
             }
 
             return Ok(());
         }
 
-        let this_value = self.get_this_value(global);
+        let this_value = self.get_this_value(&global);
         this_value.ensure_still_alive();
         // Connection failed before open; allow the wrapper to be GC'd once this
         // callback returns. The on-stack `this_value` keeps it alive for the call.
         self.this_value.downgrade();
 
-        let err_value = err.to_error_instance(global);
-        let result = match callback.call(global, this_value, &[this_value, err_value]) {
+        let err_value = err.to_error_instance(&global);
+        let result = match callback.call(&global, this_value, &[this_value, err_value]) {
             Ok(v) => v,
             Err(e) => global.take_exception(e),
         };
@@ -947,8 +947,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `promise` field's `try_swap()` resolution is in flux upstream.
             let promise: *mut jsc::JSPromise = JSValue::as_promise(val).unwrap();
             // SAFETY: `as_promise` returned non-null; promise lives for this call.
-            let err_ = err.to_error_instance_with_async_stack(global, unsafe { &*promise });
-            unsafe { (*promise).reject_as_handled(global, err_) }?;
+            let err_ = err.to_error_instance_with_async_stack(&global, unsafe { &*promise });
+            unsafe { (*promise).reject_as_handled(&global, err_) }?;
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
@@ -974,7 +974,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // empty and there's nothing to upgrade.
             if self.this_value.is_not_empty() {
                 // SAFETY: short-lived field read.
-                self.this_value.upgrade(unsafe { (*handlers).global_object });
+                self.this_value.upgrade(unsafe { &(*handlers).global_object });
             }
         }
     }
@@ -1133,7 +1133,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handshake_callback = unsafe { (*handlers).on_handshake };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
+        let this_value = self.get_this_value(&global);
 
         self.mark_active();
         // TODO: properly propagate exception upwards
@@ -1159,7 +1159,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that way if we need to call the error handler, we can
         // SAFETY: reborrow scoped to `enter()` only.
         let mut scope = unsafe { (*handlers).enter() };
-        let result = match callback.call(global, this_value, &[this_value]) {
+        let result = match callback.call(&global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -1234,8 +1234,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
-        if let Err(err) = callback.call(global, this_value, &[this_value]) {
+        let this_value = self.get_this_value(&global);
+        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             // SAFETY: re-derived after reentrant call.
             let _ = unsafe {
                 (*handlers).call_error_handler(this_value, &[this_value, global.take_error(err)])
@@ -1294,13 +1294,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
+        let this_value = self.get_this_value(&global);
 
         let result: JSValue;
         // open callback only have 1 parameters and its the socket
         // you should use getAuthorizationError and authorized getter to get those values in this case
         if is_open {
-            result = match callback.call(global, this_value, &[this_value]) {
+            result = match callback.call(&global, this_value, &[this_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };
@@ -1323,7 +1323,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let authorization_error: JSValue = if ssl_error.error_no == 0 {
                 JSValue::NULL
             } else {
-                match super::uws_jsc::verify_error_to_js(&ssl_error, global) {
+                match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
                     Ok(v) => v,
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
@@ -1337,7 +1337,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
 
             result = match callback.call(
-                global,
+                &global,
                 this_value,
                 &[this_value, JSValue::from(authorized), authorization_error],
             ) {
@@ -1418,17 +1418,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
+        let this_value = self.get_this_value(&global);
         let mut js_error: JSValue = JSValue::UNDEFINED;
         if err != 0 {
             // errors here are always a read error
             js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
                 &sys::Error::from_code_int(err, sys::Tag::read),
-                global,
+                &global,
             );
         }
 
-        if let Err(e) = callback.call(global, this_value, &[this_value, js_error]) {
+        if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             // SAFETY: re-derived after reentrant call.
             let _ = unsafe {
                 (*handlers).call_error_handler(this_value, &[this_value, global.take_error(e)])
@@ -1468,8 +1468,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let global = unsafe { (*handlers).global_object };
-        let this_value = self.get_this_value(global);
-        let output_value = match unsafe { (*handlers).binary_type }.to_js(data, global) {
+        let this_value = self.get_this_value(&global);
+        let output_value = match unsafe { (*handlers).binary_type }.to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
                 self.handle_error(global.take_exception(err));
@@ -1483,7 +1483,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut scope = unsafe { (*handlers).enter() };
 
         // const encoding = handlers.encoding;
-        if let Err(err) = callback.call(global, this_value, &[this_value, output_value]) {
+        if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             // SAFETY: re-derived after reentrant call.
             let _ = unsafe {
                 (*handlers).call_error_handler(this_value, &[this_value, global.take_error(err)])
@@ -2494,11 +2494,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is live across the read/writes below (single-threaded event loop,
         // and `from_js` cannot reenter this socket's handlers).
         let prev_mode = unsafe { (*p).mode };
-        // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime; `Handlers`
-        // stores `&'static` per the Zig contract.
-        let global_static: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
-        let handlers = Handlers::from_js(global_static, socket_obj, prev_mode == super::SocketMode::Server)?;
+        let handlers = Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were
@@ -2586,11 +2582,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
-        // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime; Handlers
-        // stores it as `&'static` (Phase A shape, see Handlers.rs).
-        let global_static: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
-        let handlers = Handlers::from_js(global_static, socket_obj, false)?;
+        let handlers = Handlers::from_js(global, socket_obj, false)?;
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
@@ -3258,7 +3250,7 @@ impl SocketMode {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DuplexUpgradeContext {
-    pub upgrade: UpgradedDuplex<'static>,
+    pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
@@ -3291,7 +3283,7 @@ impl DuplexUpgradeContext {
     #[inline(always)]
     fn duplex_socket(&mut self) -> SocketHandler<true> {
         SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
-            &mut self.upgrade as *mut UpgradedDuplex<'static> as *mut c_void,
+            &mut self.upgrade as *mut UpgradedDuplex as *mut c_void,
         ))
     }
 
@@ -3542,10 +3534,7 @@ pub fn js_upgrade_duplex_to_tls(
     // allocations (not embedded in a Listener). The mode field on Handlers
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
-    // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime.
-    let global_static: &'static JSGlobalObject =
-        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
-    let handlers = Handlers::from_js(global_static, socket_obj, false)?;
+    let handlers = Handlers::from_js(global, socket_obj, false)?;
     // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`.
     let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
         drop(h);
@@ -3710,7 +3699,7 @@ pub fn js_upgrade_duplex_to_tls(
             SocketMode::Client
         });
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
-            global_static,
+            global,
             duplex,
             UpgradedDuplexHandlers {
                 on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },

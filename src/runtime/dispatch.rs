@@ -965,7 +965,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*container).timer_callback() };
         }
         EventLoopTimerTag::UpgradedDuplex => {
-            let container = container_of!(UpgradedDuplex<'_>, event_loop_timer);
+            let container = container_of!(UpgradedDuplex, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).on_timeout() };
         }

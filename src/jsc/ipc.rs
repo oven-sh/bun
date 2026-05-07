@@ -1314,25 +1314,25 @@ impl SendQueue {
                 // the message was fully sent, but there may be more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 let item = self.queue.remove(0);
-                item.complete(global_this); // call the callback & deinit
+                item.complete(&global_this); // call the callback & deinit
             }
-            self.continue_send(global_this, ContinueSendReason::OnWritable);
-            self.update_ref(global_this);
+            self.continue_send(&global_this, ContinueSendReason::OnWritable);
+            self.update_ref(&global_this);
             return;
         } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
             // the item was partially sent; update the cursor and wait for writable to send the rest
             // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
             first.data.cursor += usize::try_from(n).expect("int cast");
-            self.update_ref(global_this);
+            self.update_ref(&global_this);
             return;
         } else if n == 0 {
             // no bytes written; wait for writable
-            self.update_ref(global_this);
+            self.update_ref(&global_this);
             return;
         } else {
             // error. close socket.
             self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
-            self.update_ref(global_this);
+            self.update_ref(&global_this);
             return;
         }
     }
@@ -1553,14 +1553,15 @@ impl SendQueue {
         // SAFETY: see the `enter()` call above.
         unsafe { (*(*vm).event_loop()).exit() };
     }
-    fn get_global_this(&self) -> &'static JSGlobalObject {
+    fn get_global_this(&self) -> crate::GlobalRef {
         // PORT NOTE: lifetime detached from `&self` so callers can hold the
         // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
-        // JSC for the VM's lifetime, so the 'static erase is sound here.
-        // SAFETY: see above — BACKREF through owner trait object.
-        unsafe { &*(*self.owner).global_this() }
+        // JSC for the VM's lifetime.
+        // SAFETY: BACKREF through owner trait object — pointer is non-null and
+        // live for the VM's lifetime.
+        crate::GlobalRef::from(unsafe { &*(*self.owner).global_this() })
     }
 
     #[cfg(windows)]
@@ -1865,7 +1866,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                 let result = match decode_ipc_message(
                     Mode::Json,
                     msg.data,
-                    global_this,
+                    &global_this,
                     Some(msg.newline_pos),
                 ) {
                     Ok(r) => r,
@@ -1889,7 +1890,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                 };
 
                 let bytes_consumed = result.bytes_consumed;
-                handle_ipc_message(send_queue, result.message, global_this);
+                handle_ipc_message(send_queue, result.message, &global_this);
                 let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                     unreachable!()
                 };
@@ -1905,7 +1906,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
             if adv_buf.len() == 0 {
                 loop {
                     let result =
-                        match decode_ipc_message(Mode::Advanced, data, global_this, None) {
+                        match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                             Ok(r) => r,
                             Err(IPCDecodeError::NotEnoughBytes) => {
                                 let IncomingBuffer::Advanced(adv_buf) =
@@ -1932,7 +1933,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             }
                         };
 
-                    handle_ipc_message(send_queue, result.message, global_this);
+                    handle_ipc_message(send_queue, result.message, &global_this);
 
                     if (result.bytes_consumed as usize) < data.len() {
                         data = &data[result.bytes_consumed as usize..];
@@ -1954,7 +1955,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                 };
                 let slice = &adv_buf.slice()[slice_start..];
                 let result =
-                    match decode_ipc_message(Mode::Advanced, slice, global_this, None) {
+                    match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
                         Ok(r) => r,
                         Err(IPCDecodeError::NotEnoughBytes) => {
                             let slice_len = slice.len();
@@ -1985,7 +1986,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                     };
 
                 let slice_len = slice.len();
-                handle_ipc_message(send_queue, result.message, global_this);
+                handle_ipc_message(send_queue, result.message, &global_this);
 
                 if (result.bytes_consumed as usize) < slice_len {
                     slice_start += result.bytes_consumed as usize;
@@ -2068,7 +2069,7 @@ pub mod IPCHandlers {
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
             log!("IPC call continueSend() from onWritable");
-            send_queue.continue_send(global_this, ContinueSendReason::OnWritable);
+            send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
         }
 
         pub fn on_timeout(_: &mut SendQueue, _: Socket) {
@@ -2180,7 +2181,7 @@ pub mod IPCHandlers {
                         let result = match decode_ipc_message(
                             Mode::Json,
                             msg.data,
-                            global_this,
+                            &global_this,
                             Some(msg.newline_pos),
                         ) {
                             Ok(r) => r,
@@ -2204,7 +2205,7 @@ pub mod IPCHandlers {
                         };
 
                         let bytes_consumed = result.bytes_consumed;
-                        handle_ipc_message(send_queue, result.message, global_this);
+                        handle_ipc_message(send_queue, result.message, &global_this);
                         let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                             unreachable!()
                         };
@@ -2237,7 +2238,7 @@ pub mod IPCHandlers {
                         let result = match decode_ipc_message(
                             Mode::Advanced,
                             slice,
-                            global_this,
+                            &global_this,
                             None,
                         ) {
                             Ok(r) => r,
@@ -2271,7 +2272,7 @@ pub mod IPCHandlers {
                         };
 
                         let slice_len = slice.len();
-                        handle_ipc_message(send_queue, result.message, global_this);
+                        handle_ipc_message(send_queue, result.message, &global_this);
 
                         if (result.bytes_consumed as usize) < slice_len {
                             slice_start += result.bytes_consumed as usize;

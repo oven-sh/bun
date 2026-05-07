@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional as Strong};
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional as Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
@@ -72,8 +72,7 @@ pub struct Handlers {
     pub binary_type: BinaryType,
 
     pub vm: &'static VirtualMachine,
-    // TODO(port): lifetime — JSC_BORROW field; using 'static to avoid struct lifetime param in Phase A
-    pub global_object: &'static JSGlobalObject,
+    pub global_object: GlobalRef,
     pub active_connections: u32,
     pub mode: SocketMode,
     pub promise: Strong, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
@@ -127,7 +126,7 @@ impl Handlers {
 
         let Some(promise) = self.promise.try_swap() else { return Ok(()) };
         let Some(any_promise) = promise.as_any_promise() else { return Ok(()) };
-        any_promise.resolve(self.global_object, value)?;
+        any_promise.resolve(&self.global_object, value)?;
         Ok(())
     }
 
@@ -140,7 +139,7 @@ impl Handlers {
 
         let Some(promise) = self.promise.try_swap() else { return Ok(false) };
         let Some(any_promise) = promise.as_any_promise() else { return Ok(false) };
-        any_promise.reject(self.global_object, value)?;
+        any_promise.reject(&self.global_object, value)?;
         Ok(true)
     }
 
@@ -194,11 +193,11 @@ impl Handlers {
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
             let _ = global_object.bun_vm().as_mut()
-                .uncaught_exception(global_object, args[1], false);
+                .uncaught_exception(&global_object, args[1], false);
             return false;
         }
 
-        if let Err(e) = on_error.call(global_object, this_value, args) {
+        if let Err(e) = on_error.call(&global_object, this_value, args) {
             global_object.report_active_exception_as_unhandled(e);
         }
 
@@ -206,7 +205,7 @@ impl Handlers {
     }
 
     pub fn from_js(
-        global_object: &'static JSGlobalObject,
+        global_object: &JSGlobalObject,
         opts: JSValue,
         is_server: bool,
     ) -> JsResult<Handlers> {
@@ -216,7 +215,7 @@ impl Handlers {
     }
 
     pub fn from_generated(
-        global_object: &'static JSGlobalObject,
+        global_object: &JSGlobalObject,
         generated: &GeneratedSocketConfigHandlers,
         is_server: bool,
     ) -> JsResult<Handlers> {
@@ -238,7 +237,7 @@ impl Handlers {
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
-            global_object,
+            global_object: GlobalRef::from(global_object),
             active_connections: 0,
             mode: if is_server { SocketMode::Server } else { SocketMode::Client },
             promise: Strong::empty(),
@@ -404,7 +403,7 @@ impl SocketConfig {
 
     pub fn from_generated(
         vm: &'static VirtualMachine,
-        global: &'static JSGlobalObject,
+        global: &JSGlobalObject,
         generated: &GeneratedSocketConfig,
         is_server: bool,
     ) -> JsResult<SocketConfig> {
@@ -480,7 +479,7 @@ impl SocketConfig {
     pub fn from_js(
         vm: &'static VirtualMachine,
         opts: JSValue,
-        global_object: &'static JSGlobalObject,
+        global_object: &JSGlobalObject,
         is_server: bool,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;

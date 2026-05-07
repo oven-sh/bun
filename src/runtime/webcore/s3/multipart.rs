@@ -101,7 +101,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{GlobalRef, JSGlobalObject};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -139,7 +139,7 @@ pub struct MultiPartUpload {
     pub poll_ref: KeepAlive,
     pub vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
-    pub global_this: &'static JSGlobalObject,
+    pub global_this: GlobalRef,
 
     pub buffered: StreamBuffer,
 

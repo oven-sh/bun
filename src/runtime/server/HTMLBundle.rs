@@ -43,7 +43,7 @@ use debug_scope::HTMLBundle as debug;
 // `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
 pub struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
-    // TODO(port): JSC_BORROW field on heap struct — `&'static JSGlobalObject` once bun_jsc is real.
+    // JSC_BORROW field on heap struct.
     pub global: *const JSGlobalObject,
     pub path: Box<[u8]>,
 }
@@ -137,7 +137,7 @@ impl RefCounted for HTMLBundle {
 
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
-    pub fn init(global: &'static JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
+    pub fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
         // Zig `try allocator.dupe` was the only fallible op; Box::from aborts on OOM.
         IntrusiveRc::new(HTMLBundle {
             ref_count: RefCount::init(),
@@ -408,7 +408,7 @@ impl Route {
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: `bundle.global` was set from a live `&'static JSGlobalObject` in `HTMLBundle::init`.
+        // SAFETY: `bundle.global` was set from a live `&JSGlobalObject` in `HTMLBundle::init`.
         let global = unsafe { &*self.bundle.global };
         let server = self.server.get().expect("server set");
         let development = server.config().development;

@@ -63,17 +63,17 @@ unsafe extern "C" {
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
 
 /// Zig: `pub fn Weak(comptime T: type) type { return struct { ... } }`
-pub struct Weak<'a, T> {
-    weak: JscWeak<'a, T>,
+pub struct Weak<T> {
+    weak: JscWeak<T>,
 }
 
-impl<'a, T> Default for Weak<'a, T> {
+impl<T> Default for Weak<T> {
     fn default() -> Self {
         Self { weak: JscWeak::default() }
     }
 }
 
-impl<'a, T> Weak<'a, T> {
+impl<T> Weak<T> {
     pub fn reject(&mut self, global: &JSGlobalObject, val: JSValue) {
         // TODO(port): Zig discards the `JSTerminated` from `JSPromise::reject` here
         // (return type is `void`). Mirror that by ignoring the Result.
@@ -104,7 +104,7 @@ impl<'a, T> Weak<'a, T> {
     }
 
     pub fn init(
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         promise: JSValue,
         ref_type: WeakRefType,
         ctx: &mut T,

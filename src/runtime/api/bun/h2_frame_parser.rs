@@ -4,7 +4,7 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, StrongOptional};
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::AbortSignal;
 use bun_jsc::abort_signal::AbortListener;
@@ -936,15 +936,14 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
 struct Handlers {
     binary_type: BinaryType,
     vm: &'static VirtualMachine,
-    global_object: *const JSGlobalObject, // JSC_BORROW
+    global_object: GlobalRef, // JSC_BORROW
 }
 
 impl Handlers {
-    /// Safe accessor for the JSC_BORROW global. The global is set at
-    /// construction from a live `&JSGlobalObject` and outlives `self`.
+    /// Safe accessor for the JSC_BORROW global.
     #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
-        unsafe { &*self.global_object }
+    fn global(&self) -> GlobalRef {
+        self.global_object
     }
 
     pub fn call_event_handler(
@@ -955,7 +954,7 @@ impl Handlers {
         data: &[JSValue],
     ) -> bool {
         let Some(callback) = event.get(this_value) else { return false };
-        self.vm.event_loop_ref().run_callback(callback, self.global(), context, data);
+        self.vm.event_loop_ref().run_callback(callback, &self.global(), context, data);
         true
     }
 
@@ -963,7 +962,7 @@ impl Handlers {
         if !callback.is_callable() {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(callback, self.global(), JSValue::UNDEFINED, data);
+        self.vm.event_loop_ref().run_callback(callback, &self.global(), JSValue::UNDEFINED, data);
         true
     }
 
@@ -974,7 +973,7 @@ impl Handlers {
         data: &[JSValue],
     ) -> JSValue {
         let Some(callback) = event.get(this_value) else { return JSValue::ZERO };
-        self.vm.event_loop_ref().run_callback_with_result(callback, self.global(), this_value, data)
+        self.vm.event_loop_ref().run_callback_with_result(callback, &self.global(), this_value, data)
     }
 
     pub fn from_js(
@@ -986,7 +985,7 @@ impl Handlers {
             binary_type: BinaryType::Buffer,
             // SAFETY: bun_vm() never returns null; VM outlives every JS object (effectively 'static).
             vm: global_object.bun_vm(),
-            global_object: global_object as *const _,
+            global_object: GlobalRef::from(global_object),
         };
 
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
@@ -1135,7 +1134,7 @@ thread_local! {
 #[bun_jsc::JsClass]
 pub struct H2FrameParser {
     strong_this: JsRef,
-    global_this: *const JSGlobalObject, // JSC_BORROW
+    global_this: GlobalRef, // JSC_BORROW
     // allocator field dropped — global mimalloc
     handlers: Handlers,
     native_socket: BunSocket,
@@ -1206,11 +1205,10 @@ impl bun_ptr::RefCounted for H2FrameParser {
     }
 }
 impl H2FrameParser {
-    /// Safe accessor for the JSC_BORROW global. The global is set at
-    /// construction from a live `&JSGlobalObject` and outlives `self`.
+    /// Safe accessor for the JSC_BORROW global.
     #[inline]
-    fn global(&self) -> &'static JSGlobalObject {
-        unsafe { &*self.global_this }
+    fn global(&self) -> GlobalRef {
+        self.global_this
     }
 
     pub fn ref_(&self) {
@@ -1358,7 +1356,7 @@ impl SignalRef {
         let stream = unsafe { &mut *stream };
         if stream.state != StreamState::CLOSED {
             // SAFETY: FFI call with valid global object
-            let wrapped = unsafe { Bun__wrapAbortError(parser.global_this, reason) };
+            let wrapped = unsafe { Bun__wrapAbortError(parser.global_this.as_ptr(), reason) };
             parser.abort_stream(stream, wrapped);
         }
     }
@@ -1680,7 +1678,7 @@ impl Stream {
         callback: JSValue,
         end_stream: bool,
     ) {
-        let global_this = unsafe { &*client.global_this };
+        let global_this = client.global_this;
 
         if let Some(last_frame) = self.data_frame_queue.peek_last() {
             if bytes.is_empty() {
@@ -1692,7 +1690,7 @@ impl Stream {
                     client.dispatch_write_callback(old_callback);
                     last_frame.callback.deinit();
                 }
-                last_frame.callback = StrongOptional::create(callback, global_this);
+                last_frame.callback = StrongOptional::create(callback, &global_this);
                 return;
             }
             if last_frame.len == 0 {
@@ -1721,7 +1719,7 @@ impl Stream {
                         client.dispatch_write_callback(old_callback);
                         last_frame.callback.deinit();
                     }
-                    last_frame.callback = StrongOptional::create(callback, global_this);
+                    last_frame.callback = StrongOptional::create(callback, &global_this);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame
@@ -1747,7 +1745,7 @@ impl Stream {
                 vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME]
             },
             callback: if callback.is_callable() {
-                StrongOptional::create(callback, global_this)
+                StrongOptional::create(callback, &global_this)
             } else {
                 StrongOptional::empty()
             },
@@ -2152,7 +2150,7 @@ impl H2FrameParser {
             let _ = self.write(debug_data);
         }
         let global = self.handlers.global();
-        let chunk = match self.handlers.binary_type.to_js(debug_data, global) {
+        let chunk = match self.handlers.binary_type.to_js(debug_data, &global) {
             Ok(v) => v,
             Err(err) => {
                 self.dispatch(JSH2FrameParser::Gc::onError, self.global().take_exception(err));
@@ -2483,7 +2481,7 @@ impl H2FrameParser {
                 let bytes_len = self.write_buffer.slice().len();
                 if bytes_len > 0 {
                     let global = self.handlers.global();
-                    let output_value = self.handlers.binary_type.to_js(self.write_buffer.slice(), global).unwrap_or(JSValue::ZERO);
+                    let output_value = self.handlers.binary_type.to_js(self.write_buffer.slice(), &global).unwrap_or(JSValue::ZERO);
                     // TODO: properly propagate exception upwards
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
 
@@ -2531,7 +2529,7 @@ impl H2FrameParser {
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                let output_value = self.handlers.binary_type.to_js(bytes, self.handlers.global()).unwrap_or(JSValue::ZERO);
+                let output_value = self.handlers.binary_type.to_js(bytes, &self.handlers.global()).unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
                 let code = if result.is_number() { result.to_int32() } else { -1 };
@@ -2806,7 +2804,7 @@ impl H2FrameParser {
         }
 
         let stream_id = stream.id;
-        let headers = JSValue::create_empty_array(global_object, 0)?;
+        let headers = JSValue::create_empty_array(&global_object, 0)?;
         headers.ensure_still_alive();
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
@@ -2852,30 +2850,30 @@ impl H2FrameParser {
                 return Ok(self.streams.get(&stream_id).copied());
             }
 
-            if let Some(js_header_name) = get_http2_common_string(global_object, header.well_know as u32) {
-                headers.push(global_object, js_header_name)?;
-                headers.push(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.value)?)?;
+            if let Some(js_header_name) = get_http2_common_string(&global_object, header.well_know as u32) {
+                headers.push(&global_object, js_header_name)?;
+                headers.push(&global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?)?;
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
-                        sensitive_headers = JSValue::create_empty_array(global_object, 0)?;
+                        sensitive_headers = JSValue::create_empty_array(&global_object, 0)?;
                         sensitive_headers.ensure_still_alive();
                     }
-                    sensitive_headers.push(global_object, js_header_name)?;
+                    sensitive_headers.push(&global_object, js_header_name)?;
                 }
             } else {
-                let js_header_name = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.name)?;
-                let js_header_value = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.value)?;
+                let js_header_name = bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?;
+                let js_header_value = bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?;
 
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
-                        sensitive_headers = JSValue::create_empty_array(global_object, 0)?;
+                        sensitive_headers = JSValue::create_empty_array(&global_object, 0)?;
                         sensitive_headers.ensure_still_alive();
                     }
-                    sensitive_headers.push(global_object, js_header_name)?;
+                    sensitive_headers.push(&global_object, js_header_name)?;
                 }
 
-                headers.push(global_object, js_header_name)?;
-                headers.push(global_object, js_header_value)?;
+                headers.push(&global_object, js_header_name)?;
+                headers.push(&global_object, js_header_value)?;
 
                 js_header_name.ensure_still_alive();
                 js_header_value.ensure_still_alive();
@@ -2978,7 +2976,7 @@ impl H2FrameParser {
             if !payload.is_empty() {
                 // no padding, just emit the data
                 let global = self.handlers.global();
-                let chunk = self.handlers.binary_type.to_js(payload, global).unwrap_or(JSValue::ZERO);
+                let chunk = self.handlers.binary_type.to_js(payload, &global).unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream.get_identifier(), chunk);
                 emitted = true;
@@ -3030,7 +3028,7 @@ impl H2FrameParser {
             let payload = unsafe { content.data() };
             let error_code = u32_from_bytes(&payload[4..8]);
             let global = self.handlers.global();
-            let chunk = self.handlers.binary_type.to_js(&payload[8..], global).unwrap_or(JSValue::ZERO);
+            let chunk = self.handlers.binary_type.to_js(&payload[8..], &global).unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
             let end = content.end;
             self.read_buffer.reset();
@@ -3043,9 +3041,9 @@ impl H2FrameParser {
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.global();
         if payload.is_empty() {
-            return BunString::empty().to_js(global);
+            return BunString::empty().to_js(&global);
         }
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, payload)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 
     pub fn handle_origin_frame(&mut self, frame: FrameHeader, data: &[u8], _: Option<*mut Stream>) -> JsResult<usize> {
@@ -3087,14 +3085,14 @@ impl H2FrameParser {
                     origin_value.ensure_still_alive();
                 } else if count == 1 {
                     // need to create an array
-                    let array = JSValue::create_empty_array(global, 0)?;
+                    let array = JSValue::create_empty_array(&global, 0)?;
                     array.ensure_still_alive();
-                    array.push(global, origin_value)?;
-                    array.push(global, self.string_or_empty_to_js(origin_str)?)?;
+                    array.push(&global, origin_value)?;
+                    array.push(&global, self.string_or_empty_to_js(origin_str)?)?;
                     origin_value = array;
                 } else {
                     // we already have an array, just add the origin to it
-                    origin_value.push(global, self.string_or_empty_to_js(origin_str)?)?;
+                    origin_value.push(&global, self.string_or_empty_to_js(origin_str)?)?;
                 }
                 count += 1;
                 payload = &payload[origin_length + 2..];
@@ -3218,7 +3216,7 @@ impl H2FrameParser {
                 self.out_standing_pings = self.out_standing_pings.saturating_sub(1);
             }
             let global = self.handlers.global();
-            let buffer = self.handlers.binary_type.to_js(&payload_owned, global).unwrap_or(JSValue::ZERO);
+            let buffer = self.handlers.binary_type.to_js(&payload_owned, &global).unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
             self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(!is_not_ack));
             return end;
@@ -3443,7 +3441,7 @@ impl H2FrameParser {
                 }
 
                 let global = self.handlers.global();
-                self.dispatch(JSH2FrameParser::Gc::onLocalSettings, self.local_settings.to_js(global));
+                self.dispatch(JSH2FrameParser::Gc::onLocalSettings, self.local_settings.to_js(&global));
             } else {
                 bun_output::scoped_log!(H2FrameParser, "empty settings has remoteSettings? {}", self.remote_settings.is_some());
                 if self.remote_settings.is_none() {
@@ -3463,7 +3461,7 @@ impl H2FrameParser {
                         }
                     }
                     let global = self.handlers.global();
-                    self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(global));
+                    self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(&global));
                 }
                 // defer chain (reverse order)
                 self.increment_window_size_if_needed();
@@ -3503,7 +3501,7 @@ impl H2FrameParser {
                 }
             }
             let global = self.handlers.global();
-            self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(global));
+            self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(&global));
             // defer chain
             self.increment_window_size_if_needed();
             let _ = self.flush();
@@ -3550,7 +3548,7 @@ impl H2FrameParser {
         let Some(callback) = JSH2FrameParser::Gc::onStreamStart.get(this_value) else { return Some(stream) };
 
         let global = self.handlers.global();
-        if let Err(err) = callback.call(global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier as f64)]) {
+        if let Err(err) = callback.call(&global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier as f64)]) {
             global.report_active_exception_as_unhandled(err);
         }
         Some(stream)
@@ -5644,7 +5642,7 @@ impl H2FrameParser {
         let init = H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
             handlers,
-            global_this: global_object as *const _,
+            global_this: GlobalRef::from(global_object),
             strong_this: JsRef::empty(),
             native_socket: BunSocket::None,
             local_settings: FullSettingsPayload::default(),

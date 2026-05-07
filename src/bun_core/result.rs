@@ -324,6 +324,7 @@ impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
     pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
     pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
+    pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
     /// Phase-A placeholder retained for callers not yet migrated to `err!()`.
     /// Aliases `Unexpected` so it round-trips through `name()` sensibly.
     pub const TODO: Self = Self::UNEXPECTED;

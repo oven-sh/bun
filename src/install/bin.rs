@@ -1421,18 +1421,12 @@ impl<'a> Linker<'a> {
         // / `self.abs_dest_buf`. The Zig holds raw `[]u8` views (no exclusivity
         // implied) and `link_bin_or_create_shim` never reads or writes those two
         // buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
-        // `skipped_due_to_missing_bin`). Detach the borrows via raw pointers so
-        // borrowck allows the disjoint access; the SAFETY invariant is that
-        // those two buffers are not aliased mutably for the lifetime of the
-        // detached slices.
-        let abs_target_buf_ptr: *mut u8 = self.abs_target_buf.as_mut_ptr();
-        let abs_target_buf_len: usize = self.abs_target_buf.len();
+        // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
+        // pointer so borrowck allows the disjoint access; the SAFETY invariant
+        // is that `abs_dest_buf` is not aliased mutably for the lifetime of the
+        // detached slice. `package_dir` (`abs_target_buf[0..package_dir_len]`)
+        // is re-derived inside each arm so no detached borrow is needed for it.
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
-
-        // SAFETY: see PORT NOTE above — abs_target_buf is not written between
-        // here and the call to link_bin_or_create_shim.
-        let package_dir =
-            unsafe { core::slice::from_raw_parts(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {

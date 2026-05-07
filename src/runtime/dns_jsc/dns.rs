@@ -969,7 +969,7 @@ impl GetNameInfoRequest {
     ) {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                let _guard = scopeguard::guard((), |_| (*resolver).request_completed());
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_name_info_cares(
                         (*this).cache.pos_in_pending(),

@@ -185,10 +185,10 @@ impl HotReloaderCtx for VirtualMachine {
         )
     }
 
-    fn watcher_fs(&self) -> &'static bun_watcher::FileSystem {
+    fn watcher_top_level_dir(&self) -> &'static [u8] {
         // SAFETY: `transpiler.fs` is the process-global `FileSystem::instance()`
         // pointer, set at startup and live for the process.
-        watcher_fs_shim(unsafe { &*self.transpiler.fs })
+        unsafe { (*self.transpiler.fs).top_level_dir }
     }
 
     fn install_bun_watcher(
@@ -287,9 +287,9 @@ pub trait HotReloaderCtx {
     /// Zig: `this.bun_watcher != .none` / `this.bun_watcher != null`.
     fn is_watcher_enabled(&self) -> bool;
 
-    /// Zig: `this.transpiler.fs` — the watcher only consumes `top_level_dir`.
-    /// Returns the process-global watcher-crate forward-decl.
-    fn watcher_fs(&self) -> &'static bun_watcher::FileSystem;
+    /// Zig: `this.transpiler.fs.top_level_dir` — the watcher only consumes the
+    /// project root path.
+    fn watcher_top_level_dir(&self) -> &'static [u8];
 
     /// Zig: assigns `this.bun_watcher = .{ .hot/.watch = w }` (or `= w` for
     /// non-ImportWatcher ctxs) and `this.transpiler.resolver.watcher =
@@ -319,17 +319,6 @@ impl HotReloaderEventLoop for EventLoop {
         // SAFETY: precondition — `this` is the VM's live event loop pointer.
         unsafe { (*this).enqueue_task_concurrent(task) }
     }
-}
-
-/// Bridge `bun_resolver::fs::FileSystem` → the `bun_watcher` crate's CYCLEBREAK
-/// forward-decl (which carries only `top_level_dir`). The resolver FS is a
-/// process singleton, so a `OnceLock` gives us the required `&'static` without
-/// leaking on every call.
-fn watcher_fs_shim(fs: &FileSystem) -> &'static bun_watcher::FileSystem {
-    static SHIM: OnceLock<bun_watcher::FileSystem> = OnceLock::new();
-    SHIM.get_or_init(|| bun_watcher::FileSystem {
-        top_level_dir: fs.top_level_dir,
-    })
 }
 
 /// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
@@ -677,10 +666,7 @@ where
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         unsafe { CLEAR_SCREEN = clear_screen_flag };
-        // PORT NOTE: bun_watcher::FileSystem is a CYCLEBREAK forward-decl carrying only
-        // `top_level_dir`; bridge from the resolver's full FileSystem here.
-        let watcher_fs = watcher_fs_shim(fs);
-        let mut watcher = match Watcher::init(reloader, watcher_fs) {
+        let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
             Ok(w) => w,
             Err(err) => {
                 // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet

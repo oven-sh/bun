@@ -1,6 +1,4 @@
 use core::fmt::Write as _;
-#[allow(unused_imports)]
-use std::sync::Arc;
 
 use bun_core::output;
 use bun_http::Method;
@@ -337,8 +335,14 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            let _ = default_credentials;
-            break 'brk todo!("blocked_on: bun_s3_signing::S3Credentials::dupe (Arc from &S3Credentials)");
+            // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
+            // intrusive ref on `default_credentials` (a `*S3Credentials`).
+            // The Rust `Store::S3` field is `Arc<S3Credentials>` (separate rc
+            // layer), so we can't share the existing intrusive allocation —
+            // deep-clone the value instead and let `init_s3` `Arc::new` it.
+            // PERF(port): was intrusive ref-bump (no copy) — profile in Phase B
+            // once Store.rs migrates `Arc<S3Credentials>` → `IntrusiveRc`.
+            break 'brk blob::Store::init_s3(path, None, default_credentials.clone()).expect("oom");
         }
     };
     // errdefer store.deinit() — handled by Drop on early return
@@ -646,10 +650,12 @@ impl S3BlobStatTask {
     // deinit: store.deref() + promise.deinit() + bun.destroy(this) — all handled by Box<Self> Drop
 }
 
-// PORT NOTE: local shim for `Method::from_js` — `bun_http::Method` has no JSC dep.
-// Mirrors the shim in `webcore/Response.rs` / `webcore/fetch.rs`.
-fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
-    todo!("blocked_on: bun_http_jsc::Method::from_js")
+// PORT NOTE: `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
+// JSC-free. Thin local alias keeps the `getPresignUrlFrom` body diff-stable
+// against the Zig.
+#[inline]
+fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
+    bun_http_jsc::method_jsc::from_js(global, value)
 }
 
 pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_options: Option<JSValue>) -> JsResult<JSValue> {

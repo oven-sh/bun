@@ -101,18 +101,15 @@ impl ReplCommand {
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
 
         // Configure bundler options
-        // PORT NOTE: ctx.install is Option<Box<BunInstall>>; bundler opts hold
-        // Option<&'static BunInstall>. ctx is the process-global ContextData so
-        // the borrow is effectively 'static — extend via raw ptr.
-        let install_ref = ctx
-            .install
-            .as_deref()
-            .map(|p| unsafe { &*(p as *const _) });
-        b.options.install = install_ref;
-        // PORT NOTE: resolver's stub `BundleOptions.install` is `*const ()` (forward-decl
-        // to break the bun_install dep cycle) — erase the type here.
+        // Spec: `b.options.install = ctx.install` (raw `?*const Api.BunInstall`
+        // copy). `BundleOptions.install` is `Option<NonNull<_>>` so no
+        // lifetime-extension cast is needed.
+        let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
+        b.options.install = install_ptr;
+        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
+        // (breaks the bun_install dep cycle) — erase the type.
         b.resolver.opts.install =
-            install_ref.map_or(core::ptr::null(), |p| p as *const _ as *const ());
+            install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;

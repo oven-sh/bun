@@ -876,16 +876,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         let mut diag = clap::Diagnostic::default();
 
         // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
-        // `cli` stores slices into it. Leak the parsed `Args` so outer slice borrows
-        // (`positionals()`, `options()`) are `'static`; inner `&[u8]` are argv-backed
-        // and already `'static`. CLI args are parsed once per process, so this is the
-        // semantic equivalent of the Zig arena that was never `deinit`'d.
+        // `cli` stores slices into it. Park the parsed `Args` in a process-global
+        // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
+        // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
+        // are parsed exactly once per process, so this is the semantic equivalent
+        // of the Zig arena that was never `deinit`'d.
+        static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let args: &'static clap::Args<clap::Help> =
             match clap::parse::<clap::Help>(params, clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
             }) {
-                Ok(a) => Box::leak(Box::new(a)),
+                Ok(a) => {
+                    // `set` only fails on second call; CLI parse runs once.
+                    let _ = PARSED_ARGS.set(a);
+                    PARSED_ARGS.get().unwrap()
+                }
                 Err(err) => {
                     Self::print_help(subcommand);
                     let _ = diag.report(Output::error_writer(), err);

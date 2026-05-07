@@ -925,7 +925,7 @@ fn init_file_system(
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly and Zig's `bundle_options` value can flow through unchanged
 /// (transpiler.zig:209 passes the same `options` to both struct fields).
-fn resolver_bundle_options_subset(
+pub(crate) fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
     use crate::options_impl::jsx::Runtime as BR;

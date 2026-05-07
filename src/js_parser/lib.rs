@@ -150,9 +150,9 @@ pub mod Macro {
     }
 
     /// Zig: `MacroImportReplacementMap` — `bun.StringArrayHashMap([]const u8)`.
-    /// Values borrow source-text slices ('static here; threaded as `'bump` once
-    /// the *_jsc crate owns the real type).
-    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<&'static [u8]>;
+    /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
+    /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
+    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
 }
 pub use crate::ast::op as Op;
 pub use crate::ast::s as S;

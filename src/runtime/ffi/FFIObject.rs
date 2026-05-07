@@ -767,20 +767,22 @@ fn eat_zig_string(
     string_value.get_zig_string(global)
 }
 
-/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI. Const-fn so the
-/// monomorphised extern thunk address is usable in the static `FIELDS` table.
-/// PORT NOTE: this is the runtime half of Zig's `toJSHostFn` — the per-param
-/// decode happens in `BODY`, not here.
-const fn wrap_host_fn<const BODY: jsc::JSHostFnZig>() -> jsc::JSHostFn {
-    unsafe extern "C" fn thunk<const BODY: jsc::JSHostFnZig>(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        let (global, callframe) = unsafe { (&*global, &*callframe) };
-        jsc::to_js_host_fn_result(global, BODY(global, callframe))
-    }
-    thunk::<BODY>
+/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI — runtime half of
+/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern "C" fn` per call site so
+/// the address is usable in the static `FIELDS` table (Rust forbids fn-pointer
+/// const generics, so this is a `macro_rules!` rather than a generic fn).
+macro_rules! wrap_host_fn {
+    ($body:path) => {{
+        unsafe extern "C" fn thunk(
+            global: *mut JSGlobalObject,
+            callframe: *mut CallFrame,
+        ) -> JSValue {
+            // SAFETY: JSC guarantees both pointers are live for the host call.
+            let (global, callframe) = unsafe { (&*global, &*callframe) };
+            jsc::to_js_host_fn_result(global, $body(global, callframe))
+        }
+        thunk as jsc::JSHostFn
+    }};
 }
 
 mod fields {

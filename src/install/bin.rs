@@ -129,11 +129,21 @@ impl Bin {
         }
     }
 
-    pub fn clone<B: StringBuilder>(
+    /// Zig: `Bin.clone(buf, prev_external_strings, all_extern_strings,
+    /// extern_strings_slice, Builder, builder)`.
+    ///
+    /// PORT NOTE: the Zig API takes both the full `all_extern_strings` buffer
+    /// and a writable tail subslice into the **same** buffer — the full slice
+    /// is only used by `ExternalStringList::init` to compute the tail's
+    /// offset. In Rust those two views alias (`&[T]` overlapping `&mut [T]` is
+    /// UB under Stacked Borrows), so callers pass the precomputed offset
+    /// instead and we build the `ExternalStringList` directly. Renamed
+    /// `clone` → `clone_with_buffers` to avoid shadowing `Clone::clone`.
+    pub fn clone_with_buffers<B: StringBuilder>(
         &self,
         buf: &[u8],
         prev_external_strings: &[ExternalString],
-        all_extern_strings: &[ExternalString],
+        extern_strings_slice_off: u32,
         extern_strings_slice: &mut [ExternalString],
         builder: &mut B,
     ) -> Bin {
@@ -174,9 +184,9 @@ impl Bin {
                     Bin {
                         tag: Tag::Map,
                         _padding_tag: [0; 3],
-                        value: Value::init_map(ExternalStringList::init(
-                            all_extern_strings,
-                            extern_strings_slice,
+                        value: Value::init_map(ExternalStringList::new(
+                            extern_strings_slice_off,
+                            extern_strings_slice.len() as u32,
                         )),
                     }
                 }

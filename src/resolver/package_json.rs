@@ -439,7 +439,10 @@ use bun_glob as glob;
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 pub type BrowserMap = StringMap;
-pub type MacroImportReplacementMap = StringArrayHashMap<&'static [u8]>; // TODO(port): lifetime — values borrow source buffer
+/// Values are owned (Zig: `[]const u8` borrowing the package.json source
+/// buffer). Owned `Box<[u8]>` here so callers (CLI bunfig → bundler options)
+/// can populate without `unsafe` lifetime-extension casts.
+pub type MacroImportReplacementMap = StringArrayHashMap<Box<[u8]>>;
 pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 
 type ScriptsMap = StringArrayHashMap<&'static [u8]>; // TODO(port): lifetime — values borrow source buffer
@@ -1166,14 +1169,13 @@ impl PackageJSON {
                     continue;
                 }
 
-                let remap_value_str: &'static [u8] = match remap_value.data.e_string() {
+                let remap_value_str: &[u8] = match remap_value.data.e_string() {
                     Some(s) => s.data,
                     None => continue,
                 };
 
                 // PERF(port): was putAssumeCapacityNoClobber
-                // TODO(port): lifetime — keys/values borrow json_source contents
-                map.insert(import_name, remap_value_str);
+                map.insert(import_name, Box::<[u8]>::from(remap_value_str));
             }
 
             if map.len() > 0 {

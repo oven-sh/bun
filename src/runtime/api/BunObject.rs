@@ -304,7 +304,7 @@ pub mod bun_object {
         #[cfg(feature = "css")]
         BunObject_callback_color => bun_css::CssColor::js_function_color,
         #[cfg(not(feature = "css"))]
-        BunObject_callback_color => super::super::color_unsupported,
+        BunObject_callback_color => super::color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
         BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
         BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,

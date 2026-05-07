@@ -29,7 +29,7 @@ use crate::server::StaticRoute;
 // ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
 // Each draft is a faithful port of the `.zig` sibling but depends on
 // `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
- #[path = "../DevServer/Assets.rs"]              pub(crate) mod assets_body;
+ // Assets body draft dissolved into `assets.rs`.
  #[path = "../DevServer/DirectoryWatchStore.rs"] pub(crate) mod directory_watch_store_body;
  #[path = "../DevServer/ErrorReportRequest.rs"]  pub(crate) mod error_report_request_body;
  #[path = "../DevServer/HmrSocket.rs"]           pub(crate) mod hmr_socket_body;

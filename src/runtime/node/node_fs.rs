@@ -1283,8 +1283,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
     pub fn on_finish(&mut self, result: Maybe<ret::Cp>) {
         if !IS_SHELL { return; }
-        // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task
-        unsafe { &mut *self.shelltask }.cp_on_finish(result);
+        // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task;
+        // `cp_on_finish` enqueues it onto the main-thread concurrent queue.
+        unsafe { ShellCpTask::cp_on_finish(self.shelltask, result) };
     }
 
     pub fn create(
@@ -1440,7 +1441,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
             // `Ok(())` placeholder, mirroring Zig which read the union value once.
             let result = core::mem::replace(self.result.get_mut(), Maybe::Ok(()));
-            unsafe { &mut *self.shelltask }.cp_on_finish(result);
+            // SAFETY: shelltask is non-null in the IS_SHELL specialization and
+            // outlives this task; `cp_on_finish` enqueues it concurrently.
+            unsafe { ShellCpTask::cp_on_finish(self.shelltask, result) };
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(self as *mut Self) };
             return Ok(());

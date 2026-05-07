@@ -487,22 +487,27 @@ impl<'a> Writable<'a> {
     }
 }
 
-impl<'a> SignalHandler for Writable<'a> {
+// PORT NOTE: Zig wires `pipe.signal = Signal.init(&subprocess.stdin)` and the
+// callbacks then `@fieldParentPtr` back to the `Subprocess`. Registering the
+// `*mut Writable` and recovering the parent inside the callback is
+// out-of-provenance in Rust (the `&mut Writable` formed by the vtable thunk
+// only carries provenance for the `stdin` field). Register the `*mut
+// Subprocess` instead — `signal.ptr` carries whole-allocation provenance and
+// `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
+impl<'a> SignalHandler for Subprocess<'a> {
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
-        Writable::on_close(self, err)
+        // Decay to a raw pointer immediately; `on_close` reborrows disjoint
+        // fields and the whole struct in sequence, never overlapping.
+        Writable::on_close(self as *mut Self, err)
     }
-    fn on_ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
-        Writable::on_ready(self, amount, offset)
-    }
-    fn on_start(&mut self) {
-        Writable::on_start(self)
-    }
+    fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
+    fn on_start(&mut self) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/subprocess/Writable.zig (341 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      Pipe holds NonNull<FileSink> (intrusive refcount, manual deref) and Buffer holds RefPtr<StaticPipeWriter> per Zig; @fieldParentPtr + aliased &mut Subprocess/&mut self need borrowck reshaping.
+//   todos:      1
+//   notes:      Pipe holds NonNull<FileSink> (intrusive refcount, manual deref) and Buffer holds RefPtr<StaticPipeWriter>. @fieldParentPtr reshaped: SignalHandler is on Subprocess; on_close/finalize take *mut Subprocess and raw-project stdin.
 // ──────────────────────────────────────────────────────────────────────────

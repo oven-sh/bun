@@ -35,8 +35,10 @@ pub fn html_string_to_string(this: HTMLString) -> BunString {
 }
 
 pub fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let str = html_string_to_string(this);
-    // `defer str.deref()` — handled by `impl Drop for bun_string::String`.
+    // Zig: `var str = this.toString(); defer str.deref();` — `bun_string::String`
+    // is `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that releases
+    // the +1 ref returned by `html_string_to_string` on scope exit.
+    let str = bun_string::OwnedString::new(html_string_to_string(this));
     str.to_js(global)
 }
 

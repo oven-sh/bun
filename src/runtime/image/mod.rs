@@ -51,9 +51,12 @@ pub mod exif;
 // `Image.rs` owns the `#[bun_jsc::JsClass]`-derived `Image` payload plus the
 // pipeline/task state types. Re-exported here so `crate::image::Image` is the
 // JsClass-bearing struct (Body.rs / Blob.rs downcast to it).
+//
+// `pub` so generated_classes.rs can re-export `crate::image::image_body::Image`
+// directly — codegen addresses the defining module, not the flattened re-export.
 
 #[path = "Image.rs"]
-mod image_body;
+pub mod image_body;
 pub use image_body::{
     AsyncImageTask, Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize,
     Source, TaskResult,

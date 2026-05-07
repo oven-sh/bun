@@ -1073,7 +1073,7 @@ impl Subprocess<'_> {
                 .signal
                 .ptr
                 .map(|p| p.as_ptr() as *const c_void)
-                == Some(&self.stdin as *const Writable<'_> as *const c_void)
+                == Some(self as *const Self as *const c_void)
             {
                 // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
                 // through `*FileSink` here.
@@ -1206,7 +1206,7 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 if !called {
-                    self.stdin.finalize();
+                    Writable::finalize(self as *mut Self);
                 } else {
                     self.stdin.close();
                 }

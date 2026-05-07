@@ -32,6 +32,26 @@ impl PackageManager {
         get_cache_directory(self)
     }
 
+    /// Snapshot the four `PackageManager` scalars
+    /// `PackageManifestMap::by_name_hash_allow_expired`'s disk-fallback path
+    /// reads. Captured by value so the loop body can hold `&mut self.manifests`
+    /// alongside `&self.lockfile` / `&self.options` without aliasing the whole
+    /// `&mut self` (Stacked-Borrows UB the Zig `*PackageManager` pattern is
+    /// immune to).
+    ///
+    /// The cache directory is opened lazily here only when
+    /// `options.enable.manifest_cache` is set (the only branch that reads it),
+    /// matching the Zig `byNameHashAllowExpired` gating.
+    pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
+        let enable_manifest_cache = self.options.enable.manifest_cache();
+        crate::package_manifest_map::DiskCacheCtx {
+            enable_manifest_cache,
+            enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
+            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self).fd()),
+            timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
+        }
+    }
+
     #[inline]
     pub fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
         get_cache_directory_and_abs_path(self)

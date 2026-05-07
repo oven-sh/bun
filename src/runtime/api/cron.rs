@@ -1907,15 +1907,23 @@ impl SpawnCmdTarget for CronRemoveJob {
 }
 
 /// Generic spawn used by both CronRegisterJob and CronRemoveJob.
-fn spawn_cmd_generic<T: SpawnCmdTarget>(
-    this: &mut T,
+///
+/// May free `this` (synchronously, via either an early `T::finish` on setup
+/// error or `watch_or_reap` → exit handler → `maybe_finished` → `finish`).
+/// Raw-ptr receiver: see [`CronJobBase`] PORT NOTE. Callers must not touch
+/// `this` after this returns.
+unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
+    this: *mut T,
     argv: &mut [*const c_char],
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) {
-    *this.has_called_process_exit_mut() = false;
-    *this.exit_status_mut() = None;
-    *this.remaining_fds() = 0;
+    // SAFETY: local reborrow (no FnEntry protector). Re-derived after each
+    // section so no `&mut T` outlives a potentially-freeing call.
+    let s = unsafe { &mut *this };
+    *s.has_called_process_exit_mut() = false;
+    *s.exit_status_mut() = None;
+    *s.remaining_fds() = 0;
 
     #[allow(unused_mut)]
     let mut resolved_argv0: Option<*const c_char> = None;
@@ -1938,17 +1946,17 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         match bun_core::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
-                this.set_err(format_args!(
+                s.set_err(format_args!(
                     "Could not find '{}' in PATH",
                     bstr::BStr::new(argv0)
                 ));
-                return T::finish(this);
+                return unsafe { T::finish(this) };
             }
         }
     }
     #[cfg(windows)]
     {
-        this.stderr_reader().source = Some(bun_io::Source::Pipe(Box::new(
+        s.stderr_reader().source = Some(bun_io::Source::Pipe(Box::new(
             // SAFETY: all-zero is a valid uv_pipe_t init state.
             unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
         )));
@@ -1959,7 +1967,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(this.stderr_reader().source.as_ref().unwrap().pipe()),
+        stderr: spawn::Stdio::Buffer(s.stderr_reader().source.as_ref().unwrap().pipe()),
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
@@ -1997,24 +2005,24 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 envp_owned.as_ptr().cast()
             }
             Err(_) => {
-                this.set_err(format_args!("Failed to create environment block"));
-                return T::finish(this);
+                s.set_err(format_args!("Failed to create environment block"));
+                return unsafe { T::finish(this) };
             }
         }
     };
 
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
-        Ok(Ok(s)) => s,
+        Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
-            this.set_err(format_args!(
+            s.set_err(format_args!(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
             ));
-            return T::finish(this);
+            return unsafe { T::finish(this) };
         }
         Err(e) => {
-            this.set_err(format_args!("Failed to spawn process: {}", e.name()));
-            return T::finish(this);
+            s.set_err(format_args!("Failed to spawn process: {}", e.name()));
+            return unsafe { T::finish(this) };
         }
     };
     let mut spawned = spawned;
@@ -2022,14 +2030,14 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(unix)]
     {
         if let Some(stdout) = spawned.stdout {
-            let this_ptr = this as *mut T as *mut core::ffi::c_void;
+            let this_ptr = this as *mut core::ffi::c_void;
             if !spawned.memfds[1] {
-                this.stdout_reader().set_parent(this_ptr);
+                s.stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
-                *this.remaining_fds() += 1;
+                *s.remaining_fds() += 1;
                 {
                     use bun_io::pipe_reader::PosixFlags;
-                    let flags = &mut this.stdout_reader().flags;
+                    let flags = &mut s.stdout_reader().flags;
                     flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                     flags.remove(
                         PosixFlags::MEMFD
@@ -2037,27 +2045,27 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
                 }
-                if this.stdout_reader().start(stdout, true).is_err() {
-                    this.set_err(format_args!("Failed to start reading stdout"));
-                    return T::finish(this);
+                if s.stdout_reader().start(stdout, true).is_err() {
+                    s.set_err(format_args!("Failed to start reading stdout"));
+                    return unsafe { T::finish(this) };
                 }
-                if let Some(p) = this.stdout_reader().handle.get_poll() {
+                if let Some(p) = s.stdout_reader().handle.get_poll() {
                     p.set_flag(bun_io::FilePollFlag::Socket);
                 }
             } else {
-                this.stdout_reader().set_parent(this_ptr);
-                this.stdout_reader().start_memfd(stdout);
+                s.stdout_reader().set_parent(this_ptr);
+                s.stdout_reader().start_memfd(stdout);
             }
         }
     }
     #[cfg(windows)]
     {
         if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
-            this.stderr_reader().parent = this as *mut T as *mut core::ffi::c_void;
-            *this.remaining_fds() += 1;
-            if this.stderr_reader().start_with_current_pipe().unwrap_result().is_err() {
-                this.set_err(format_args!("Failed to start reading stderr"));
-                return T::finish(this);
+            s.stderr_reader().parent = this as *mut core::ffi::c_void;
+            *s.remaining_fds() += 1;
+            if s.stderr_reader().start_with_current_pipe().unwrap_result().is_err() {
+                s.set_err(format_args!("Failed to start reading stderr"));
+                return unsafe { T::finish(this) };
             }
         }
     }
@@ -2065,12 +2073,14 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
-    *this.process_slot() = Some(process);
+    *s.process_slot() = Some(process);
     // Zig: `process.setExitHandler(this)` (anytype dispatch over the
     // TaggedPointerUnion of handler types). The Rust port uses a per-type
     // static vtable; see `cron_on_process_exit_thunk`.
     // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
-    unsafe { (*process).set_exit_handler(this as *mut T as *mut (), T::EXIT_VTABLE) };
+    unsafe { (*process).set_exit_handler(this as *mut (), T::EXIT_VTABLE) };
+    // `s` not used past this point — `watch_or_reap` may synchronously invoke
+    // the exit handler, which can free `this`.
     // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the
     // exit handler (which re-enters `this` via the vtable thunk).
     match unsafe { (*process).watch_or_reap() } {

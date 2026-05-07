@@ -758,9 +758,13 @@ impl StatWatcher {
         }
 
         self.set_last_stat(&res);
-        Self::ref_(self); // Ensure it stays alive long enough to receive the callback.
+        // Capture the raw pointer before the `&self` autoref of
+        // `enqueue_task_concurrent` is taken — `self as *mut _` is an `&mut`
+        // reborrow and would otherwise overlap that immutable borrow (E0502).
+        let this_ptr: *mut StatWatcher = self;
+        Self::ref_(this_ptr); // Ensure it stays alive long enough to receive the callback.
         self.enqueue_task_concurrent(ConcurrentTask::from_callback(
-            self as *mut StatWatcher,
+            this_ptr,
             Self::swap_and_call_listener_on_main_thread,
         ));
     }

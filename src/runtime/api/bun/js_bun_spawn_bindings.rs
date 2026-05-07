@@ -1445,20 +1445,21 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if matches!(subprocess.stdin, Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
         // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
-        // Signal.init(&subprocess.stdin)` — a self-referential store. Capture
-        // the field address via `addr_of_mut!` (no intermediate `&mut` is
-        // formed) and route through `init_with_type` so borrowck never sees the
-        // alias; the vtable only dereferences this pointer later on the JS
-        // thread, after the local `subprocess` borrow has ended.
-        let stdin_ptr: *mut Writable<'_> = core::ptr::addr_of_mut!(subprocess.stdin);
-        // SAFETY: `stdin_ptr` is the stable boxed address of `subprocess.stdin`
-        // (Subprocess was `Box::into_raw`'d above) and was just confirmed to be
-        // the `Pipe` variant; the signal's stored back-pointer remains valid for
-        // the lifetime of the FileSink, which is owned by this same field.
+        // Signal.init(&subprocess.stdin)` and the callback `@fieldParentPtr`s
+        // back to the `Subprocess`. In Rust the SignalHandler impl is on
+        // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
+        // (whole-allocation provenance), so `Writable::on_close` can raw-project
+        // `stdin` instead of doing out-of-provenance pointer arithmetic. The
+        // vtable only dereferences this pointer later on the JS thread, after
+        // the local `subprocess` borrow has ended.
+        // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
+        // `Box::into_raw` above) and `stdin` was just confirmed to be the
+        // `Pipe` variant; the signal's stored back-pointer remains valid for
+        // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
-            if let Writable::Pipe(pipe) = &mut *stdin_ptr {
+            if let Writable::Pipe(pipe) = &mut (*subprocess_ptr).stdin {
                 (*pipe.as_ptr()).signal =
-                    WebCore::streams::Signal::init_with_type::<Writable<'_>>(stdin_ptr);
+                    WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(subprocess_ptr);
             }
         }
     }

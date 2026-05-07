@@ -19,27 +19,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::SSLConfig;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
-use bun_str::strings;
 use bun_uws as uws;
-
-/// Local shim: `approx_cert_bytes()` lives on
-/// `bun_uws_sys::socket_context::BunSocketContextOptions`, but `as_usockets()`
-/// returns the (layout-identical, `#[repr(C)]`) `bun_uws::SocketContext`
-/// duplicate. Bridge here so call sites match the .zig spec without touching
-/// upstream crates. `digest()` is now native on the `bun_uws` copy.
-trait BunSocketContextOptionsExt {
-    fn approx_cert_bytes(&self) -> usize;
-}
-impl BunSocketContextOptionsExt for uws::SocketContext::BunSocketContextOptions {
-    #[inline]
-    fn approx_cert_bytes(&self) -> usize {
-        // SAFETY: both structs are `#[repr(C)]` with identical field order and
-        // types (see src/uws/lib.rs:1452 and src/uws_sys/SocketContext.rs:22).
-        let sys: &bun_uws_sys::socket_context::BunSocketContextOptions =
-            unsafe { core::mem::transmute(self) };
-        sys.approx_cert_bytes()
-    }
-}
 
 /// Mirrors Zig's `pub const js = jsc.Codegen.JSSecureContext`. Re-export the
 /// codegen-emitted module so `$zig(SecureContext.zig, js.getConstructor)` in
@@ -116,7 +96,7 @@ impl SecureContext {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
                 // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
-                if strings::eql_long(unsafe { &(*existing).digest }, &d, false) {
+                if unsafe { (*existing).digest } == d {
                     return Ok(cached);
                 }
             }

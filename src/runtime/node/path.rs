@@ -165,14 +165,14 @@ fn l<T: PathChar>(s: &'static [u8]) -> &'static [T] {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
-        // SAFETY: T == u8 when !IS_U16
-        // TODO(port): avoid transmute once specialization lands
-        let a8: &[u8] = unsafe { core::mem::transmute(a) };
-        let b8: &[u8] = unsafe { core::mem::transmute(b) };
+        // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
+        let a8: &[u8] = unsafe { core::slice::from_raw_parts(a.as_ptr().cast(), a.len()) };
+        let b8: &[u8] = unsafe { core::slice::from_raw_parts(b.as_ptr().cast(), b.len()) };
         return strings::eql_case_insensitive_ascii(a8, b8, true);
     }
-    // TODO(port): Zig body for u16 falls through with no return; matches comptime-only u8 path.
-    // Phase B: add u16 case-insensitive compare if ever called with T=u16.
+    // Zig's `eqlIgnoreCaseT` body for `T == u16` falls through with no return (UB if reached);
+    // in practice the only callers instantiate with `T == u8`. Provide a sound u16 compare so
+    // the generic body type-checks and behaves correctly if ever exercised.
     if a.len() != b.len() {
         return false;
     }
@@ -198,7 +198,8 @@ fn to_lower_t<T: PathChar>(a_c: T) -> T {
 // `jsc.Node.Maybe([]T, Syscall.Error)` → bun_sys::Result<&mut [T]>
 type MaybeBuf<'a, T> = bun_sys::Result<&'a mut [T]>;
 // `jsc.Node.Maybe([:0]const T, Syscall.Error)` → bun_sys::Result<&[T]>
-// TODO(port): preserve NUL-termination via ZStr/WStr associated type on PathChar.
+// NUL termination is written into the backing buffer at `buf[len]`; the returned
+// slice itself is `&[T]` (Rust has no `[:0]T` sentinel type).
 type MaybeSlice<'a, T> = bun_sys::Result<&'a [T]>;
 
 // validatePathT is enforced at compile time by the `PathChar` trait bound.
@@ -397,7 +398,7 @@ pub fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
 }
 
 pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    // TODO(port): avoid transmute once Rust specialization lands; T is u8 or u16 by trait bound.
+    // Dispatch on `T::IS_U16` (poor-man's specialization); T is u8 or u16 by trait bound.
     if T::IS_U16 {
         // SAFETY: T == u16 when IS_U16
         let buf16: &mut [u16] = unsafe { core::mem::transmute(buf) };
@@ -1160,7 +1161,8 @@ fn _format_t<'a, T: PathChar>(
 
     // Translated from the following JS code:
     //   const dir = pathObject.dir || pathObject.root;
-    // TODO(port): Zig used `std.mem.eql(u8, dir, root)` (always u8) — likely a Zig bug for T=u16.
+    // PORT NOTE: Zig used `std.mem.eql(u8, dir, root)` (hard-coded u8) which is a latent bug
+    // for `T == u16`; compare as `&[T]` here.
     let dir_is_root = dir.is_empty() || dir == root;
     let dir_or_root = if dir_is_root { root } else { dir };
     let dir_len = dir_or_root.len();
@@ -1372,8 +1374,7 @@ pub fn is_absolute_posix_zig_string(path_zstr: &ZigString) -> bool {
 
 pub fn is_absolute_windows_zig_string(path_zstr: &ZigString) -> bool {
     if path_zstr.len > 0 && path_zstr.is_16bit() {
-        // TODO(port): @alignCast on utf16Slice
-        is_absolute_windows_t::<u16>(path_zstr.utf16_slice())
+        is_absolute_windows_t::<u16>(path_zstr.utf16_slice_aligned())
     } else {
         is_absolute_windows_t::<u8>(path_zstr.slice())
     }
@@ -1640,7 +1641,8 @@ pub fn join(
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
     let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
 
-    // TODO(port): Zig leaked the per-arg toSlice() into the arena; here we hold owned slices.
+    // Zig leaks each per-arg `toSlice()` into the arena and bulk-frees at the end;
+    // here the `ZigStringSlice` RAII guards live in `owned` for the same effect.
     let mut owned: Vec<bun_str::ZigStringSlice> = Vec::with_capacity(args_len as usize);
     let mut paths: Vec<&[u8]> = Vec::with_capacity(args_len as usize);
 
@@ -1650,14 +1652,12 @@ pub fn join(
         let path_zstr = path_ptr.get_zig_string(global_object)?;
         if path_zstr.len > 0 {
             owned.push(path_zstr.to_slice());
-        } else {
-            // push empty placeholder so indices match (not strictly needed)
         }
     }
     for s in &owned {
         paths.push(s.slice());
     }
-    // TODO(port): Zig kept empty entries in `paths` array; join*T skips empties anyway.
+    // Empty entries are skipped both here and inside `join_*_t`, matching Zig.
     join_js_t::<u8>(global_object, is_windows, &paths)
 }
 
@@ -2828,8 +2828,6 @@ pub fn relative(
         return Ok(from_ptr);
     }
 
-    // TODO(port): rareData().path_buf pooled allocator — Phase B should restore the
-    // lazily-allocated RareData buffer to avoid per-call heap alloc.
     // PERF(port): was RareData path_buf stack-fallback — profile in Phase B
     let from_zig_slice = from_zig_str.to_slice();
     let to_zig_slice = to_zig_str.to_slice();
@@ -3432,7 +3430,7 @@ pub fn resolve(
     // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large on the stack.
     // The arena handles overflow for very long paths.
     // PERF(port): was arena bulk-free + RareData path_buf — profile in Phase B
-    // TODO(port): restore globalObject.bunVM().rareData().path_buf pooled allocator.
+    // PERF(port): was RareData path_buf pooled allocator — profile in Phase B.
 
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
     let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
@@ -3632,7 +3630,7 @@ pub fn to_namespaced_path(
         return Ok(path_ptr);
     }
 
-    // TODO(port): restore globalObject.bunVM().rareData().path_buf pooled allocator.
+    // PERF(port): was RareData path_buf pooled allocator — profile in Phase B.
     // PERF(port): was RareData path_buf stack-fallback — profile in Phase B
     let path_zslice = path_zstr.to_slice();
     to_namespaced_path_js_t::<u8>(global_object, is_windows, path_zslice.slice())

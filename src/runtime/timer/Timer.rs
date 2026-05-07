@@ -13,7 +13,7 @@ use core::mem::offset_of;
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc};
 use bun_str::String as BunString;
 use bun_uws::Loop as UwsLoop;
 

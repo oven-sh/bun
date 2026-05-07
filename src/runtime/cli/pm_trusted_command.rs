@@ -55,8 +55,9 @@ impl UntrustedCommand {
         let _ = (ctx, pm);
         todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::{{load_from_cwd,has_trusted_dependency,buffers.dependencies/resolutions}} / package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
         {
-        let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        let log_level = pm.options.log_level;
+        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         pm.update_lockfile_if_needed(&load_lockfile)?;
 
         let packages = pm.lockfile.packages.slice();
@@ -254,8 +255,9 @@ impl TrustCommand {
         let _ = (ctx, pm, &packages_to_trust, trust_all);
         todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — Lockfile::{{load_from_cwd,has_trusted_dependency,buffers.dependencies/resolutions,trusted_dependencies,save_to_disk}} / package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}} / PackageManager::{{log,progress,sleep,spawn_package_lifecycle_scripts,root_package_json_file}}");
         {
-        let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        let log_level = pm.options.log_level;
+        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         pm.update_lockfile_if_needed(&load_lockfile)?;
 
         let buf = pm.lockfile.buffers.string_bytes.as_slice();

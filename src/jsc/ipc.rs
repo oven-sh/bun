@@ -1626,7 +1626,7 @@ impl SendQueue {
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
         if let Err(err) = unsafe { (*ipc_pipe).open(pipe_fd) }.unwrap_() {
             // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
-            unsafe { (*ipc_pipe).close_and_destroy() };
+            unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.

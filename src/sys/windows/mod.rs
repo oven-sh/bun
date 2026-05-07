@@ -3999,9 +3999,10 @@ pub struct EXCEPTION_POINTERS {
 }
 
 /// Zig `windows_c.zig::detectRuntimeVersion` — best-effort `major.build`
-/// string from `RtlGetVersion`. Returned as an owned `String` (the Zig
-/// version writes into a static buffer; that's awkward across Rust callers).
-pub fn detect_runtime_version() -> std::string::String {
+/// string from `RtlGetVersion`. Zig writes into a static buffer (zero-alloc);
+/// mirror that with a `OnceLock<String>` so the per-call allocation goes away
+/// after the first call.
+pub fn detect_runtime_version() -> &'static str {
     #[repr(C)]
     struct OSVERSIONINFOW {
         dwOSVersionInfoSize: u32,
@@ -4014,14 +4015,17 @@ pub fn detect_runtime_version() -> std::string::String {
     unsafe extern "system" {
         fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
     }
-    // SAFETY: out-param fully written by RtlGetVersion when it returns 0.
-    let mut info: OSVERSIONINFOW = unsafe { core::mem::zeroed() };
-    info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-    // SAFETY: `info` is a valid out-pointer.
-    if unsafe { RtlGetVersion(&mut info) } != 0 {
-        return std::string::String::from("unknown");
-    }
-    std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
+    static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        // SAFETY: out-param fully written by RtlGetVersion when it returns 0.
+        let mut info: OSVERSIONINFOW = unsafe { core::mem::zeroed() };
+        info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
+        // SAFETY: `info` is a valid out-pointer.
+        if unsafe { RtlGetVersion(&mut info) } != 0 {
+            return std::string::String::from("unknown");
+        }
+        std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
+    })
 }
 
 #[repr(C)]

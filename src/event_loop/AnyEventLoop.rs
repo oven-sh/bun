@@ -798,8 +798,14 @@ pub unsafe fn __bun_io_file_poll_unregister(
     #[cfg(windows)]
     unsafe {
         let _ = force_unregister;
-        (*p.cast::<AioFilePoll>()).unregister(&mut *loop_.cast::<UwsLoop>());
-        Ok(())
+        // Windows `FilePoll::unregister` returns `bool` (always `true` today);
+        // map to the `Result<()>` contract this hook advertises so a future
+        // failing `uv_unref` can surface instead of being silently dropped.
+        if (*p.cast::<AioFilePoll>()).unregister(&mut *loop_.cast::<UwsLoop>()) {
+            Ok(())
+        } else {
+            Err(bun_sys::Error::from_code(bun_sys::E::INVAL, bun_sys::Tag::TODO))
+        }
     }
 }
 

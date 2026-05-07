@@ -1405,8 +1405,11 @@ impl WindowsBufferedReader {
                 }
                 // we got some data we can slice the buffer!
                 let len: usize = usize::try_from(nread_int).expect("int cast");
-                // SAFETY: buf is valid when nread > 0.
-                let slice = unsafe { (*buf).slice_mut() };
+                // SAFETY: buf is valid when nread > 0. `uv_buf_t` is `Copy` —
+                // take a local copy so `slice_mut` can borrow `&mut self`
+                // (libuv's `read_cb` hands us `*const`).
+                let mut b = unsafe { *buf };
+                let slice = unsafe { b.slice_mut() };
                 this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
             }
         }
@@ -1564,7 +1567,8 @@ impl WindowsBufferedReader {
                                     Some(Self::on_file_read),
                                 )
                             }
-                            .to_error(sys::Tag::read)
+                            // PORT NOTE: matches Zig bug (PipeReader.zig:1113 tags this `.write`).
+                            .to_error(sys::Tag::write)
                             {
                                 file.complete(false);
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1637,7 +1641,8 @@ impl WindowsBufferedReader {
                         Some(Self::on_file_read),
                     )
                 }
-                .to_error(sys::Tag::read)
+                // PORT NOTE: matches Zig bug (PipeReader.zig:1163 tags this `.write`).
+                .to_error(sys::Tag::write)
                 {
                     file.complete(false);
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1656,8 +1661,8 @@ impl WindowsBufferedReader {
                 .to_error(sys::Tag::open)
                 {
                     bun_sys::syslog!(
-                        "uv_read_start() = {s}",
-                        String::from_utf8_lossy(err.name()),
+                        "uv_read_start() = {}",
+                        bstr::BStr::new(err.name()),
                     );
                     return sys::Result::Err(err);
                 }

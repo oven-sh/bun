@@ -44,6 +44,22 @@ type SockaddrStorage = bun_libuv_sys::sockaddr_storage;
 type AddrInfo = libc::addrinfo;
 #[cfg(windows)]
 type AddrInfo = bun_libuv_sys::addrinfo;
+#[cfg(not(windows))]
+type Sockaddr = libc::sockaddr;
+#[cfg(windows)]
+type Sockaddr = bun_libuv_sys::sockaddr;
+
+/// Platform `freeaddrinfo` for the [`AddrInfo`] alias above. On Windows the
+/// list comes from `ws2_32!getaddrinfo` (see `work_pool_callback`), so it must
+/// be freed with `ws2_32!freeaddrinfo` — *not* `uv_freeaddrinfo` (different
+/// allocator) and *not* `libc::freeaddrinfo` (wrong type / absent on Windows).
+#[inline]
+unsafe fn os_freeaddrinfo(ai: *mut AddrInfo) {
+    #[cfg(not(windows))]
+    unsafe { libc::freeaddrinfo(ai) };
+    #[cfg(windows)]
+    unsafe { bun_sys::windows::ws2_32::freeaddrinfo(ai.cast()) };
+}
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
@@ -2329,7 +2345,7 @@ pub mod internal {
                 entry.info.ai_next = ptr::null_mut();
             }
             if !entry.info.ai_addr.is_null() {
-                entry.info.ai_addr = &mut entry.addr as *mut _ as *mut libc::sockaddr;
+                entry.info.ai_addr = &mut entry.addr as *mut _ as *mut Sockaddr;
             }
         }
 
@@ -2339,7 +2355,7 @@ pub mod internal {
     fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
-            unsafe { libc::freeaddrinfo(info) };
+            unsafe { os_freeaddrinfo(info) };
             Some(res)
         } else {
             None

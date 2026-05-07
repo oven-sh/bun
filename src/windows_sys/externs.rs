@@ -498,6 +498,12 @@ pub mod ws2_32 {
 
     #[link(name = "ws2_32")]
     unsafe extern "system" {
+        pub fn getaddrinfo(
+            node: *const c_char,
+            service: *const c_char,
+            hints: *const addrinfo,
+            res: *mut *mut addrinfo,
+        ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
     }
 

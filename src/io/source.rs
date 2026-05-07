@@ -303,7 +303,7 @@ impl Source {
             // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
             let raw = Box::into_raw(pipe);
             // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
-            unsafe { (*raw).close_and_destroy() };
+            unsafe { uv::Pipe::close_and_destroy(raw) };
             return bun_sys::Result::Err(err);
         }
 

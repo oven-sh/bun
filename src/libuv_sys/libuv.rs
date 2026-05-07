@@ -254,11 +254,17 @@ impl uv_buf_t {
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
         unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
-    /// Mutable view of the buffer (Zig `uv_buf_t::slice` returned `[]u8`).
-    /// SAFETY: caller asserts exclusive write access for the buffer's lifetime
-    /// and that `(base, len)` came from a writeable allocation.
+    /// Mutable view of the buffer (Zig `uv_buf_t::slice` returned `[]u8`, which
+    /// carries no exclusivity invariant — Rust `&mut [u8]` does).
+    ///
+    /// SAFETY: caller asserts that `(base, len)` came from a writeable
+    /// allocation and that no other `&mut`/`&` to that storage is live for the
+    /// returned slice's lifetime. Takes `&mut self` so borrowck rejects the
+    /// obvious double-call aliasing footgun at the type level; this does *not*
+    /// by itself make the call safe (the pointee may still be aliased
+    /// elsewhere).
     #[inline]
-    pub unsafe fn slice_mut(&self) -> &mut [u8] {
+    pub unsafe fn slice_mut(&mut self) -> &mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
     }
 }
@@ -871,8 +877,18 @@ impl uv_write_t {
     /// Context-aware `uv_write` (Zig libuv.zig:1327 `uv_write_t::write` with
     /// `context: anytype, comptime onWrite`). Stores `context` in `req.data`;
     /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
-    /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`
-    /// — same codegen shape as Zig's comptime fn pointer.
+    /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
+    ///
+    /// PORT NOTE: Zig captures `onWrite` at *comptime* (one thunk per
+    /// callsite, direct call) and returns `Maybe(void)` with the
+    /// `.toError(.write)` already applied. The Rust port can do neither
+    /// without a `bun_sys` dependency / unstable const-generic fn pointers, so
+    /// it (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
+    /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri
+    /// rejects the latter), and (b) returns the raw [`ReturnCode`]; callers
+    /// apply `.to_error(Tag::write)` themselves. The `bun.sys.syslog` line is
+    /// emitted via this crate's `[uv]` log scope. The null-callback path is
+    /// [`write_raw`].
     #[inline]
     pub fn write<T>(
         &mut self,
@@ -882,24 +898,26 @@ impl uv_write_t {
         on_write: fn(&mut T, ReturnCode),
     ) -> ReturnCode {
         // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
-        // 6-slot `reserved` array on `uv_req_t`). We can't capture `on_write`
-        // in the `extern "C"` thunk without static dispatch, and a per-`T`
-        // static would forbid distinct callbacks for the same `T`.
+        // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered via
+        // `transmute<usize, fn>` in the thunk.
         self.data = context.cast();
-        self.reserved[0] = on_write as *mut c_void;
+        self.reserved[0] = on_write as usize as *mut c_void;
         unsafe extern "C" fn thunk<T>(req: *mut uv_write_t, status: ReturnCode) {
             // SAFETY: `data`/`reserved[0]` were set immediately before
-            // `uv_write` below; libuv invokes this exactly once with the
-            // same `req` pointer.
+            // `uv_write` below; libuv invokes this exactly once with the same
+            // `req` pointer. `usize` → `fn` transmute round-trips the address
+            // written by `on_write as usize` above (Win64: same width).
             unsafe {
                 let cb: fn(&mut T, ReturnCode) =
-                    mem::transmute::<*mut c_void, fn(&mut T, ReturnCode)>((*req).reserved[0]);
+                    mem::transmute::<usize, fn(&mut T, ReturnCode)>((*req).reserved[0] as usize);
                 cb(&mut *(*req).data.cast::<T>(), status);
             }
         }
         // SAFETY: caller guarantees `self` lives until the cb fires and
         // `stream` is a live stream handle.
-        unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) }
+        let rc = unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) };
+        crate::__uv_log!("uv_write({}) = {}", input.len, rc.int());
+        rc
     }
 }
 
@@ -1164,21 +1182,28 @@ impl Pipe {
     /// `uv_pipe_init` the handle is in the event loop's `handle_queue`;
     /// freeing without `uv_close` corrupts that list.
     ///
-    /// SAFETY: `self` must be a `Box<Pipe>`-allocated pointer (the close
+    /// SAFETY: `this` must be a `Box<Pipe>`-allocated pointer (the close
     /// callback reclaims it via `Box::from_raw`). Caller relinquishes
-    /// ownership.
-    pub unsafe fn close_and_destroy(&mut self) {
+    /// ownership. Receiver is `*mut Pipe` (not `&mut self`) because the
+    /// never-initialized branch deallocates the pointee — holding a live
+    /// `&mut self` across that drop would dangle. In the already-closing
+    /// branch the allocation is *not* reclaimed here: the previously
+    /// registered `uv_close` callback is assumed to free the box (matches
+    /// Zig); if a non-freeing callback was registered, the pipe leaks.
+    pub unsafe fn close_and_destroy(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
             drop(unsafe { Box::from_raw(handle) });
         }
-        if self.loop_.is_null() {
+        // SAFETY: caller contract — `this` is a live Box-allocated Pipe.
+        if unsafe { (*this).loop_.is_null() } {
             // Never initialized — safe to free directly.
-            // SAFETY: caller contract — Box-allocated.
-            drop(unsafe { Box::from_raw(self as *mut Pipe) });
-        } else if !self.is_closing() {
+            // SAFETY: caller contract — Box-allocated; no `&mut` borrow held.
+            drop(unsafe { Box::from_raw(this) });
+        } else if !unsafe { (*this).is_closing() } {
             // Initialized and not yet closing — must uv_close first.
-            self.close(on_close_destroy);
+            // SAFETY: `this` is live until the close cb fires.
+            unsafe { (*this).close(on_close_destroy) };
         }
         // else: already closing — the pending close callback owns the lifetime.
     }

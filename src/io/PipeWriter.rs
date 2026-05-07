@@ -1861,7 +1861,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         let _g = scopeguard::guard(self.parent, |p| unsafe { Parent::deref(p) });
 
         if let Some(err) = status.to_error(sys::Tag::write) {
-            log!("onWrite() = {s}", String::from_utf8_lossy(err.name()));
+            log!("onWrite() = {}", bstr::BStr::new(err.name()));
             self.last_write_result = WriteResult::Err(err.clone());
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_error(self.parent(), err) };

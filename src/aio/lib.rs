@@ -16,11 +16,29 @@ pub mod stub_event_loop;
 pub mod windows_event_loop;
 
 // ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
-// Windows handles orphan death via Job Objects in `spawn`.
+// Windows handles orphan death via Job Objects in `spawn`. The Zig original
+// compiles on all targets and short-circuits each fn with
+// `if (comptime !Environment.isPosix) return;`, so downstream code calls
+// `install()` / `enable()` / `is_enabled()` unconditionally. Mirror that with a
+// no-op Windows stub so the cross-platform call sites (main.rs, bunfig,
+// run_command, filter_run, dispatch) keep compiling.
 #[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
-#[cfg(not(windows))]
+#[cfg(windows)]
+pub mod parent_death_watchdog {
+    use crate::posix_event_loop::EventLoopCtx;
+    /// Unit struct — `FilePoll.Owner` dispatch needs a real pointee type.
+    pub struct ParentDeathWatchdog;
+    pub const EXIT_CODE: u8 = 128 + 1;
+    #[inline] pub fn is_enabled() -> bool { false }
+    #[inline] pub fn install() {}
+    #[inline] pub fn enable() {}
+    #[inline] pub fn install_on_event_loop(_handle: EventLoopCtx) {}
+    #[inline] pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
+        debug_assert!(false, "ParentDeathWatchdog poll on Windows");
+    }
+}
 pub use parent_death_watchdog as ParentDeathWatchdog;
 
 // `posix_event_loop` also defines the *shared* event-loop scaffolding

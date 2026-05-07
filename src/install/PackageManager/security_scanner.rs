@@ -1201,7 +1201,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let pipe = scopeguard::guard(pipe_ptr, |p| {
             // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
             // schedules uv_close + frees the allocation.
-            unsafe { (*p).close_and_destroy() };
+            unsafe { uv::Pipe::close_and_destroy(p) };
         });
         // SAFETY: *pipe was just Box::into_raw'd above and is non-null.
         unsafe { (**pipe).init(self.loop_(), false) }.unwrap()?;

@@ -1534,7 +1534,7 @@ impl WindowsStdio {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
                 if !pipe.is_null() {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    unsafe { (**pipe).close_and_destroy() };
+                    unsafe { uv::Pipe::close_and_destroy(*pipe) };
                     *pipe = core::ptr::null_mut();
                 }
             }

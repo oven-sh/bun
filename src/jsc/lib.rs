@@ -1388,6 +1388,15 @@ unsafe extern "C" {
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toRangeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toValueGC(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toExternalValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toJSONObject(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__external(
+        this: *const bun_string::ZigString,
+        global: *const JSGlobalObject,
+        ctx: *mut core::ffi::c_void,
+        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
+    ) -> JSValue;
 }
 
 impl JSGlobalObject {

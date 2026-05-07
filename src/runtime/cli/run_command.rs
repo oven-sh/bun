@@ -1002,24 +1002,17 @@ impl Run {
                 if promise.status() == PromiseStatus::Rejected {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    // TODO(b2-blocked): `vm.uncaught_exception(global, result, true)`
-                    // — gated. Route through the unhandled-rejection printer
-                    // instead so the error still surfaces.
                     let global = vm.global;
                     // SAFETY: `global` valid for VM lifetime.
-                    (vm.on_unhandled_rejection)(vm, unsafe { &*global }, result);
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
-                    // Spec bun.js.zig:407 gates on `vm.hot_reload != .none or handled`;
-                    // `is_watcher_enabled()` reads `bun_watcher`, which is only set
-                    // by the (gated) `enableHotModuleReloading`. Key off `hot_reload`
-                    // directly so `--hot`/`--watch` keep the process alive on a
-                    // rejected entry point regardless of watcher wiring.
-                    // TODO(b2-blocked): `or handled` — needs `vm.uncaught_exception`
-                    // un-gated to thread the bool back here.
-                    if vm.hot_reload != 0 {
-                        // TODO(b2-blocked): `add_main_to_watcher_if_needed()` — gated.
+                    // Spec bun.js.zig:407: when --hot/--watch is on (or a user
+                    // `uncaughtException` handler swallowed the error), keep the
+                    // process alive instead of hard-exiting on a rejected entry.
+                    if vm.hot_reload != 0 || handled {
+                        vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
                         unsafe { (*vm.event_loop()).tick() };
@@ -1028,17 +1021,16 @@ impl Run {
                         unsafe { (*vm.event_loop()).tick_possibly_forever() };
                     } else {
                         vm.exit_handler.exit_code = 1;
-                        Run::on_exit(vm);
+                        vm.on_exit();
                         if ANY_UNHANDLED.load(Ordering::Relaxed) {
                             printed_sourcemap_warning_and_version = true;
-                            // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`
-                            // — real impl lives in the gated `SavedSourceMap.rs`.
+                            bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                             pretty_errorln!(
                                 "<r>\n<d>{}<r>",
                                 Global::unhandled_error_bun_version_string,
                             );
                         }
-                        Run::global_exit(vm);
+                        vm.global_exit();
                     }
                 }
 
@@ -1062,15 +1054,16 @@ impl Run {
                     Output::flush();
                 }
                 vm.exit_handler.exit_code = 1;
-                Run::on_exit(vm);
+                vm.on_exit();
                 if ANY_UNHANDLED.load(Ordering::Relaxed) {
                     printed_sourcemap_warning_and_version = true;
+                    bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                     pretty_errorln!(
                         "<r>\n<d>{}<r>",
                         Global::unhandled_error_bun_version_string,
                     );
                 }
-                Run::global_exit(vm);
+                vm.global_exit();
             }
         }
 
@@ -1078,49 +1071,43 @@ impl Run {
         // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed.
         if vm.is_event_loop_alive() || unsafe { (*vm.event_loop()).tick_concurrent_with_count() } > 0 {
             vm.global().vm().release_weak_refs();
-            // TODO(b2-blocked): `vm.arena.gc()` — `bun_alloc::Arena::gc` not yet
-            // wired through the `Option<NonNull<Arena>>` field.
+            // TODO(port): `vm.arena.gc()` — `bun_alloc::Arena` is `bumpalo::Bump`
+            // which has no per-heap GC; the Zig MimallocArena's `gc()` was a
+            // mimalloc heap collect. Phase B replaces `Arena` with the
+            // mimalloc-backed type once `bun_alloc::MimallocArena::gc` lands.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
 
-        // TODO(b2-blocked): `StandaloneModuleGraph::hint_source_pages_dont_need()`
-        // — `bun_standalone_module_graph` not in this crate's dep set.
+        bun_standalone_graph::StandaloneModuleGraph::hint_source_pages_dont_need();
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
-            // TODO(b2-blocked): `report_exception_in_hot_reloaded_module_if_needed`
-            // — gated upstream. The watcher arm otherwise matches the
-            // non-watcher arm with `tick_possibly_forever` keeping the
-            // process alive across reloads.
             loop {
+                vm.report_exception_in_hot_reloaded_module_if_needed();
                 while vm.is_event_loop_alive() {
                     vm.tick();
-                    // SAFETY: `event_loop` is a self-pointer into this VM;
-                    // uniquely accessed here.
                     vm.auto_tick_active();
                 }
-                Run::on_before_exit(vm);
+                vm.on_before_exit();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
-                // reloads (run_command.zig `start` watcher loop).
+                // reloads (bun.js.zig `start` watcher loop).
                 unsafe { (*vm.event_loop()).tick_possibly_forever() };
             }
         } else {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                // SAFETY: `event_loop` is a self-pointer into this VM;
-                // uniquely accessed here.
                 vm.auto_tick_active();
             }
 
             if self.eval_and_print {
-                // TODO(b2-blocked): `bun -p` result printing —
-                // `JSValue::then2`/`print` + `Bun__on{Resolve,Reject}EntryPointResult`
-                // are not yet at this tier. See `src/bun.js.rs` lines 652-685.
+                // TODO(port): `bun -p` result printing — needs `JSValue::then2`
+                // (the JSValue-ctx variant). `Bun__on{Resolve,Reject}EntryPointResult`
+                // are exported from `crate::hw_exports`; wire once `then2` lands.
             }
 
-            Run::on_before_exit(vm);
+            vm.on_before_exit();
         }
 
         if log_has_msgs(vm) {
@@ -1130,11 +1117,11 @@ impl Run {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         vm.global().handle_rejected_promises();
-        Run::on_exit(vm);
+        vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) && !printed_sourcemap_warning_and_version {
             vm.exit_handler.exit_code = 1;
-            // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`.
+            bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
             pretty_errorln!(
                 "<r>\n<d>{}<r>",
                 Global::unhandled_error_bun_version_string,
@@ -1144,7 +1131,7 @@ impl Run {
         // PORT NOTE: `fixDeadCodeElimination()` calls dropped — Rust does not
         // DCE `#[no_mangle] extern "C"` symbols the way Zig does, so the
         // anti-DCE shims are unnecessary here.
-        Run::global_exit(vm);
+        vm.global_exit();
     }
 }
 

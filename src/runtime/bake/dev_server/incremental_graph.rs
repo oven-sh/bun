@@ -1739,21 +1739,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let paths = self.bundled_files.keys();
         match SIDE {
             Side::Client => {
-                let mut file_paths: Vec<&'static [u8]> =
+                let mut file_paths: Vec<Box<[u8]>> =
                     Vec::with_capacity(self.current_chunk_parts.len());
                 let mut contained_maps: Vec<packed_map::Shared> =
                     Vec::with_capacity(self.current_chunk_parts.len());
                 let mut overlapping_memory_cost: usize = 0;
 
                 for file_index in &self.current_chunk_parts {
-                    // SAFETY: keys outlive the `Entry` (DevServer-owned). The
-                    // 'static is a stand-in for the DevServer-self lifetime.
-                    let p: &'static [u8] = unsafe {
-                        core::mem::transmute::<&[u8], &'static [u8]>(
-                            &*paths[file_index.get() as usize],
-                        )
-                    };
-                    file_paths.push(p);
+                    // PERF(port): Zig stored borrowed slice headers into
+                    // `bundled_files.keys()`; that is self-referential w.r.t.
+                    // `DevServer`, so the port owns a copy. Paths are short and
+                    // source-map entries are infrequent — profile in Phase B.
+                    file_paths.push(Box::<[u8]>::from(&*paths[file_index.get() as usize]));
                     let sm = self.bundled_files.values()[file_index.get() as usize]
                         .source_map
                         .clone();
@@ -1764,7 +1761,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 overlapping_memory_cost += contained_maps.capacity()
                     * core::mem::size_of::<packed_map::Shared>()
-                    + file_paths.len() * core::mem::size_of::<&[u8]>();
+                    + file_paths.len() * core::mem::size_of::<Box<[u8]>>();
 
                 let ref_count = out.ref_count;
                 *out = source_map_store::Entry {

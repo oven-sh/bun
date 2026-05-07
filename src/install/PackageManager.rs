@@ -2305,16 +2305,27 @@ pub fn init_with_runtime_once(
             // When using bun, we only do staleness checks once per day
             .saturating_sub(bun_core::time::S_PER_DAY);
 
-    // PORT NOTE: `manager.lockfile` is `Box<crate::lockfile::Lockfile>` (the
-    // stub shape); `load_from_cwd` is impl'd on `crate::lockfile_real::Lockfile`.
-    // The two are distinct types until reconciler-6 unifies the lockfile module.
-    // For the runtime-init path (auto-install during `bun run`), fall back to an
-    // empty lockfile — matches the `else` arm below.
-    // TODO(port): blocked_on lockfile stub/real unification (reconciler-6) —
-    // wire `load_from_cwd::<true>` once `Box<lockfile::Lockfile>` ==
-    // `Box<lockfile_real::Lockfile>`.
-    let _ = root_dir;
-    manager.lockfile.init_empty();
+    // Zig (PackageManager.zig:1111): `if (root_dir.entries.hasComptimeQuery("bun.lockb"))`
+    // — gate the disk load on the cached dir listing so the runtime auto-install
+    // path doesn't open()/read() a lockfile that isn't there. The Zig
+    // `manager.lockfile = load.lockfile` self-assignment is a no-op in the Rust
+    // shape (`load_from_cwd` mutates `*manager.lockfile` in place and returns a
+    // borrow of it), so `Ok` keeps the loaded value as-is.
+    // PORT NOTE: `load_from_cwd` is typed against the lib.rs `crate::PackageManager`
+    // stub; cast `manager_ptr` (same erased-ctx pattern as
+    // `active_lifecycle_scripts.context` above) until reconciler-6 unifies the
+    // two structs.
+    if root_dir.has_comptime_query(b"bun.lockb") {
+        match manager
+            .lockfile
+            .load_from_cwd(manager_ptr as *mut crate::PackageManager, log, true)
+        {
+            lockfile::LoadResult::Ok(_) => {}
+            _ => manager.lockfile.init_empty(),
+        }
+    } else {
+        manager.lockfile.init_empty();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

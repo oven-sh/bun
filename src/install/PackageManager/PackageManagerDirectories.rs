@@ -1001,16 +1001,16 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let file = tmpfile.file();
     {
-        // TODO(port): blocked_on bun_install::package_manager_real un-gate
-        // (reconciler-6). `lockfile::Printer` borrows `&mut lockfile_real::Lockfile`
-        // but `this.lockfile` is the stub `lockfile::Lockfile`; once the two
-        // unify this becomes:
-        //   let mut printer = lockfile::Printer { lockfile: &mut *this.lockfile, options: this.options.clone(), ... };
-        //   lockfile::printer_mods::yarn::print(&mut printer, &mut writer)?;
-        let _ = (&this.lockfile, &this.options, &file);
-        todo!("blocked_on: lockfile_real un-gate (reconciler-6) — Printer<'_> borrows real Lockfile, stub/real types not yet unified");
+        let mut printer = crate::lockfile_real::Printer {
+            lockfile: &this.lockfile,
+            options: &this.options,
+            successfully_installed: None,
+            updates: &this.update_requests,
+        };
+        let mut buffered_writer = bun_io::Writer::new(file);
+        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buffered_writer)?;
+        buffered_writer.flush()?;
     }
-    #[allow(unreachable_code)]
     {
         #[cfg(unix)]
         {

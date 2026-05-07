@@ -1151,7 +1151,12 @@ impl Bytes {
 impl Drop for Bytes {
     fn drop(&mut self) {
         // Zig `deinit`: `default_allocator.free(stored_name.slice())` then
-        // `this.allocator.free(ptr[0..cap])`. `stored_name` drops itself.
+        // `this.allocator.free(ptr[0..cap])`.
+        // SAFETY: every writer of `stored_name` adopts a heap allocation via
+        // `PathString::init_owned` (Blob.rs), or leaves it `EMPTY`; the one
+        // borrow case (standalone_graph_jsc.rs) hands a default-allocator
+        // slice that Zig also frees here.
+        unsafe { self.stored_name.deinit_owned() };
         if let Some(ptr) = self.ptr.take() {
             // SAFETY: `ptr[..cap]` is the allocation owned by `self.allocator`;
             // sole owner at drop time. Reconstructing the slice only for the

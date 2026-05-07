@@ -97,6 +97,49 @@ impl PathString {
         Self(ptr | len)
     }
 
+    /// Take ownership of `bytes`, store its raw pointer/len, and forget the
+    /// allocation. The returned PathString must be paired with
+    /// [`deinit_owned`] (typically by the containing struct's `Drop`) to avoid
+    /// a leak — this mirrors Zig, where `Bytes.deinit` runs
+    /// `default_allocator.free(stored_name.slice())`.
+    ///
+    /// PathString itself stays `Copy` (it is a packed pointer), so ownership
+    /// is a contract on the *container*, not enforced by the type.
+    #[inline]
+    pub fn init_owned(bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            return Self::EMPTY;
+        }
+        // Shed any unused capacity so the (ptr,len) pair fully describes the
+        // allocation and `deinit_owned` can reconstruct it without tracking
+        // capacity separately. `Box::into_raw` (not `leak`) is the explicit
+        // ownership-transfer-to-raw API; the matching `Box::from_raw` lives
+        // in `deinit_owned`.
+        let raw: *mut [u8] = Box::into_raw(bytes.into_boxed_slice());
+        // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
+        // ptr+len into the backing int.
+        Self::init(unsafe { &*raw })
+    }
+
+    /// Free a heap allocation previously adopted by [`init_owned`]. No-op for
+    /// `EMPTY`/borrowed-static slices of length 0.
+    ///
+    /// # Safety
+    /// `self` must have been produced by [`init_owned`] (or be empty). Calling
+    /// this on a borrowed PathString is UB.
+    #[inline]
+    pub unsafe fn deinit_owned(&mut self) {
+        let ptr = self.ptr();
+        let len = self.len();
+        *self = Self::EMPTY;
+        if ptr == 0 || len == 0 {
+            return;
+        }
+        // SAFETY: caller contract — (ptr,len) is exactly the `Box<[u8]>` that
+        // `init_owned` released via `into_raw`.
+        drop(unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
+    }
+
     #[inline]
     pub fn is_empty(self) -> bool {
         self.len() == 0

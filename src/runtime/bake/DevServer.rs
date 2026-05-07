@@ -3737,6 +3737,14 @@ pub fn finalize_bundle(
         let key = ctx.sources[index.get() as usize].path.key_for_incremental_graph();
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
+        // Track css files that look like tailwind files.
+        // PORT NOTE: hoisted before `replace_path` because that consumes
+        // `code.buffer`; same observable order as Zig (buffer is identical
+        // pre- and post-asset-registration there).
+        let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
+            let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
+            strings::index_of(first_1024, b"tailwind").is_some()
+        };
         let asset_index = dev.assets.replace_path(
             key,
             &crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
@@ -3747,10 +3755,8 @@ pub fn finalize_bundle(
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
         chunk.entry_point.set_entry_point_id(asset_index.get() as u32);
 
-        // Track css files that look like tailwind files.
         if let Some(map) = &mut dev.has_tailwind_plugin_hack {
-            let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
-            if strings::index_of(first_1024, b"tailwind").is_some() {
+            if looks_like_tailwind {
                 // PORT NOTE: `get_or_put` consumes the key by value; on miss the key
                 // already lives in the map so the explicit `*key_ptr =` is redundant.
                 let _ = map.get_or_put(Box::from(key))?;

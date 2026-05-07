@@ -86,6 +86,21 @@ impl From<AllocError> for YamlParseError {
     }
 }
 
+impl From<YamlParseError> for bun_core::Error {
+    // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
+    // (e.g. `try YAML.parse(...)` in `ParseTask.getAST`) coerce it into the
+    // wider inferred error union. Mirror that by mapping each variant to its
+    // Zig-tag string via `bun.err!`, the same shape `json5::ExternalError`
+    // uses one file over.
+    fn from(e: YamlParseError) -> Self {
+        match e {
+            YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
+            YamlParseError::SyntaxError => bun_core::err!("SyntaxError"),
+            YamlParseError::StackOverflow => bun_core::err!("StackOverflow"),
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────

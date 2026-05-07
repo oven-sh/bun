@@ -374,117 +374,109 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// VirtualMachine / RareData — local view.
+// VirtualMachine / EventLoop — direct re-exports from bun_jsc.
 //
-// `bun_jsc::rare_data::RareData` declares `mysql_context` / `postgresql_context`
-// as opaque ZSTs (placeholder until the runtime-crate cycle-break vtable lands).
-// The SQL bindings need the *concrete* `crate::mysql::MySQLContext` /
-// `crate::postgres::PostgresSQLContext`, so a local `VirtualMachine` /
-// `RareData` view is kept here. All accesses go through extern "C" accessors;
-// the Zig side `@export`s these as `Bun__VM__*`.
+// bun_sql_jsc already depends on bun_jsc, so the previous opaque-ZST view
+// structs that round-tripped through Rust→Rust extern "C" shims
+// (Bun__VM__global / Bun__VM__eventLoop / Bun__EventLoop__enterLoop / …)
+// were a layering workaround. SQL-specific accessors that bun_jsc doesn't
+// expose at this tier (sql_state(), timer(), ssl_ctx_cache()) are provided
+// as the [VirtualMachineSqlExt] extension trait.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct VirtualMachine {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-impl VirtualMachine {
-    #[inline] fn as_mut_ptr(&self) -> *mut VirtualMachine { self._opaque.get() as *mut VirtualMachine }
+pub use bun_jsc::virtual_machine::VirtualMachine;
+pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
+pub use bun_aio::KeepAlive;
 
-    pub fn rare_data(&mut self) -> &mut RareData {
-        // SAFETY: `Bun__VM__rareData` lazily allocates; never returns null.
-        // TODO(port): export from Zig — `Bun__VM__rareData`.
-        unsafe { &mut *Bun__VM__rareData(self.as_mut_ptr()) }
-    }
-    pub fn global(&self) -> &JSGlobalObject {
-        // SAFETY: `global` is set during init and live for the VM lifetime.
-        unsafe { &*Bun__VM__global(self.as_mut_ptr()) }
-    }
-    /// `bun_jsc::VirtualMachine::get()` — TLS-backed singleton accessor.
-    pub fn get() -> *mut VirtualMachine {
-        // SAFETY: `Bun__getVM` reads the thread-local; non-null on the JS thread.
-        unsafe { Bun__getVM() as *mut VirtualMachine }
-    }
-    pub fn event_loop(&self) -> &EventLoop {
-        // SAFETY: returns a non-null `*EventLoop` (self-ptr into the VM).
-        // TODO(port): export from Zig — `Bun__VM__eventLoop`.
-        unsafe { &*Bun__VM__eventLoop(self.as_mut_ptr()) }
-    }
-    pub fn is_shutting_down(&self) -> bool {
-        // SAFETY: pure FFI accessor (already exported for ZigGlobalObject.h).
-        unsafe { Bun__VirtualMachine__isShuttingDown(self.as_mut_ptr() as *mut c_void) }
-    }
-    /// `vm.timer` — exposed as a method returning `&mut TimerHeap` so callers
-    /// can write `self.vm().timer().remove(..)`.
-    pub fn timer(&mut self) -> &mut TimerHeap {
-        // SAFETY: `&vm.timer` — non-null while the VM is live.
-        // TODO(port): export from Zig — `Bun__VM__timer`.
-        unsafe { &mut *Bun__VM__timer(self.as_mut_ptr()) }
-    }
-}
-
-/// Mirrors `bun_jsc::rare_data::RareData` — only SQL fields surfaced.
+/// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
+/// crate::postgres::PostgresSQLContext that the Zig RareData carried as
+/// value fields. The bun_jsc::rare_data::RareData slots for these are opaque
+/// (cycle break: bun_jsc cannot name bun_sql_jsc types), so the storage lives
+/// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
+/// [VirtualMachineSqlExt::sql_state].
 #[repr(C)]
 pub struct RareData {
     pub mysql_context: crate::mysql::MySQLContext,
     pub postgresql_context: crate::postgres::PostgresSQLContext,
 }
 
+/// SQL-specific accessors on [VirtualMachine] for state owned by the
+/// higher-tier bun_runtime::jsc_hooks::RuntimeState.
+pub trait VirtualMachineSqlExt {
+    /// RareData.{mysql,postgresql}_context. Named sql_state to avoid
+    /// shadowing the inherent VirtualMachine::rare_data() (which returns the
+    /// bun_jsc RareData holding the per-protocol SocketGroups).
+    fn sql_state(&mut self) -> &mut RareData;
+    /// vm.timer — the Timer::All heap, owned by RuntimeState.
+    fn timer(&mut self) -> &mut TimerHeap;
+    /// RareData.ssl_ctx_cache — owned by RuntimeState.
+    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
+    /// bun_aio::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
+    fn vm_ctx(&self) -> bun_aio::EventLoopCtx;
+    /// &mut *self.event_loop() — EventLoop::{enter,exit,run_callback} take
+    /// &mut self; bun_jsc returns the raw pointer. Unbounded lifetime so the
+    /// returned &mut does not borrow *self (the loop is a disjoint heap
+    /// allocation owned by the VM).
+    ///
+    /// SAFETY: caller must not hold another live &mut EventLoop.
+    unsafe fn event_loop_mut<'a>(&self) -> &'a mut EventLoop;
+}
+impl VirtualMachineSqlExt for VirtualMachine {
+    #[inline]
+    fn sql_state(&mut self) -> &mut RareData {
+        // SAFETY: Bun__VM__rareData (bun_runtime/hw_exports.rs) returns
+        // &runtime_state().sql_rare; non-null on the JS thread once
+        // init_runtime_state has run.
+        unsafe { &mut *Bun__VM__rareData(self) }
+    }
+    #[inline]
+    fn timer(&mut self) -> &mut TimerHeap {
+        // SAFETY: Bun__VM__timer (bun_runtime/hw_exports.rs) returns
+        // &runtime_state().timer; non-null after init_runtime_state.
+        unsafe { &mut *Bun__VM__timer(self) }
+    }
+    #[inline]
+    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
+        // SAFETY: Bun__RareData__sslCtxCache (bun_runtime/hw_exports.rs)
+        // returns &runtime_state().ssl_ctx_cache; non-null after
+        // init_runtime_state.
+        unsafe { &mut *Bun__RareData__sslCtxCache(self as *mut _ as *mut c_void) }
+    }
+    #[inline]
+    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
+        bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+    }
+    #[inline]
+    unsafe fn event_loop_mut<'a>(&self) -> &'a mut EventLoop {
+        // SAFETY: caller contract; event_loop() points into the VM-owned
+        // EventLoop, live for the VM lifetime.
+        unsafe { &mut *self.event_loop() }
+    }
+}
+
+/// RAII enter()/exit() for [EventLoop] — wraps the inherent (unsafe,
+/// raw-pointer) bun_jsc::event_loop::EventLoop::enter_scope.
+pub trait EventLoopSqlExt {
+    fn entered(&mut self) -> EventLoopGuard;
+}
+impl EventLoopSqlExt for EventLoop {
+    #[inline]
+    fn entered(&mut self) -> EventLoopGuard {
+        // SAFETY: self is the live VM-owned event loop; the guard holds the
+        // raw pointer so no &mut is held across re-entrant JS.
+        unsafe { EventLoop::enter_scope(self) }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
-// EventLoop / TimerHeap / EventLoopTimer — local opaque views.
+// Timer heap / EventLoopTimer — opaque on this side (Timer::All lives in
+// bun_runtime::RuntimeState; reached via Bun__VM__timer / Bun__Timer__All__*
+// in bun_runtime/hw_exports.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun_jsc::EventLoop` — opaque, always borrowed.
-#[repr(C)]
-pub struct EventLoop {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-impl EventLoop {
-    pub fn enter(&self) {
-        // SAFETY: `self` is a live `*EventLoop`.
-        unsafe { Bun__EventLoop__enterLoop(self._opaque.get() as *mut EventLoop) }
-    }
-    pub fn exit(&self) {
-        // SAFETY: `self` is a live `*EventLoop`.
-        unsafe { Bun__EventLoop__exitLoop(self._opaque.get() as *mut EventLoop) }
-    }
-    /// RAII scope: `enter()` now, `exit()` on drop. Replaces the Zig
-    /// `loop.enter(); defer loop.exit();` pair.
-    #[must_use]
-    pub fn entered(&self) -> EventLoopGuard<'_> {
-        self.enter();
-        EventLoopGuard(self)
-    }
-    /// `EventLoop.runCallback` (event_loop.zig) — `enter()` → call → report
-    /// any thrown exception as unhandled → `exit()`. Mirrors the inline body
-    /// JSMySQLConnection used before this helper existed.
-    pub fn run_callback(
-        &self,
-        function: JSValue,
-        global: &JSGlobalObject,
-        this_value: JSValue,
-        args: &[JSValue],
-    ) {
-        self.enter();
-        if let Err(e) = function.call(global, this_value, args) {
-            global.report_active_exception_as_unhandled(e);
-        }
-        self.exit();
-    }
-}
-
-/// RAII guard returned by [`EventLoop::entered`]; calls `exit()` on drop.
-pub struct EventLoopGuard<'a>(&'a EventLoop);
-impl Drop for EventLoopGuard<'_> {
-    fn drop(&mut self) {
-        self.0.exit();
-    }
-}
-
-/// `bun_jsc::api::Timer::All` — heap of `EventLoopTimer`. Opaque on this side;
-/// `insert`/`remove` forward to the Zig impl (Timer.zig:63/86).
+/// bun_runtime::timer::All — heap of EventLoopTimer. Opaque on this side;
+/// insert/remove forward to the bun_runtime impl via the C-ABI exports in
+/// src/runtime/hw_exports.rs (RuntimeState owns the heap).
 #[repr(C)]
 pub struct TimerHeap {
     _opaque: core::cell::UnsafeCell<[u8; 0]>,
@@ -492,11 +484,11 @@ pub struct TimerHeap {
 }
 impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&vm.timer`; `t` is a live intrusive heap node.
+        // SAFETY: self is &runtime_state().timer; t is a live intrusive node.
         unsafe { Bun__Timer__All__insert(self._opaque.get() as *mut TimerHeap, t) }
     }
     pub fn remove(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&vm.timer`; `t` is a live intrusive heap node.
+        // SAFETY: self is &runtime_state().timer; t was previously inserted.
         unsafe { Bun__Timer__All__remove(self._opaque.get() as *mut TimerHeap, t) }
     }
 }
@@ -525,8 +517,8 @@ pub enum EventLoopTimerTag {
     MySQLConnectionTimeout,
     MySQLConnectionMaxLifetime,
 }
-// Namespace shim so callers can write `EventLoopTimer::State::ACTIVE` /
-// `EventLoopTimer::Tag::PostgresSQLConnectionTimeout` (Zig nested-type style).
+// Namespace shim so callers can write EventLoopTimer::State::ACTIVE /
+// EventLoopTimer::Tag::PostgresSQLConnectionTimeout (Zig nested-type style).
 impl EventLoopTimer {
     #[allow(non_upper_case_globals)]
     pub const State: PhantomData<EventLoopTimerState> = PhantomData;
@@ -535,27 +527,41 @@ impl EventLoopTimer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// AutoFlusher (mirrors bun_event_loop::AutoFlusher; Zig
-// `src/event_loop/AutoFlusher.zig`).
+// AutoFlusher — thin VM-taking wrapper over
+// bun_jsc::event_loop::EventLoop::deferred_tasks (Zig
+// AutoFlusher.registerDeferredMicrotaskWithType).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AutoFlusher {
     pub registered: bool,
 }
+
+/// Zig's free fns take (comptime Type: type, this: *Type) and duck-type on
+/// this.auto_flusher + Type.onAutoFlush. SQL connection types implement this.
+pub trait HasAutoFlush: Sized {
+    fn on_auto_flush(this: *mut Self) -> bool;
+}
+
 impl AutoFlusher {
-    pub fn register_deferred_microtask_with_type_unchecked<T>(this: *mut T, vm: &VirtualMachine) {
-        // SAFETY: `vm` is live; `this` is a live `*mut T` whose `auto_flusher`
-        // field has `registered == false` (caller-checked).
-        // TODO(port): export from Zig — `Bun__VM__postDeferredTask`.
-        unsafe {
-            Bun__VM__postDeferredTask(vm.as_mut_ptr(), this as *mut c_void, None);
+    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlush>(
+        this: *mut T,
+        vm: &VirtualMachine,
+    ) {
+        unsafe extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
+            // SAFETY: ctx is the *mut T registered below; the queue feeds it
+            // back unchanged.
+            T::on_auto_flush(ctx as *mut T)
         }
+        // SAFETY: vm.event_loop() is the live VM-owned loop; deferred_tasks
+        // is an embedded field with stable address for the VM lifetime.
+        let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
+        q.post_task(NonNull::new(this as *mut c_void), trampoline::<T>);
     }
     pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
-        // SAFETY: `vm` is live; `this` was previously registered.
-        // TODO(port): export from Zig — `Bun__VM__unregisterDeferredTask`.
-        unsafe { Bun__VM__unregisterDeferredTask(vm.as_mut_ptr(), this as *mut c_void) };
+        // SAFETY: see register_deferred_microtask_with_type_unchecked.
+        let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
+        q.unregister_task(NonNull::new(this as *mut c_void));
     }
 }
 
@@ -1034,25 +1040,10 @@ pub fn marked_argument_buffer_run<Ctx>(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// RareData — SQL socket-group accessors.
-// ──────────────────────────────────────────────────────────────────────────
-
-impl RareData {
-    pub fn postgres_group(&mut self, vm: &VirtualMachine, ssl: bool) -> *mut bun_uws::SocketGroup {
-        // SAFETY: `vm` is live; the Zig side lazily inits the embedded group.
-        unsafe { Bun__RareData__postgresGroup(vm.as_mut_ptr() as *mut c_void, ssl) }
-    }
-    pub fn mysql_group(&mut self, vm: &VirtualMachine, ssl: bool) -> *mut bun_uws::SocketGroup {
-        // SAFETY: `vm` is live; the Zig side lazily inits the embedded group.
-        unsafe { Bun__RareData__mysqlGroup(vm.as_mut_ptr() as *mut c_void, ssl) }
-    }
-    pub fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: returns `&rare.ssl_ctx_cache` — non-null while RareData lives.
-        unsafe { &mut *Bun__RareData__sslCtxCache(VirtualMachine::get() as *mut c_void) }
-    }
-}
-/// Opaque handle to `bun_runtime::api::SSLContextCache`.
+/// Opaque handle to bun_runtime::api::SSLContextCache (owned by RuntimeState).
+/// Reached via [VirtualMachineSqlExt::ssl_ctx_cache]; backed by
+/// Bun__RareData__sslCtxCache / Bun__SSLContextCache__getOrCreateOpts in
+/// src/runtime/hw_exports.rs.
 #[repr(C)]
 pub struct SslCtxCache { _opaque: core::cell::UnsafeCell<[u8; 0]> }
 impl SslCtxCache {
@@ -1061,8 +1052,8 @@ impl SslCtxCache {
         opts: bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<*mut bun_uws::SslCtx> {
-        // SAFETY: `self` is `&rare.ssl_ctx_cache`; `opts` passed by value;
-        // `err` is a valid out-param.
+        // SAFETY: self is &runtime_state().ssl_ctx_cache; opts passed by
+        // value; err is a valid out-param.
         let p = unsafe {
             Bun__SSLContextCache__getOrCreateOpts(
                 self._opaque.get() as *mut c_void,
@@ -1071,39 +1062,6 @@ impl SslCtxCache {
             )
         };
         if p.is_null() { None } else { Some(p) }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// KeepAlive — local mirror accepting the local `&VirtualMachine`.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum KeepAliveStatus { #[default] Inactive, Active, Done }
-
-#[derive(Default)]
-pub struct KeepAlive { status: KeepAliveStatus }
-impl KeepAlive {
-    pub fn ref_(&mut self, vm: &VirtualMachine) {
-        if self.status != KeepAliveStatus::Inactive { return; }
-        self.status = KeepAliveStatus::Active;
-        // SAFETY: `vm` is live; FFI bumps the loop's active counter.
-        unsafe { Bun__VM__loopRef(vm.as_mut_ptr() as *mut c_void) };
-    }
-    /// Back-compat alias for callers still spelling it `r#ref`.
-    #[inline] pub fn r#ref(&mut self, vm: &VirtualMachine) { self.ref_(vm) }
-    pub fn unref(&mut self, vm: &VirtualMachine) {
-        if self.status != KeepAliveStatus::Active { return; }
-        self.status = KeepAliveStatus::Inactive;
-        // SAFETY: `vm` is live; FFI decrements the loop's active counter.
-        unsafe { Bun__VM__loopUnref(vm.as_mut_ptr() as *mut c_void) };
-    }
-    pub fn disable(&mut self) {
-        if self.status == KeepAliveStatus::Active {
-            // SAFETY: thread-local VM is set on the JS thread.
-            unsafe { Bun__VM__loopUnref(VirtualMachine::get() as *mut c_void) };
-        }
-        self.status = KeepAliveStatus::Done;
     }
 }
 

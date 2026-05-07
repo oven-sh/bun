@@ -19,7 +19,7 @@ use crate::parser::{
     VisitArgsOpts,
 };
 
-// Local short-hands so the un-gated _draft bodies read close to the Zig
+// Local short-hands so the visitor bodies read close to the Zig
 // (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
 // bulk find-replace at every call-site.
 use js_ast::ExprData as Data;
@@ -74,7 +74,7 @@ fn macro_context_call(
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
-// `visit_expr_in_out` are surfaced. Full draft body preserved under  mod _draft below.
+// `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn visit_expr(&mut self, expr: Expr) -> Expr {
@@ -189,12 +189,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
-    // All 24 visitor bodies are ported from `_draft` and call into the real
-    // P helpers: value_for_define, is_dot_define_match, transpose_require,
-    // transpose_require_resolve_known_string, check_dynamic_specifier,
-    // handle_import_meta_hot_accept_call, handle_react_refresh_hook_call,
-    // get_react_refresh_hook_signal_{decl,init}, E::Template::fold,
-    // MacroContext::call, jsx_strings_to_member_expression.
 
     fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         // TODO: delete import.meta might not work
@@ -2463,7 +2457,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut final_expr = expr;
 
-         // blocked_on: P::get_react_refresh_hook_signal_{decl,init}
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
                 let Some(mut stmts) = p.nearest_stmt_list else {
@@ -2475,7 +2468,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 final_expr = p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        let _ = react_hook_data;
 
         if let Some(name) = e_.func.name {
             final_expr = p.keep_expr_symbol_name(

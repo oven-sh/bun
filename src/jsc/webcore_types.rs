@@ -1,25 +1,32 @@
-//! Core `webcore` data types — `Blob`, `Blob::Store` and friends.
+//! Core `webcore` data types — `Blob`, `Blob::Store`.
 //!
 //! LAYERING: these are the **single nominal definitions**. `bun_runtime::webcore`
-//! re-exports them and layers behaviour (S3 I/O, streaming, JS host-fns) on
-//! top via extension traits / inherent impls in that crate. Defining the data
-//! shapes here lets lower-tier crates (`bun_bundler_jsc`, `bun_http_jsc`,
-//! `bun_sql_jsc`) construct/read Blobs without a `bun_runtime` forward-dep.
+//! re-exports them (`pub use bun_jsc::webcore_types::*`) and layers behaviour
+//! (S3 I/O, streaming, JS host-fns, async readers) on top via the `BlobExt` /
+//! `StoreExt` / … extension traits in that crate. Defining the data shapes here
+//! lets lower-tier crates (`bun_http_jsc`, `bun_sql_jsc`) downcast a `JSValue`
+//! to `*mut Blob` and read its bytes without a `bun_runtime` forward-dep.
 //!
 //! Ported from `src/runtime/webcore/Blob.zig` (struct fields + `init`/
 //! `initWithStore`/`sharedView`/`dupe`/`detach`/`deinit`) and
 //! `src/runtime/webcore/blob/Store.zig` (`Store`/`Data`/`Bytes`/`File`/`S3`/
-//! `init`/`initFile`/`ref`/`deref`/`sharedView`). Everything that touches the
+//! `init`/`ref`/`deref`/`sharedView`/`deinit`). Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
+//!
+//! `BuildArtifact` is **not** hoisted here: its `#[host_fn]`-decorated accessors
+//! must live in an inherent `impl` (the macro emits a sibling shim referencing
+//! `Self`), and those accessors call `BlobExt` methods. With no lower-tier
+//! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
-use bun_http::MimeType::{self as mime, MimeType};
+use bun_http_types::MimeType::MimeType;
 use bun_string::{strings::AsciiStatus, PathString};
 
 use crate::node_path::{PathLike, PathOrFileDescriptor};
-use crate::{JSGlobalObject, JSTimeType, JSValue, JsClass, INIT_TIMESTAMP};
+use crate::{JSGlobalObject, JSValue, JsClass};
 
 /// `webcore.Blob.SizeType` (Blob.zig:60) — Zig `u52`; widened to `u64` here
 /// (Rust has no native `u52`). Values are masked to 52 bits at the boundary.
@@ -27,42 +34,57 @@ pub type SizeType = u64;
 /// `webcore.Blob.max_size` (Blob.zig:61) — `std.math.maxInt(u52)`.
 pub const MAX_SIZE: SizeType = (1u64 << 52) - 1;
 
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ClosingState {
+    Running,
+    Closing,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `webcore.Blob` (src/runtime/webcore/Blob.zig:7-52). Field order mirrors the
-/// Zig declaration so `Blob__create`'s `m_ctx` round-trips between this crate
-/// and `bun_runtime` without layout drift.
+/// `webcore.Blob` (src/runtime/webcore/Blob.zig:7-52). The `m_ctx` payload of
+/// the codegen'd `JSBlob` wrapper.
 #[repr(C)]
 pub struct Blob {
     pub reported_estimated_size: usize,
     pub size: SizeType,
     pub offset: SizeType,
-    /// Intrusively-refcounted backing store (one ref owned by this `Blob`).
-    pub store: Option<NonNull<Store>>,
-    /// Borrowed when `!content_type_allocated`; heap-owned (via mimalloc) when
-    /// `content_type_allocated` is set. Freed in `Drop`.
-    pub content_type: &'static [u8],
+    /// Intrusively-refcounted backing store. `StoreRef::clone`/`drop` map
+    /// directly to Zig's `store.ref()`/`store.deref()`.
+    pub store: Option<StoreRef>,
+    /// Either a `&'static [u8]` (mime constant / literal) or a heap allocation
+    /// owned by this Blob, discriminated by `content_type_allocated`.
+    // TODO(port): model as Cow<'static, [u8]> once callers are audited.
+    pub content_type: *const [u8],
     pub content_type_allocated: bool,
     pub content_type_was_set: bool,
     /// Cached encoding probe of `shared_view()`.
     pub charset: AsciiStatus,
+    /// Was it created via the `File` constructor?
     pub is_jsdom_file: bool,
-    /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight
-    /// `*Blob` borrows handed to async readers; not the JS GC retain count.
-    /// Zero while the JS cell is the sole owner (Blob.zig:44).
-    ref_count: u32,
+    /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
+    /// borrows handed to async readers; not the JS GC retain count. Zero while
+    /// the JS cell is the sole owner (Blob.zig:44).
+    ///
+    /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
+    /// literals (the Zig spec spells out per-field init at every call site).
+    pub ref_count: bun_ptr::RawRefCount,
     pub global_this: *const JSGlobalObject,
     pub last_modified: f64,
     /// Only used by `<input type="file">` / `File` (issue #10178).
     pub name: bun_string::String,
 }
 
-// SAFETY: `Blob` is moved across threads via `WorkPoolTask`s in Zig; the
-// store's atomic refcount and the `to_thread_safe()` path-string promotion
-// uphold the invariants. Matches the Zig spec which freely sends `*Blob`.
+// SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
+// default to `!Send`/`!Sync`. The Zig original moves `Blob` across threads
+// under `ObjectURLRegistry`'s mutex and via the work-pool read/write tasks;
+// the pointee data is either `'static`/heap-owned (`content_type`) or an
+// opaque JSC handle only ever dereferenced on its owning JS thread.
 unsafe impl Send for Blob {}
+unsafe impl Sync for Blob {}
 
 impl Default for Blob {
     fn default() -> Self {
@@ -71,12 +93,12 @@ impl Default for Blob {
             size: 0,
             offset: 0,
             store: None,
-            content_type: b"",
+            content_type: b"" as &'static [u8] as *const [u8],
             content_type_allocated: false,
             content_type_was_set: false,
             charset: AsciiStatus::Unknown,
             is_jsdom_file: false,
-            ref_count: 0,
+            ref_count: bun_ptr::RawRefCount::init(0),
             global_this: core::ptr::null(),
             last_modified: 0.0,
             name: bun_string::String::dead(),
@@ -84,86 +106,121 @@ impl Default for Blob {
     }
 }
 
-// Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`) — C++
-// symbols, not Rust, so declaring them here is a normal FFI binding.
-// TODO(port): jsc.conv ABI — `extern "sysv64"` on windows-x64.
-unsafe extern "C" {
-    fn Blob__fromJS(value: JSValue) -> Option<NonNull<Blob>>;
-    fn Blob__fromJSDirect(value: JSValue) -> Option<NonNull<Blob>>;
-    fn Blob__create(ptr: *mut Blob, global: *mut JSGlobalObject) -> JSValue;
-    fn Blob__getConstructor(global: *mut JSGlobalObject) -> JSValue;
-}
+// Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
+// `*mut Blob` is opaque to C++ — only Rust dereferences it. The
+// `improper_ctypes` lint recurses through `Option<StoreRef>` → `NonNull<Store>`
+// and complains `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by
+// value, so silence it for the whole anon-const.
+#[allow(improper_ctypes)]
+const _: () = {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "Blob__fromJS"]
+        fn __from_js(value: JSValue) -> *mut Blob;
+        #[link_name = "Blob__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut Blob;
+        #[link_name = "Blob__create"]
+        fn __create(global: *const JSGlobalObject, ptr: *mut Blob) -> JSValue;
+        #[link_name = "Blob__getConstructor"]
+        fn __get_constructor(global: *const JSGlobalObject) -> JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "Blob__fromJS"]
+        fn __from_js(value: JSValue) -> *mut Blob;
+        #[link_name = "Blob__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut Blob;
+        #[link_name = "Blob__create"]
+        fn __create(global: *const JSGlobalObject, ptr: *mut Blob) -> JSValue;
+        #[link_name = "Blob__getConstructor"]
+        fn __get_constructor(global: *const JSGlobalObject) -> JSValue;
+    }
 
-impl JsClass for Blob {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        // SAFETY: codegen extern; `value` is a valid JSValue by contract.
-        unsafe { Blob__fromJS(value) }.map(|p| p.as_ptr())
+    impl JsClass for Blob {
+        fn from_js(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; returns null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p) }
+        }
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            // `Blob.toJS` (Blob.zig:3707, simplified): heap-promote and hand
+            // ownership to the codegen wrapper. The S3File fast-path (different
+            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
+            // S3-backed blobs; lower-tier callers never construct S3 blobs.
+            let ptr = Blob::new(self);
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the
+            // C++ wrapper (freed via `BlobClass__finalize` → `deinit`).
+            unsafe { __create(global, ptr) }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; codegen extern returns the cached ctor.
+            unsafe { __get_constructor(global) }
+        }
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        // SAFETY: caller checked `is_cell()`.
-        unsafe { Blob__fromJSDirect(value) }.map(|p| p.as_ptr())
-    }
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // `Blob.toJS` (Blob.zig:3686-3706, simplified): heap-promote and hand
-        // the pointer to the codegen `Blob__create` extern. The S3File
-        // fast-path (different JS wrapper) is layered on by
-        // `bun_runtime::webcore::Blob::to_js` for S3-backed blobs; lower-tier
-        // callers never construct S3 blobs so this is sufficient here.
-        let boxed = Box::into_raw(Blob::new(self));
-        // SAFETY: codegen extern takes ownership of `boxed` and wraps it in a
-        // `JSBlob`; freed via `Blob::finalize` → `Drop`.
-        unsafe { Blob__create(boxed, global.as_mut_ptr()) }
-    }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is live; codegen extern returns the cached ctor.
-        unsafe { Blob__getConstructor(global.as_mut_ptr()) }
-    }
-}
+};
 
 impl Blob {
     /// `bun.TrivialNew(@This())` (Blob.zig:16) — heap-promote and mark as
-    /// heap-allocated so `Drop` knows to `bun.destroy(self)`.
+    /// heap-allocated so `deinit` knows to `bun.destroy(self)`.
     #[inline]
-    pub fn new(mut blob: Blob) -> Box<Blob> {
-        blob.ref_count = 1;
-        Box::new(blob)
+    pub fn new(mut blob: Blob) -> *mut Blob {
+        blob.ref_count = bun_ptr::RawRefCount::init(1);
+        Box::into_raw(Box::new(blob))
+    }
+
+    #[inline]
+    pub fn is_heap_allocated(&self) -> bool {
+        // Spec (Blob.zig:5092-5094): single read of `self.#ref_count.raw_value != 0`.
+        self.ref_count.unsafe_get_value() != 0
+    }
+
+    #[inline]
+    pub fn set_not_heap_allocated(&mut self) {
+        self.ref_count = bun_ptr::RawRefCount::init(0);
+    }
+
+    #[inline]
+    pub fn content_type_slice(&self) -> &[u8] {
+        // SAFETY: `content_type` is always a valid (possibly empty) slice
+        // pointer owned either by `'static` data or by this `Blob` (when
+        // `content_type_allocated`).
+        unsafe { &*self.content_type }
+    }
+
+    /// `Blob.initWithStore(store, globalThis)` (Blob.zig:3649). Accepts both
+    /// `Box<Store>` (from `Store::new` / `Store::init*`) and `StoreRef`.
+    pub fn init_with_store<S: Into<StoreRef>>(store: S, global_this: &JSGlobalObject) -> Blob {
+        let store: StoreRef = store.into();
+        let size = store.size();
+        // Zig: `if (store.data == .file) store.data.file.mime_type.value else ""`.
+        // `MimeType::value` is `Cow<'static, [u8]>`; the raw slice pointer is
+        // stable for the life of `store` (either `'static` or backed by the heap
+        // allocation we hold a ref to in `self.store`).
+        let content_type: *const [u8] = if let store::Data::File(ref f) = store.data {
+            f.mime_type.value.as_ref() as *const [u8]
+        } else {
+            b"" as &'static [u8] as *const [u8]
+        };
+        Blob {
+            size,
+            store: Some(store),
+            content_type,
+            global_this,
+            ..Default::default()
+        }
     }
 
     /// `Blob.init(bytes, allocator, globalThis)` (Blob.zig:3576). Takes
     /// ownership of `bytes`.
     pub fn init(bytes: Vec<u8>, global_this: &JSGlobalObject) -> Blob {
         let size = bytes.len() as SizeType;
-        let store = if !bytes.is_empty() {
-            // SAFETY: `Box::into_raw` never returns null. Ownership is the +1
-            // initial ref released via `Store::deref` → `Box::from_raw`.
-            Some(unsafe { NonNull::new_unchecked(Box::into_raw(Store::init(bytes))) })
-        } else {
-            None
-        };
+        let store = if !bytes.is_empty() { Some(Store::init(bytes)) } else { None };
         Blob { size, store, global_this, ..Default::default() }
-    }
-
-    /// `Blob.initWithStore(store, globalThis)` (Blob.zig:3649).
-    pub fn init_with_store(store: NonNull<Store>, global_this: &JSGlobalObject) -> Blob {
-        // SAFETY: caller hands over a +1 reference to a live `Store`.
-        let store_ref = unsafe { store.as_ref() };
-        Blob {
-            size: store_ref.size(),
-            store: Some(store),
-            content_type: match &store_ref.data {
-                // File mime types are populated from the static extension table
-                // (`mime::by_extension_no_default` / const items), so `value`
-                // is always `Cow::Borrowed(&'static [u8])`. Owned variants
-                // (parsed from a request header) never reach `init_with_store`.
-                store::Data::File(f) => match &f.mime_type.value {
-                    std::borrow::Cow::Borrowed(s) => *s,
-                    std::borrow::Cow::Owned(_) => b"",
-                },
-                _ => b"",
-            },
-            global_this,
-            ..Default::default()
-        }
     }
 
     /// `Blob.initEmpty(globalThis)` (Blob.zig:3660).
@@ -176,137 +233,121 @@ impl Blob {
     /// bytes (`offset..offset+size` of the backing store). Empty for
     /// file-/S3-backed or zero-length blobs.
     pub fn shared_view(&self) -> &[u8] {
-        if self.size == 0 {
+        if self.size == 0 || self.store.is_none() {
             return b"";
         }
-        let Some(store) = self.store else { return b"" };
-        // SAFETY: `self` holds a +1 ref on `store` for the lifetime of `&self`.
-        let slice = unsafe { store.as_ref() }.shared_view();
+        let mut slice = self.store.as_ref().unwrap().shared_view();
         if slice.is_empty() {
             return b"";
         }
         // Defensive: `offset`/`size` may originate from untrusted
         // structured-clone data; never index past the store's length.
         let off = (self.offset as usize).min(slice.len());
-        let tail = &slice[off..];
-        &tail[..tail.len().min(self.size as usize)]
+        slice = &slice[off..];
+        &slice[..slice.len().min(self.size as usize)]
     }
 
     /// `Blob.detach()` (Blob.zig:3675) — release the store ref without
     /// dropping `self`.
+    #[inline]
     pub fn detach(&mut self) {
-        if let Some(store) = self.store.take() {
-            // SAFETY: `self` owned a +1 ref on `store`.
-            unsafe { Store::deref(store) };
-        }
+        // `StoreRef::drop` calls `Store::deref()`.
+        self.store = None;
     }
 
-    /// `Blob.dupe()` / `dupeWithContentType` (Blob.zig:3684) — new view onto
-    /// the same store, +1 ref. When `content_type_allocated`, the duplicate
-    /// gets its **own** heap copy so dropping either side never dangles the
-    /// other (Zig changed both `dupe` paths to deep-copy here to fix FormData
-    /// multipart-boundary loss).
+    /// `Blob.dupe()` (Blob.zig:3684) — new view onto the same store, +1 ref.
+    #[inline]
     pub fn dupe(&self) -> Blob {
-        if let Some(store) = self.store {
-            // SAFETY: `self` proves `store` is live.
-            unsafe { store.as_ref() }.ref_();
-        }
-        let (content_type, content_type_allocated) = if self.content_type_allocated {
-            // Zig: `duped.content_type = allocator.dupe(this.content_type)`.
-            (bun_alloc::default_dupe(self.content_type), true)
-        } else {
-            // Borrowed (`&'static`) — copy the slice ref as-is.
-            (self.content_type, false)
-        };
-        Blob {
+        self.dupe_with_content_type(false)
+    }
+
+    /// `Blob.dupeWithContentType()` (Blob.zig:3688). The Zig spec ignores
+    /// `include_content_type` and **always** deep-copies a heap-allocated
+    /// `content_type` so freeing one side does not dangle the other (the old
+    /// borrow path was removed because it dropped user-supplied parameters
+    /// like multipart boundaries on a static-mime miss).
+    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
+        // Zig: `if (this.store != null) this.store.?.ref()` then bitwise-copy.
+        // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
+        let mut duped = Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
             offset: self.offset,
-            store: self.store,
-            content_type,
-            content_type_allocated,
+            store: self.store.clone(),
+            content_type: self.content_type,
+            content_type_allocated: self.content_type_allocated,
             content_type_was_set: self.content_type_was_set,
             charset: self.charset,
             is_jsdom_file: self.is_jsdom_file,
-            ref_count: 0,
+            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: self.global_this,
             last_modified: self.last_modified,
-            name: {
-                self.name.ref_();
-                self.name
-            },
+            name: self.name.dupe_ref(),
+        };
+        // If the source's content_type is heap-allocated, the bitwise copy
+        // above aliases the same allocation. Take our own copy so freeing one
+        // side doesn't dangle the other (Blob.zig:3700).
+        if duped.content_type_allocated {
+            let copy = self.content_type_slice().to_vec().into_boxed_slice();
+            duped.content_type = Box::into_raw(copy);
         }
+        duped
     }
 
-    /// Inherent `to_js` so callers don't need `JsClass` in scope.
-    #[inline]
-    pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        <Self as JsClass>::to_js(self, global)
-    }
-
-    #[inline]
-    pub fn is_heap_allocated(&self) -> bool {
-        self.ref_count > 0
-    }
-
-    #[inline]
-    pub fn set_not_heap_allocated(&mut self) {
-        self.ref_count = 0;
-    }
-}
-
-// SAFETY: `Blob__ref`/`Blob__deref` (Blob.zig:5100) operate on the intrusive
-// `ref_count` of a heap-allocated `Blob`; the pointee remains valid while the
-// count is > 0, and `ext_deref` boxes-from-raw and drops when it falls to 0.
-unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
-    unsafe fn ext_ref(this: *mut Self) {
-        // SAFETY: caller upholds `this` is a live, heap-allocated `Blob`.
-        let blob = unsafe { &mut *this };
-        bun_core::assertf!(
-            blob.is_heap_allocated(),
-            "cannot ref: this Blob is not heap-allocated",
-        );
-        blob.ref_count += 1;
-    }
-
-    unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller upholds `this` is a live, heap-allocated `Blob`.
-        let blob = unsafe { &mut *this };
-        bun_core::assertf!(
-            blob.is_heap_allocated(),
-            "cannot deref: this Blob is not heap-allocated",
-        );
-        blob.ref_count -= 1;
-        if blob.ref_count == 0 {
-            // Re-arm so `is_heap_allocated()` stays true through `Drop` (mirrors
-            // Blob.zig:5112 which increments before `deinit` so its own
-            // heap-allocation guard around `bun.destroy` succeeds).
-            blob.ref_count = 1;
-            // SAFETY: `this` was produced by `Box::into_raw` in `Blob::new`;
-            // dropping the reconstituted `Box` runs `Blob::drop` then frees.
-            drop(unsafe { Box::from_raw(this) });
-        }
-    }
-}
-
-impl Drop for Blob {
-    /// `Blob.deinit` (Blob.zig:3720) sans the trailing `bun.destroy(this)` —
-    /// `Box::drop` handles the allocation when `is_heap_allocated()`.
-    fn drop(&mut self) {
+    /// `Blob.deinit()` (Blob.zig:3720). Tear down owned resources; if
+    /// heap-allocated, also frees the heap box.
+    ///
+    /// PORT NOTE: kept as an explicit method (not `Drop`) because `Blob` is the
+    /// `m_ctx` payload of a `.classes.ts` class — `finalize()` owns teardown,
+    /// and many call sites tear down stack copies explicitly.
+    pub fn deinit(&mut self) {
         self.detach();
         self.name.deref();
+        self.name = bun_string::String::dead();
+
         if self.content_type_allocated {
-            // SAFETY: `content_type` was duped via mimalloc when
-            // `content_type_allocated` was set; free with the same allocator.
-            unsafe {
-                bun_alloc::default_free(
-                    self.content_type.as_ptr() as *mut u8,
-                    self.content_type.len(),
-                );
-            }
-            self.content_type = b"";
+            // SAFETY: `content_type_allocated` implies `content_type` is a
+            // leaked `Box<[u8]>` (mimalloc).
+            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
+            self.content_type = b"" as &'static [u8] as *const [u8];
             self.content_type_allocated = false;
         }
+
+        if self.is_heap_allocated() {
+            // SAFETY: `self` is the `*mut Blob` originally produced by
+            // `Blob::new` (`Box::into_raw`).
+            unsafe { drop(Box::from_raw(self as *mut Blob)) };
+        }
+    }
+}
+
+// SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
+// keep the heap-allocated `Blob` alive while the count is > 0.
+unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__ref(&mut *this) }
+    }
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__deref(&mut *this) }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__ref(self_: &mut Blob) {
+    debug_assert!(self_.is_heap_allocated(), "cannot ref: this Blob is not heap-allocated");
+    self_.ref_count.increment();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__deref(self_: &mut Blob) {
+    debug_assert!(self_.is_heap_allocated(), "cannot deref: this Blob is not heap-allocated");
+    if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
+        // `deinit` has its own `is_heap_allocated()` guard around the
+        // `drop(Box::from_raw)`, so re-arm so it returns true (Blob.zig:5112).
+        self_.ref_count.increment();
+        self_.deinit();
     }
 }
 
@@ -319,7 +360,6 @@ pub mod store {
 
     /// `Blob.Store` (Store.zig:1-9). Intrusively-refcounted; always
     /// heap-allocated (`bun.TrivialNew`).
-    #[repr(C)]
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
@@ -333,7 +373,7 @@ pub mod store {
         fn default() -> Self {
             Self {
                 data: Data::Bytes(Bytes::default()),
-                mime_type: mime::NONE,
+                mime_type: bun_http_types::MimeType::NONE,
                 ref_count: AtomicU32::new(1),
                 is_all_ascii: None,
             }
@@ -347,48 +387,210 @@ pub mod store {
         S3(S3),
     }
 
-    /// `Store.Bytes` (Store.zig:472) — raw owned byte buffer.
-    #[derive(Default)]
+    /// Discriminant-only tag for `Data` (Zig: `std.meta.Tag(Store.Data)`).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum DataTag {
+        Bytes,
+        File,
+        S3,
+    }
+
+    impl Data {
+        #[inline]
+        pub fn tag(&self) -> DataTag {
+            match self {
+                Self::Bytes(_) => DataTag::Bytes,
+                Self::File(_) => DataTag::File,
+                Self::S3(_) => DataTag::S3,
+            }
+        }
+        /// Panics if not a `File` (Zig: `data.file` union access).
+        pub fn as_file(&self) -> &File {
+            match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
+        }
+        pub fn as_file_mut(&mut self) -> &mut File {
+            match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
+        }
+        /// Panics if not `S3` (Zig: `data.s3` union access).
+        pub fn as_s3(&self) -> &S3 {
+            match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
+        }
+        pub fn as_s3_mut(&mut self) -> &mut S3 {
+            match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
+        }
+        /// Panics if not `Bytes` (Zig: `data.bytes` union access).
+        pub fn as_bytes(&self) -> &Bytes {
+            match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
+        }
+        pub fn as_bytes_mut(&mut self) -> &mut Bytes {
+            match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
+        }
+    }
+
+    #[repr(u8)]
+    pub enum SerializeTag {
+        File = 0,
+        Bytes = 1,
+        Empty = 2,
+    }
+
+    impl SerializeTag {
+        #[inline]
+        pub fn from_raw(raw: u8) -> Option<Self> {
+            match raw {
+                0 => Some(Self::File),
+                1 => Some(Self::Bytes),
+                2 => Some(Self::Empty),
+                _ => None,
+            }
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Bytes
+    // ────────────────────────────────────────────────────────────────────
+
+    /// `Blob.Store.Bytes` (Store.zig:472). Kept as `(ptr,len,cap,allocator)`
+    /// rather than `Vec<u8>` so the memfd-backed path
+    /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
+    /// can carry its allocator vtable with the buffer.
     pub struct Bytes {
-        /// (`ptr`, `len`, `cap`) — kept as `Vec<u8>` so capacity is preserved
-        /// for `toInternalBlob`/`asArrayList`. Allocated via mimalloc.
-        pub bytes: Vec<u8>,
+        pub ptr: Option<NonNull<u8>>,
+        pub len: SizeType,
+        pub cap: SizeType,
+        pub allocator: bun_alloc::StdAllocator,
         /// Used by standalone module graph and the `File` constructor.
         pub stored_name: PathString,
     }
 
-    impl Bytes {
-        /// Takes ownership of `bytes`.
-        #[inline]
-        pub fn init(bytes: Vec<u8>) -> Bytes {
-            Bytes { bytes, stored_name: PathString::empty() }
+    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
+    // `NonNull<u8>` is uniquely owned (Zig: `ptr` is the sole alias) and
+    // `StdAllocator` is `Send + Sync`.
+    unsafe impl Send for Bytes {}
+    unsafe impl Sync for Bytes {}
+
+    impl Default for Bytes {
+        fn default() -> Self {
+            Self {
+                ptr: None,
+                len: 0,
+                cap: 0,
+                allocator: bun_alloc::basic::C_ALLOCATOR,
+                stored_name: PathString::default(),
+            }
         }
+    }
+
+    impl Bytes {
+        /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
+        pub fn init(bytes: Vec<u8>) -> Bytes {
+            let mut v = core::mem::ManuallyDrop::new(bytes);
+            let len = v.len();
+            let cap = v.capacity();
+            Bytes {
+                ptr: NonNull::new(v.as_mut_ptr()),
+                // Zig: `@truncate(bytes.len)` for both — we additionally keep
+                // the real `cap` so `to_internal_blob` can soundly
+                // `Vec::from_raw_parts`.
+                len: len as SizeType,
+                cap: cap as SizeType,
+                allocator: bun_alloc::basic::C_ALLOCATOR,
+                stored_name: PathString::default(),
+            }
+        }
+
+        /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
+        ///
+        /// # Safety
+        /// `ptr[..cap]` must be a live allocation owned by `allocator`'s vtable
+        /// and `len <= cap`. Ownership transfers to the returned `Bytes`.
+        pub unsafe fn from_raw_parts(
+            ptr: *mut u8,
+            len: SizeType,
+            cap: SizeType,
+            allocator: bun_alloc::StdAllocator,
+        ) -> Bytes {
+            Bytes {
+                ptr: NonNull::new(ptr),
+                len,
+                cap,
+                allocator,
+                stored_name: PathString::default(),
+            }
+        }
+
         #[inline]
         pub fn init_empty_with_name(name: PathString) -> Bytes {
-            Bytes { bytes: Vec::new(), stored_name: name }
+            Bytes { stored_name: name, ..Default::default() }
         }
+
         #[inline]
-        pub fn slice(&self) -> &[u8] {
-            &self.bytes
+        pub fn allocator(&self) -> bun_alloc::StdAllocator {
+            self.allocator
         }
+
         #[inline]
         pub fn len(&self) -> SizeType {
-            self.bytes.len() as SizeType
+            self.len
+        }
+
+        pub fn slice(&self) -> &[u8] {
+            match self.ptr {
+                // SAFETY: `ptr[..len]` is a live initialized region
+                // (init/from_raw_parts contract).
+                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
+                None => &[],
+            }
+        }
+
+        pub fn allocated_slice(&self) -> &[u8] {
+            match self.ptr {
+                // SAFETY: `ptr[..cap]` is the full allocation; bytes in
+                // `[len..cap]` may be uninitialized (mirrors Zig `ptr[0..cap]`).
+                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
+                None => &[],
+            }
+        }
+
+        pub fn as_array_list(&mut self) -> &mut [u8] {
+            self.as_array_list_leak()
+        }
+
+        pub fn as_array_list_leak(&mut self) -> &mut [u8] {
+            match self.ptr {
+                // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
+                Some(p) => unsafe {
+                    core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
+                },
+                None => &mut [],
+            }
         }
     }
 
     impl Drop for Bytes {
         fn drop(&mut self) {
-            // `bun.default_allocator.free(this.stored_name.slice())` — the
-            // `PathString` borrows a heap dupe owned by this `Bytes`.
-            // SAFETY: `stored_name` was set via `PathString::init_owned`
-            // (mimalloc dupe) or is `empty()` (no-op).
+            // Zig `deinit`: `default_allocator.free(stored_name.slice())` then
+            // `this.allocator.free(ptr[0..cap])`.
+            // SAFETY: every writer of `stored_name` adopts a heap allocation via
+            // `PathString::init_owned`, or leaves it `EMPTY`.
             unsafe { self.stored_name.deinit_owned() };
-            // `bytes: Vec` drops itself.
+            if let Some(ptr) = self.ptr.take() {
+                // SAFETY: `ptr[..cap]` is the allocation owned by
+                // `self.allocator`; sole owner at drop time.
+                let buf = unsafe {
+                    core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap as usize)
+                };
+                self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
+            }
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // File
+    // ────────────────────────────────────────────────────────────────────
+
     /// `Store.File` (Store.zig:250) — a blob store referencing a file on disk.
+    #[derive(Clone)]
     pub struct File {
         pub pathlike: PathOrFileDescriptor,
         pub mime_type: MimeType,
@@ -397,7 +599,21 @@ pub mod store {
         pub seekable: Option<bool>,
         pub max_size: SizeType,
         /// Milliseconds since ECMAScript epoch.
-        pub last_modified: JSTimeType,
+        pub last_modified: crate::JSTimeType,
+    }
+
+    impl Default for File {
+        fn default() -> Self {
+            Self {
+                pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
+                mime_type: bun_http_types::MimeType::OTHER,
+                is_atty: None,
+                mode: 0,
+                seekable: None,
+                max_size: MAX_SIZE,
+                last_modified: crate::INIT_TIMESTAMP,
+            }
+        }
     }
 
     impl File {
@@ -405,12 +621,8 @@ pub mod store {
         pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
             File {
                 pathlike,
-                mime_type: mime_type.unwrap_or(mime::OTHER),
-                is_atty: None,
-                mode: 0,
-                seekable: None,
-                max_size: MAX_SIZE,
-                last_modified: INIT_TIMESTAMP,
+                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                ..Default::default()
             }
         }
 
@@ -420,11 +632,15 @@ pub mod store {
                 return Some(s);
             }
             if self.mode != 0 {
-                return Some(bun_sys::is_regular_file(self.mode));
+                return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
             }
             None
         }
     }
+
+    // ────────────────────────────────────────────────────────────────────
+    // S3
+    // ────────────────────────────────────────────────────────────────────
 
     /// `Store.S3` (Store.zig:291) — an S3 blob store. Data-only at this tier;
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
@@ -432,8 +648,8 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike,
         pub mime_type: MimeType,
-        pub credentials: Option<NonNull<bun_s3_signing::credentials::S3Credentials>>,
-        pub options: bun_s3_signing::credentials::MultiPartUploadOptions,
+        pub credentials: Option<Arc<bun_s3_signing::S3Credentials>>,
+        pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
         pub request_payer: bool,
@@ -445,16 +661,74 @@ pub mod store {
             Some(true)
         }
 
+        pub fn get_credentials(&self) -> &Arc<bun_s3_signing::S3Credentials> {
+            debug_assert!(self.credentials.is_some());
+            self.credentials.as_ref().unwrap()
+        }
+
         pub fn estimated_size(&self) -> usize {
             self.pathlike.estimated_size()
-                + self
-                    .credentials
-                    // SAFETY: `credentials` is null or a live ref-counted ptr
-                    // owned by this S3 (released in `Store::drop`).
-                    .map(|c| unsafe { c.as_ref() }.estimated_size())
-                    .unwrap_or(0)
+                + self.credentials.as_ref().map(|c| c.estimated_size()).unwrap_or(0)
+        }
+
+        pub fn path(&self) -> &[u8] {
+            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
+            // normalize start and ending
+            if bun_string::strings::ends_with(path_name, b"/") {
+                path_name = &path_name[0..path_name.len()];
+            } else if bun_string::strings::ends_with(path_name, b"\\") {
+                path_name = &path_name[0..path_name.len() - 1];
+            }
+            if bun_string::strings::starts_with(path_name, b"/") {
+                path_name = &path_name[1..];
+            } else if bun_string::strings::starts_with(path_name, b"\\") {
+                path_name = &path_name[1..];
+            }
+            path_name
+        }
+
+        pub fn init_with_referenced_credentials(
+            pathlike: PathLike,
+            mime_type: Option<MimeType>,
+            credentials: Arc<bun_s3_signing::S3Credentials>,
+        ) -> S3 {
+            S3 {
+                // Zig: `credentials.ref()` — Arc::clone bumps the strong count.
+                credentials: Some(Arc::clone(&credentials)),
+                pathlike,
+                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                options: bun_s3_signing::MultiPartUploadOptions::default(),
+                acl: None,
+                storage_class: None,
+                request_payer: false,
+            }
+        }
+
+        pub fn init(
+            pathlike: PathLike,
+            mime_type: Option<MimeType>,
+            credentials: bun_s3_signing::S3Credentials,
+        ) -> S3 {
+            S3 {
+                // Zig: `credentials.dupe()` — heap-allocate a fresh refcounted copy.
+                credentials: Some(Arc::new(credentials)),
+                pathlike,
+                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
+                options: bun_s3_signing::MultiPartUploadOptions::default(),
+                acl: None,
+                storage_class: None,
+                request_payer: false,
+            }
         }
     }
+
+    // PORT NOTE: `S3.deinit` body deleted — only freed owned fields
+    // (`pathlike`, `credentials.deref()`), all handled by `PathLike::drop` /
+    // `Option<Arc<_>>::drop`. Per PORTING.md §Idiom map, no explicit `Drop`.
+
+    // ────────────────────────────────────────────────────────────────────
+    // Store impl
+    // ────────────────────────────────────────────────────────────────────
 
     impl Store {
         /// `bun.TrivialNew(@This())`.
@@ -465,48 +739,43 @@ pub mod store {
 
         /// `Store.init(bytes, allocator)` (Store.zig:152). Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
-        pub fn init(bytes: Vec<u8>) -> Box<Store> {
-            Store::new(Store {
+        pub fn init(bytes: Vec<u8>) -> StoreRef {
+            StoreRef::from(Store::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: mime::NONE,
+                mime_type: bun_http_types::MimeType::NONE,
                 ref_count: AtomicU32::new(1),
                 is_all_ascii: None,
-            })
+            }))
         }
 
-        /// `Store.initFile(pathlike, mime_type, allocator)` (Store.zig:125).
-        pub fn init_file(
-            pathlike: PathOrFileDescriptor,
-            mime_type: Option<MimeType>,
-        ) -> Result<NonNull<Store>, bun_core::AllocError> {
-            let mime_type = mime_type.or_else(|| match &pathlike {
-                PathOrFileDescriptor::Path(path) => {
-                    let sliced = path.slice();
-                    if sliced.is_empty() {
-                        return None;
-                    }
-                    let ext = bun_paths::extension(sliced);
-                    let ext = ext.strip_prefix(b".").unwrap_or(ext);
-                    mime::by_extension_no_default(ext)
+        pub fn get_path(&self) -> Option<&[u8]> {
+            match &self.data {
+                Data::Bytes(bytes) => {
+                    let n = bytes.stored_name.slice();
+                    if n.is_empty() { None } else { Some(n) }
                 }
-                PathOrFileDescriptor::Fd(_) => None,
-            });
-            let store = Store::new(Store {
-                data: Data::File(File::init(pathlike, mime_type)),
-                mime_type: mime::NONE,
-                ref_count: AtomicU32::new(1),
-                is_all_ascii: None,
-            });
-            // SAFETY: `Box::into_raw` never returns null. Paired with
-            // `Box::from_raw` in `Store::deref` on last-ref.
-            Ok(unsafe { NonNull::new_unchecked(Box::into_raw(store)) })
+                Data::File(file) => {
+                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                        Some(path.slice())
+                    } else {
+                        None
+                    }
+                }
+                Data::S3(s3) => Some(s3.pathlike.slice()),
+            }
         }
 
-        /// `Store.mime_type` setter — replaces the in-tree
-        /// `Bun__Blob__Store__setMimeType` trampoline.
-        #[inline]
-        pub fn set_mime_type(&mut self, mime: MimeType) {
-            self.mime_type = mime;
+        pub fn memory_cost(&self) -> usize {
+            if self.has_one_ref() {
+                core::mem::size_of::<Self>()
+                    + match &self.data {
+                        Data::Bytes(bytes) => bytes.len() as usize,
+                        Data::File(_) => 0,
+                        Data::S3(s3) => s3.estimated_size(),
+                    }
+            } else {
+                0
+            }
         }
 
         /// `Store.size()` (Store.zig:28).
@@ -521,10 +790,10 @@ pub mod store {
         /// `Store.sharedView()` (Store.zig:164).
         #[inline]
         pub fn shared_view(&self) -> &[u8] {
-            match &self.data {
-                Data::Bytes(b) => b.slice(),
-                _ => b"",
+            if let Data::Bytes(bytes) = &self.data {
+                return bytes.slice();
             }
+            &[]
         }
 
         /// `Store.ref()` (Store.zig:43).
@@ -541,35 +810,40 @@ pub mod store {
         }
 
         /// `Store.deref()` (Store.zig:171). Consumes one reference; on last
-        /// ref, drops & frees the heap `Store` (which was created via
-        /// `Box::into_raw` in `init`/`init_file`/`new`).
+        /// ref, drops & frees the heap `Store`.
+        ///
+        /// Takes a raw pointer rather than `&self`: deriving the freeing `*mut`
+        /// from a `&self` borrow is UB — the shared-ref provenance forbids
+        /// mutation/deallocation through it.
         ///
         /// # Safety
-        /// `this` must be a +1-ref pointer obtained from `Store::new`/`init`/
-        /// `init_file` (i.e. a `Box::into_raw`).
+        /// `this` must point to a live `Store` originally allocated via
+        /// `Store::new` / `Box::new`, and the caller must own one outstanding
+        /// reference being released.
         pub unsafe fn deref(this: NonNull<Store>) {
-            // SAFETY: caller upheld contract; `ref_count` is atomic so the
-            // shared-borrow read is sound even under concurrent `ref_`.
-            let old = unsafe { this.as_ref() }.ref_count.fetch_sub(1, Ordering::AcqRel);
+            // SAFETY: place-project to the atomic field without materializing a
+            // `&Store`; `AtomicU32` is interior-mutable so the read is sound
+            // even with concurrent refs.
+            let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Relaxed) };
             debug_assert!(old >= 1);
             if old == 1 {
-                // SAFETY: last ref; reconstitute the Box to drop+free.
+                // SAFETY: refcount hit zero; we are the sole remaining owner.
                 drop(unsafe { Box::from_raw(this.as_ptr()) });
             }
         }
 
-        /// `extern "C" fn external` (Store.zig:63) — `JSCArrayBuffer`
-        /// deallocator hook signature.
-        #[unsafe(no_mangle)]
-        pub extern "C" fn Blob__Store__external(
+        /// `extern fn external` (Store.zig:63) — `JSCArrayBuffer` deallocator
+        /// hook signature. Zig has only `callconv(.c)` (callback fn pointer),
+        /// no `@export`, so no `#[unsafe(no_mangle)]` here.
+        pub extern "C" fn external(
             ptr: *mut core::ffi::c_void,
             _: *mut core::ffi::c_void,
             _: usize,
         ) {
             let Some(this) = NonNull::new(ptr.cast::<Store>()) else { return };
-            // SAFETY: C++ passes the `Store*` it was handed by
-            // `BlobArrayBuffer_deallocator`'s context; that path always owns
-            // a +1 ref.
+            // SAFETY: caller passes a `*Store` (originally leaked via
+            // `Box::into_raw`) as the opaque pointer; mirrors Zig
+            // `bun.cast(*Store, ptr)`.
             unsafe { Store::deref(this) };
         }
     }
@@ -579,84 +853,152 @@ pub mod store {
         /// `Box` handles the allocation.
         fn drop(&mut self) {
             match &mut self.data {
-                Data::Bytes(_) => { /* Bytes::drop frees buffer + stored_name */ }
+                // `Bytes::drop` frees buffer + stored_name.
+                Data::Bytes(_) => {}
                 Data::File(file) => {
-                    if let PathOrFileDescriptor::Path(path) = &mut file.pathlike {
-                        if let PathLike::String(s) = path {
-                            // Zig: `allocator.free(@constCast(path.slice()))` —
-                            // the `PathString` payload was duped for this Store.
-                            // SAFETY: duped via mimalloc by the constructing
-                            // call site (e.g. `dupe_path`); `deinit_owned`
-                            // no-ops on empty.
-                            unsafe { s.deinit_owned() };
-                        }
-                        // Other `PathLike` variants drop themselves.
-                    }
-                }
-                Data::S3(s3) => {
-                    // `S3.deinit` (Store.zig:458): free the heap-duped path
-                    // string then deref credentials. `PathLike::Drop` is a
-                    // no-op for `String(_)` so it must be freed here, same as
-                    // the `File` arm.
-                    if let PathLike::String(s) = &mut s3.pathlike {
+                    // Zig:
+                    //   if (path == .string) allocator.free(@constCast(path.slice()));
+                    //   else file.pathlike.path.deinit();
+                    //
+                    // The `PathLike::String` payload is a *borrowed*
+                    // `(ptr,len)` pair whose backing buffer was duped for this
+                    // `Store` — `PathLike::drop` does NOT free it (it has no
+                    // way to know the buffer is owned), so free it explicitly
+                    // here. All other variants own their storage and release it
+                    // in `PathLike::drop`.
+                    if let PathOrFileDescriptor::Path(PathLike::String(s)) = &mut file.pathlike {
                         // SAFETY: duped via mimalloc by the constructing call
-                        // site; `deinit_owned` no-ops on empty.
+                        // site (e.g. `dupe_path`); `deinit_owned` no-ops on
+                        // empty.
                         unsafe { s.deinit_owned() };
                     }
-                    // Other `PathLike` variants drop themselves.
-                    if let Some(creds) = s3.credentials.take() {
-                        // SAFETY: `credentials` is a +1 ref this S3 owned.
-                        unsafe {
-                            bun_ptr::RefCount::<
-                                bun_s3_signing::credentials::S3Credentials,
-                            >::deref(creds.as_ptr());
-                        }
-                    }
+                    // `file.pathlike` (and its `PathLike` payload) drops at the
+                    // end of `Data`'s drop — that covers the
+                    // `else file.pathlike.path.deinit()` arm for the
+                    // ref-counted/owned variants.
+                }
+                Data::S3(_) => {
+                    // `s3.deinit(allocator)` released `credentials` and freed
+                    // `pathlike` — both handled by `Option<Arc<_>>::drop` and
+                    // `PathLike::drop` when `Data` drops.
                 }
             }
         }
     }
-}
-pub use store::Store;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `jsc.API.BuildArtifact` (src/runtime/api/JSBundler.zig:1786)
-// ──────────────────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────────────
+    // StoreRef — intrusive-refcounted handle
+    // ────────────────────────────────────────────────────────────────────
 
-/// Single nominal definition; `bun_runtime::api::BuildArtifact` re-exports this.
-#[repr(C)]
-pub struct BuildArtifact {
-    pub blob: Blob,
-    pub loader: bun_bundler::options::Loader,
-    pub path: Box<[u8]>,
-    pub hash: u64,
-    pub output_kind: bun_bundler::options::OutputKind,
-    pub sourcemap: crate::strong::Optional,
-}
+    /// Owning handle to a heap `Store`, refcounted via the *intrusive*
+    /// `Store::ref_count` field. Mirrors Zig's `*Store` with `.ref()`/`.deref()`.
+    ///
+    /// Not `Arc<Store>`: `Store::deref()` (reachable from `Store::external` and
+    /// other FFI callbacks) frees via `Box::from_raw` when the intrusive count
+    /// hits zero; `Arc` would own the allocation itself, and the two refcounts
+    /// would diverge. One refcount, one deallocation path.
+    #[repr(transparent)]
+    pub struct StoreRef {
+        ptr: NonNull<Store>,
+    }
 
-impl Default for BuildArtifact {
-    fn default() -> Self {
-        Self {
-            blob: Blob::default(),
-            loader: bun_bundler::options::Loader::File,
-            path: Box::default(),
-            hash: u64::MAX,
-            output_kind: bun_bundler::options::OutputKind::Chunk,
-            sourcemap: crate::strong::Optional::default(),
+    impl StoreRef {
+        /// Adopt an existing +1. Does **not** increment.
+        ///
+        /// # Safety
+        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`,
+        /// and the caller transfers one outstanding reference.
+        #[inline]
+        pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
+            Self { ptr }
+        }
+
+        /// Wrap a raw `*Store`, incrementing its intrusive refcount.
+        ///
+        /// # Safety
+        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`.
+        #[inline]
+        pub unsafe fn retained(ptr: NonNull<Store>) -> Self {
+            // SAFETY: caller contract.
+            unsafe { ptr.as_ref() }.ref_();
+            Self { ptr }
+        }
+
+        #[inline]
+        pub fn as_ptr(&self) -> *mut Store {
+            self.ptr.as_ptr()
+        }
+
+        /// Leak the held +1 and return the raw pointer. Pair with a later
+        /// `Store::deref()` (typically via `Store::external` / an FFI
+        /// deallocator).
+        #[inline]
+        pub fn into_raw(self) -> *mut Store {
+            let p = self.ptr.as_ptr();
+            core::mem::forget(self);
+            p
+        }
+
+        /// Mutable access to `data` through the shared handle. Zig mutates
+        /// `store.data` freely through any holder; the caller must ensure no
+        /// other `&mut` to the same `Store` is live (single-threaded JS
+        /// event-loop discipline).
+        #[inline]
+        #[allow(clippy::mut_from_ref)]
+        pub fn data_mut(&self) -> &mut Data {
+            // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
+            unsafe { &mut (*self.as_ptr()).data }
         }
     }
-}
 
-unsafe extern "C" {
-    fn BuildArtifact__create(ptr: *mut BuildArtifact, global: *mut JSGlobalObject) -> JSValue;
-}
-
-impl BuildArtifact {
-    /// `BuildArtifact.toJS` (codegen `JSBuildArtifact.toJS`). Heap-promotes
-    /// `self` and hands ownership to the codegen `BuildArtifact__create` extern.
-    pub fn to_js(self: Box<Self>, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: codegen extern takes ownership of the boxed artifact and
-        // wraps it in a `JSBuildArtifact`.
-        unsafe { BuildArtifact__create(Box::into_raw(self), global.as_mut_ptr()) }
+    impl From<Box<Store>> for StoreRef {
+        #[inline]
+        fn from(b: Box<Store>) -> Self {
+            // `Store::new` initializes `ref_count` to 1 — adopt that +1.
+            // SAFETY: `Box::into_raw` never returns null.
+            Self { ptr: unsafe { NonNull::new_unchecked(Box::into_raw(b)) } }
+        }
     }
+
+    impl Clone for StoreRef {
+        #[inline]
+        fn clone(&self) -> Self {
+            // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
+            unsafe { self.ptr.as_ref() }.ref_();
+            Self { ptr: self.ptr }
+        }
+    }
+
+    impl Drop for StoreRef {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: invariant — `ptr` is live and originated from
+            // `Box::into_raw` (mutable provenance); `deref()` frees on last ref.
+            unsafe { Store::deref(self.ptr) };
+        }
+    }
+
+    impl core::ops::Deref for StoreRef {
+        type Target = Store;
+        #[inline]
+        fn deref(&self) -> &Store {
+            // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
+            unsafe { self.ptr.as_ref() }
+        }
+    }
+
+    impl PartialEq for StoreRef {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.ptr == other.ptr
+        }
+    }
+    impl Eq for StoreRef {}
+
+    // SAFETY: `Store`'s refcount is atomic and its payload is either
+    // immutable-after-init or guarded by callers; matches Zig's cross-thread
+    // `*Store` usage.
+    unsafe impl Send for StoreRef {}
+    unsafe impl Sync for StoreRef {}
 }
+pub use store::{Store, StoreRef};

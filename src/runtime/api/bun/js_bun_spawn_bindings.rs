@@ -123,7 +123,7 @@ pub struct TerminalCreateResult {
 // Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
 // because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
 // sees only the `dyn SendQueueOwner` trait object.
-impl<'a> IPC::SendQueueOwner for SubprocessT<'a> {
+impl IPC::SendQueueOwner for SubprocessT<'static> {
     fn global_this(&self) -> *const JSGlobalObject {
         self.global_this
     }
@@ -143,14 +143,11 @@ impl<'a> IPC::SendQueueOwner for SubprocessT<'a> {
 
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
-    // SAFETY: erase the borrowed lifetime — `SendQueue.owner` is a BACKREF
-    // (the SendQueue is stored inline in `Subprocess.ipc_data` and dropped
-    // before the Subprocess is freed).
-    unsafe {
-        core::mem::transmute::<*mut dyn IPC::SendQueueOwner, *mut dyn IPC::SendQueueOwner>(
-            ptr as *mut dyn IPC::SendQueueOwner,
-        )
-    }
+    // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
+    // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
+    // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
+    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
+    ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
 }
 
 /// Obtain `&mut Process` from the intrusively-refcounted `*mut Process` stored

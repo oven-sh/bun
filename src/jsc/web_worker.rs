@@ -482,9 +482,9 @@ impl WebWorker {
         let mut temp_log = logger::Log::default();
         parent_ref.transpiler.set_log(&mut temp_log);
         // RAII: Zig's `defer parent.transpiler.setLog(prev_log)` + `temp_log.deinit()`.
-        let log_guard = scopeguard::guard((), |()| {
+        let log_guard = scopeguard::guard(prev_log, |prev| {
             // SAFETY: parent live for the duration of create() (caller contract).
-            unsafe { (*parent).transpiler.set_log(prev_log) };
+            unsafe { (*parent).transpiler.set_log(prev) };
         });
 
         let preload_modules: &[BunString] = if preload_modules_ptr.is_null() {
@@ -786,7 +786,7 @@ impl WebWorker {
                     unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
                 {
                     // override the existing even if it was set
-                    transform_options.allow_addons = allow_addons;
+                    transform_options.allow_addons = Some(allow_addons);
                 }
             }
         }
@@ -803,7 +803,13 @@ impl WebWorker {
         // see the same state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        let map = Box::leak(Box::new(bun_dotenv::Map::default()));
+        // SAFETY: worker-thread-only fields; no other thread reads them.
+        // Ownership of `Map`/`Loader` lives on `self` (see `env_map` field doc)
+        // so the VM's borrowed `*mut Loader` stays valid until `shutdown()`
+        // drops them after `vm.destroy()`.
+        let env_map_slot = unsafe { &mut *self.env_map.get() };
+        *env_map_slot = Some(Box::new(bun_dotenv::Map::default()));
+        let map: &mut bun_dotenv::Map = env_map_slot.as_mut().unwrap();
         {
             let parent_slots = parent.proxy_env_storage.lock();
             temp_proxy_slots.clone_from(&parent_slots);
@@ -814,7 +820,17 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(map);
 
-        let loader = Box::leak(Box::new(bun_dotenv::Loader::init(map)));
+        // SAFETY: `map` borrows `self.env_map` (worker-thread-only); the
+        // `Loader` stores `&'a mut Map` which is sound for the worker's
+        // lifetime because both live in `self` and are dropped together in
+        // `shutdown()` (loader before map). Erase to `'static` for the
+        // `Loader<'static>` field shape (FFI / VM stores `*mut Loader<'static>`).
+        let map_static: &'static mut bun_dotenv::Map =
+            unsafe { &mut *(map as *mut bun_dotenv::Map) };
+        let env_loader_slot = unsafe { &mut *self.env_loader.get() };
+        *env_loader_slot = Some(Box::new(bun_dotenv::Loader::init(map_static)));
+        let loader: *mut bun_dotenv::Loader<'static> =
+            env_loader_slot.as_mut().unwrap().as_mut() as *mut _;
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
         // VM. If terminateAllAndWait() fired while we were cloning the env
@@ -1101,8 +1117,10 @@ impl WebWorker {
 
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
-        // SAFETY: worker-thread only field; no other thread reads `arena`.
+        // SAFETY: worker-thread only fields; no other thread reads them.
         let mut arena = unsafe { (*self.arena.get()).take() };
+        let env_loader = unsafe { (*self.env_loader.get()).take() };
+        let env_map = unsafe { (*self.env_map.get()).take() };
 
         // ---- 1. Unpublish vm --------------------------------------------------
         self.vm_lock.lock();
@@ -1262,7 +1280,7 @@ impl WebWorker {
             let _ = jsc::js_global_object::report_uncaught_exception(global, unsafe {
                 &*global
                     .take_exception(e)
-                    .as_exception(global.vm_ptr())
+                    .as_exception(global.vm().as_mut_ptr())
                     .unwrap()
             });
         }

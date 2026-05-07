@@ -4001,16 +4001,7 @@ impl VirtualMachine {
         // SAFETY: `global` valid for VM lifetime.
         let global_ref = unsafe { &*global };
 
-        // PORT NOTE: `JSValue::is_aggregate_error` not yet ported; the C++
-        // binding exists, so call it directly.
-        unsafe extern "C" {
-            fn JSC__JSValue__isAggregateError(
-                this: JSValue,
-                global: *const JSGlobalObject,
-            ) -> bool;
-        }
-        // SAFETY: `global_ref` is live; FFI is infallible per JSValue.zig:2194.
-        if unsafe { JSC__JSValue__isAggregateError(value, global_ref) } {
+        if value.is_aggregate_error(global_ref) {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
             // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
@@ -4193,9 +4184,8 @@ impl VirtualMachine {
             allow_side_effects,
         ) {
             if err == bun_core::err!("JSError") {
-                // SAFETY: `global` valid for VM lifetime; FFI clears the
-                // pending VM exception.
-                unsafe { JSGlobalObject__clearException(self.global) };
+                // SAFETY: `self.global` valid for VM lifetime.
+                unsafe { (*self.global).clear_exception() };
             } else {
                 #[cfg(debug_assertions)]
                 {

@@ -184,10 +184,6 @@ pub use max_heap_allocator::MaxHeapAllocator;
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use maybe_owned::MaybeOwned;
 
-// `MimallocArena` / `allocation_scope` / `LinuxMemFdAllocator` import
-// bun_core/sys/runtime/collections (back-edge from tier-0); they live in
-// `bun_runtime::allocators` (CYCLEBREAK MOVE_DOWN). Callers import from there
-// directly — no forwarding stubs here.
 pub mod mimalloc_arena { pub use crate::MimallocArena; }
 
 // ── tier-0 local primitives ───────────────────────────────────────────────

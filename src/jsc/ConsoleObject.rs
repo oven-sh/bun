@@ -3150,27 +3150,13 @@ pub mod formatter {
             // call would re-take both borrows immediately and trip E0499).
             //
             // Zig: `defer { if (writer.failed) this.failed = true; }`.
-            // Capture raw pointers so the body can keep using `writer`/`self`;
-            // the guard reads the *current* `writer.failed` at scope exit, so
-            // every return path (including `?` propagation) is covered.
-            // PORT NOTE: point at the `failed: bool` field directly rather than
-            // the whole `WrappedWriter<'_>` — a `*const WrappedWriter<'_>` would
-            // carry the `'_` lifetime into the guard's closure type, keeping the
-            // borrows of `writer_` / `self.estimated_line_length` alive across
-            // every drop/recreate (E0499). `*const bool` is lifetime-free, and
-            // `writer` is a fixed stack slot so the field address survives the
-            // `drop(writer); writer = WrappedWriter { .. }` reassignment.
-            let writer_failed_ptr: *const bool = core::ptr::addr_of!(writer.failed);
-            let self_failed_ptr: *mut bool = &mut self.failed;
-            scopeguard::defer! {
-                // SAFETY: both pointees are stack locals that outlive this
-                // guard; no other borrow is live at the drop point.
-                unsafe {
-                    if *writer_failed_ptr {
-                        *self_failed_ptr = true;
-                    }
-                }
-            }
+            // PORT NOTE: a scopeguard reading `*addr_of!(writer.failed)` is
+            // unsound — several arms `drop(writer)` and then `return`/`?`
+            // without recreating, so the guard would read a deinitialized
+            // stack slot. Instead, every `Ok` exit while `writer` is live (and
+            // every `drop(writer)` reseat) propagates `writer.failed` into
+            // `self.failed` explicitly. `Err` exits skip propagation because
+            // the JS exception aborts formatting before `self.failed` is read.
 
             if FORMAT.can_have_circular_references() {
                 if !self.stack_check.is_safe_to_recurse() {
@@ -3199,6 +3185,7 @@ pub mod formatter {
                     writer.write_all(
                         pfmt!("<r><cyan>[Circular]<r>", ENABLE_ANSI_COLORS).as_bytes(),
                     );
+                    if writer.failed { self.failed = true; }
                     return Ok(());
                 } else {
                     remove_before_recurse = true;
@@ -3255,6 +3242,7 @@ pub mod formatter {
                     if self.quote_strings && js_type != jsc::JSType::RegExpObject {
                         if str.is_empty() {
                             writer.write_all(b"\"\"");
+                            if writer.failed { self.failed = true; }
                             return Ok(());
                         }
 
@@ -3291,6 +3279,7 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.write_all(pfmt!("<r>", true).as_bytes());
                         }
+                        if writer.failed { self.failed = true; }
                         return Ok(());
                     }
 
@@ -3329,6 +3318,7 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.write_all(pfmt!("<r>", true).as_bytes());
                         }
+                        if writer.failed { self.failed = true; }
                         return Ok(());
                     }
 

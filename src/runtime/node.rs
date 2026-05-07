@@ -38,6 +38,8 @@ pub mod process;
 
 #[path = "node/node_crypto_binding.rs"]
 pub mod crypto;
+// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
+pub use crypto as node_crypto_binding;
 
 #[path = "node/fs_events.rs"]
 pub mod fs_events;

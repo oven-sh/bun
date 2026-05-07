@@ -588,7 +588,7 @@ impl Route {
                     let blob =
                         AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
                     let mut headers = Headers::default();
-                    let mut fallback_mime;
+                    let fallback_mime;
                     let content_type: &[u8] = match &blob {
                         AnyBlob::Blob(b) => match b.content_type_or_mime_type() {
                             Some(ct) => ct,
@@ -600,7 +600,6 @@ impl Route {
                         },
                         _ => unreachable!(),
                     };
-                    let _ = &mut fallback_mime;
                     headers.append(b"Content-Type", content_type);
                     // Do not apply etags to html.
                     if output_files[i].loader != Loader::Html

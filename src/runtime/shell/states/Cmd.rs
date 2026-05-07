@@ -484,12 +484,20 @@ impl Cmd {
         // Stage the exec slot *before* spawning so PipeReader / process-exit
         // callbacks (which deref `cmd_parent.exec`) see a populated `Subproc`
         // with the correct `child` once `spawn_async` writes through
-        // `out_subproc`.
+        // `out_subproc`. `interp` is left null until `spawn_async` and the
+        // `did_exit_immediately` handling have returned: a synchronous
+        // `Cmd::on_exit` reached via the process exit handler would otherwise
+        // drive the trampoline (`Yield::run(&mut *interp)`) while this frame
+        // still holds `&mut Interpreter`, tearing the Cmd down (and freeing
+        // `child`) underneath the live `subproc` borrow. With `interp` null,
+        // `on_exit` records `exit_code`/`state = Done` and returns; we resume
+        // via the Yield we hand back below.
+        let interp_ptr: *mut Interpreter = interp;
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
             child: core::ptr::null_mut(),
             buffered_closed,
-            interp: interp as *mut Interpreter,
+            interp: core::ptr::null_mut(),
             this_id: this,
         }));
 
@@ -530,9 +538,9 @@ impl Cmd {
             &mut did_exit_immediately,
         );
         drop(shellio);
-        drop(arena);
 
         if let Err(e) = spawn_result {
+            drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
             return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
@@ -540,7 +548,6 @@ impl Cmd {
 
         // Read the subprocess back via the arena instead of holding `child_out`
         // across the call (spec: `.result => this.exec.subproc.child`).
-        interp.as_cmd_mut(this).spawn_arena_freed = true;
         let child: *mut ShellSubprocess = match &interp.as_cmd(this).exec {
             Exec::Subproc(sub) => sub.child,
             _ => unreachable!(),
@@ -549,7 +556,11 @@ impl Cmd {
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
         let subproc = unsafe { &mut *child };
+        // Spec order (Cmd.zig 531-533): `subproc.ref()` precedes
+        // `spawn_arena_freed = true; arena.deinit()`.
         subproc.r#ref();
+        interp.as_cmd_mut(this).spawn_arena_freed = true;
+        drop(arena);
 
         if did_exit_immediately {
             // Spec lines 535-544. `watch()` failed → process already gone.
@@ -564,6 +575,18 @@ impl Cmd {
             }
         }
 
+        // Publish the interpreter backref now that all synchronous spawn-time
+        // callbacks have returned, so subsequent async pipe-close /
+        // process-exit notifications can drive the trampoline themselves. If a
+        // synchronous callback already finished the command (`state = Done`),
+        // resume here instead — the callback couldn't, with `interp` null.
+        let me = interp.as_cmd_mut(this);
+        if let Exec::Subproc(exec) = &mut me.exec {
+            exec.interp = interp_ptr;
+        }
+        if matches!(me.state, CmdState::Done) {
+            return Yield::Next(this);
+        }
         Yield::suspended()
     }
 
@@ -598,7 +621,7 @@ impl Cmd {
         match core::mem::take(&mut me.exec) {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
-            Exec::Subproc(sub) => {
+            Exec::Subproc(sub) if !sub.child.is_null() => {
                 // SAFETY: `child` was set by `initSubproc` from a
                 // `Box::into_raw(ShellSubprocess)` and stays valid until
                 // this drop. Single-threaded.
@@ -613,6 +636,9 @@ impl Cmd {
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
+            // `Exec::Subproc` with null `child`: spawn failed before the
+            // subprocess box was returned. Nothing to tear down.
+            Exec::Subproc(_) => {}
         }
         // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.
         // Argv/env are heap-owned `Vec`s in the port; nothing arena-backed to

@@ -537,6 +537,15 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
+        /// Read-only view of the interned string table — `(buf, lens)` —
+        /// safe to call before `finalize()`. Unlike `as_deserialized()` this
+        /// does not assert `finalized`; it exists so the bundler can rewrite
+        /// cross-chunk specifier StringIDs (which must happen pre-finalize
+        /// because `replace_string_id` debug-asserts `!finalized`).
+        pub fn strings(&self) -> (&[u8], &[u32]) {
+            (&self.strings_buf, &self.strings_lens)
+        }
+
         pub fn str(&mut self, value: &[u8]) -> StringID {
             if let Some(&idx) = self.strings_map.get(value) {
                 return StringID(idx);

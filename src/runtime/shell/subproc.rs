@@ -192,7 +192,7 @@ impl ShellSubprocess {
     /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
     /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
     #[inline]
-    fn proc(&self) -> &mut Process {
+    pub fn proc(&self) -> &mut Process {
         // SAFETY: see doc comment.
         unsafe { &mut *self.process }
     }

@@ -5260,8 +5260,12 @@ impl VirtualMachine {
         );
 
         drop(source_code_slice);
-        // TODO(port): `Holder::deinit` — parser-arena reset plumbing gated.
-        let _ = exception_holder;
+        // Spec VirtualMachine.zig:3304 `defer exception_holder.deinit(this)` —
+        // releases the WTFString refs (`name`/`message`/stack-frame
+        // `function_name`/`source_url`/source-line bodies) populated by
+        // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
+        // OOMs the inspect-error-leak test.
+        exception_holder.deinit(self);
         result
     }
 

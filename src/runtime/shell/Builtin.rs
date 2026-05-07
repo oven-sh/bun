@@ -733,8 +733,9 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
+            // Spec: `enqueueCb(ctx)` — only the `.fd` arm transitions state.
+            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
@@ -747,7 +748,7 @@ impl Builtin {
         let shell = interp.as_cmd(cmd).base.shell;
         // SAFETY: shell env outlives the Cmd node.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
-            let _ = unsafe { (*(*shell).buffered_stderr()).append_slice(&buf) };
+            bun_core::handle_oom(unsafe { (*(*shell).buffered_stderr()).append_slice(&buf) });
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)

@@ -4157,55 +4157,56 @@ impl Blob {
     }
 
     pub fn resolve_size(&mut self) {
-        if let Some(store) = &self.store {
-            match &store.data {
-                store::Data::Bytes(_) => {
+        let Some(store) = &self.store else {
+            self.size = 0;
+            return;
+        };
+        // PORT NOTE: dispatch on the copied `DataTag` rather than
+        // `match &store.data { File(file) => … }`. The latter goes through
+        // `StoreRef::Deref → &Store → &Data` (no `UnsafeCell`), and that shared
+        // borrow is live across the arm body where `resolve_file_stat`
+        // materializes `&mut File` on the same memory via the raw
+        // `Box::into_raw` pointer — Stacked Borrows UB, and under noalias the
+        // optimizer may legally cache the pre-call `seekable: None` and fall
+        // through to `self.size = 0`. Mirrors Zig, which re-loads
+        // `store.data.file.*` fresh after `resolveFileStat`.
+        let store_ptr = store.as_ptr();
+        // SAFETY: `store_ptr` is the live `Box::into_raw` pointer behind
+        // `StoreRef`; single-threaded JS event loop ⇒ no concurrent writers.
+        match unsafe { &(*store_ptr).data }.tag() {
+            store::DataTag::Bytes => {
+                let offset = self.offset;
+                let store_size = store.size();
+                if store_size != MAX_SIZE {
+                    self.offset = store_size.min(offset);
+                    self.size = store_size - offset;
+                }
+            }
+            store::DataTag::File => {
+                // SAFETY: see above; short-lived read, dropped before the call.
+                if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
+                    resolve_file_stat(store);
+                }
+                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
+                let file = unsafe { (*store_ptr).data.as_file() };
+
+                if file.seekable.is_some() && file.max_size != MAX_SIZE {
+                    let store_size = file.max_size;
                     let offset = self.offset;
-                    let store_size = store.size();
-                    if store_size != MAX_SIZE {
-                        self.offset = store_size.min(offset);
-                        self.size = store_size - offset;
-                    }
+                    self.offset = store_size.min(offset);
+                    self.size = store_size.saturating_sub(offset);
                     return;
                 }
-                store::Data::File(_) => {
-                    // PORT NOTE: do not hold the pattern-bound `&File` across
-                    // `resolve_file_stat` — it materializes `&mut File` on the
-                    // same memory (Stacked Borrows UB; the optimizer may legally
-                    // cache the pre-call `seekable: None` and fall through to
-                    // `self.size = 0`). Re-read through the raw store pointer
-                    // after the mutating call. Mirrors Zig, which re-loads
-                    // `store.data.file.*` each time.
-                    let store_ptr = store.as_ptr();
-                    // SAFETY: `store_ptr` is the live `Box::into_raw` pointer
-                    // behind `StoreRef`; single-threaded JS event loop ⇒ no
-                    // concurrent writers.
-                    if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
-                        resolve_file_stat(store);
-                    }
-                    // SAFETY: fresh borrow after possible mutation.
-                    let file = unsafe { (*store_ptr).data.as_file() };
 
-                    if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                        let store_size = file.max_size;
-                        let offset = self.offset;
-                        self.offset = store_size.min(offset);
-                        self.size = store_size.saturating_sub(offset);
-                        return;
-                    }
-
-                    // For non-seekable files (pipes, FIFOs), the size is genuinely
-                    // unknown — leave it as max_size so that stream readers don't
-                    // treat it as an empty file.
-                    if file.seekable == Some(false) {
-                        return;
-                    }
+                // For non-seekable files (pipes, FIFOs), the size is genuinely
+                // unknown — leave it as max_size so that stream readers don't
+                // treat it as an empty file.
+                if file.seekable == Some(false) {
+                    return;
                 }
-                _ => {}
+                self.size = 0;
             }
-            self.size = 0;
-        } else {
-            self.size = 0;
+            store::DataTag::S3 => self.size = 0,
         }
     }
 
@@ -4214,42 +4215,42 @@ impl Blob {
     /// (e.g. `ByteBlobLoader::setup`) that in Zig copied the whole `Blob` value
     /// (`var blobe = blob.*; blobe.resolveSize();`) — `Blob` is not `Clone` in Rust.
     pub fn resolved_size(&self) -> (SizeType, SizeType) {
-        if let Some(store) = &self.store {
-            match &store.data {
-                store::Data::Bytes(_) => {
+        let Some(store) = &self.store else {
+            return (self.offset, 0);
+        };
+        // PORT NOTE: see `resolve_size` — dispatch on the copied tag and re-read
+        // through the raw store pointer after `resolve_file_stat` so no
+        // `Deref`-produced `&Data`/`&File` is live across the mutating call.
+        let store_ptr = store.as_ptr();
+        // SAFETY: `store_ptr` is the live `Box::into_raw` pointer behind
+        // `StoreRef`; single-threaded JS event loop.
+        match unsafe { &(*store_ptr).data }.tag() {
+            store::DataTag::Bytes => {
+                let offset = self.offset;
+                let store_size = store.size();
+                if store_size != MAX_SIZE {
+                    return (store_size.min(offset), store_size - offset);
+                }
+                (self.offset, self.size)
+            }
+            store::DataTag::File => {
+                // SAFETY: see above; short-lived read, dropped before the call.
+                if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
+                    resolve_file_stat(store);
+                }
+                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
+                let file = unsafe { (*store_ptr).data.as_file() };
+                if file.seekable.is_some() && file.max_size != MAX_SIZE {
+                    let store_size = file.max_size;
                     let offset = self.offset;
-                    let store_size = store.size();
-                    if store_size != MAX_SIZE {
-                        return (store_size.min(offset), store_size - offset);
-                    }
+                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                }
+                if file.seekable == Some(false) {
                     return (self.offset, self.size);
                 }
-                store::Data::File(_) => {
-                    // PORT NOTE: see `resolve_size` — re-read through the raw
-                    // store pointer after `resolve_file_stat` to avoid the
-                    // stale-shared-borrow UB.
-                    let store_ptr = store.as_ptr();
-                    // SAFETY: `store_ptr` is the live `Box::into_raw` pointer
-                    // behind `StoreRef`; single-threaded JS event loop.
-                    if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
-                        resolve_file_stat(store);
-                    }
-                    // SAFETY: fresh borrow after possible mutation.
-                    let file = unsafe { (*store_ptr).data.as_file() };
-                    if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                        let store_size = file.max_size;
-                        let offset = self.offset;
-                        return (store_size.min(offset), store_size.saturating_sub(offset));
-                    }
-                    if file.seekable == Some(false) {
-                        return (self.offset, self.size);
-                    }
-                }
-                _ => {}
+                (self.offset, 0)
             }
-            (self.offset, 0)
-        } else {
-            (self.offset, 0)
+            store::DataTag::S3 => (self.offset, 0),
         }
     }
 }

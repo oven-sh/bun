@@ -23,33 +23,93 @@ pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
 
 pub mod behavior {
     bitflags::bitflags! {
-        /// Port of `install/dependency.zig` `Behavior` (packed u8).
+        /// Port of `install/dependency.zig` `Behavior` (packed u8). Bit 0 and
+        /// bit 7 are reserved (`_unused_1`/`_unused_2` in Zig) so the on-disk
+        /// lockfile encoding stays byte-compatible.
         #[derive(Default, Clone, Copy, PartialEq, Eq)]
         pub struct Behavior: u8 {
-            const PROD     = 1 << 1;
-            const OPTIONAL = 1 << 2;
-            const DEV      = 1 << 3;
-            const PEER     = 1 << 4;
+            const PROD      = 1 << 1;
+            const OPTIONAL  = 1 << 2;
+            const DEV       = 1 << 3;
+            const PEER      = 1 << 4;
             const WORKSPACE = 1 << 5;
+            /// Is not set for transitive bundled dependencies
+            const BUNDLED   = 1 << 6;
         }
     }
 }
 pub use behavior::Behavior;
 
-/// Port of `install/dependency.zig` `Version.Tag` — only the variants the
-/// resolver branches on are surfaced; `bun_install` widens via `From`.
+impl Behavior {
+    #[inline] pub fn is_prod(self) -> bool { self.contains(Self::PROD) }
+    /// Zig: `optional and !peer` — peer-optionals are reported separately.
+    #[inline] pub fn is_optional(self) -> bool {
+        self.contains(Self::OPTIONAL) && !self.contains(Self::PEER)
+    }
+    #[inline] pub fn is_optional_peer(self) -> bool {
+        self.contains(Self::OPTIONAL) && self.contains(Self::PEER)
+    }
+    #[inline] pub fn is_dev(self) -> bool { self.contains(Self::DEV) }
+    #[inline] pub fn is_peer(self) -> bool { self.contains(Self::PEER) }
+    #[inline] pub fn is_workspace(self) -> bool { self.contains(Self::WORKSPACE) }
+    #[inline] pub fn is_bundled(self) -> bool { self.contains(Self::BUNDLED) }
+    #[inline] pub fn includes(self, rhs: Self) -> bool { self.intersects(rhs) }
+    #[inline] pub fn is_required(self) -> bool { !self.is_optional() }
+
+    pub fn is_enabled(self, features: Features) -> bool {
+        self.is_prod()
+            || (features.optional_dependencies && self.is_optional())
+            || (features.dev_dependencies && self.is_dev())
+            || (features.peer_dependencies && self.is_peer())
+            || (features.workspaces && self.is_workspace())
+    }
+
+    pub fn cmp(self, rhs: Self) -> core::cmp::Ordering {
+        use core::cmp::Ordering::*;
+        if self == rhs { return Equal; }
+        // ensure workspaces are placed at the beginning
+        if self.is_workspace() != rhs.is_workspace() {
+            return if self.is_workspace() { Less } else { Greater };
+        }
+        if self.is_dev() != rhs.is_dev() {
+            return if self.is_dev() { Less } else { Greater };
+        }
+        if self.is_optional() != rhs.is_optional() {
+            return if self.is_optional() { Less } else { Greater };
+        }
+        if self.is_prod() != rhs.is_prod() {
+            return if self.is_prod() { Less } else { Greater };
+        }
+        if self.is_peer() != rhs.is_peer() {
+            return if self.is_peer() { Less } else { Greater };
+        }
+        Equal
+    }
+}
+
+/// Port of `install/dependency.zig` `Version.Tag`.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum DependencyVersionTag {
     #[default]
-    Uninitialized,
-    Npm,
-    Dist,
-    Tarball,
-    Folder,
-    Symlink,
-    Workspace,
-    Git,
-    Github,
+    Uninitialized = 0,
+    /// Semver range
+    Npm = 1,
+    /// NPM dist tag, e.g. "latest"
+    DistTag = 2,
+    /// URI to a .tgz or .tar.gz
+    Tarball = 3,
+    /// Local folder
+    Folder = 4,
+    /// link:path
+    Symlink = 5,
+    /// Local path specified under `workspaces`
+    Workspace = 6,
+    /// Git Repository (via `git` CLI)
+    Git = 7,
+    /// GitHub Repository (via REST API)
+    Github = 8,
+    Catalog = 9,
 }
 
 /// Resolver-visible projection of `install::dependency::Version`. The full

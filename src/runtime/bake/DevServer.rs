@@ -1155,7 +1155,11 @@ impl DevServer {
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
         );
 
-        let global = self.vm().global();
+        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime.
+        // Raw-ptr deref (not `self.vm().global()`) so `global`'s lifetime is
+        // decoupled from `&self` — it's held across the `&mut self` field
+        // assignments below.
+        let global = unsafe { &*(*self.vm).global };
         let interface = match c::bake_load_initial_server_code(
             global,
             runtime,

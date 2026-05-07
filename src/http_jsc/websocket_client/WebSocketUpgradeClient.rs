@@ -1810,13 +1810,30 @@ fn trim_ws(s: &[u8]) -> &[u8] {
 }
 
 /// `std.fmt.parseInt(u8, s, 10) catch null`
-fn parse_u8_dec(s: &[u8]) -> Option<u8> {
+///
+/// Zig's `parseInt` accepts an optional leading `+` (and `-`, which for an
+/// unsigned target type only succeeds on `-0`). RFC 7692 §7.1.2 constrains the
+/// permessage-deflate window-bits parameter to bare decimal `8`..`15`, so the
+/// sign handling is only here for spec parity with the Zig path.
+fn parse_u8_dec(mut s: &[u8]) -> Option<u8> {
+    match s.first()? {
+        b'+' => s = &s[1..],
+        b'-' => {
+            // Unsigned target: `-0`/`-00…` parses to 0; any other digit fails.
+            s = &s[1..];
+            if s.is_empty() || s.iter().any(|&b| b != b'0') {
+                return None;
+            }
+            return Some(0);
+        }
+        _ => {}
+    }
     if s.is_empty() {
         return None;
     }
     let mut acc: u32 = 0;
     for &b in s {
-        if !(b'0'..=b'9').contains(&b) {
+        if !b.is_ascii_digit() {
             return None;
         }
         acc = acc.checked_mul(10)?.checked_add((b - b'0') as u32)?;

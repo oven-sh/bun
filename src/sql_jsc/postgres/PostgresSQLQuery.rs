@@ -56,7 +56,7 @@ impl Drop for PostgresSQLQuery {
             // SAFETY: `stmt` was produced by `Box::into_raw` (in `do_run` or
             // PostgresSQLConnection's statements map) and was ref'd when stored
             // into `self.statement`.
-            unsafe { stmt_deref(stmt) };
+            unsafe { PostgresSQLStatement::deref(stmt) };
         }
     }
 }

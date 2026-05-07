@@ -1491,7 +1491,7 @@ impl<'a> Match<'a> {
     }
 
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        b1_stubs::strings_ext::trim_left(self.pathname, b"/")
+        strings::trim_left(self.pathname, b"/")
     }
 }
 
@@ -1569,7 +1569,7 @@ pub mod pattern {
                             .iter()
                             .position(|&b| b == b'/')
                             .unwrap_or(path_.len())];
-                        if !str_.eql(segment) {
+                        if !str_.eql_bytes(segment) {
                             params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
                             return false;
                         }
@@ -1659,7 +1659,7 @@ pub mod pattern {
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
         pub fn validate(input: &[u8], log: &mut logger::Log) -> Option<ValidationResult> {
-            if b1_stubs::CodepointIterator::needs_utf8_decoding(input) {
+            if strings::CodepointIterator::needs_utf8_decoding(input) {
                 let source = logger::Source::init_empty_file(input);
                 log.add_error_fmt(
                     Some(&source),
@@ -1988,7 +1988,7 @@ pub mod pattern {
         pub fn eql(a: &Value, b: &Value) -> bool {
             a.tag() == b.tag()
                 && match (a, b) {
-                    (Value::Static(a), Value::Static(b)) => HashedString::eql_hashed(*a, *b),
+                    (Value::Static(a), Value::Static(b)) => a.eql(b),
                     (Value::Dynamic(a), Value::Dynamic(b)) => TinyPtr::eql(*a, *b),
                     (Value::CatchAll(a), Value::CatchAll(b)) => TinyPtr::eql(*a, *b),
                     (Value::OptionalCatchAll(a), Value::OptionalCatchAll(b)) => {
@@ -2515,7 +2515,7 @@ mod tests {
             _ => panic!(),
         }
         match static_.value {
-            pattern::Value::Static(s) => assert_eq!(s.slice(), b"static"),
+            pattern::Value::Static(s) => assert_eq!(s.str(), b"static"),
             _ => panic!(),
         }
         match dynamic2.value {
@@ -2523,7 +2523,7 @@ mod tests {
             _ => panic!(),
         }
         match static2.value {
-            pattern::Value::Static(s) => assert_eq!(s.slice(), b"static2"),
+            pattern::Value::Static(s) => assert_eq!(s.str(), b"static2"),
             _ => panic!(),
         }
         match catch_all.value {

@@ -62,9 +62,7 @@ impl BakeSourceProvider {
     /// Returns the pre-bundled sourcemap JSON for `source_filename` if the
     /// current global is a `Bake::GlobalObject`; `None` otherwise (caller falls
     /// back to reading `<source>.map` from disk).
-    // TODO(port): returned slice borrows from `PerThread.bundled_outputs`; lifetime
-    // is not expressible against `&self`. Phase B: thread `'pt` or return owned.
-    pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&'static [u8]> {
+    pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
         // SAFETY: `VirtualMachine::get()` returns the live per-thread VM pointer;
         // we only read its `global` field.
         let global = unsafe { (*bun_jsc::virtual_machine::VirtualMachine::get()).global };
@@ -73,17 +71,24 @@ impl BakeSourceProvider {
             return None;
         }
 
-        // TODO(b2-blocked): bun_runtime::bake::production::PerThread — `bun_runtime`
-        // is a higher-tier crate (depending on it here creates a cycle; see
-        // Cargo.toml). The Zig body is:
-        //     const pt = BakeGlobalObject__getPerThreadData(global);
-        //     if (pt.source_maps.get(source_filename)) |value|
-        //         return pt.bundled_outputs[value.get()].value.asSlice();
-        //     return "";
-        // Until `PerThread` is reachable from this tier, fall through to the
-        // empty-slice sentinel (caller treats it as "no external map").
-        let _ = BakeGlobalObject__getPerThreadData;
-        let _ = source_filename;
+        // SAFETY: `global` is a `Bake::GlobalObject` (checked above), so the
+        // attached `PerThread*` is non-null and live for the bake build session.
+        let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
+        // PORT NOTE: `PerThread`'s fields name `bun_bundler::OutputFile`, which
+        // lives above this crate (forward-dep cycle). The field access
+        // (`pt.source_maps.get(filename)` →
+        // `pt.bundled_outputs[idx].value.asSlice()`) is dispatched through the
+        // existing `bun_jsc::RuntimeHooks` vtable per PORTING.md §Dispatch
+        // (cold path — error-stack source-map resolution).
+        let hooks = bun_jsc::virtual_machine::runtime_hooks()
+            .expect("RuntimeHooks not installed");
+        // SAFETY: `pt` is the live `*mut PerThread` per above; called on the JS
+        // thread. The returned slice borrows `PerThread.bundled_outputs`, which
+        // outlives this `BakeSourceProvider` (the provider is created from a
+        // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
+        if let Some(slice) = unsafe { (hooks.bake_per_thread_source_map)(pt, source_filename) } {
+            return Some(unsafe { &*slice });
+        }
         Some(b"")
     }
 
@@ -117,7 +122,6 @@ impl SourceProvider for BakeSourceProvider {
     }
 
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        // `Option<&'static [u8]>` covariant-narrows to `Option<&'self [u8]>`.
         Self::get_external_data(self, source_filename)
     }
 }
@@ -125,7 +129,7 @@ impl SourceProvider for BakeSourceProvider {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sourcemap_jsc/source_provider.zig (48 lines)
-//   confidence: medium
-//   todos:      2 gated bodies
-//   notes:      get_external_data return lifetime borrows PerThread; @hasDecl dispatch → needs trait in bun_sourcemap
+//   confidence: high
+//   notes:      PerThread field access hoisted to bun_runtime via the
+//               RuntimeHooks cold-path vtable (PORTING.md §Dispatch).
 // ──────────────────────────────────────────────────────────────────────────

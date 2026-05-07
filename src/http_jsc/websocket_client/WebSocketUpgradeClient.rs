@@ -30,7 +30,7 @@ use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
 use bun_core::FeatureFlags;
 use bun_http::{HeaderValueIterator, Headers};
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachineRef};
+use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_string::strings;
 use bun_string::{String as BunString, ZigStringSlice as Utf8Slice};

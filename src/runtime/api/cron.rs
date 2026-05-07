@@ -73,12 +73,20 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
 
 /// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
 // Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
-trait CronJobBase {
+//
+// PORT NOTE: every method on the path to `finish()` (which `Box::from_raw`-
+// drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
+// A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
+// making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
+// has no protector and ends at last use under NLL, so field access via `s`
+// followed by `Self::finish(this)` is sound.
+trait CronJobBase: Sized {
     fn remaining_fds_mut(&mut self) -> &mut i8;
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
     fn has_called_process_exit_mut(&mut self) -> &mut bool;
     fn exit_status_mut(&mut self) -> &mut Option<Status>;
-    fn maybe_finished(&mut self);
+    /// May free `this`. Caller must not touch `this` afterward.
+    unsafe fn maybe_finished(this: *mut Self);
 
     fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]

@@ -260,6 +260,15 @@ pub const fn max_path_size<T: PathChar>() -> usize {
     }
 }
 
+/// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
+/// the current target. Used for sizing stack buffers where the `T`-dependent
+/// array length can't be expressed as a const-generic (Zig's `[MAX_PATH_SIZE(T):0]T`).
+const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
+    MAX_PATH_BYTES
+} else {
+    bun_paths::PATH_MAX_WIDE
+};
+
 pub const fn path_size<T: PathChar>() -> usize {
     if T::IS_U16 {
         PATH_MIN_WIDE
@@ -2948,13 +2957,13 @@ pub fn resolve_posix_t<'a, T: PathChar>(
     while i_i64 > -2 && !resolved_absolute {
         // PORT NOTE: reshaped for borrowck — `path` may borrow from tmp_buf which lives
         // in this scope; copy into buf2 before reusing.
-        let mut tmp_buf: [T; max_path_size::<u8>()];
-        // TODO(port): const-generic array size depends on T; using u8 size as upper bound.
+        // Zig: `[MAX_PATH_SIZE(T):0]T` — sized to the larger of the two T variants.
+        let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).unwrap()]
         } else {
             // cwd is limited to MAX_PATH_BYTES.
-            tmp_buf = [T::default(); max_path_size::<u8>()];
+            tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
             match super::_cwd::posix_cwd_t(&mut tmp_buf) {
                 Ok(r) => &*r,
                 Err(e) => return Err(e),

@@ -179,21 +179,22 @@ pub fn populate_manifest_cache(
                 let needs_extended_manifest =
                     unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
 
-                // SAFETY: `scope_for_package_name` borrows `&self.options`;
-                // `manifests` is a disjoint field. `by_name`'s `pm` parameter
-                // is only used for `pm.options` / `pm.get_cache_directory()` /
-                // `pm.timestamp_for_manifest_cache_control` — never `pm.manifests`
-                // — so the two `&mut` projections from the same provenance root
-                // touch disjoint memory.
+                // SAFETY: `scope_for_package_name` borrows only `options`;
+                // `manifests` is a disjoint field projected from the same raw
+                // provenance root. `by_name` takes `pm` as a raw pointer and
+                // dereferences only fields disjoint from `manifests` (see its
+                // safety doc), so no borrow stack is invalidated.
                 let scope: *const crate::npm::registry::Scope =
-                    unsafe { &*manager_ptr }.scope_for_package_name(pkg_name_slice);
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
-                    unsafe { &mut *manager_ptr },
-                    unsafe { &*scope },
-                    pkg_name_slice,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended_manifest,
-                );
+                    unsafe { &(*manager_ptr).options }.scope_for_package_name(pkg_name_slice);
+                let cached = unsafe {
+                    (*manager_ptr).manifests.by_name(
+                        manager_ptr,
+                        &*scope,
+                        pkg_name_slice,
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended_manifest,
+                    )
+                };
                 if cached.is_none() {
                     start_manifest_task(
                         unsafe { &mut *manager_ptr },
@@ -232,14 +233,16 @@ pub fn populate_manifest_cache(
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // SAFETY: see disjoint-field note on the `.All` arm above.
                     let scope: *const crate::npm::registry::Scope =
-                        unsafe { &*manager_ptr }.scope_for_package_name(package_name);
-                    let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
-                        unsafe { &mut *manager_ptr },
-                        unsafe { &*scope },
-                        package_name,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
-                        needs_extended_manifest,
-                    );
+                        unsafe { &(*manager_ptr).options }.scope_for_package_name(package_name);
+                    let cached = unsafe {
+                        (*manager_ptr).manifests.by_name(
+                            manager_ptr,
+                            &*scope,
+                            package_name,
+                            ManifestLoad::LoadFromMemoryFallbackToDisk,
+                            needs_extended_manifest,
+                        )
+                    };
                     if cached.is_none() {
                         start_manifest_task(
                             unsafe { &mut *manager_ptr },

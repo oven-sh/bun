@@ -67,7 +67,9 @@ unsafe extern "C" fn __jsc_host_bun_test_done_callback(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/DoneCallback.zig (46 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; groupLog begin/end mapped to group_begin!() RAII GroupGuard
+//   confidence: high
+//   todos:      0
+//   notes:      groupLog begin/end mapped to group_begin!() RAII GroupGuard;
+//               toJSHostFn comptime wrap → explicit extern "C" thunk +
+//               to_js_host_fn_result
 // ──────────────────────────────────────────────────────────────────────────

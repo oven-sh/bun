@@ -2740,7 +2740,7 @@ impl DevServer {
                     .generate_client_bundle(route_bundle)
                     .expect("oom");
                 let route_ptr = StaticRoute::init_from_any_blob(
-                    &crate::webcore::AnyBlob::from_owned_slice(payload),
+                    crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
                         server: unsafe { &*self_ptr }.server,
@@ -3764,7 +3764,7 @@ pub fn finalize_bundle(
         };
         let asset_index = dev.assets.replace_path(
             key,
-            &crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
+            crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,
             h,
         )?;
@@ -5046,7 +5046,7 @@ impl DevServer {
         match resp {
             DevResponse::Http(r) => StaticRoute::send_blob_then_deinit(
                 r,
-                &crate::webcore::blob::Any::from_array_list(buf),
+                crate::webcore::blob::Any::from_array_list(buf),
                 crate::server::static_route::InitFromBytesOptions {
                     mime_type: Some(&MimeType::HTML),
                     server: self.server,
@@ -6101,7 +6101,7 @@ impl DevServer {
     pub fn put_or_overwrite_asset(
         &mut self,
         path: &bun_bundler::bun_fs::Path<'_>,
-        contents: &crate::webcore::blob::Any,
+        contents: crate::webcore::blob::Any,
         content_hash: u64,
     ) -> Result<(), bun_core::Error> {
         let _g = self.graph_safety_lock.guard();

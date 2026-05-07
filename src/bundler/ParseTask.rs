@@ -53,13 +53,12 @@ mod EventLoop {
 
 // PORT NOTE: arena-lifetime erasure helper. Slices borrowed from the per-file
 // parse arena (or `Source.contents: Cow<'static,[u8]>`) outlive the link step;
-// see TODO(port): arena lifetime notes throughout. Centralized so the unsafe
-// transmute is auditable.
+// see TODO(port): arena lifetime notes throughout. Routed through `StoreStr`
+// so the lifetime erasure goes through one audited unsafe (`StoreStr::slice`)
+// instead of an open-coded `transmute` at every site.
 #[inline(always)]
 fn leak_static(s: &[u8]) -> &'static [u8] {
-    // SAFETY: ARENA — caller guarantees `s` borrows storage that outlives all
-    // reads through the returned slice (parse arena / interned source bytes).
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+    ast::StoreStr::new(s).slice()
 }
 
 // CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
@@ -169,9 +168,9 @@ pub struct ParseTask {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub ctx: *mut BundleV2<'static>, // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
-    // TODO(port): arena lifetime — borrowed from package_json
-    pub package_version: &'static [u8],
-    pub package_name: &'static [u8],
+    // Borrows package_json (resolver arena); valid for the bundle pass.
+    pub package_version: ast::StoreStr,
+    pub package_name: ast::StoreStr,
     pub is_entry_point: bool,
 }
 
@@ -223,16 +222,14 @@ pub struct Success {
     pub side_effects: _resolver::SideEffects,
 
     /// Used by "file" loader files.
-    // TODO(port): arena lifetime
-    pub unique_key_for_additional_file: &'static [u8],
+    pub unique_key_for_additional_file: ast::StoreStr,
     /// Used by "file" loader files.
     pub content_hash_for_additional_file: u64,
 
     pub loader: Loader,
 
     /// The package name from package.json, used for barrel optimization.
-    // TODO(port): arena lifetime
-    pub package_name: &'static [u8],
+    pub package_name: ast::StoreStr,
 }
 
 pub struct ResultError {
@@ -266,19 +263,17 @@ impl ParseTask {
     ) -> ParseTask {
         // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
         // arena outlives the bundle pass, so deref'ing the raw pointer here to
-        // borrow `name`/`version` is sound. Slices are leaked to `'static` per
-        // the Phase-A arena-lifetime convention (TODO(port): arena lifetime).
-        let (package_name, package_version): (&'static [u8], &'static [u8]) =
-            match resolve_result.package_json {
-                Some(pj) => unsafe {
-                    let pj = &*pj;
-                    (
-                        core::mem::transmute::<&[u8], &'static [u8]>(&pj.name[..]),
-                        core::mem::transmute::<&[u8], &'static [u8]>(&pj.version[..]),
-                    )
-                },
-                None => (b"", b""),
-            };
+        // borrow `name`/`version` is sound.
+        let (package_name, package_version) = match resolve_result.package_json {
+            Some(pj) => unsafe {
+                let pj = &*pj;
+                (
+                    ast::StoreStr::new(&pj.name[..]),
+                    ast::StoreStr::new(&pj.version[..]),
+                )
+            },
+            None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
+        };
         // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
         // only read `transpiler().options.target` here.
         let known_target = unsafe { (*ctx).transpiler().options.target };
@@ -358,8 +353,8 @@ impl Default for ParseTask {
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
-            package_version: b"",
-            package_name: b"",
+            package_version: ast::StoreStr::EMPTY,
+            package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
         }
     }
@@ -574,8 +569,8 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         module_type: options::ModuleType::Unknown,
         emit_decorator_metadata: false,
         experimental_decorators: false,
-        package_version: b"",
-        package_name: b"",
+        package_version: ast::StoreStr::EMPTY,
+        package_name: ast::StoreStr::EMPTY,
         is_entry_point: false,
     };
     let source = Source {
@@ -659,8 +654,7 @@ fn get_empty_ast<RootType: Default + ast::expr::IntoExprData>(
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct FileLoaderHash {
-    // TODO(port): arena lifetime
-    pub key: &'static [u8],
+    pub key: ast::StoreStr,
     pub content_hash: u64,
 }
 
@@ -922,7 +916,7 @@ fn get_ast(
                     .expect("unreachable");
                     let embedded_path = leak_static(buf.into_bump_str().as_bytes());
                     *unique_key_for_additional_file = FileLoaderHash {
-                        key: embedded_path,
+                        key: ast::StoreStr::new(embedded_path),
                         content_hash: ContentHasher::run(&source.contents),
                     };
                     break 'brk embedded_path;
@@ -1038,7 +1032,7 @@ fn get_ast(
             );
 
             *unique_key_for_additional_file = FileLoaderHash {
-                key: unique_key,
+                key: ast::StoreStr::new(unique_key),
                 content_hash: ContentHasher::run(&source.contents),
             };
             return Ok(JSAst::init(
@@ -1260,7 +1254,7 @@ fn get_ast(
             };
             let root = Expr::init(E::String { data: unique_key.into(), ..Default::default() }, Loc { start: 0 });
             *unique_key_for_additional_file = FileLoaderHash {
-                key: unique_key,
+                key: ast::StoreStr::new(unique_key),
                 content_hash,
             };
             let mut ast = JSAst::init(
@@ -2297,7 +2291,7 @@ fn run_with_source_code(
             (*transpiler).macro_context.as_mut().unwrap(),
         ))
     };
-    opts.package_version = task.package_version;
+    opts.package_version = task.package_version.slice();
 
     opts.features.allow_runtime = !task.source_index.is_runtime();
     opts.features.unwrap_commonjs_to_esm =
@@ -2439,7 +2433,7 @@ fn run_with_source_code(
     task.jsx.parse = loader.is_jsx();
 
     let mut unique_key_for_additional_file = FileLoaderHash {
-        key: b"",
+        key: ast::StoreStr::EMPTY,
         content_hash: 0,
     };
     // SAFETY: task.ctx backref valid.

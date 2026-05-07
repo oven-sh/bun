@@ -557,10 +557,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data.allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
         data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
 
-        // SAFETY: arena-owned slice — E::Arrow.args is `&'static [G::Arg]` pending arena-lifetime
-        // rework (see TODO on the field). Round-trip through a raw pointer to erase the borrow
-        // lifetime; the backing allocation lives for the parser arena.
-        let args_slice: &'static [G::Arg] = unsafe { &*(args as *const [G::Arg]) };
+        let args_slice = crate::StoreSlice::<G::Arg>::new_mut(args);
 
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;

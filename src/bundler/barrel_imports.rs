@@ -87,7 +87,7 @@ fn apply_barrel_optimization_impl(
     let source_index = result.source.index.0;
 
     let is_explicit = if let Some(oi) = this.transpiler().options.optimize_imports {
-        oi.map.contains(result.package_name)
+        oi.map.contains(result.package_name.slice())
     } else {
         false
     };
@@ -232,7 +232,7 @@ fn apply_barrel_optimization_impl(
             barrel,
             "barrel detected: {} (source={}, {} deferred, {} needed)",
             bstr::BStr::new(if !result.package_name.is_empty() {
-                result.package_name
+                result.package_name.slice()
             } else {
                 result.source.path.text
             }),

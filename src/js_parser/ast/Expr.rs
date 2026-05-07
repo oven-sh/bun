@@ -149,7 +149,6 @@ impl Expr {
 
         Ok(Expr::init(
             E::Arrow {
-                args: &[],
                 body: G::FnBody {
                     loc: this.loc,
                     stmts: stmts as *mut [Stmt],
@@ -2314,16 +2313,8 @@ impl Data {
                 for i in 0..el.args.len() {
                     args.push(el.args[i].deep_clone(bump)?);
                 }
-                // TODO(port): `Arrow.args` is `&'static [G::Arg]` pending Phase-B
-                // arena-lifetime threading; erase the bump lifetime here (the
-                // slice lives in the same arena as the `Arrow` node).
-                let args: &'static [G::Arg] = unsafe {
-                    core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(
-                        args.into_bump_slice(),
-                    )
-                };
                 let item = bump.alloc(E::Arrow {
-                    args,
+                    args: crate::StoreSlice::new(args.into_bump_slice()),
                     body: G::FnBody { loc: el.body.loc, stmts: el.body.stmts },
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,

@@ -449,6 +449,136 @@ impl core::fmt::Debug for StoreStr {
     }
 }
 
+// ─── StoreSlice<T> — arena-owned typed slice (StoreStr's generic sibling) ───
+//
+// Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
+// per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena and
+// were previously typed `&'static [T]`, forcing a `transmute` at every
+// construction site. Same contract as `StoreRef`/`StoreStr`: safe `::new`,
+// raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
+// owning arena resets. The `u32` length matches Zig's `[]T` (`u32` len under
+// `-Dwasm32` and the AST's practical bounds) and keeps the field at 12 bytes
+// on 64-bit instead of 16 — relevant for hot AST nodes.
+#[repr(C)]
+pub struct StoreSlice<T> {
+    ptr: core::ptr::NonNull<T>,
+    len: u32,
+}
+
+// Manual Copy/Clone: derive would add a spurious `T: Copy` bound.
+impl<T> Copy for StoreSlice<T> {}
+impl<T> Clone for StoreSlice<T> {
+    #[inline]
+    fn clone(&self) -> Self { *self }
+}
+
+// SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
+// arena. Asserted Send/Sync so payload types can sit in `static` Prefill
+// tables; callers must not actually share a Store across threads.
+unsafe impl<T> Send for StoreSlice<T> {}
+unsafe impl<T> Sync for StoreSlice<T> {}
+
+impl<T> StoreSlice<T> {
+    pub const EMPTY: StoreSlice<T> =
+        StoreSlice { ptr: core::ptr::NonNull::<T>::dangling(), len: 0 };
+
+    /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
+    /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
+    /// (valid until the owning arena resets).
+    #[inline]
+    pub const fn new(s: &[T]) -> Self {
+        debug_assert!(s.len() <= u32::MAX as usize);
+        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
+            Some(ptr) => StoreSlice { ptr, len: s.len() as u32 },
+            None => StoreSlice::EMPTY,
+        }
+    }
+
+    /// Wrap an arena-owned mutable slice (e.g. `bump.alloc_slice_*`). Same
+    /// contract as `new`; provided so callers don't need a `&mut → &` reborrow
+    /// at every site.
+    #[inline]
+    pub fn new_mut(s: &mut [T]) -> Self {
+        debug_assert!(s.len() <= u32::MAX as usize);
+        match core::ptr::NonNull::new(s.as_mut_ptr()) {
+            Some(ptr) => StoreSlice { ptr, len: s.len() as u32 },
+            None => StoreSlice::EMPTY,
+        }
+    }
+
+    #[inline]
+    pub const fn as_ptr(self) -> *const T {
+        self.ptr.as_ptr()
+    }
+
+    #[inline]
+    pub const fn raw_len(self) -> u32 {
+        self.len
+    }
+
+    /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
+    /// `StoreRef::get`: the pointee lives until arena reset, which the caller
+    /// must not cross. Takes `self` by value (Copy) so the returned borrow is
+    /// not tied to a stack temporary.
+    #[inline]
+    pub fn slice<'a>(self) -> &'a [T] {
+        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // initialized `T` valid for the arena lifetime (or `'static`); caller
+        // must not outlive the owning arena (same as `StoreRef`).
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+    }
+
+    /// Re-borrow as `&mut [T]`. Unsafe: caller must guarantee no aliasing
+    /// `&`/`&mut` is outstanding for this slice (the arena hands out unique
+    /// allocations, but `StoreSlice` is `Copy`, so this cannot be checked).
+    /// Mirrors the pre-existing `from_raw_parts_mut` pattern at visit sites.
+    #[inline]
+    pub unsafe fn slice_mut<'a>(self) -> &'a mut [T] {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+    }
+}
+
+impl<T> Default for StoreSlice<T> {
+    #[inline]
+    fn default() -> Self {
+        StoreSlice::EMPTY
+    }
+}
+
+impl<T> core::ops::Deref for StoreSlice<T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        self.slice()
+    }
+}
+
+impl<T> AsRef<[T]> for StoreSlice<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        self.slice()
+    }
+}
+
+impl<T> From<&[T]> for StoreSlice<T> {
+    #[inline]
+    fn from(s: &[T]) -> Self {
+        StoreSlice::new(s)
+    }
+}
+impl<T> From<&mut [T]> for StoreSlice<T> {
+    #[inline]
+    fn from(s: &mut [T]) -> Self {
+        StoreSlice::new_mut(s)
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.slice().fmt(f)
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// This is the index to the automatically-generated part containing code that

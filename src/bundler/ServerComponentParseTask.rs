@@ -184,9 +184,9 @@ fn task_callback(
         log: core::mem::take(log),
         use_directive: UseDirective::None,
         side_effects: _resolver::SideEffects::NoSideEffectsPureData,
-        unique_key_for_additional_file: b"",
+        unique_key_for_additional_file: js_ast::StoreStr::EMPTY,
         content_hash_for_additional_file: 0,
-        package_name: b"",
+        package_name: js_ast::StoreStr::EMPTY,
     })
 }
 
@@ -217,12 +217,11 @@ fn generate_client_entry_wrapper(
     data: &ClientEntryWrapper,
     b: &mut AstBuilder,
 ) -> Result<(), OOM> {
-    // SAFETY: `add_import_record` requires `&'static [u8]` only because the
-    // resulting `ImportRecord` stores the slice raw; `data.path` outlives the
-    // bundle pass (owned by the heap-allocated task). Erase the lifetime.
-    let path: &'static [u8] =
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&data.path[..]) };
-    let record = b.add_import_record(path, ImportKind::Stmt)?;
+    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
+    // outlives the bundle pass (owned by the heap-allocated task). Route through
+    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
+    let path = js_ast::StoreStr::new(&data.path[..]);
+    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,
@@ -252,18 +251,14 @@ fn generate_client_reference_proxy(
 
     let client_named_exports = &data.named_exports;
 
-    // SAFETY: `add_import_stmt` requires `'static` slices only because the
-    // resulting `ImportRecord`/`ClauseItem`s store them raw; the framework
-    // config outlives the bundle pass. Erase the lifetimes.
-    let runtime_import: &'static [u8] = unsafe {
-        core::mem::transmute::<&[u8], &'static [u8]>(&server_components.server_runtime_import[..])
-    };
-    let register_ref: &'static [u8] = unsafe {
-        core::mem::transmute::<&[u8], &'static [u8]>(
-            &server_components.server_register_client_reference[..],
-        )
-    };
-    let register_client_reference = b.add_import_stmt(runtime_import, [register_ref])?[0];
+    // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
+    // the framework config outlives the bundle pass. Route through `StoreStr`
+    // so the lifetime erasure goes through one audited unsafe.
+    let runtime_import = js_ast::StoreStr::new(&server_components.server_runtime_import[..]);
+    let register_ref =
+        js_ast::StoreStr::new(&server_components.server_register_client_reference[..]);
+    let register_client_reference =
+        b.add_import_stmt(runtime_import.slice(), [register_ref.slice()])?[0];
 
     let module_path = b.new_expr(E::String::init(
         // In development, the path loaded is the source file: Easy!

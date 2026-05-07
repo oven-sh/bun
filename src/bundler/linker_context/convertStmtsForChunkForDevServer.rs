@@ -204,19 +204,16 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         let binding =
                             Binding::alloc(bump, b::Identifier { r#ref: st.namespace_ref }, loc);
                         esm_decls.push(ArrayBinding { binding, default_value: None });
-                        // SAFETY: arena-owned slice — `E::Arrow.args` is `&'static [G::Arg]`
-                        // pending Phase-B arena-lifetime threading; erase the bump lifetime
-                        // (the slice lives in the same arena as the `Arrow` node).
-                        let arrow_args: &'static [G::Arg] = unsafe {
-                            &*(core::slice::from_ref(bump.alloc(G::Arg {
+                        let arrow_args = js_ast::StoreSlice::new(core::slice::from_ref(
+                            bump.alloc(G::Arg {
                                 binding: Binding::alloc(
                                     bump,
                                     b::Identifier { r#ref: ast.module_ref },
                                     Loc::EMPTY,
                                 ),
                                 ..Default::default()
-                            })) as *const [G::Arg])
-                        };
+                            }),
+                        ));
                         esm_callbacks.push(Expr::init(
                             E::Arrow {
                                 args: arrow_args,

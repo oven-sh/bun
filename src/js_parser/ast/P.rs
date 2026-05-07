@@ -5705,16 +5705,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // PORT NOTE: `G::Arg` is not `Copy` (contains `BabyList<Decorator>`); use
         // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
-        // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase-B
-        // `'bump` threading on `E::Arrow.args` (currently `&'static [G::Arg]`).
-        let func_args: &'static [G::Arg] = unsafe {
-            core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(
-                allocator.alloc_slice_fill_iter([G::Arg {
-                    binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
-                    ..Default::default()
-                }]),
-            )
-        };
+        let func_args = crate::StoreSlice::new_mut(
+            allocator.alloc_slice_fill_iter([G::Arg {
+                binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
+                ..Default::default()
+            }]),
+        );
 
         let args_list = ExprNodeList::init_one(arg_expr).expect("oom");
 

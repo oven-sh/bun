@@ -50,14 +50,14 @@ pub fn to_be_empty(
                 )?;
                 pass = !any_properties_in_iterator;
             } else {
-                let Some(cell) = value.to_cell() else {
+                let Some(_cell) = value.to_cell() else {
                     return Err(global.throw_type_error(format_args!(
                         "Expected value to be a string, object, or iterable"
                     )));
                 };
-                // SAFETY: `to_cell` returned `Some`; the cell is GC-rooted by `value`
-                // (a `JSValue` on the stack) for the duration of this borrow.
-                let object = unsafe { &*cell }.to_object(global);
+                // Zig: `cell.toObject(globalThis)` — `value` is the same cell, so use the
+                // JSValue ToObject path directly.
+                let object = value.to_object(global)?;
                 let props_iter = JSPropertyIterator::init(
                     global,
                     object,
@@ -65,6 +65,7 @@ pub fn to_be_empty(
                         skip_empty_name: false,
                         own_properties_only: false,
                         include_value: true,
+                        // FIXME: can we do this?
                         ..Default::default()
                     },
                 )?;
@@ -122,5 +123,5 @@ pub fn to_be_empty(
 //   source:     src/test_runner/expect/toBeEmpty.zig (88 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      defer postMatch via scopeguard owning &mut Expect; JSPropertyIterator path ported with runtime options struct
+//   notes:      defer postMatch via scopeguard owning &mut Expect; JSPropertyIterator path ported with runtime options
 // ──────────────────────────────────────────────────────────────────────────

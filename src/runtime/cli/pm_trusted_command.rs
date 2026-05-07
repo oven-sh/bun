@@ -544,7 +544,11 @@ impl TrustCommand {
         }
 
         // SAFETY: `pm_raw` singleton; `root_package_json_file` owned by `pm`.
-        let root_file = unsafe { (*pm_raw).root_package_json_file };
+        // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
+        // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
+        // consume it after the final write — matches Zig's by-value `File`.
+        let root_file =
+            unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`

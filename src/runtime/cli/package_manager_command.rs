@@ -17,7 +17,7 @@ use bun_install::{migration, DependencyID, PackageID, PackageManager};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_str::strings;
-use bun_sys::{self, Dir, Fd, File};
+use bun_sys::{self, Dir, Fd, FdExt as _, File};
 
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};

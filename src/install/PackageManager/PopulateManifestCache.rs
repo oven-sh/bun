@@ -89,9 +89,8 @@ fn start_manifest_task(
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
     unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
-    // SAFETY: `write_init` populated every read field; remaining
-    // Zig-`undefined` fields (`callback`, http buffers) are written by
-    // `for_manifest` / `schedule()` before being observed.
+    // SAFETY: `write_init` populated every field with a drop-safe value;
+    // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };
     // SAFETY: `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).

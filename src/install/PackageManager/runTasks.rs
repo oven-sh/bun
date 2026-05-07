@@ -534,7 +534,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
+                        // SAFETY: `unsafe_http_client` was initialized by
+                        // `for_manifest`/`for_tarball` before `schedule()`;
+                        // direct field access (not `task.http()`) to keep the
+                        // split borrow with `&mut task.callback` above.
+                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                            / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "\n<d>Downloaded <r><green>{}<r> versions\n",
@@ -892,7 +897,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        (task.unsafe_http_client.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
+                        // SAFETY: `unsafe_http_client` was initialized by
+                        // `for_manifest`/`for_tarball` before `schedule()`;
+                        // direct field access (not `task.http()`) to keep the
+                        // split borrow with `&mut task.callback` above.
+                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                            / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
@@ -1848,9 +1858,8 @@ pub fn generate_network_task_for_tarball<'a>(
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
     unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
-    // SAFETY: `write_init` populated every read field; remaining
-    // Zig-`undefined` fields (`callback`, http buffers) are written by
-    // `for_tarball` / `schedule()` before being observed.
+    // SAFETY: `write_init` populated every field with a drop-safe value;
+    // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);

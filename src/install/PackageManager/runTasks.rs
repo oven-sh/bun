@@ -570,29 +570,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .manifests
                             .hash_map
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
-                        let entry_manifest = manager
-                            .manifests
-                            .hash_map
-                            .get_mut(&name_hash)
-                            .unwrap()
-                            .manifest_mut();
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
-                            // PORT NOTE: split-borrow — `scope_for_package_name`
-                            // and `get_*_directory` borrow `&mut PackageManager`
-                            // disjointly from `manifests`; route through the raw
-                            // provenance root.
-                            // SAFETY: see `_drain_guard` provenance note.
-                            let mgr = unsafe { &mut *manager_ptr };
                             // PORT NOTE: reshaped for borrowck — compute the
                             // `&mut`-taking directory accessors first so the
-                            // immutable `scope_for_package_name` borrow does
-                            // not overlap them.
-                            let tmp_fd = directories::get_temporary_directory(mgr).handle.fd;
-                            let cache_fd = directories::get_cache_directory(mgr).fd;
+                            // shared `scope_for_package_name` / `manifests`
+                            // borrows below do not overlap them. `save_async`
+                            // only needs `&PackageManifest`, so reborrow the
+                            // freshly-inserted entry immutably alongside the
+                            // scope (both `&manager`, no conflict).
+                            let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
+                            let cache_fd = directories::get_cache_directory(manager).fd;
                             npm::package_manifest::Serializer::save_async(
-                                entry_manifest,
-                                mgr.scope_for_package_name(name),
+                                manager
+                                    .manifests
+                                    .hash_map
+                                    .get(&name_hash)
+                                    .unwrap()
+                                    .manifest(),
+                                manager.scope_for_package_name(name),
                                 tmp_fd,
                                 cache_fd,
                             );

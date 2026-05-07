@@ -807,14 +807,21 @@ pub fn install_with_manager(
     // `mem::replace` so `lockfile_before_clean` owns the old box and `manager.lockfile` the new.
     let new_lockfile = {
         let mgr: *mut PackageManager = manager;
-        let log = manager.log.unwrap().as_ptr();
-        manager.lockfile.clean_with_logger(
-            mgr,
-            &manager.update_requests,
-            log,
-            manager.options.enable.exact_versions,
-            log_level,
-        )?
+        // SAFETY: `lockfile`, `update_requests`, and `*log` are disjoint storage
+        // within `*mgr`; `clean_with_logger` only reads `manager` for option flags
+        // and its preinstall_state, so a single raw provenance root keeps all
+        // reborrows under one tag (PORTING.md §Aliasing-split-borrow).
+        unsafe {
+            let log: *mut logger::Log = (*mgr).log;
+            let exact_versions = (*mgr).options.enable.exact_versions();
+            (*mgr).lockfile.clean_with_logger(
+                &mut *mgr,
+                &mut (*mgr).update_requests,
+                &mut *log,
+                exact_versions,
+                log_level,
+            )?
+        }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
 

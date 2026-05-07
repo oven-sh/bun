@@ -48,7 +48,10 @@ pub struct PatchTask {
     /// via raw pointer through the intrusive thread-pool queue while the
     /// manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    pub manager: *const PackageManager,
+    /// `*mut` (not `*const`) because the worker thread hands it to
+    /// `PackageManager::wake_raw(*mut Self)`, which writes the event-loop wake
+    /// flag — provenance must permit mutation.
+    pub manager: *mut PackageManager,
     pub tempdir: StdFsDir,
     pub project_dir: &'static [u8],
     pub callback: Callback,
@@ -170,18 +173,6 @@ pub struct InstallContext {
 }
 
 impl PatchTask {
-    /// Shared-borrow the BACKREF.
-    ///
-    /// # Safety
-    /// Caller must ensure no `&mut PackageManager` is live for the duration of
-    /// the returned borrow (the task runs on a worker thread that only reads
-    /// fields the main thread does not mutate concurrently — same contract as
-    /// the Zig pointer).
-    #[inline]
-    unsafe fn manager(&self) -> &PackageManager {
-        unsafe { &*self.manager }
-    }
-
     /// Destroy a heap-allocated `PatchTask` previously created by
     /// `new_calc_patch_hash` / `new_apply_patch_hash`.
     ///
@@ -239,7 +230,7 @@ impl PatchTask {
         let mgr = self.manager;
         unsafe {
             (*mgr).patch_task_queue.push(self as *mut Self);
-            PackageManager::wake_raw(mgr as *mut PackageManager);
+            PackageManager::wake_raw(mgr);
         }
     }
 
@@ -548,7 +539,8 @@ impl PatchTask {
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
-        // SAFETY: BACKREF — see `manager()`.
+        // SAFETY: BACKREF — read-only lockfile access; same contract as the
+        // Zig pointer dereference here.
         let lockfile = unsafe { &(*self.manager).lockfile };
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
@@ -807,7 +799,7 @@ impl PatchTask {
         let mgr = self.manager;
         unsafe {
             (*mgr).patch_task_queue.push(self as *mut Self);
-            PackageManager::wake_raw(mgr as *mut PackageManager);
+            PackageManager::wake_raw(mgr);
         }
     }
 
@@ -843,7 +835,7 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: manager as *const PackageManager,
+            manager: manager as *mut PackageManager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -920,7 +912,7 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: pkg_manager as *const PackageManager,
+            manager: pkg_manager as *mut PackageManager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -956,5 +948,5 @@ use crate::package_manager_task::Id as TaskId;
 //   source:     src/install/patch_install.zig (593 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      manager BACKREF stored as *const PackageManager (matches NetworkTask); owned-ZStr field type, std.fs.Dir mapping, and Log early-deinit semantics need Phase B attention.
+//   notes:      manager BACKREF stored as *mut PackageManager (wake_raw needs mutable provenance); owned-ZStr field type, std.fs.Dir mapping, and Log early-deinit semantics need Phase B attention.
 // ──────────────────────────────────────────────────────────────────────────

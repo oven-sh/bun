@@ -7,7 +7,6 @@
 
 use core::ffi::{c_int, c_void};
 use core::mem;
-use core::ptr::NonNull;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc, URL};
 use bun_str::{self as strings, String as BunString, OwnedString, ZStr};

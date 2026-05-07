@@ -2656,7 +2656,7 @@ impl TestCommand {
             // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
             // raw-ptr escape mirrors Zig `defer bun_test_root.exitFile()` so the
             // closure does not hold a borrowck lock on it for the loop body.
-            let _exit_file = scopeguard::guard((), move |_| unsafe { (*bun_test_root_ptr).exit_file(); });
+            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Raw-ptr split

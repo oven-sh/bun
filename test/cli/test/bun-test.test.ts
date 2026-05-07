@@ -1290,6 +1290,57 @@ describe("bun test", () => {
     `);
   });
 
+  test("reporter output for each test result status", () => {
+    // Exercises every Execution.Result variant so the per-status reporter
+    // formatting (status marker, scope chain, explanation lines) stays locked down.
+    const stderr = runTest({
+      args: ["--todo"],
+      input: `
+        import { test, expect, describe } from "bun:test";
+        describe("outer", () => {
+          describe("inner", () => {
+            test("pass", () => { expect(1).toBe(1); });
+            test("fail", () => { expect(1).toBe(2); });
+            test.skip("skip", () => {});
+            test.todo("todo");
+            test.failing("failing that passes", () => { expect(1).toBe(1); });
+            test.todo("todo that passes", () => { expect(1).toBe(1); });
+            test("has-assertions fail", () => { expect.hasAssertions(); });
+            test("assertion-count fail", () => { expect.assertions(5); expect(1).toBe(1); });
+            test("timeout", async () => { await new Promise(r => setTimeout(r, 50)); }, 1);
+            test("timeout with done", (done) => { setTimeout(done, 50); }, 1);
+          });
+        });
+      `,
+      env: { GITHUB_ACTIONS: undefined, CI: undefined },
+    });
+    // Keep only the reporter-generated lines: status markers, the "  ^ this test ..."
+    // explanations, and the AssertionError lines printed for expect.assertions/hasAssertions.
+    const lines = stderr
+      .replace(/ \[[\d.]+m?s\]/g, "")
+      .replace(/after \d+ms/g, "after Nms")
+      .split("\n")
+      .filter(line => /^\((pass|fail|skip|todo)\) |^  \^ |^AssertionError:/.test(line));
+    expect(lines.join("\n")).toMatchInlineSnapshot(`
+      "(pass) outer > inner > pass
+      (fail) outer > inner > fail
+      (skip) outer > inner > skip
+      (todo) outer > inner > todo
+      (fail) outer > inner > failing that passes
+        ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+      (fail) outer > inner > todo that passes
+        ^ this test is marked as todo but passes. Remove \`.todo\` if tested behavior now works
+      AssertionError: received 0 assertions, but expected at least one assertion to be called
+      (fail) outer > inner > has-assertions fail
+      AssertionError: expected 5 assertions, but test ended with 1 assertion
+      (fail) outer > inner > assertion-count fail
+      (fail) outer > inner > timeout
+        ^ this test timed out after Nms.
+      (fail) outer > inner > timeout with done
+        ^ this test timed out after Nms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function"
+    `);
+  });
+
   test("--tsconfig-override works", () => {
     const dir = tempDirWithFiles("test-tsconfig-override", {
       "math.test.ts": `

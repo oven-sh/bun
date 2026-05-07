@@ -606,9 +606,9 @@ impl HotReloadEvent {
         // SAFETY: see above; `magic` read is non-aliasing.
         debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
-        let _end_log = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             bun_core::scoped_log!(DevServer, "HMR Task end");
-        });
+        }
 
         #[cfg(debug_assertions)]
         {
@@ -1241,10 +1241,9 @@ impl DirectoryWatchStore {
         // `graph_safety_lock` are disjoint from `directory_watchers` so this does
         // not alias `&mut self`.
         let dev = self.owner();
-        unsafe { (*dev).graph_safety_lock.lock() };
-        let lock_ptr: *mut ThreadLock = unsafe { &mut (*dev).graph_safety_lock };
-        // SAFETY: `lock_ptr` points into the heap-allocated DevServer.
-        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+        // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
+        // disjoint from `directory_watchers`. RAII guard unlocks on drop.
+        let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: *const [u8] = match renderer {
             Graph::Client => unsafe { &mut (*dev).client_graph }
                 .insert_empty(import_source, FileKind::Unknown)?
@@ -1322,10 +1321,10 @@ impl DirectoryWatchStore {
         // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
         let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> = &mut self.watches;
-        let watches_guard = scopeguard::guard((), move |_| {
+        let watches_guard = scopeguard::guard(gop_index, move |idx| {
             // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
             // the error path no other borrow of `self.watches` is outstanding.
-            let _ = unsafe { (*watches_ptr).swap_remove_at(gop_index) };
+            let _ = unsafe { (*watches_ptr).swap_remove_at(idx) };
         });
 
         // Try to use an existing open directory handle
@@ -1396,7 +1395,7 @@ impl DirectoryWatchStore {
 
         // Disarm errdefer guards: success path.
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
-        scopeguard::ScopeGuard::into_inner(watches_guard);
+        let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
 
         let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
             next: None,

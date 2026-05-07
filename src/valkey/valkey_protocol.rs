@@ -2,7 +2,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-#[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(strum::IntoStaticStr, strum::EnumString, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
     ConnectionClosed,
@@ -47,6 +47,18 @@ impl From<RedisError> for bun_core::Error {
     fn from(e: RedisError) -> Self {
         // TODO(port): wire IntoStaticStr → bun_core::err! interning
         bun_core::Error::from_name(<&'static str>::from(e))
+    }
+}
+
+impl From<bun_core::Error> for RedisError {
+    /// Reverse of the `RedisError → bun_core::Error` interning above so the
+    /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
+    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
+    /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
+    /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
+    /// already covers.
+    fn from(e: bun_core::Error) -> Self {
+        e.name().parse().unwrap_or(RedisError::ConnectionClosed)
     }
 }
 

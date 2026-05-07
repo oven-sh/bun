@@ -27,8 +27,13 @@ bun_bundler = { workspace = true, default-features = false }
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
+bun_aio.workspace = true
+bun_analytics.workspace = true
+bun_install_types.workspace = true
 bun_interchange.workspace = true
 bun_js_parser.workspace = true
+bun_resolver.workspace = true
+bun_url.workspace = true
 bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true

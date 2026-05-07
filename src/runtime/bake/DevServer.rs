@@ -147,7 +147,7 @@ impl DevServer {
         for (key, _) in self.route_lookup.iter() {
             other += ::core::mem::size_of_val(key);
         }
-        for failure in self.bundling_failures.keys() {
+        for failure in self.bundling_failures.values() {
             other += failure.data.len();
         }
         other += self.incremental_result.memory_cost();
@@ -1126,7 +1126,7 @@ impl Drop for DevServer {
             bun_crash_handler::remove_pre_crash_handler(self as *mut _ as *mut c_void);
         }
 
-        for failure in self.bundling_failures.keys() {
+        for failure in self.bundling_failures.values() {
             // TODO(port): blocked_on: SerializedFailure::deinit — Drop on the
             // owning map handles the allocation; explicit deinit was Zig-side.
             let _ = failure;
@@ -1376,19 +1376,15 @@ unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     }
 }
 
-/// Adapter: `ErrorReportRequest::run` is typed against the keystone DevServer
-/// and a generic `BodyResponse`; bridge both at the seam.
-fn on_report_error_request(dev: &mut DevServer<'static>, req: &mut Request, resp: AnyResponse) {
-    // LAYERING: see SAFETY note at `bundle_new_route_js_function_impl`.
-    let kdev = unsafe { &mut *(dev as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) };
+fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     match resp {
-        AnyResponse::SSL(r) => ErrorReportRequest::run(kdev, req, unsafe { &mut *r }),
-        AnyResponse::TCP(r) => ErrorReportRequest::run(kdev, req, unsafe { &mut *r }),
+        AnyResponse::SSL(r) => ErrorReportRequest::run(dev, req, unsafe { &mut *r }),
+        AnyResponse::TCP(r) => ErrorReportRequest::run(dev, req, unsafe { &mut *r }),
         AnyResponse::H3(_) => not_found(resp),
     }
 }
 
-fn on_unref_source_map_request(dev: &mut DevServer<'static>, req: &mut Request, resp: AnyResponse) {
+fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     match resp {
         AnyResponse::SSL(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
         AnyResponse::TCP(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
@@ -1398,8 +1394,7 @@ fn on_unref_source_map_request(dev: &mut DevServer<'static>, req: &mut Request, 
 
 /// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
 fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    type W<const SSL: bool> =
-        bun_uws_sys::web_socket::Wrap<crate::bake::dev_server::DevServer, HmrSocket, SSL>;
+    type W<const SSL: bool> = bun_uws_sys::web_socket::Wrap<DevServer, HmrSocket, SSL>;
     bun_uws_sys::WebSocketBehavior {
         open: Some(W::<SSL>::on_open),
         message: Some(W::<SSL>::on_message),
@@ -1711,7 +1706,7 @@ impl RequestEnsureRouteBundledCtx {
     }
 }
 
-impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
+impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
     fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> { Self::on_defer(self, b) }
     fn on_loaded(&mut self) -> JsResult<()> { Self::on_loaded(self) }
     fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
@@ -1790,17 +1785,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
 
                                 let load_result: crate::server::GetOrStartLoadResult =
                                     dev.server.as_ref().unwrap().get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(
-                                            // LAYERING: callback stores an opaque
-                                            // `*const dev_server::DevServer`; bridge the
-                                            // body↔keystone seam via `*const ()`.
-                                            // SAFETY: pointer is only stored, never
-                                            // deref'd as the keystone type by this path.
-                                            unsafe {
-                                                &*(dev as *mut _ as *const ()
-                                                    as *const crate::bake::dev_server::DevServer)
-                                            },
-                                        ),
+                                        crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -4145,7 +4130,7 @@ pub fn finalize_bundle(
             // value with no aliasing check). The callee never touches
             // `bundling_failures`.
             // SAFETY: `dev_ptr` is live for the entire fn body (see line 3133).
-            let failures = unsafe { (*dev_ptr).bundling_failures.keys() };
+            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
                     promise: current_bundle!().promise.strong.take(),
@@ -4181,7 +4166,7 @@ pub fn finalize_bundle(
 
             // SAFETY: see PORT NOTE on `failures` above; `dev_ptr` is live and
             // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.keys() };
+            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 resp,
                 failures,
@@ -4193,7 +4178,7 @@ pub fn finalize_bundle(
         if let Some(agent_ptr) = inspector_agent_ptr {
             let mut buf: Vec<u8> = Vec::new();
             // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-            dev.encode_serialized_failures(dev.bundling_failures.keys(), &mut buf, Some(unsafe { &mut *agent_ptr }))?;
+            dev.encode_serialized_failures(dev.bundling_failures.values(), &mut buf, Some(unsafe { &mut *agent_ptr }))?;
         }
 
         return Ok(());

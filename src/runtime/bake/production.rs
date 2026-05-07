@@ -1011,7 +1011,9 @@ pub fn build_with_vm(
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
-        let main_file = pt.output_file(main_file_route_index);
+        // PORT NOTE: reshaped for borrowck — `pt.output_file()` borrows `pt`
+        // immutably, but `pt.preload_bundled_module()` below needs `&mut pt`.
+        // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         pattern.prepend_part(route.part);
@@ -1030,8 +1032,12 @@ pub fn build_with_vm(
             _ => {}
         }
         let mut file_count: u32 = 1;
-        let mut css_file_count: u32 =
-            u32::try_from(main_file.referenced_css_chunks.len()).unwrap();
+        let mut css_file_count: u32 = u32::try_from(
+            pt.output_file(main_file_route_index)
+                .referenced_css_chunks
+                .len(),
+        )
+        .unwrap();
         if let Some(file) = route.file_layout {
             css_file_count +=
                 u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
@@ -1071,7 +1077,7 @@ pub fn build_with_vm(
         file_count = 1;
         css_file_count = 0;
         file_list.put_index(global, 0, pt.preload_bundled_module(main_file_route_index).map_err(js_err)?).map_err(js_err)?;
-        for r#ref in main_file.referenced_css_chunks.iter() {
+        for r#ref in pt.output_file(main_file_route_index).referenced_css_chunks.iter() {
             styles.put_index(
                 global,
                 css_file_count,
@@ -1133,7 +1139,11 @@ pub fn build_with_vm(
             global,
             u32::try_from(nav_index).unwrap(),
             JSValue::js_number_from_int32(
-                TypeAndFlags::new(route.r#type.get(), main_file.bake_extra.fully_static).bits(),
+                TypeAndFlags::new(
+                    route.r#type.get(),
+                    pt.output_file(main_file_route_index).bake_extra.fully_static,
+                )
+                .bits(),
             ),
         ).map_err(js_err)?;
 

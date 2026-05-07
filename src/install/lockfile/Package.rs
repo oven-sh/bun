@@ -1601,18 +1601,11 @@ impl Package<u64> {
         self.parse_with_json::<R>(lockfile, pm, log, source, json, resolver, features)
     }
 
-    /// Bridge for `package_manager_real::PackageManager` callers
-    /// (`processDependencyList`, `folder_resolver`). Splits the
-    /// `lockfile` / `log` borrows out of the manager via raw pointer (Zig
-    /// passes `manager.lockfile`, `manager`, `manager.log` as three separate
-    /// args; Rust borrowck rejects the overlap on `&mut self`).
-    ///
-    /// LAYERING (reconciler-6): `package_manager_real::PackageManager.lockfile`
-    /// is `Box<crate::lockfile::Lockfile>` (column-vec stub) while
-    /// `parse_with_json` is typed against `lockfile_real::Lockfile`
-    /// (`MultiArrayList`). This wrapper centralises that boundary so the
-    /// scattered call sites stay clean; the field type flips when the stub
-    /// `PackageList` is replaced by `package::List<u64>`.
+    /// Borrow-splitting bridge for `PackageManager` callers
+    /// (`processDependencyList`, `folder_resolver`). Zig passes
+    /// `manager.lockfile`, `manager`, `manager.log` as three separate args;
+    /// Rust borrowck rejects the overlap on `&mut self`, so split via raw
+    /// pointer here once instead of at every call site.
     pub fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
@@ -1622,17 +1615,15 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: `manager` points to a live `PackageManager` for the duration
         // of this call (caller passes `self as *mut _`); `lockfile` and `log`
-        // are disjoint fields and `parse` does not re-enter through `manager`.
-        let m = unsafe { &mut *manager };
-        let log: &mut logger::Log = unsafe { &mut *m.log };
-        let lockfile: *mut crate::lockfile::Lockfile = &mut *m.lockfile;
-        // reconciler-6: forward to `self.parse(&mut *lockfile, …)` once
-        // `package_manager_real::PackageManager.lockfile` becomes
-        // `Box<lockfile_real::Lockfile>`. The two structs expose identical
-        // `buffers` / `string_pool` / `packages` field surfaces; only the
-        // `packages` column container type differs.
-        let _ = (lockfile, log, source, resolver, features);
-        Err(bun_core::err!(LockfileTypePendingReconciler6))
+        // are disjoint fields, and `parse_with_json` only reaches `manager`
+        // through the `pm` argument it receives here — no re-entrancy.
+        let (lockfile, pm, log) = unsafe {
+            let m = &mut *manager;
+            let lockfile: *mut Lockfile = &mut *m.lockfile;
+            let log: *mut logger::Log = m.log;
+            (&mut *lockfile, &mut *manager, &mut *log)
+        };
+        self.parse(lockfile, pm, log, source, resolver, features)
     }
 
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`

@@ -1636,7 +1636,8 @@ pub fn init(
     // Zig: `try bun.cli.Arguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);`
     // (PackageManager.zig:801). `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
-    bun_bunfig::arguments::load_config(
+    // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
+    ::bun_bunfig::arguments::load_config(
         bun_options_types::CommandTag::Tag::InstallCommand,
         cli.config.as_deref(),
         ctx,
@@ -2012,14 +2013,17 @@ pub fn init(
     // `ZBox` C-string pointers. The `ZBox`es are kept alive by `ca` for the
     // duration of `init` (the HTTP thread copies them into BoringSSL).
     let ca_ptrs: Vec<*const c_void> = ca.iter().map(|z| z.as_ptr() as *const c_void).collect();
-    // `InitOpts.abs_ca_file_name: &'static [u8]` — leak the `ZBox` (process-lifetime
-    // config string; matches Zig's `allocator.dupeZ` into a leaked singleton field).
+    // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
+    // string (Zig: `allocator.dupeZ` into a leaked singleton field). Park it in
+    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
+    // (never `Box::leak`/`transmute` to mint `&'static`). `init()` runs once on
+    // the main thread, so `.set()` cannot race; ignore the already-set case for
+    // hot-reload re-entry (the existing CA path stays valid for the process).
     let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
         b""
     } else {
-        // SAFETY: process-lifetime config string; never freed (Zig: leaked singleton).
-        let v = abs_ca_file_name.into_vec_with_nul().into_boxed_slice();
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(Box::leak(v)) }
+        let _ = holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
+        holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
     };
     http::http_thread::init(&http::http_thread::InitOpts {
         ca: ca_ptrs,

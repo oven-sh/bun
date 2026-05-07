@@ -692,15 +692,17 @@ impl<'a> PackageInstaller<'a> {
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;
 
-        let lockfile = &*self.lockfile;
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-
         let trees_len = self.trees.len();
         for i in 0..trees_len {
             // PORT NOTE: reshaped for borrowck — index instead of iter_mut.
+            // `can_install_package_for_tree` takes the tree slice by raw pointer
+            // to avoid overlapping `&mut self.lockfile` with `&self`.
+            let trees_ptr: *mut [Tree] = self.lockfile.buffers.trees.as_mut_slice();
             if FORCE
                 || self.can_install_package_for_tree(
-                    self.lockfile.buffers.trees.as_mut_slice(),
+                    // SAFETY: `trees_ptr` borrows from `self.lockfile`; nothing
+                    // resizes `buffers.trees` during installation.
+                    unsafe { &mut *trees_ptr },
                     u32::try_from(i).unwrap(),
                 )
             {

@@ -52,23 +52,16 @@ pub const CLIENT_PREFIX: &str = "/_bun/client";
 /// `bun.jsc.Debugger.DevServerId`.
 pub type DebuggerId = jsc::DebuggerId;
 
-/// In debug builds the discriminant is a 128-bit canary so UAF/poison is
-/// loudly detected; in release the field is zero-sized.
-#[cfg(debug_assertions)]
-#[repr(u128)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Magic { Valid = 0x1ffd363f121f5c12 }
-#[cfg(not(debug_assertions))]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Magic { Valid }
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PluginState {
-    Unknown,
-    Pending,
-    Loaded,
-    Err,
-}
+// LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
+// `super::dev_server_body`). The struct definitions are owned there so impl
+// blocks and `@fieldParentPtr` submodules name a single type. Re-export so
+// `crate::bake::dev_server::DevServer` (the public path used by `server/`,
+// `dispatch.rs`, …) resolves to that one struct.
+pub use super::dev_server_body::{
+    deferred_request, AllocationScope, CacheEntry, CurrentBundle, DeferredPromise,
+    DeferredRequest, DevServer, EntryPointList, entry_point_list, HTMLRouter, Magic, NextBundle,
+    Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch, TestingBatchEvents,
+};
 
 /// `DevServer.FileKind` — must match `bun_bundler::bake_types::CacheKind`
 /// discriminants exactly (the vtable boundary transmutes between them).
@@ -198,34 +191,6 @@ impl HmrTopic {
         }
     }
 }
-
-/// `RouteIndexAndRecurseFlag` — `packed struct(u32)` (31-bit index + 1 flag).
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-pub struct RouteIndexAndRecurseFlag(pub u32);
-impl RouteIndexAndRecurseFlag {
-    #[inline] pub fn new(idx: RouteIndex, recurse: bool) -> Self {
-        Self(idx.get() | ((recurse as u32) << 31))
-    }
-    #[inline] pub fn route_index(self) -> RouteIndex { RouteIndex::init(self.0 & 0x7FFF_FFFF) }
-    #[inline] pub fn should_recurse_when_visiting(self) -> bool { (self.0 >> 31) != 0 }
-}
-
-/// `DevServer.CacheEntry` — return of `is_file_cached`. Mirrors
-/// `bun_bundler::bake_types::CacheEntry`.
-#[derive(Copy, Clone)]
-pub struct CacheEntry {
-    pub kind: FileKind,
-}
-
-/// Incremented in `Drop` so tests can assert deinit ran.
-pub static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: AtomicI32 = AtomicI32::new(0);
-
-// ──────────────────────────────────────────────────────────────────────────
-// AllocationScope
-// ──────────────────────────────────────────────────────────────────────────
-/// `bun.allocators.AllocationScopeIn(bun.DefaultAllocator)`.
-pub type AllocationScope = bun_alloc::AllocationScope;
 
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
@@ -1580,32 +1545,56 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
                 }
             })
         },
-        barrel_needed_exports: |_p| {
-            // DevServer field is `StringArrayHashMap<StringHashMap<()>>` but the
-            // vtable slot expects `*mut StringHashMap<StringHashMap<()>>` —
-            // mismatched container kinds; bundler side must adapt.
-            todo!("blocked_on: bun_bundler::dispatch::DevServerVTable::barrel_needed_exports container kind")
+        barrel_needed_exports: |p| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            &mut dev.barrel_needed_exports
         },
-        log_for_resolution_failures: |_p, _abs_path, _graph| {
-            todo!("blocked_on: dev_server_body::DevServer::log_for_resolution_failures un-gate")
+        log_for_resolution_failures: |p, abs_path, graph| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            match dev.get_log_for_resolution_failures(abs_path, graph) {
+                Ok(log) => log,
+                // OOM is the only error path; matches Zig `bun.handleOom` at the call site.
+                Err(_) => bun_alloc::out_of_memory(),
+            }
         },
-        finalize_bundle: |_p, _bv2, _result| {
-            todo!("blocked_on: dev_server_body::DevServer::finalize_bundle un-gate")
+        finalize_bundle: |p, bv2, result| {
+            // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
+            // (DevServerHandle invariant).
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            // SAFETY: `bv2` borrows the three `Transpiler`s stored inline in
+            // `DevServer` (stable heap address); the `'static` is a stand-in for
+            // the DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
+            dev.finalize_bundle(unsafe { &mut *bv2.cast() }, result as *const ())
         },
-        handle_parse_task_failure: |_p, _err, _graph, _abs_path, _log, _bv2| {
-            todo!("blocked_on: dev_server_body::DevServer::handle_parse_task_failure un-gate")
+        handle_parse_task_failure: |p, err, graph, abs_path, log, bv2| {
+            // SAFETY: p is a live *mut DevServer; log/bv2 are valid for the call.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            dev.handle_parse_task_failure(err, graph, abs_path, unsafe { &*log }, unsafe {
+                &mut *bv2
+            })
+            .map_err(Into::into)
         },
-        put_or_overwrite_asset: |_p, _path, _contents, _hash| {
-            todo!("blocked_on: dev_server::Assets::put_or_overwrite un-gate")
+        put_or_overwrite_asset: |p, path, contents, content_hash| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
+            // `DevServerHandle::put_or_overwrite_asset` call site.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            let path = unsafe { &*(path as *const bun_resolver::fs::Path<'_>) };
+            dev.put_or_overwrite_asset(path, contents, content_hash)
         },
-        track_resolution_failure: |_p, _import_source, _specifier, _graph, _loader| {
-            todo!("blocked_on: dev_server_body::DevServer::track_resolution_failure un-gate")
+        track_resolution_failure: |p, import_source, specifier, renderer, loader| {
+            // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
+            let dev = unsafe { &mut *p.cast::<DevServer>() };
+            dev.directory_watchers
+                .track_resolution_failure(import_source, specifier, renderer, loader)
+                .map_err(Into::into)
         },
         asset_hash: |p, abs_path| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
-            let dev = unsafe { &mut *p.cast::<DevServer>() };
-            let _ = (dev, abs_path);
-            todo!("blocked_on: dev_server::Assets::get_hash un-gate")
+            let dev = unsafe { &*p.cast::<DevServer>() };
+            dev.assets.get_hash(abs_path)
         },
         current_bundle_start_data: |p| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.

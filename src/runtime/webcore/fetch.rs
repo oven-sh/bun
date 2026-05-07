@@ -144,7 +144,7 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
 /// the call site here in T6.
-fn s3_credentials_from_env(env: &bun_dotenv::S3Credentials) -> bun_s3_signing::S3Credentials {
+pub(crate) fn s3_credentials_from_env(env: &bun_dotenv::S3Credentials) -> bun_s3_signing::S3Credentials {
     bun_s3_signing::S3Credentials::new_value(
         env.access_key_id.clone(),
         env.secret_access_key.clone(),

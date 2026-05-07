@@ -1,58 +1,53 @@
 use core::cmp::Ordering;
-#[allow(unused_imports)]
 use std::io::Write as _;
 
-#[allow(unused_imports)]
+use bun_core::fmt::PathSep;
 use bun_core::{env_var, fmt as bun_fmt, Global, Output};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{self, Lockfile};
-#[allow(unused_imports)]
+use bun_install::lockfile::{
+    self,
+    package::{PackageListExt as _, PackageSliceExt as _},
+    tree, LoadResult, Lockfile,
+};
 use bun_install::npm as Npm;
-use bun_install::{DependencyID, PackageID, PackageManager};
-#[allow(unused_imports)]
+use bun_install::package_manager_real::{
+    self as pm_mod, get_cache_directory, package_manager_options::LogLevel, setup_global_dir,
+    CommandLineArguments, Subcommand,
+};
+use bun_install::{migration, DependencyID, PackageID, PackageManager};
 use bun_paths::{self as Path, PathBuffer};
-#[allow(unused_imports)]
 use bun_resolver::fs as Fs;
 use bun_str::{strings, ZStr};
-#[allow(unused_imports)]
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, File};
+use bun_sys::{self, Dir, Fd, File};
 
-use crate::cli::Command;
-#[allow(unused_imports)]
 use crate::cli::pm_pkg_command::PmPkgCommand;
-#[allow(unused_imports)]
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
-#[allow(unused_imports)]
 use crate::cli::pm_version_command::PmVersionCommand;
-#[allow(unused_imports)]
 use crate::cli::pm_view_command as PmViewCommand;
-#[allow(unused_imports)]
 use crate::cli::pm_why_command::PmWhyCommand;
+use crate::cli::Command;
 
 pub use crate::cli::pack_command::PackCommand;
 pub use crate::cli::scan_command::ScanCommand;
 
 // PORT NOTE: Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
-// The real iterator (`lockfile_real::tree::IteratorNext`) yields borrowed
-// slices into its own path_buf; we copy into owned storage so the directories
-// Vec can outlive each `next()` call. Real type is gated behind reconciler-6.
-#[allow(dead_code)]
+// `tree::IteratorNext` borrows the iterator's internal `path_buf`; we copy
+// into owned storage so the `directories` Vec can outlive each `next()` call.
 struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
-    tree_id: lockfile::tree::Id,
+    tree_id: tree::Id,
     depth: usize,
 }
 
 // PORT NOTE: transient sort-comparator context; lifetime is fn-local (BORROW_PARAM).
-#[allow(dead_code)]
 struct ByName<'a> {
     dependencies: &'a [Dependency],
     buf: &'a [u8],
 }
 
-#[allow(dead_code)]
 impl<'a> ByName<'a> {
+    #[allow(dead_code)]
     pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
         strings::cmp_strings_asc(
             &(),
@@ -74,18 +69,37 @@ impl<'a> ByName<'a> {
 
 pub struct PackageManagerCommand;
 
-impl PackageManagerCommand {
-    pub fn handle_load_lockfile_errors(load_lockfile: &lockfile::LoadResult, pm: &mut PackageManager) {
-        let not_silent = pm.options.log_level != bun_install::LogLevel::Silent;
+/// PORT NOTE: reshaped for borrowck — Zig `pm.lockfile.loadFromCwd(pm, …)`
+/// passes `pm` as a separate argument while the receiver borrows `pm.lockfile`.
+/// In Rust this is a self-referential split borrow; route through raw pointers
+/// (the `Box<Lockfile>` heap allocation is disjoint from the `PackageManager`
+/// frame so the two `&mut` views never alias the same memory).
+fn load_lockfile_from_cwd(pm: *mut PackageManager) -> LoadResult<'static> {
+    // SAFETY: `pm` is the process-singleton returned by `PackageManager::init`;
+    // single-threaded CLI dispatch guarantees exclusive access. `(*pm).lockfile`
+    // is a `Box<Lockfile>` whose pointee lives in a separate heap allocation, so
+    // forming `&mut Lockfile` and `&mut PackageManager` simultaneously cannot
+    // alias overlapping bytes. `load_from_cwd` only reads `manager.options` /
+    // `manager.log` and never re-projects `manager.lockfile`.
+    unsafe {
+        let lockfile: *mut Lockfile = &mut **core::ptr::addr_of_mut!((*pm).lockfile);
+        let log: *mut bun_logger::Log = (*pm).log;
+        (*lockfile).load_from_cwd::<true>(Some(&mut *pm), &mut *log)
+    }
+}
 
-        if matches!(load_lockfile, lockfile::LoadResult::NotFound) {
+impl PackageManagerCommand {
+    pub fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, pm: &mut PackageManager) {
+        let not_silent = pm.options.log_level != LogLevel::Silent;
+
+        if matches!(load_lockfile, LoadResult::NotFound) {
             if not_silent {
                 Output::err_generic("Lockfile not found", ());
             }
             Global::exit(1);
         }
 
-        if let lockfile::LoadResult::Err(err) = load_lockfile {
+        if let LoadResult::Err(err) = load_lockfile {
             if not_silent {
                 Output::err_generic("Error loading lockfile: {s}", (err.value.name(),));
             }
@@ -95,44 +109,46 @@ impl PackageManagerCommand {
 
     #[cold]
     pub fn print_hash(ctx: Command::Context, file: File) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `PackageManager::CommandLineArguments::parse`, `PackageManager::init`,
-        // and `pm.lockfile` live in `bun_install::package_manager_real`, which is currently
-        // lacks `init`, `lockfile`, and `Subcommand::Pm`-tied options. Full port body
-        let _ = (ctx, file);
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::init / CommandLineArguments::parse / pm.lockfile");
-        {
-            let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-            let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
-            // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — _cwd is owned and drops at scope exit.
+        let cli = CommandLineArguments::parse(Subcommand::Pm)?;
+        let (pm_ptr, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
+        // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `_cwd: Box<[u8]>` drops at scope exit.
+        // SAFETY: `init` returns the process-singleton `*mut PackageManager`;
+        // single-threaded CLI dispatch guarantees exclusive access here.
+        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
-            let read = file.read_to_end();
-            let bytes = match read.err {
-                None => read.bytes,
-                Some(err) => {
-                    Output::err(err, "failed to read lockfile", format_args!(""));
-                    Global::crash();
-                }
-            };
+        let read = file.read_to_end();
+        let bytes = match read.err {
+            None => read.bytes,
+            Some(err) => {
+                Output::err(bun_core::Error::from(err), "failed to read lockfile", ());
+                Global::crash();
+            }
+        };
 
-            let load_lockfile = pm.lockfile.load_from_bytes(pm, &bytes, ctx.log);
+        // PORT NOTE: reshaped for borrowck — see `load_lockfile_from_cwd`.
+        // SAFETY: same disjoint-heap-allocation invariant as documented there.
+        let load_lockfile = unsafe {
+            let lockfile: *mut Lockfile = &mut **core::ptr::addr_of_mut!((*pm_ptr).lockfile);
+            let log: *mut bun_logger::Log = (*pm_ptr).log;
+            (*lockfile).load_from_bytes(Some(&mut *pm_ptr), bytes, &mut *log)
+        };
 
-            Self::handle_load_lockfile_errors(&load_lockfile, pm);
+        Self::handle_load_lockfile_errors(&load_lockfile, pm);
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", load_lockfile.ok().lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
-            Global::exit(0);
-        }
+        Output::flush();
+        Output::disable_buffering();
+        Output::writer().print(format_args!("{}", load_lockfile.ok().lockfile.fmt_meta_hash()))?;
+        Output::enable_buffering();
+        Global::exit(0);
     }
 
-    #[allow(dead_code)]
-    fn get_subcommand<'a>(args_ptr: &mut &'a [&'a [u8]]) -> &'a [u8] {
-        // PORT NOTE: reshaped for borrowck — Zig copied *args_ptr to a local, mutated it,
-        // and `defer`-wrote it back. We mutate through args_ptr directly.
+    fn get_subcommand(args_ptr: &mut &'static [&'static [u8]]) -> &'static [u8] {
+        // PORT NOTE: reshaped for borrowck — Zig copied `*args_ptr` to a local,
+        // mutated it, and `defer`-wrote it back. We mutate through `args_ptr`
+        // directly so the reslice persists into `pm.options.positionals`.
         let mut subcommand: &[u8] = if !args_ptr.is_empty() { args_ptr[0] } else { b"" };
 
-        if subcommand == b"pm" {
+        if strings::eql_comptime(subcommand, b"pm") {
             subcommand = b"";
             if args_ptr.len() > 1 {
                 *args_ptr = &args_ptr[1..];
@@ -199,52 +215,33 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `CommandLineArguments`, `PackageManager::init`, `pm.lockfile`,
-        // `pm.options.{positionals,global,bin_path,json_output,enable.force_save_lockfile}`,
-        // and `pm.setup_global_dir` live in `bun_install::package_manager_real`, which is
-        // `bun_install::PackageManager` only carries `options.{log_level,enable,scope,...}`.
-        // Mirrors `link_command.rs` / `install_command.rs` precedent until those crates
-        // fixes applied.
-        let _ = ctx;
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — PackageManager::init / CommandLineArguments::parse / pm.lockfile / pm.options.{{positionals,global,bin_path,json_output}} / setup_global_dir");
-    }
-}
-
-// ─── Gated full port body (un-gate alongside bun_install::package_manager_real) ───
-mod _gated_port {
-    use super::*;
-    use bun_install::package_manager::Subcommand;
-    use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
-
-    impl PackageManagerCommand {
-        pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig `std.process.argsAlloc(ctx.allocator)` → collect bun.argv
-        // (process-static ZBox storage) into a borrowed-slice Vec so downstream
-        // `&[&[u8]]` callers (TrustCommand/UntrustedCommand) keep their shape.
+        // PORT NOTE: Zig `std.process.argsAlloc(ctx.allocator)[1..]` → collect
+        // process-static argv (already skips argv[0] internally? no — `Argv`
+        // includes argv[0]) into a borrowed-slice Vec so `&[&[u8]]` callers
+        // (TrustCommand/UntrustedCommand, `left_has_any_in_right`) keep their shape.
         let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
         let args: &[&[u8]] = &args_vec;
 
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
-        let is_direct_whoami = match bun_core::argv().get(1) {
-            Some(arg) => arg.as_bytes() == b"whoami",
-            None => false,
-        };
+        let is_direct_whoami = bun_core::argv()
+            .get(1)
+            .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let (pm, cwd) = match PackageManager::init(ctx, cli, Subcommand::Pm) {
+        let (pm_ptr, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
-                if err == bun_core::err!("MissingPackageJSON") {
+                if err == bun_core::err!(MissingPackageJSON) {
                     let mut cwd_buf = PathBuffer::uninit();
                     match bun_sys::getcwd(&mut cwd_buf[..]) {
                         Ok(len) => {
                             Output::err_generic(
                                 "No package.json was found for directory \"{s}\"",
-                                format_args!("{}", bstr::BStr::new(&cwd_buf[..len])),
+                                (bstr::BStr::new(&cwd_buf[..len]),),
                             );
                         }
                         Err(_) => {
-                            Output::err_generic("No package.json was found", format_args!(""));
+                            Output::err_generic("No package.json was found", ());
                         }
                     }
                     Output::note("Run \"bun init\" to initialize a project");
@@ -253,36 +250,39 @@ mod _gated_port {
                 return Err(err);
             }
         };
-        // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `cwd` owned, drops at scope exit.
+        // PORT NOTE: `defer ctx.allocator.free(cwd)` — `cwd: Box<[u8]>` drops at scope exit.
+
+        // SAFETY: `init` returns the process-singleton `*mut PackageManager`;
+        // single-threaded CLI dispatch guarantees exclusive access for the
+        // command's duration (mirrors Zig's `*PackageManager`).
+        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // PORT NOTE: Zig `getSubcommand(&pm.options.positionals)` defer-writes the advanced
-            // slice back into the field; downstream branches (cache rm, view, version/why/pkg)
-            // index positionals[1]/[2] *after* that advance. Must pass the field itself by &mut
-            // so the reslice persists — passing &mut of a temporary drops the write-back.
+            // PORT NOTE: Zig `getSubcommand(&pm.options.positionals)` defer-writes the
+            // advanced slice back into the field; downstream branches (cache rm, view,
+            // version/why/pkg) index `positionals[1]/[2]` *after* that advance. Pass the
+            // field itself by `&mut` so the reslice persists.
             Self::get_subcommand(&mut pm.options.positionals)
-            // TODO(port): verify pm.options.positionals field type matches &mut &[&[u8]] so the
-            // write-back in get_subcommand actually mutates pm.options (load-bearing for indices).
         };
 
         // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
-        if subcommand == b"list" {
+        if strings::eql_comptime(subcommand, b"list") {
             subcommand = b"ls";
         }
 
         if pm.options.global {
-            pm.setup_global_dir(ctx)?;
+            setup_global_dir(pm, &&mut *ctx)?;
         }
 
-        if subcommand == b"scan" {
-            ScanCommand::exec_with_manager(ctx, pm, &cwd)?;
+        if strings::eql_comptime(subcommand, b"scan") {
+            ScanCommand::exec_with_manager(&&mut *ctx, pm, &cwd)?;
             Global::exit(0);
-        } else if subcommand == b"pack" {
+        } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm)?;
             Global::exit(0);
-        } else if subcommand == b"whoami" {
+        } else if strings::eql_comptime(subcommand, b"whoami") {
             let username = match Npm::whoami(pm) {
                 Ok(u) => u,
                 Err(err) => {
@@ -291,16 +291,13 @@ mod _gated_port {
                         Npm::WhoamiError::NeedAuth => {
                             Output::err_generic(
                                 "missing authentication (run <cyan>`bunx npm login`<r>)",
-                                format_args!(""),
+                                (),
                             );
                         }
                         Npm::WhoamiError::ProbablyInvalidAuth => {
                             Output::err_generic(
                                 "failed to authenticate with registry '{f}'",
-                                format_args!(
-                                    "{}",
-                                    bun_fmt::redacted_npm_url(&pm.options.scope.url.href)
-                                ),
+                                (bun_fmt::redacted_npm_url(pm.options.scope.url.href),),
                             );
                         }
                     }
@@ -309,7 +306,7 @@ mod _gated_port {
             };
             Output::println(format_args!("{}", bstr::BStr::new(&username)));
             Global::exit(0);
-        } else if subcommand == b"view" {
+        } else if strings::eql_comptime(subcommand, b"view") {
             let property_path = if pm.options.positionals.len() > 2 {
                 Some(pm.options.positionals[2])
             } else {
@@ -326,17 +323,17 @@ mod _gated_port {
                 pm.options.json_output,
             )?;
             Global::exit(0);
-        } else if subcommand == b"bin" {
-            // PORT NOTE: Zig `Path.joinAbs(cwd, .auto, bun.asByteSlice(bin_path))`.
-            // Rust join_abs takes the platform as a type parameter; bin_path is a
-            // ZStr so `.as_bytes()` replaces `bun.asByteSlice`.
-            let output_path = bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
-                // SAFETY: FileSystem::instance() is initialized during CLI startup.
-                unsafe { (*Fs::FileSystem::instance()).top_level_dir },
+        } else if strings::eql_comptime(subcommand, b"bin") {
+            // SAFETY: `FileSystem::instance()` is initialised during
+            // `PackageManager::init` (CLI startup); the singleton lives for
+            // process lifetime.
+            let top_level_dir: &[u8] = unsafe { (*Fs::FileSystem::instance()).top_level_dir };
+            let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
+                top_level_dir,
                 pm.options.bin_path.as_bytes(),
             );
             Output::prettyln(format_args!("{}", bstr::BStr::new(output_path)));
-            if Output::stdout_descriptor_type() == Output::DescriptorType::Terminal {
+            if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
                 Output::prettyln(format_args!("\n"));
             }
 
@@ -344,10 +341,12 @@ mod _gated_port {
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
+                            // PORT NOTE: `std.mem.tokenizeScalar` skips empty
+                            // segments; mirror with `split` + `filter`.
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
-                            while let Some(entry) = path_iter.next() {
+                            for entry in &mut path_iter {
                                 if strings::eql(entry, output_path) {
                                     break 'warner;
                                 }
@@ -361,8 +360,8 @@ mod _gated_port {
 
             Output::flush();
             return Ok(());
-        } else if subcommand == b"hash" {
-            let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        } else if strings::eql_comptime(subcommand, b"hash") {
+            let load_lockfile = load_lockfile_from_cwd(pm_ptr);
             Self::handle_load_lockfile_errors(&load_lockfile, pm);
 
             let _ = pm
@@ -377,8 +376,8 @@ mod _gated_port {
             ))?;
             Output::enable_buffering();
             Global::exit(0);
-        } else if subcommand == b"hash-print" {
-            let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        } else if strings::eql_comptime(subcommand, b"hash-print") {
+            let load_lockfile = load_lockfile_from_cwd(pm_ptr);
             Self::handle_load_lockfile_errors(&load_lockfile, pm);
 
             Output::flush();
@@ -389,63 +388,70 @@ mod _gated_port {
             ))?;
             Output::enable_buffering();
             Global::exit(0);
-        } else if subcommand == b"hash-string" {
-            let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        } else if strings::eql_comptime(subcommand, b"hash-string") {
+            let load_lockfile = load_lockfile_from_cwd(pm_ptr);
             Self::handle_load_lockfile_errors(&load_lockfile, pm);
 
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
             Global::exit(0);
-        } else if subcommand == b"cache" {
+        } else if strings::eql_comptime(subcommand, b"cache") {
             let mut dir = PathBuffer::uninit();
-            let fd = pm.get_cache_directory();
-            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
-                Ok(p) => p,
+            let fd = get_cache_directory(pm);
+            let outpath = match bun_sys::get_fd_path(fd.fd(), &mut dir) {
+                Ok(p) => &p[..],
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
                         "{} getting cache directory",
-                        bstr::BStr::new(err.name()),
+                        bun_core::Error::from(err).name(),
                     ));
                     Global::crash();
                 }
             };
 
-            if pm.options.positionals.len() > 1 && pm.options.positionals[1] == b"rm" {
-                fd.close();
+            if pm.options.positionals.len() > 1
+                && strings::eql_comptime(pm.options.positionals[1], b"rm")
+            {
+                fd.fd().close();
 
                 let mut had_err = false;
 
-                // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent (std::fs banned)
-                if let Err(err) = (|| -> Result<(), bun_core::Error> {
-                    let _ = outpath;
-                    todo!("blocked_on: bun_sys::delete_tree_absolute")
-                })() {
-                    Output::err(err, "Could not delete {s}", format_args!("{}", bstr::BStr::new(outpath)));
+                if let Err(err) = bun_sys::delete_tree_absolute(outpath) {
+                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(outpath),));
                     had_err = true;
                 }
                 Output::prettyln(format_args!("Cleared 'bun install' cache"));
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
-                    // TODO(port): std.fs.openDirAbsolute → bun_sys equivalent (std::fs banned)
                     let tmp_dir = match bun_sys::open_dir_absolute(tmp) {
-                        Ok(d) => d,
+                        Ok(d) => Dir::from_fd(d),
                         Err(err) => {
-                            Output::err(err, "Could not open {s}", format_args!("{}", bstr::BStr::new(tmp)));
+                            Output::err(
+                                bun_core::Error::from(err),
+                                "Could not open {s}",
+                                (bstr::BStr::new(tmp),),
+                            );
                             had_err = true;
                             break 'bunx;
                         }
                     };
-                    let mut iter = bun_sys::iterate_dir(tmp_dir);
+                    let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
 
                     // This is to match 'bunx_command.BunxCommand.exec's logic
                     let mut prefix: Vec<u8> = Vec::new();
                     #[cfg(unix)]
-                    // SAFETY: getuid(2) is always successful and has no preconditions.
-                    write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() }).expect("unreachable");
+                    {
+                        // SAFETY: getuid(2) is always-successful with no preconditions.
+                        write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() })
+                            .expect("unreachable");
+                    }
                     #[cfg(not(unix))]
-                    write!(&mut prefix, "bunx-{}-", bun_sys::windows::user_unique_id()).expect("unreachable");
+                    {
+                        write!(&mut prefix, "bunx-{}-", bun_sys::windows::user_unique_id())
+                            .expect("unreachable");
+                    }
 
                     let mut deleted: usize = 0;
                     loop {
@@ -453,17 +459,22 @@ mod _gated_port {
                             Ok(Some(e)) => e,
                             Ok(None) => break,
                             Err(err) => {
-                                Output::err(err, "Could not read {s}", format_args!("{}", bstr::BStr::new(tmp)));
+                                Output::err(
+                                    bun_core::Error::from(err),
+                                    "Could not read {s}",
+                                    (bstr::BStr::new(tmp),),
+                                );
                                 had_err = true;
                                 break 'bunx;
                             }
                         };
-                        if entry.name.as_bytes().starts_with(prefix.as_slice()) {
-                            if let Err(err) = tmp_dir.delete_tree(entry.name.as_bytes()) {
+                        let name = entry.name.slice_u8();
+                        if name.starts_with(prefix.as_slice()) {
+                            if let Err(err) = tmp_dir.delete_tree(name) {
                                 Output::err(
                                     err,
                                     "Could not delete {s}",
-                                    format_args!("{}", bstr::BStr::new(entry.name.as_bytes())),
+                                    (bstr::BStr::new(name),),
                                 );
                                 had_err = true;
                                 continue;
@@ -481,46 +492,43 @@ mod _gated_port {
 
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
-        } else if subcommand == b"default-trusted" {
+        } else if strings::eql_comptime(subcommand, b"default-trusted") {
             DefaultTrustedCommand::exec()?;
             Global::exit(0);
-        } else if subcommand == b"untrusted" {
-            UntrustedCommand::exec(ctx, pm, args)?;
+        } else if strings::eql_comptime(subcommand, b"untrusted") {
+            UntrustedCommand::exec(&&mut *ctx, pm, args)?;
             Global::exit(0);
-        } else if subcommand == b"trust" {
-            TrustCommand::exec(ctx, pm, args)?;
+        } else if strings::eql_comptime(subcommand, b"trust") {
+            TrustCommand::exec(&&mut *ctx, pm, args)?;
             Global::exit(0);
-        } else if subcommand == b"ls" {
-            let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
+        } else if strings::eql_comptime(subcommand, b"ls") {
+            let load_lockfile = load_lockfile_from_cwd(pm_ptr);
             Self::handle_load_lockfile_errors(&load_lockfile, pm);
 
             Output::flush();
             Output::disable_buffering();
-            let lockfile = load_lockfile.ok().lockfile;
-            let mut iterator = lockfile::tree::Iterator::<{ lockfile::tree::IteratorPathStyle::NodeModules }>::init(lockfile);
-            // TODO(port): Lockfile.Tree.Iterator(.node_modules) — verify const-generic spelling
+            let lockfile: &Lockfile = load_lockfile.ok().lockfile;
+            let mut iterator =
+                tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
 
             let mut max_depth: usize = 0;
 
             let mut directories: Vec<NodeModulesFolder> = Vec::new();
             while let Some(node_modules) = iterator.next(None) {
-                let path_len = node_modules.relative_path.len();
+                let path_len = node_modules.relative_path.as_bytes().len();
                 let mut path: Vec<u8> = Vec::with_capacity(path_len + 1);
                 path.extend_from_slice(node_modules.relative_path.as_bytes());
                 path.push(0);
 
-                let dependencies: Box<[DependencyID]> =
-                    Box::from(node_modules.dependencies);
+                let dependencies: Box<[DependencyID]> = Box::from(node_modules.dependencies);
 
                 if max_depth < node_modules.depth + 1 {
                     max_depth = node_modules.depth + 1;
                 }
 
                 directories.push(NodeModulesFolder {
-                    // Move the NUL-terminated buffer into the struct (single allocation,
-                    // no `mem::forget` — see PORTING.md §Forbidden patterns).
+                    // SAFETY: NUL terminator just appended above.
                     relative_path: bun_core::ZBox::from_vec_with_nul(path),
-                    // TODO(port): NodeModulesFolder.relative_path is [:0]u8 in Zig; verify owned vs borrowed in Rust struct
                     dependencies,
                     tree_id: node_modules.tree_id,
                     depth: node_modules.depth,
@@ -562,12 +570,11 @@ mod _gated_port {
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
                 let root_deps = slice.items_dependencies()[0];
-                // TODO(port): MultiArrayList .items(.field) accessor naming — verify in bun_collections
 
                 Output::println(format_args!(
                     "{} node_modules ({})",
                     bstr::BStr::new(path),
-                    lockfile.buffers.hoisted_dependencies.len()
+                    lockfile.buffers.hoisted_dependencies.len(),
                 ));
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
                 let mut sorted_dependencies: Vec<DependencyID> =
@@ -580,33 +587,37 @@ mod _gated_port {
                     buf: string_bytes,
                 };
                 sorted_dependencies.sort_by(|a, b| by_name.cmp(*a, *b));
-                // PERF(port): Zig used pdqsort; Rust sort_by is also pattern-defeating quicksort — profile in Phase B
+                // PERF(port): Zig used pdqsort; Rust sort_by is also pattern-defeating quicksort.
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
-                    let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
+                    let package_id =
+                        lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
                     if package_id as usize >= lockfile.packages.len() {
                         continue;
                     }
                     let name = dependencies[dependency_id as usize].name.slice(string_bytes);
-                    let resolution = resolutions[package_id as usize].fmt(string_bytes, lockfile::FmtMode::Auto);
+                    let resolution =
+                        resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
 
                     if index < sorted_dependencies.len() - 1 {
                         Output::prettyln(format_args!(
                             "<d>├──<r> {}<r><d>@{}<r>\n",
-                            bstr::BStr::new(name), resolution,
+                            bstr::BStr::new(name),
+                            resolution,
                         ));
                     } else {
                         Output::prettyln(format_args!(
                             "<d>└──<r> {}<r><d>@{}<r>\n",
-                            bstr::BStr::new(name), resolution,
+                            bstr::BStr::new(name),
+                            resolution,
                         ));
                     }
                 }
             }
 
             Global::exit(0);
-        } else if subcommand == b"migrate" {
-            if !pm.options.enable.force_save_lockfile {
+        } else if strings::eql_comptime(subcommand, b"migrate") {
+            if !pm.options.enable.force_save_lockfile() {
                 if bun_sys::exists_z(bun_core::zstr!("bun.lock")) {
                     Output::pretty_errorln(
                         "<r><red>error<r>: bun.lock already exists\nrun with --force to overwrite",
@@ -621,28 +632,48 @@ mod _gated_port {
                     Global::exit(1);
                 }
             }
-            // TODO(port): bun_install::migration is an empty stub (file body is
-            //   migration::detect_and_load_other_lockfile(&mut pm.lockfile, Fd::cwd(), pm, pm.log)
-            let load_lockfile: lockfile::LoadResult =
-                todo!("blocked_on: bun_install::migration::detect_and_load_other_lockfile (reconciler-6)");
-            let _ = Fd::cwd();
-            if matches!(load_lockfile, lockfile::LoadResult::NotFound) {
+            // PORT NOTE: reshaped for borrowck — see `load_lockfile_from_cwd`.
+            // SAFETY: same disjoint-heap-allocation invariant as documented there.
+            let load_lockfile = unsafe {
+                let lockfile: *mut Lockfile = &mut **core::ptr::addr_of_mut!((*pm_ptr).lockfile);
+                let log: *mut bun_logger::Log = (*pm_ptr).log;
+                migration::detect_and_load_other_lockfile(
+                    &mut *lockfile,
+                    Fd::cwd(),
+                    &mut *pm_ptr,
+                    &mut *log,
+                )
+            };
+            if matches!(load_lockfile, LoadResult::NotFound) {
                 Output::pretty_errorln("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, pm);
-            let lockfile = load_lockfile.ok().lockfile;
-
-            lockfile.save_to_disk(&load_lockfile, &pm.options);
+            // PORT NOTE: reshaped for borrowck — `LoadResultOk.lockfile` is
+            // `&mut Lockfile`; reborrow through the raw `pm_ptr` to call
+            // `save_to_disk` while `load_lockfile` still borrows the same
+            // heap allocation by-value as the result discriminant only.
+            // SAFETY: `save_to_disk` reads `load_result` only for its
+            // `format`/`migrated` payload; the `&mut Lockfile` it receives is
+            // the sole live mutable reference into the boxed lockfile.
+            unsafe {
+                let lockfile: *mut Lockfile = &mut **core::ptr::addr_of_mut!((*pm_ptr).lockfile);
+                (*lockfile).save_to_disk(&load_lockfile, &(*pm_ptr).options);
+            }
             Global::exit(0);
-        } else if subcommand == b"version" {
-            PmVersionCommand::exec(ctx, pm, &pm.options.positionals, &cwd)?;
+        } else if strings::eql_comptime(subcommand, b"version") {
+            // PORT NOTE: `pm.options.positionals: &'static [&'static [u8]]`
+            // coerces to `&[&[u8]]` (covariant in both lifetimes).
+            let positionals: &[&[u8]] = pm.options.positionals;
+            PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;
             Global::exit(0);
-        } else if subcommand == b"why" {
-            PmWhyCommand::exec(ctx, pm, &pm.options.positionals)?;
+        } else if strings::eql_comptime(subcommand, b"why") {
+            let positionals: &[&[u8]] = pm.options.positionals;
+            PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
             Global::exit(0);
-        } else if subcommand == b"pkg" {
-            PmPkgCommand::exec(ctx, pm, &pm.options.positionals, &cwd)?;
+        } else if strings::eql_comptime(subcommand, b"pkg") {
+            let positionals: &[&[u8]] = pm.options.positionals;
+            PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
             Global::exit(0);
         }
 
@@ -659,13 +690,9 @@ mod _gated_port {
         } else {
             Global::exit(0);
         }
-        }
     }
 }
 
-// Gated: depends on `Lockfile.packages` MultiArrayList accessors and
-// `Resolution::fmt(.., FmtMode)` which only exist on the real (currently
-// Sole caller is the `ls` branch above, itself gated for the same reason.
 fn print_node_modules_folder_structure(
     directory: &NodeModulesFolder,
     directory_package_id: Option<PackageID>,
@@ -676,7 +703,6 @@ fn print_node_modules_folder_structure(
 ) -> Result<(), bun_core::Error> {
     // PORT NOTE: `lockfile.allocator` dropped — global mimalloc.
     let resolutions = lockfile.packages.items_resolution();
-    // TODO(port): MultiArrayList .items(.field) accessor naming — verify in bun_collections
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
     {
@@ -712,17 +738,10 @@ fn print_node_modules_folder_structure(
                     temp_depth -= 1;
                 }
             }
-            let directory_version = {
-                let mut cursor: &mut [u8] = &mut resolution_buf[..];
-                let cap = cursor.len();
-                write!(
-                    &mut cursor,
-                    "{}",
-                    resolutions[id as usize].fmt(string_bytes, lockfile::FmtMode::Auto)
-                )?;
-                let written = cap - cursor.len();
-                &resolution_buf[..written]
-            };
+            let directory_version = buf_print(
+                &mut resolution_buf,
+                format_args!("{}", resolutions[id as usize].fmt(string_bytes, PathSep::Auto)),
+            );
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 Output::prettyln(format_args!(
                     "{}<d>@{}<r>",
@@ -758,7 +777,7 @@ fn print_node_modules_folder_structure(
         buf: string_bytes,
     };
     sorted_dependencies.sort_by(|a, b| by_name.cmp(*a, *b));
-    // PERF(port): Zig used pdqsort; Rust sort_by is also pattern-defeating quicksort — profile in Phase B
+    // PERF(port): Zig used pdqsort; Rust sort_by is also pattern-defeating quicksort.
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
@@ -841,17 +860,13 @@ fn print_node_modules_folder_structure(
         }
 
         let mut resolution_buf = [0u8; 512];
-        let package_version = {
-            let mut cursor: &mut [u8] = &mut resolution_buf[..];
-            let cap = cursor.len();
-            write!(
-                &mut cursor,
+        let package_version = buf_print(
+            &mut resolution_buf,
+            format_args!(
                 "{}",
-                resolutions[package_id as usize].fmt(string_bytes, lockfile::FmtMode::Auto)
-            )?;
-            let written = cap - cursor.len();
-            &resolution_buf[..written]
-        };
+                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
+            ),
+        );
         Output::prettyln(format_args!(
             "{}<d>@{}<r>",
             bstr::BStr::new(package_name),
@@ -862,19 +877,33 @@ fn print_node_modules_folder_structure(
     Ok(())
 }
 
-// Items only referenced in the gated bodies.
+/// Helper: write `args` into `buf` and return the written subslice.
+/// Mirrors `std.fmt.bufPrint(buf, fmt, args)`.
+fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
+    let total = buf.len();
+    let mut cursor: &mut [u8] = buf;
+    cursor.write_fmt(args).expect("buf_print overflow");
+    let remaining = cursor.len();
+    let written = total - remaining;
+    // PORT NOTE: reshaped for borrowck — re-slice from the original buffer.
+    // SAFETY: `written` bytes were just written contiguously starting at buf[0].
+    unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) }
+}
+
+// Type alias retained so unused imports lint catches drift on `ZStr` and
+// `lockfile` re-exports above.
 #[allow(dead_code)]
-type _GatedRefs = (PackageID, Lockfile, &'static ZStr);
+type _Refs = (PackageID, &'static ZStr, &'static lockfile::Lockfile, pm_mod::Subcommand);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/package_manager_command.zig (618 lines)
 //   confidence: medium
-//   todos:      10
-//   notes:      exec/print_hash bodies gated behind bun_install::package_manager_real un-gate
-//               (reconciler-6) — stub PackageManager lacks init/lockfile/options.positionals/
-//               global/bin_path/json_output/setup_global_dir; std.fs dir/tree ops mapped to
-//               bun_sys placeholders; NodeModulesFolder ownership and MultiArrayList accessors
-//               need Phase B verification; get_subcommand must mutate pm.options.positionals
-//               in place (write-back is load-bearing for downstream index math).
+//   notes:      `pm.lockfile.loadFromCwd(pm, ..)` is a self-referential split
+//               borrow in Rust; routed through raw `*mut PackageManager` with
+//               disjoint-heap-allocation SAFETY justification.
+//               `Command::Context` (= `&mut ContextData`) is reborrowed at
+//               each sub-command call site so `ctx` remains usable across
+//               branches; sub-commands taking `&Command::Context` receive
+//               `&&mut ContextData`.
 // ──────────────────────────────────────────────────────────────────────────

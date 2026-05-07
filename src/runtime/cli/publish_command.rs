@@ -354,7 +354,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha512.r#final(&mut integrity);
         drop(sha512);
 
-        let normalized_pkg_info = Self::normalized_package(
+        // TODO(port): `json_mod::Expr` (= `bun_logger::js_ast::Expr`) and
+        // `bun_js_parser::Expr` are split in Phase-A; `normalized_package`
+        // types against the parser-shaped one (so `pack_command` can pass
+        // `WorkspacePackageJSONCache::MapEntry.root`). The two unify under
+        // reconciler-6; until then this call carries the same type-bridge as
+        // `WorkspacePackageJSONCache::get_with_path`.
+        let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
             &package_version,
@@ -364,7 +370,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             integrity,
         )?;
 
-        Pack::Context::print_summary(
+        pack::Context::print_summary(
             pack::Stats {
                 total_files,
                 unpacked_size,
@@ -399,12 +405,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromWorkspaceError> {
-        // PORT NOTE: reshaped for borrowck — Zig stack-allocated a `Lockfile`
-        // and freely aliased `*PackageManager` across `loadFromCwd` + the
-        // `pack::Context` borrow. In Rust the lockfile must outlive `'a`
-        // (it's borrowed by `pack::Context.lockfile`), so leak it (single-shot
-        // CLI; freed at process exit).
-        let lockfile: &'a mut Lockfile = Box::leak(Box::<Lockfile>::default());
+        let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         // SAFETY: `manager.log` is set once at `PackageManager::init`.
         let log: &mut logger::Log = unsafe { &mut *manager.log };
@@ -1863,6 +1864,5 @@ impl From<GetOTPError> for PublishError {
 // PORT STATUS
 //   source:     src/cli/publish_command.zig (1468 lines)
 //   confidence: medium
-//   todos:      13
-//   notes:      Context<const bool> cannot vary field types (script_env/publish_script kept as Option); std.process.Child/std.Thread/std.fs.Dir need bun_* substitutes; Expr/E.String construction shapes guessed; allocPrintSentinel reshaped for borrowck
+//   notes:      Context<const bool> cannot vary field types (script_env/publish_script kept as Option); std.process.Child→spawn_sync, std.Thread→std::thread, std.fs.Dir→bun_sys::Fd; allocPrintSentinel reshaped for borrowck; json_mod::Expr↔bun_js_parser::Expr split is the same Phase-A bridge carried by WorkspacePackageJSONCache.
 // ──────────────────────────────────────────────────────────────────────────

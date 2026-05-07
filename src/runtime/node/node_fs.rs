@@ -260,26 +260,12 @@ use bun_jsc::JSPromiseStrong;
 use super::dir_iterator as DirIterator;
 use bun_resolver::fs::FileSystem;
 
+// On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
+// `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
+// behind `#[cfg(windows)]`. There is intentionally **no** POSIX stub module
+// here so misuse is a compile error, not a silent null.
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv as uv};
-/// On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are dead
-/// branches kept for source parity with `node_fs.zig`. `bun_sys` only exports
-/// the libuv shim on Windows, so we provide a minimal type-only stub here so
-/// the cross-platform signatures (`uv::fs_t`, `uv::Loop`) type-check. Every
-/// body that actually *calls* into uv on POSIX is already `#[cfg(windows)]`.
-#[cfg(not(windows))]
-mod uv {
-    #[repr(C)]
-    pub struct fs_t { _opaque: [u8; 0] }
-    impl fs_t {
-        pub const UNINITIALIZED: fs_t = fs_t { _opaque: [] };
-        pub fn deinit(&mut self) {}
-        pub unsafe fn ptr_as<T>(&self) -> *const T { core::ptr::null() }
-    }
-    pub struct Loop;
-    impl Loop { pub fn get() -> *mut Loop { core::ptr::null_mut() } }
-    pub unsafe fn uv_fs_req_cleanup(_req: *mut fs_t) {}
-}
 
 // Syscall = bun.sys.sys_uv on Windows, bun.sys otherwise
 #[cfg(windows)]
@@ -788,7 +774,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result } as i64);
+        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result }.int());
         if let Maybe::Err(err) = &mut this.result {
             *err = err.clone();
             core::hint::black_box(&node_fs);
@@ -805,7 +791,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result } as i64);
+        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
         if let Maybe::Err(err) = &mut this.result {
             *err = err.clone();
             core::hint::black_box(&node_fs);
@@ -1024,15 +1010,14 @@ impl FsReturn for StatOrNotFound {
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
 /// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to
 /// a distinct `task_tag::*` via the comptime type-name lookup; the const-
-/// generic `F` carries that information but Rust can't compute the tag from it
-/// in a `const` context yet, so use a placeholder and rely on
-/// `bun_runtime::dispatch::run_task` (which keys on the explicit per-`F`
-/// `task_tag::*` arm) for routing.
-// TODO(port): replace with per-`async_::*` Taskable impls (or a const-fn
-// `NodeFSFunctionEnum -> TaskTag` map) once dispatch.rs's exhaustiveness
-// assert is wired.
+/// generic `F` carries that information and `NodeFSFunctionEnum::task_tag()`
+/// is `const fn`, so the per-`F` tag is computed at monomorphisation time.
 impl<R, A, const F: NodeFSFunctionEnum> bun_event_loop::Taskable for AsyncFSTask<R, A, F> {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ManagedTask;
+    const TAG: bun_event_loop::TaskTag = F.task_tag();
+}
+#[cfg(windows)]
+impl<R, A, const F: NodeFSFunctionEnum> bun_event_loop::Taskable for UVFSRequest<R, A, F> {
+    const TAG: bun_event_loop::TaskTag = F.task_tag();
 }
 
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
@@ -1052,8 +1037,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     /// already called, no guarantees are made. It is recommended for
     /// the functions to check .signal.aborted() for early returns.
     pub const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
-    // TODO(port): heap_label = "Async" ++ typeBaseName(A) ++ "Task"
-    pub const HEAP_LABEL: &'static str = "AsyncFSTask";
+    pub const HEAP_LABEL: &'static str = F.heap_label();
 
     pub fn create(
         global_object: &JSGlobalObject,
@@ -1088,7 +1072,6 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         };
 
         let mut node_fs = NodeFS::default();
-        // TODO(port): dispatch via NodeFSFunctionEnum const-generic to the correct NodeFS method
         this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
 
         if let Maybe::Err(err) = &mut this.result {
@@ -1173,20 +1156,10 @@ pub type AsyncCpTask = NewAsyncCpTask<false>;
 pub type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
 // Zig path was `bun.shell.Interpreter.Builtin.Cp.ShellCpTask`. The Rust shell
-// port flattens builtins under `crate::shell::builtins::*`.
+// port flattens builtins under `crate::shell::builtins::*`. The
+// `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
+// (cp.rs), called directly below — no trait indirection.
 type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
-
-/// Callbacks `NewAsyncCpTask<true>` fires back into the owning shell `cp`
-/// builtin. In Zig these are inherent methods on `ShellCpTask`
-/// (`cpOnCopy` / `cpOnFinish`); the Rust shell port hasn't grown them yet, so
-/// they're routed through this extension trait with no-op defaults. Once
-/// `shell/builtin/cp.rs` adds inherent `cp_on_copy` / `cp_on_finish`, method
-/// resolution will prefer those over the trait defaults automatically.
-pub trait ShellCpHooks {
-    fn cp_on_copy(&mut self, _src: &[OSPathChar], _dest: &[OSPathChar]) {}
-    fn cp_on_finish(&mut self, _result: Maybe<ret::Cp>) {}
-}
-impl ShellCpHooks for ShellCpTask {}
 
 pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     pub promise: JSPromiseStrong,
@@ -1199,8 +1172,10 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     pub result: core::cell::UnsafeCell<Maybe<ret::Cp>>,
     /// If this task is called by the shell then we shouldn't call this as
     /// it is not threadsafe and is unnecessary as the process will be kept
-    /// alive by the shell instance
-    // TODO(port): conditional field — using KeepAlive unconditionally; on shell path it's never ref()'d
+    /// alive by the shell instance.
+    // PORT NOTE: Zig made the field conditional via `if (!is_shell) … else void`.
+    // Rust keeps the field unconditionally and simply skips `ref_()`/`unref()`
+    // on the `IS_SHELL` path (`KeepAlive::default()` is inert until ref'd).
     pub r#ref: KeepAlive,
     // PERF(port): was arena bulk-free — profile in Phase B
     pub tracker: AsyncTaskTracker,
@@ -2275,7 +2250,7 @@ impl ResultListEntryValue {
 pub use _async_tasks::{
     async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument,
     IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    ShellCpHooks, UVFSRequest,
+    UVFSRequest,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -7517,7 +7492,86 @@ pub enum NodeFSFunctionEnum {
     Truncate, Unlink, Utimes, Write, WriteFile, Writev,
 }
 
-// TODO(port): i52 marker type — Zig `i52` used for ReadPosition coercion bounds
+impl NodeFSFunctionEnum {
+    /// Maps each async-FS function to its event-loop [`TaskTag`]. The Zig
+    /// source did this via comptime `@typeName` lookup against the
+    /// `Task.Tag.@"NameOfTask"` table; Rust spells it out (the `tags!` macro
+    /// in `bun_event_loop::task_tag` declares one constant per variant).
+    pub const fn task_tag(self) -> bun_event_loop::TaskTag {
+        use bun_event_loop::task_tag;
+        match self {
+            Self::Access => task_tag::Access,
+            Self::AppendFile => task_tag::AppendFile,
+            Self::Chmod => task_tag::Chmod,
+            Self::Chown => task_tag::Chown,
+            Self::Close => task_tag::Close,
+            Self::CopyFile => task_tag::CopyFile,
+            Self::Exists => task_tag::Exists,
+            Self::Fchmod => task_tag::Fchmod,
+            Self::Fchown => task_tag::FChown,
+            Self::Fdatasync => task_tag::Fdatasync,
+            Self::Fstat => task_tag::Fstat,
+            Self::Fsync => task_tag::Fsync,
+            Self::Ftruncate => task_tag::FTruncate,
+            Self::Futimes => task_tag::Futimes,
+            Self::Lchmod => task_tag::Lchmod,
+            Self::Lchown => task_tag::Lchown,
+            Self::Link => task_tag::Link,
+            Self::Lstat => task_tag::Lstat,
+            Self::Lutimes => task_tag::Lutimes,
+            Self::Mkdir => task_tag::Mkdir,
+            Self::Mkdtemp => task_tag::Mkdtemp,
+            Self::Open => task_tag::Open,
+            Self::Read => task_tag::Read,
+            Self::Readdir => task_tag::Readdir,
+            Self::ReadFile => task_tag::ReadFile,
+            Self::Readlink => task_tag::Readlink,
+            Self::Readv => task_tag::Readv,
+            Self::Realpath => task_tag::Realpath,
+            Self::RealpathNonNative => task_tag::RealpathNonNative,
+            Self::Rename => task_tag::Rename,
+            Self::Rm => task_tag::Rm,
+            Self::Rmdir => task_tag::Rmdir,
+            Self::Stat => task_tag::Stat,
+            Self::Statfs => task_tag::StatFS,
+            Self::Symlink => task_tag::Symlink,
+            Self::Truncate => task_tag::Truncate,
+            Self::Unlink => task_tag::Unlink,
+            Self::Utimes => task_tag::Utimes,
+            Self::Write => task_tag::Write,
+            Self::WriteFile => task_tag::WriteFile,
+            Self::Writev => task_tag::Writev,
+        }
+    }
+
+    /// `"Async" ++ typeBaseName(ArgumentType) ++ "Task"` — Zig built this via
+    /// comptime string concat on `@typeName(ArgumentType)`. Rust has no
+    /// `type_name::<T>()` in `const`, so key off the `F` discriminant instead
+    /// (each `F` is bound to exactly one `args::*` type via `async_::*`).
+    pub const fn heap_label(self) -> &'static str {
+        macro_rules! lbl { ($($v:ident),+ $(,)?) => { match self { $(Self::$v => concat!("Async", stringify!($v), "Task"),)+ } } }
+        lbl!(Access, AppendFile, Chmod, Chown, Close, CopyFile, Exists, Fchmod, Fchown,
+             Fdatasync, Fstat, Fsync, Ftruncate, Futimes, Lchmod, Lchown, Link, Lstat,
+             Lutimes, Mkdir, Mkdtemp, Open, Read, Readdir, ReadFile, Readlink, Readv,
+             Realpath, RealpathNonNative, Rename, Rm, Rmdir, Stat, Statfs, Symlink,
+             Truncate, Unlink, Utimes, Write, WriteFile, Writev)
+    }
+    pub const fn heap_label_uv(self) -> &'static str {
+        match self {
+            Self::Open => "AsyncOpenUvTask",
+            Self::Close => "AsyncCloseUvTask",
+            Self::Read => "AsyncReadUvTask",
+            Self::Write => "AsyncWriteUvTask",
+            Self::Readv => "AsyncReadvUvTask",
+            Self::Writev => "AsyncWritevUvTask",
+            Self::Statfs => "AsyncStatfsUvTask",
+            _ => "AsyncUvTask",
+        }
+    }
+}
+
+/// `i52` — Zig's odd-width integer used for `ReadPosition` coercion bounds.
+/// Only `MIN` is referenced (in `args::FTruncate::from_js`).
 #[allow(non_camel_case_types)]
 struct i52;
 impl i52 { const MIN: i64 = -(1i64 << 51); }

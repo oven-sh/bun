@@ -9,7 +9,7 @@ use bun_sys as sys;
 
 use crate::bun_json as json;
 use crate::bun_json::Expr;
-use crate::lockfile_real::package::{Package, ResolverContext, Scripts};
+use crate::lockfile_real::package::{Package, PackageListExt, ResolverContext, Scripts};
 use crate::lockfile_real::StringBuilder;
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{
@@ -201,10 +201,8 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&new_name);
-                        // inlined `resolver.count(&mut builder, undefined)` —
-                        // ResolverContext::count is typed against `lockfile_real::StringBuilder`;
-                        // the body is a single `builder.count(resolved)`.
-                        builder.count(resolver.resolved);
+                        // Zig passed `undefined` for the unused `JSAst.Expr` arg.
+                        resolver.count(&mut builder, &Expr::default());
 
                         bun_core::handle_oom(builder.allocate());
 
@@ -212,15 +210,9 @@ impl PackageManager {
                         pkg.name = name.value;
                         pkg.name_hash = name.hash;
 
-                        // inlined `resolver.resolve(&mut builder, undefined)` for the same
-                        // builder-type reason; body is two lines (see `GitResolver::resolve`).
-                        // SAFETY: tag is `.git` or `.github`; both store `Repository`.
-                        let mut repo = unsafe { resolver.resolution.value.github };
-                        repo.resolved = builder.append::<SemverString>(resolver.resolved);
-                        pkg.resolution = ResolutionType::init(match resolver.resolution.tag {
-                            ResolutionTag::Git => TaggedValue::Git(repo),
-                            _ => TaggedValue::Github(repo),
-                        });
+                        pkg.resolution = resolver
+                            .resolve(&mut builder, &Expr::default())
+                            .expect("unreachable");
                     }
 
                     pkg

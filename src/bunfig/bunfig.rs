@@ -505,11 +505,8 @@ impl<'a> Parser<'a> {
                     // accept a parsed value.
                     
                     {
-                        // PORT NOTE: `reports_directory: &'static [u8]` upstream;
-                        // leak the parsed value to satisfy the lifetime until the
-                        // schema field is retyped to `Box<[u8]>`.
                         self.ctx.test_options.coverage.reports_directory =
-                            Box::leak(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump));
+                            estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
                     }
                 }
 
@@ -1183,10 +1180,8 @@ impl Bunfig {
 // reference fields that do not yet exist on the opaque schema structs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-mod phase_a_draft {
+mod install_registry_serve {
     use super::*;
-    #[allow(unused_imports)]
-    use bun_install::{self, PackageManager, PnpmMatcher};
     use bun_url::URL;
     use std::io::Write as _;
 

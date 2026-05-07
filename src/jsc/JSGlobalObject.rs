@@ -1495,26 +1495,10 @@ pub struct ValidateObjectOpts {
     pub nullable: bool,
 }
 
-#[derive(Copy, Clone)]
-pub struct IntegerRange {
-    // TODO(port): Zig used `comptime_int` for min/max; i128 covers every signed/unsigned
-    // primitive integer's MIN/MAX as well as MIN/MAX_SAFE_INTEGER without narrowing.
-    pub min: i128,
-    pub max: i128,
-    pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
-}
-
-impl Default for IntegerRange {
-    fn default() -> Self {
-        Self {
-            min: i128::from(MIN_SAFE_INTEGER),
-            max: i128::from(MAX_SAFE_INTEGER),
-            field_name: b"",
-            always_allow_zero: false,
-        }
-    }
-}
+// Unified with the crate-root definition (lib.rs) — re-exported here so
+// `bun_jsc::js_global_object::IntegerRange` keeps resolving for any caller
+// that named it via this path.
+pub use crate::IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported (callconv(.c)) functions — Zig used `comptime { @export(...) }`.

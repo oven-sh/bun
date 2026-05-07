@@ -121,9 +121,8 @@ pub static Bun__version_sha: CStrPtr =
     CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
 
 mod _impl {
-use core::ffi::c_void;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::zig_string::ZigString;
 use bun_str::{String as BunString, strings};
 use bun_sys as Syscall;
@@ -135,29 +134,19 @@ unsafe extern "C" {
     fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
 }
 
-/// Local shim for `bun.String.toJSArray` — `bun_jsc::bun_string_jsc::to_js_array`
-fn bun_string_to_js_array(global: &JSGlobalObject, items: &[BunString]) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global, items.len())?;
-    for (i, s) in items.iter().enumerate() {
-        array.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
-    }
-    Ok(array)
-}
-
 // ───────────────────────────── title ─────────────────────────────
 
-static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
-/// Heap-owned backing for `Bun__Node__ProcessTitle` when it was set via JS
-/// (`process.title = ...`). The CLI may also set the static to a slice
-/// borrowing process-lifetime argv storage; that case is *not* tracked here so
-/// dropping this never frees argv. Guarded by `TITLE_MUTEX`.
-static mut PROCESS_TITLE_OWNED: Option<Box<[u8]>> = None;
+/// Heap-owned backing for `crate::cli::Bun__Node__ProcessTitle` when it was set
+/// via JS (`process.title = ...`). The CLI may also point that static at a
+/// slice borrowing process-lifetime argv storage; that case is *not* tracked
+/// here so dropping this never frees argv. The mutex guards *both* this owned
+/// box and reads/writes of `crate::cli::Bun__Node__ProcessTitle`.
+static PROCESS_TITLE: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
 
 #[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
-    TITLE_MUTEX.lock();
-    let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
-    // SAFETY: TITLE_MUTEX held; Bun__Node__ProcessTitle is the static guarded by it
+    let _guard = PROCESS_TITLE.lock();
+    // SAFETY: PROCESS_TITLE lock held; Bun__Node__ProcessTitle is the static guarded by it
     let str_ = unsafe { crate::cli::Bun__Node__ProcessTitle };
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
@@ -170,34 +159,41 @@ pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunStrin
 pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
     // SAFETY: newvalue is a valid pointer from C++; we consume one ref before returning
     let newvalue = unsafe { &mut *newvalue };
-    let _guard_deref = scopeguard::guard((), |()| newvalue.deref());
-    TITLE_MUTEX.lock();
-    let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
+    let _deref = scopeguard::guard((), |()| newvalue.deref());
+    let mut owned = PROCESS_TITLE.lock();
 
     // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
     // the Zig OOM-throw path is unreachable here.
     let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-    // SAFETY: TITLE_MUTEX held; both statics are guarded by it. The
-    // `&'static [u8]` published into `Bun__Node__ProcessTitle` borrows
-    // `PROCESS_TITLE_OWNED`; readers under the mutex never observe a stale
-    // borrow because we publish the slice *before* swapping the owned box,
-    // and the old box is dropped only after the slice no longer points at it.
+    // SAFETY: PROCESS_TITLE lock held. The `&'static [u8]` published into
+    // `Bun__Node__ProcessTitle` borrows `*owned`; readers under the mutex never
+    // observe a stale borrow because we publish the slice *before* swapping the
+    // owned box, and the old box is dropped only after the slice no longer
+    // points at it.
     unsafe {
         let slice: &'static [u8] = core::mem::transmute::<&[u8], &'static [u8]>(&new_title[..]);
         crate::cli::Bun__Node__ProcessTitle = Some(slice);
-        // Zig: `if (old) |slice| allocator.free(slice)` — drop the previous
-        // heap-owned title (if any). Argv-borrowed initial titles are not in
-        // PROCESS_TITLE_OWNED so are correctly left alone.
-        PROCESS_TITLE_OWNED = Some(new_title);
     }
+    // Zig: `if (old) |slice| allocator.free(slice)` — drop the previous
+    // heap-owned title (if any). Argv-borrowed initial titles are not in
+    // PROCESS_TITLE so are correctly left alone.
+    *owned = Some(new_title);
 }
 
 // ───────────────────────────── execArgv ─────────────────────────────
 
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__Process__createExecArgv")]
-pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+// Zig: `@export(&host_fn.wrap1(createExecArgv), ...)` — the C++ caller
+// (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
+// not a `JSHostFunctionType`. Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Process__createExecArgv(global_object: *const JSGlobalObject) -> JSValue {
+    // SAFETY: global_object is valid for the duration of this call
+    let global_object = unsafe { &*global_object };
+    bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
+}
+
+fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback alloc (4096 bytes) — profile in Phase B
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = unsafe { &*global_object.bun_vm() };
@@ -255,7 +251,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
                 }
             }
 
-            return bun_string_to_js_array(global_object, &args);
+            return bun_string_jsc::to_js_array(global_object, &args);
         }
         return JSValue::create_empty_array(global_object, 0);
     }
@@ -333,7 +329,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         break;
     }
 
-    bun_string_to_js_array(global_object, &args)
+    bun_string_jsc::to_js_array(global_object, &args)
 }
 
 // ───────────────────────────── argv ─────────────────────────────
@@ -404,7 +400,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
         }
     }
 
-    bun_string_to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+    bun_string_jsc::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
 }
 
 // ───────────────────────────── eval ─────────────────────────────
@@ -423,9 +419,17 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
 
 // ───────────────────────────── cwd ─────────────────────────────
 
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__Process__getCwd")]
-pub fn get_cwd(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+// Zig: `pub const getCwd = host_fn.wrap1(getCwd_)` — C++ (headers.h) declares
+// `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the wrap1
+// shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Process__getCwd(global_object: *const JSGlobalObject) -> JSValue {
+    // SAFETY: global_object is valid for the duration of this call
+    let global_object = unsafe { &*global_object };
+    bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
+}
+
+fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     let mut buf = PathBuffer::uninit();
     match crate::node::path::get_cwd(&mut buf) {
         bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
@@ -433,15 +437,21 @@ pub fn get_cwd(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<J
     }
 }
 
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__Process__setCwd")]
-pub fn set_cwd(global_object: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Zig wraps via `host_fn.wrap2` which auto-coerces arg 0 → ZigString. The
-    // Rust `#[host_fn]` macro emits a fixed `(global, frame)` shim, so do the
-    // ZigString extraction here (wrap2 semantics: `arg.toZigString(out, global)`).
-    let mut to = ZigString::EMPTY;
-    frame.argument(0).to_zig_string(&mut to, global_object)?;
+// Zig: `pub const setCwd = host_fn.wrap2(setCwd_)` — C++ (headers.h) declares
+// `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
+// the wrap2 shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Process__setCwd(
+    global_object: *const JSGlobalObject,
+    to: *mut ZigString,
+) -> JSValue {
+    // SAFETY: global_object/to are valid for the duration of this call (C++ caller contract)
+    let global_object = unsafe { &*global_object };
+    let to = unsafe { &*to };
+    bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
+}
 
+fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
     if to.length() == 0 {
         return Err(global_object
             .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
@@ -555,6 +565,6 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
 // PORT STATUS
 //   source:     src/runtime/node/node_process.zig (381 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      comptime-built ComptimeStringMap from cli auto_params needs build.rs/proc-macro; mutable global process_title accessed via bun_cli helpers; exported *const c_char statics wrapped in Sync newtype; host_fn.wrapN exports mapped to #[bun_jsc::host_fn]+#[export_name]
+//   todos:      3
+//   notes:      comptime-built ComptimeStringMap from cli auto_params needs build.rs/proc-macro; process_title heap backing owned by parking_lot::Mutex (published slice still in cli static); exported *const c_char statics wrapped in Sync newtype; host_fn.wrapN exports hand-rolled as extern "C" shims (callers are not JSHostFunctionType)
 // ──────────────────────────────────────────────────────────────────────────

@@ -81,10 +81,16 @@ pub(crate) mod bun_progress {
     pub use bun_core::Progress::{Node, Progress};
 }
 
-/// `bun_bunfig` → config-loading entrypoint; install only needs the
-/// `Arguments` shape for `Transpiler::init` plumbing (gated body).
+/// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
+/// hosts `Arguments::loadConfig` (MOVE_DOWN b0); this local shim only adds the
+/// legacy `Arguments` alias (= `bun_options_types::Context`) that
+/// `hoisted_install` / `isolated_install` import for `Transpiler::init`
+/// plumbing. Kept as a local module so those callers don't need updating; the
+/// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
+/// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
     pub use bun_options_types::Context as Arguments;
+    pub use ::bun_bunfig::*;
 }
 
 use core::cell::Cell;

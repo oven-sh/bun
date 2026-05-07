@@ -94,33 +94,6 @@ impl JSValueCryptoExt for JSValue {
     }
 }
 
-/// Local extension surface for `JSGlobalObject` methods not yet on the `bun_jsc` stub.
-pub(crate) trait JSGlobalObjectCryptoExt {
-    fn throw_invalid_argument_type_value2(
-        &self,
-        argname: &str,
-        typename: &str,
-        value: JSValue,
-    ) -> jsc::JsError;
-}
-
-impl JSGlobalObjectCryptoExt for JSGlobalObject {
-    /// `"The \"{argname}\" argument must be {typename}. Received {actual}"`
-    /// (JSGlobalObject.zig:197) — differs from `throw_invalid_argument_type_value`
-    /// only in omitting the words "of type".
-    fn throw_invalid_argument_type_value2(
-        &self,
-        argname: &str,
-        typename: &str,
-        value: JSValue,
-    ) -> jsc::JsError {
-        // TODO(blocked_on: bun_jsc::JSGlobalObject::throw_invalid_argument_type_value2):
-        // upstream `js_global_object::JSGlobalObject` is a separate type; reuse the
-        // lib.rs `_value` form for now (wording differs by "of type").
-        self.throw_invalid_argument_type_value(argname, typename, value)
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // ExternCryptoJob — Zig `fn ExternCryptoJob(comptime name: []const u8) type`.
 // This does token-pasting to form C symbol names (`Bun__<name>Ctx__runTask`
@@ -544,10 +517,10 @@ pub mod random {
         }
 
         if !min_value.is_safe_integer() {
-            return Err(global.throw_invalid_argument_type_value2("min", "a safe integer", min_value));
+            return Err(global.throw_invalid_argument_type_value2(b"min", b"a safe integer", min_value));
         }
         if !max_value.is_safe_integer() {
-            return Err(global.throw_invalid_argument_type_value2("max", "a safe integer", max_value));
+            return Err(global.throw_invalid_argument_type_value2(b"max", b"a safe integer", max_value));
         }
 
         let min: i64 = min_value.as_number().trunc() as i64;
@@ -658,7 +631,7 @@ pub mod random {
         length: usize,
     ) -> JsResult<u32> {
         if !offset_value.is_number() {
-            return Err(global.throw_invalid_argument_type_value("offset", "number", offset_value));
+            return Err(global.throw_invalid_argument_type_value(b"offset", b"number", offset_value));
         }
         let offset = offset_value.as_number() * (element_size as f64);
 
@@ -750,8 +723,8 @@ pub mod random {
 
         let Some(mut buf) = buf_value.as_array_buffer(global) else {
             return Err(global.throw_invalid_argument_type_value(
-                "buf",
-                "ArrayBuffer or ArrayBufferView",
+                b"buf",
+                b"ArrayBuffer or ArrayBufferView",
                 buf_value,
             ));
         };
@@ -787,8 +760,8 @@ pub mod random {
 
         let Some(mut buf) = buf_value.as_array_buffer(global) else {
             return Err(global.throw_invalid_argument_type_value(
-                "buf",
-                "ArrayBuffer or ArrayBufferView",
+                b"buf",
+                b"ArrayBuffer or ArrayBufferView",
                 buf_value,
             ));
         };
@@ -934,8 +907,8 @@ impl Scrypt {
             StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
         else {
             return Err(global.throw_invalid_argument_type_value(
-                "password",
-                "string, ArrayBuffer, Buffer, TypedArray, or DataView",
+                b"password",
+                b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
                 password_value,
             ));
         };
@@ -952,8 +925,8 @@ impl Scrypt {
             StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
         else {
             return Err(global.throw_invalid_argument_type_value(
-                "salt",
-                "string, ArrayBuffer, Buffer, TypedArray, or DataView",
+                b"salt",
+                b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
                 salt_value,
             ));
         };
@@ -985,7 +958,7 @@ impl Scrypt {
 
                 if let Some(cost_value) = options.get(global, "cost")? {
                     if n.is_some() {
-                        return global.throw_incompatible_option_pair("N", "cost");
+                        return Err(global.throw_incompatible_option_pair(b"N", b"cost"));
                     }
                     n = Some(validators::validate_uint32(
                         global, cost_value, format_args!("cost"), false,
@@ -998,7 +971,7 @@ impl Scrypt {
 
                 if let Some(blocksize_value) = options.get(global, "blockSize")? {
                     if r.is_some() {
-                        return global.throw_incompatible_option_pair("r", "blockSize");
+                        return Err(global.throw_incompatible_option_pair(b"r", b"blockSize"));
                     }
                     r = Some(validators::validate_uint32(
                         global,
@@ -1014,7 +987,7 @@ impl Scrypt {
 
                 if let Some(parallelization_value) = options.get(global, "parallelization")? {
                     if p.is_some() {
-                        return global.throw_incompatible_option_pair("p", "parallelization");
+                        return Err(global.throw_incompatible_option_pair(b"p", b"parallelization"));
                     }
                     p = Some(validators::validate_uint32(
                         global,
@@ -1113,7 +1086,7 @@ impl Scrypt {
             )
         } == 0
         {
-            return global.throw_invalid_scrypt_params();
+            return Err(global.throw_invalid_scrypt_params());
         }
         Ok(())
     }

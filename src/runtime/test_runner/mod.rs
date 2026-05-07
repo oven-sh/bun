@@ -48,11 +48,13 @@ cfg_jsc! {
 
     // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
     // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
-    // method or free host_fn to `Expect`. Loaded as a private sibling so the
-    // `pub mod expect` façade below can layer matcher submodules on top
-    // without a directory-level mod.rs.
+    // method or free host_fn to `Expect`. Declared `pub` because the
+    // generate-classes.ts Rust emitter resolves payload types at
+    // `crate::test_runner::expect_core::Expect*` (see
+    // build/debug/codegen/generated_classes.rs); the `pub mod expect` façade
+    // below layers matcher submodules + shims on top via `pub use`.
     #[path = "expect.rs"]
-    mod expect_core;
+    pub mod expect_core;
 }
 
 cfg_jsc! {

@@ -128,12 +128,12 @@ impl FileSystemRouter {
     ) -> JsResult<Box<FileSystemRouter>> {
         let argument_ = callframe.arguments_old::<1>();
         if argument_.len == 0 {
-            return Err(global_this.throw_invalid_arguments("Expected object"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
-            return Err(global_this.throw_invalid_arguments("Expected object"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
         let vm_ptr = global_this.bun_vm();
@@ -149,19 +149,21 @@ impl FileSystemRouter {
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         if let Some(style_val) = argument.get(global_this, "style")? {
             if !(style_val.get_zig_string(global_this)?).eql_comptime("nextjs") {
-                return Err(global_this.throw_invalid_arguments(
-                    "Only 'nextjs' style is currently implemented",
-                ));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Only 'nextjs' style is currently implemented"
+                )));
             }
         } else {
-            return Err(global_this.throw_invalid_arguments(
-                "Expected 'style' option (ex: \"style\": \"nextjs\")",
-            ));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected 'style' option (ex: \"style\": \"nextjs\")"
+            )));
         }
 
         if let Some(dir) = argument.get(global_this, "dir")? {
             if !dir.is_string() {
-                return Err(global_this.throw_invalid_arguments("Expected dir to be a string"));
+                return Err(
+                    global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
+                );
             }
             let root_dir_path_ = dir.to_slice(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
@@ -182,24 +184,27 @@ impl FileSystemRouter {
             }
         } else {
             // dir is not optional
-            return Err(global_this.throw_invalid_arguments("Expected dir to be a string"));
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
+            );
         }
         // PERF(port): was arena bulk-free — extensions/asset_prefix/log all allocated from this.
         let mut arena = Box::new(ArenaAllocator::new());
         let mut extensions: Vec<&[u8]> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {
-                return Err(global_this
-                    .throw_invalid_arguments("Expected fileExtensions to be an Array"));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected fileExtensions to be an Array"
+                )));
             }
 
             let mut iter = file_extensions.array_iterator(global_this)?;
             extensions.reserve_exact(iter.len as usize);
             while let Some(val) = iter.next()? {
                 if !val.is_string() {
-                    return Err(global_this.throw_invalid_arguments(
-                        "Expected fileExtensions to be an Array of strings",
-                    ));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected fileExtensions to be an Array of strings"
+                    )));
                 }
                 if val.get_length(global_this)? == 0 {
                     continue;
@@ -218,8 +223,9 @@ impl FileSystemRouter {
 
         if let Some(asset_prefix) = argument.get_truthy(global_this, "assetPrefix")? {
             if !asset_prefix.is_string() {
-                return Err(global_this
-                    .throw_invalid_arguments("Expected assetPrefix to be a string"));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected assetPrefix to be a string"
+                )));
             }
 
             // TODO(port): `clone_if_borrowed` not on `ZigStringSlice` — copy into arena.
@@ -297,7 +303,9 @@ impl FileSystemRouter {
 
         if let Some(origin) = argument.get(global_this, "origin")? {
             if !origin.is_string() {
-                return Err(global_this.throw_invalid_arguments("Expected origin to be a string"));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected origin to be a string"
+                )));
             }
             origin_str = origin.to_slice(global_this)?;
         }
@@ -512,12 +520,16 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let argument_ = callframe.arguments_old::<2>();
         if argument_.len == 0 {
-            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected string, Request or Response"
+            )));
         }
 
         let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
-            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected string, Request or Response"
+            )));
         }
 
         let mut path: ZigStringSlice = 'brk: {
@@ -541,7 +553,9 @@ impl FileSystemRouter {
                 }
             }
 
-            return Err(global_this.throw_invalid_arguments("Expected string, Request or Response"));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected string, Request or Response"
+            )));
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {

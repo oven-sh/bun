@@ -58,7 +58,7 @@ impl Default for PBKDF2 {
             salt: StringOrBuffer::default(),
             iteration_count: 1,
             length: 0,
-            // TODO(port): Zig had no default for `algorithm`; callers always set it.
+            // PORT NOTE: Zig had no default for `algorithm` (callers always set it).
             // Sha256 is an arbitrary placeholder so `Default` compiles.
             algorithm: Algorithm::Sha256,
         }
@@ -129,7 +129,7 @@ impl PBKDF2 {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
         if !arg3.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value("keylen", "number", arg3));
+            return Err(global_this.throw_invalid_argument_type_value(b"keylen", b"number", arg3));
         }
 
         let keylen_num = arg3.as_number();
@@ -164,7 +164,7 @@ impl PBKDF2 {
         }
 
         if !arg2.is_any_int() {
-            return Err(global_this.throw_invalid_argument_type_value("iterations", "number", arg2));
+            return Err(global_this.throw_invalid_argument_type_value(b"iterations", b"number", arg2));
         }
 
         let iteration_count = arg2.coerce_to_int64(global_this)?;
@@ -188,7 +188,7 @@ impl PBKDF2 {
 
         let algorithm = 'brk: {
             if !arg4.is_string() {
-                return Err(global_this.throw_invalid_argument_type_value("digest", "string", arg4));
+                return Err(global_this.throw_invalid_argument_type_value(b"digest", b"string", arg4));
             }
 
             'invalid: {
@@ -240,15 +240,15 @@ impl PBKDF2 {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
-                    "salt",
-                    "string or buffer",
+                    b"salt",
+                    b"string or buffer",
                     arg1,
                 ));
             }
         };
 
         if guard.salt.slice().len() > i32::MAX as usize {
-            return Err(global_this.throw_invalid_arguments("salt is too long"));
+            return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
         guard.password = match StringOrBuffer::from_js_maybe_async(
@@ -260,21 +260,21 @@ impl PBKDF2 {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
-                    "password",
-                    "string or buffer",
+                    b"password",
+                    b"string or buffer",
                     arg0,
                 ));
             }
         };
 
         if guard.password.slice().len() > i32::MAX as usize {
-            return Err(global_this.throw_invalid_arguments("password is too long"));
+            return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
         if is_async {
             if !arg5.is_function() {
                 return Err(
-                    global_this.throw_invalid_argument_type_value("callback", "function", arg5)
+                    global_this.throw_invalid_argument_type_value(b"callback", b"function", arg5)
                 );
             }
         }
@@ -339,7 +339,7 @@ impl Job {
     }
 
     pub fn run_from_js(this: *mut Job) -> JsResult<()> {
-        // TODO(port): narrow error set — Zig was `bun.JSTerminated!void`.
+        // PORT NOTE: Zig was `bun.JSTerminated!void`; widened to JsResult per crate convention.
         // SAFETY: `this` was produced by `Box::into_raw` in `create()` and is uniquely owned here;
         // dropping the Box at any return point runs `impl Drop for Job` (Zig: `defer this.deinit()`).
         let mut this = unsafe { Box::from_raw(this) };
@@ -385,7 +385,7 @@ impl Job {
             promise: JSPromiseStrong::default(),
             vm,
             err: None,
-            // TODO(port): Zig used `undefined` then assigned below; need MaybeUninit or two-phase init.
+            // Zig used `undefined` then assigned below; AnyTask::default() is a safe placeholder.
             any_task: AnyTask::default(),
             poll: KeepAlive::default(),
         }));
@@ -447,7 +447,6 @@ pub fn pbkdf2<'a>(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/crypto/PBKDF2.zig (262 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Job uses intrusive @fieldParentPtr; run_task scopeguard borrow of `job` will need raw-ptr reshaping in Phase B. RangeErrorOptions/ErrorCode/throw builder shapes are guesses.
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

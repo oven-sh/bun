@@ -74,12 +74,12 @@ pub fn render_to_ansi(
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
     let input = buffer.slice();
@@ -130,12 +130,12 @@ pub fn render_to_html(
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
     let input = buffer.slice();
@@ -229,12 +229,12 @@ pub fn render(
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
     let input = buffer.slice();
@@ -326,12 +326,12 @@ fn render_ast(
     let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
     let input = buffer.slice();

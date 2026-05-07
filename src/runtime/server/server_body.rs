@@ -4267,8 +4267,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         if is_star_path {
                             has_any_ws_route_for_star_path = true;
                         }
-                        let _ = (&websocket, &mut *user_route);
-                        todo!("blocked_on: bun_uws_sys::WebSocketUpgradeServer impl for NewServer");
+                        app!().ws(
+                            user_route.route.path.to_bytes(),
+                            user_route as *mut _ as *mut c_void,
+                            1, // id 1 means is a user route
+                            ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                        );
                     }
                 }
                 server_config::RouteMethod::Specific(method_val) => {
@@ -4287,8 +4291,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(websocket) = &self.config.websocket {
                         // Websocket upgrade is a GET request
                         if method_val == Method::GET {
-                            let _ = (&websocket, &mut *user_route);
-                            todo!("blocked_on: bun_uws_sys::WebSocketUpgradeServer impl for NewServer");
+                            app!().ws(
+                                user_route.route.path.to_bytes(),
+                                user_route as *mut _ as *mut c_void,
+                                1, // id 1 means is a user route
+                                ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                            );
                         }
                     }
                 }

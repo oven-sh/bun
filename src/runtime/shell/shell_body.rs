@@ -284,7 +284,6 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn throw_error(self, err: sys::Error) {
-        // TODO(port): move to *_jsc — err.to_js() lives in jsc extension trait
         self.global_this.throw_value(err.to_js(self.global_this));
     }
 

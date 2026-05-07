@@ -86,6 +86,8 @@ pub mod csrf_jsc;
 pub mod glob;
 #[path = "api/standalone_graph_jsc.rs"]
 pub mod standalone_graph_jsc;
+#[path = "api/crash_handler_jsc.rs"]
+pub mod crash_handler_jsc;
 
 // ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`); the

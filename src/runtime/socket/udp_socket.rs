@@ -1352,6 +1352,12 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Codegen calls `UDPSocket::r#ref` (raw-ident lowering of JS `ref`).
+    #[inline]
+    pub fn r#ref(this: &mut Self, global_this: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        Self::ref_(this, global_this, frame)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;

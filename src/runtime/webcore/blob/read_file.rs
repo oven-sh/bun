@@ -541,17 +541,10 @@ impl ReadFile {
             return Ok(());
         }
 
-        // TODO(port): lifetime — Zig hands `buffer.items` as a raw slice with
-        // `is_temporary = true`; receiver takes ownership of the allocation.
-        // SAFETY: ownership of the boxed allocation is transferred to the callback via
-        // is_temporary=true; the receiver is responsible for freeing it.
-        let buf_slice: &'static mut [u8] = unsafe {
-            let mut b = buf.into_boxed_slice();
-            let ptr = b.as_mut_ptr();
-            let len = b.len();
-            core::mem::forget(b);
-            core::slice::from_raw_parts_mut(ptr, len)
-        };
+        // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
+        // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
+        // can reclaim via `Box::from_raw` with a matching layout.
+        let buf_slice: &'static mut [u8] = Box::leak(buf.into_boxed_slice());
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
@@ -1008,16 +1001,13 @@ impl<'a> ReadFileUV<'a> {
             ReadFileResultType::Err(err)
         } else {
             // Move byte_store out so dropping `this_box` below does not free the
-            // buffer we hand to the callback.
-            let byte_store = core::mem::take(&mut this_box.byte_store);
-            let slice = byte_store.slice();
-            let (ptr, len) = (slice.as_ptr() as *mut u8, slice.len());
-            core::mem::forget(byte_store);
+            // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
+            // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
+            // via `Box::from_raw` — handing out `(ptr, len)` from a ByteStore
+            // whose `cap > len` would be a layout-mismatched dealloc.
+            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
-                // SAFETY: byte_store owned the allocation; ownership is transferred to the
-                // callback via is_temporary=true (receiver frees it). The backing memory
-                // outlives `this_box` because we forgot byte_store above.
-                buf: unsafe { core::slice::from_raw_parts_mut(ptr, len) },
+                buf: Box::leak(boxed),
                 total_size: this_box.total_size,
                 is_temporary: true,
             })

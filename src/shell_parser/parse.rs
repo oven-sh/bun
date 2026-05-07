@@ -63,6 +63,10 @@ impl From<ParseError> for bun_core::Error {
 pub mod ast {
     use super::*;
 
+    // Re-export so `ast::SmolList<T, N>` resolves for downstream state nodes
+    // (mirrors Zig's nesting where `SmolList` lives under the AST namespace).
+    pub use super::SmolList;
+
     // PORT NOTE: Zig AST nodes hold `[]T` slices (ptr+len, copyable). The Rust
     // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
     // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.

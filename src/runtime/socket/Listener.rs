@@ -888,6 +888,14 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Codegen calls `Listener::r#ref` (raw-ident lowering of the JS `ref`
+    /// property). Forward to [`ref_`] so the existing call sites that spell it
+    /// with the trailing underscore keep working.
+    #[inline]
+    pub fn r#ref(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        Self::ref_(this, global, frame)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.unref(vm_event_loop_ctx());

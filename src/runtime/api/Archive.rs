@@ -129,6 +129,15 @@ const _: () = {
 };
 
 impl Archive {
+    /// `Archive.write(path, data, options?)` static class fn — codegen
+    /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
+    /// so forward to the module-level [`write`] body below (Zig had it as
+    /// `pub fn write` in the file struct, which is both).
+    #[inline]
+    pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self::write(global, callframe)
+    }
+
     pub fn finalize(this: *mut Self) {
         jsc::mark_binding();
         // SAFETY: called once by the JSC finalizer on the mutator thread; `this`

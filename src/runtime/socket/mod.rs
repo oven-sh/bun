@@ -69,7 +69,12 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 pub type WindowsNamedPipeContext = ();
 
 pub mod udp_socket {
-    pub struct UDPSocket(());
+    pub use super::udp_socket_draft::{UDPSocket, UDPSocketConfig};
+    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
+    /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
+    /// `udp_socket` segment is the snake-cased struct name; aliasing the type
+    /// lets the associated-fn path resolve directly.
+    pub use super::udp_socket_draft::UDPSocket as udp_socket;
 }
 
 /// Codegen path alias.

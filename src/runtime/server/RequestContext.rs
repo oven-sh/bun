@@ -483,9 +483,7 @@ where
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
-        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
-        let ctx_ptr = ctx as *mut Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*ctx_ptr).deref() });
+        let _ref = RequestContextRef(ctx as *mut Self);
 
         let result = arguments.ptr[0];
         result.ensure_still_alive();
@@ -685,9 +683,7 @@ where
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
-        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
-        let ctx_ptr = ctx as *mut Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*ctx_ptr).deref() });
+        let _ref = RequestContextRef(ctx as *mut Self);
 
         let err = arguments.ptr[0];
         Self::handle_reject(

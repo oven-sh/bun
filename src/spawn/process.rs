@@ -3517,6 +3517,30 @@ pub mod sync {
         fn Bun__sendPendingSignalIfNecessary();
     }
 
+    /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
+    /// construction, unregisters and restores the crash-handler signal
+    /// disposition on drop. Replaces the Zig
+    /// `defer { Bun__unregisterSignalsForForwarding(); crash_handler.resetOnPosix(); }`.
+    #[cfg(unix)]
+    struct SignalForwarding;
+    #[cfg(unix)]
+    impl SignalForwarding {
+        #[inline]
+        fn register() -> Self {
+            // SAFETY: FFI
+            unsafe { Bun__registerSignalsForForwarding() };
+            Self
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for SignalForwarding {
+        fn drop(&mut self) {
+            // SAFETY: FFI
+            unsafe { Bun__unregisterSignalsForForwarding() };
+            bun_crash_handler::reset_on_posix();
+        }
+    }
+
     /// TTY job-control bridge for `--no-orphans` `bun run`. We put the script
     /// in its own pgroup so `kill(-pgid)` reaches every descendant on cleanup,
     /// which makes `bun run` a one-job mini shell on a controlling terminal:
@@ -3669,7 +3693,7 @@ pub mod sync {
             let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
         }
         #[cfg(target_os = "linux")]
-        let _subreaper_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if no_orphans {
                 // Kill subreaper-adopted setsid daemons (ppid==us, not in the
                 // pre-arm snapshot) *before* disarming, while we can still find
@@ -3680,7 +3704,7 @@ pub mod sync {
                 // SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
             }
-        });
+        }
 
         // macOS no_orphans: kqueue passed to `waitMacKqueue` for ppid/child
         // NOTE_EXIT and per-descendant NOTE_FORK. NOTE_TRACK (auto-attach to

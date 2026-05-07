@@ -3031,6 +3031,20 @@ pub struct Resolver {
     pub pending_nameinfo_cache_cares: NameInfoPendingCache,
 }
 
+/// RAII owner for a scoped `Resolver` refcount bump (Zig: `this.ref(); defer this.deref();`).
+/// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.
+#[must_use = "dropping immediately releases the scoped ref"]
+struct ResolverRefGuard(*mut Resolver);
+
+impl Drop for ResolverRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `ref_scope` took a ref on a live heap-allocated Resolver, so
+        // `self.0` is still live here and `deref` has valid write provenance.
+        unsafe { Resolver::deref(self.0) };
+    }
+}
+
 // `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
 impl bun_ptr::RefCounted for Resolver {
     type DestructorCtx = ();

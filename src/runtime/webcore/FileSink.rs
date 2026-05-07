@@ -100,6 +100,47 @@ impl FileSink {
     }
 }
 
+/// RAII owner of one intrusive ref on a `FileSink`. Drops the ref (and frees
+/// the allocation if it was the last) on scope exit. Replaces the Zig
+/// `self.ref(); defer self.deref();` pair without borrowing `self`.
+struct FileSinkRef(*mut FileSink);
+
+impl FileSinkRef {
+    /// Take a fresh ref on `this` for the guard's lifetime.
+    ///
+    /// # Safety
+    /// `this` must point to a live `FileSink` with write+dealloc provenance
+    /// (see [`FileSink::deref`]).
+    #[inline]
+    unsafe fn new_ref(this: *mut FileSink) -> Self {
+        // SAFETY: caller contract — `this` is live; `ref_` only touches the
+        // `Cell<u32>` field via shared borrow.
+        unsafe { (*this).ref_() };
+        Self(this)
+    }
+
+    /// Adopt an existing ref previously taken elsewhere (e.g. balanced against
+    /// the `ref_()` in `run_pending_later`/`assign_to_stream`). Does not bump
+    /// the count.
+    ///
+    /// # Safety
+    /// `this` must point to a live `FileSink` and the caller must own one
+    /// outstanding ref that is being transferred to this guard.
+    #[inline]
+    unsafe fn adopt(this: *mut FileSink) -> Self {
+        Self(this)
+    }
+}
+
+impl Drop for FileSinkRef {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is live and carries
+        // write+dealloc provenance for `deref`'s potential `deinit`.
+        unsafe { FileSink::deref(self.0) };
+    }
+}
+
 /// Count of live native FileSink instances. Incremented at allocation,
 /// decremented in `deinit`. Exposed to tests via `bun:internal-for-testing`
 /// so leak tests can detect native FileSink leaks that are invisible to

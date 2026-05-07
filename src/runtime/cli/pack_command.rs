@@ -1120,12 +1120,9 @@ fn iterate_project_tree(
     dirs.push(root_dir);
 
     while let Some(dir_info) = dirs.pop() {
-        let DirInfo(mut dir, dir_subpath, dir_depth) = dir_info;
-        let _close = scopeguard::guard((), |_| {
-            if dir_depth != 1 {
-                dir.close();
-            }
-        });
+        let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
+        // Root (depth 1) is caller-owned; only close subdirs we opened.
+        let _close = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -1986,7 +1983,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     };
-    let _close_root = scopeguard::guard((), |_| root_dir.close());
+    let _close_root = CloseOnDrop::dir(root_dir);
 
     ctx.bundled_deps = match get_bundled_deps(&json.root, "bundledDependencies")? {
         Some(deps) => deps,
@@ -2292,7 +2289,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let _close_fd = scopeguard::guard((), |_| fd.close());
+            let _close_fd = CloseOnDrop::new(fd);
 
             let stat = match bun_sys::sys_uv::fstat(fd) {
                 Ok(s) => s,
@@ -2340,7 +2337,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
-            let _close_file = scopeguard::guard((), |_| { let _ = file.close(); });
+            let _close_file = CloseOnDrop::file(&file);
             let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
@@ -2404,7 +2401,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Global::crash();
             }
         };
-        let _close_tarball = scopeguard::guard((), |_| { let _ = tarball_file.close(); });
+        let _close_tarball = CloseOnDrop::file(&tarball_file);
 
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();

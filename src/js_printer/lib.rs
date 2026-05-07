@@ -1200,22 +1200,12 @@ impl<'a> Default for Options<'a> {
     }
 }
 
-// Default indentation is 2 spaces
-#[derive(Clone, Copy)]
-pub struct Indentation {
-    pub scalar: usize,
-    pub count: usize,
-    pub character: IndentationCharacter,
-}
-
-impl Default for Indentation {
-    fn default() -> Self {
-        Self { scalar: 2, count: 0, character: IndentationCharacter::Space }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IndentationCharacter { Tab, Space }
+// LAYERING: `Indentation` is a TYPE_ONLY MOVE_DOWN — the canonical definition
+// lives in `bun_logger::js_printer` (T2) so the JSON parser (T3) can thread it
+// through without depending on the printer crate (T4). Re-export here so
+// `bun_js_printer::Indentation` and `bun_logger::js_printer::Indentation` are
+// the *same* type, not structurally-identical duplicates.
+pub use bun_logger::js_printer::{Indentation, IndentationCharacter};
 
 /// Downstream-compat re-export: B-1 callers reference `bun_js_printer::options::Indentation`.
 pub mod options {

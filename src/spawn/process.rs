@@ -3730,31 +3730,24 @@ pub mod sync {
         // LIFO: this runs LAST — after killSyncScriptTree() (which scans via
         // m_kq) and releaseKq().
         #[cfg(target_os = "macos")]
-        let _kq_close_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if no_orphans_kq != spawn_sys::INVALID_FD {
                 no_orphans_kq.close();
             }
-        });
+        }
         // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
         // its NOTE_FORK-drain rescan), before the close above.
         #[cfg(target_os = "macos")]
-        let _kq_release_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if no_orphans_kq != spawn_sys::INVALID_FD {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_releaseKq() };
             }
-        });
+        }
 
         // SAFETY: extern static
-        unsafe {
-            Bun__currentSyncPID = 0;
-            Bun__registerSignalsForForwarding();
-        }
-        let _signals_guard = scopeguard::guard((), |_| {
-            // SAFETY: FFI
-            unsafe { Bun__unregisterSignalsForForwarding() };
-            bun_crash_handler::reset_on_posix();
-        });
+        unsafe { Bun__currentSyncPID = 0 };
+        let _signals = SignalForwarding::register();
 
         let process = match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
             Maybe::Err(err) => return Ok(Maybe::Err(err)),
@@ -4259,11 +4252,11 @@ pub mod sync {
             };
             (fd, restore)
         };
-        let _chld_close = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if chld_fd != spawn_sys::INVALID_FD {
                 chld_fd.close();
             }
-        });
+        }
 
         // Parent-death: pidfd when available (instant wake). When not
         // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
@@ -4279,11 +4272,11 @@ pub mod sync {
                 }
             }
         }
-        let _ppid_close = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if ppid_fd != spawn_sys::INVALID_FD {
                 ppid_fd.close();
             }
-        });
+        }
         // `enable()` armed `PDEATHSIG=SIGKILL` on us. The kernel queues
         // PDEATHSIG to children inside `exit_notify()` *before*
         // `do_notify_pidfd()` wakes pidfd pollers (both under tasklist_lock),
@@ -4296,12 +4289,12 @@ pub mod sync {
             // SAFETY: prctl
             let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
         }
-        let _pdeathsig_restore = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if ppid > 1 {
                 // SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
             }
-        });
+        }
         // SAFETY: libc getppid
         if ppid > 1 && unsafe { libc::getppid() } != ppid {
             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);

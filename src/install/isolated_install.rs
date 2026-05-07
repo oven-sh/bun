@@ -310,6 +310,7 @@ pub fn install_isolated_packages(
                         install_root_dependencies,
                         manager,
                         lockfile,
+                        resolutions,
                     ) {
                         provides.set(pkg_id as usize, bit);
                     }

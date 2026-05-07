@@ -2008,7 +2008,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let ssl_js_value =
             match crate::socket::uws_jsc::verify_error_to_js(ssl_error, this.global_object) {
                 Ok(v) => v,
-                Err(jsc::JsError::Terminated) => return Err(jsc::JsTerminated::JSTerminated),
+                Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(jsc::JsError::Thrown) => {
                     // Clear any pending exception since we can't convert it to

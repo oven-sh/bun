@@ -1587,17 +1587,64 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-if (process.platform === "linux")
-  it("should use correct error when using a root range port(#7187)", () => {
-    expect(() => {
+// #7187: EACCES must be reported correctly when binding to a privileged port
+// as a non-root user. Linux and macOS both return EACCES for unprivileged
+// binds to ports < 1024 (on Linux this depends on ip_unprivileged_port_start),
+// so we only run this when the process is unprivileged and the sysctl doesn't
+// make low ports unprivileged.
+const canReproducePrivilegedBindEACCES: boolean = (() => {
+  if (process.platform === "win32") return false;
+  // @ts-ignore geteuid exists on posix at runtime
+  const isRoot = typeof process.geteuid === "function" && process.geteuid() === 0;
+  if (isRoot) return false;
+  if (process.platform === "linux") {
+    try {
+      const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
+      if (!Number.isFinite(start) || start <= 80) return false;
+    } catch {}
+  }
+  return true;
+})();
+
+it.if(canReproducePrivilegedBindEACCES)("reports EACCES (not EADDRINUSE) for privileged bind (#7187, #30363)", () => {
+  try {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 80,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    throw new Error("should have thrown");
+  } catch (e: any) {
+    expect(e.code).toBe("EACCES");
+    expect(e.syscall).toBe("listen");
+  }
+});
+
+// #27410, #30363: errno from the bind/listen syscall must be plumbed through
+// so Bun.serve reports the real code (EADDRNOTAVAIL, EACCES, etc.) instead of
+// always falling back to EADDRINUSE. Works on macOS and Linux with no special
+// privileges — 192.0.2.0/24 is TEST-NET-1 (RFC 5737) and bind() returns
+// EADDRNOTAVAIL there on both platforms.
+it.skipIf(process.platform === "win32")(
+  "reports EADDRNOTAVAIL (not EADDRINUSE) for bind to a non-local address (#30363)",
+  () => {
+    try {
       using server = Bun.serve({
-        port: 1003,
-        fetch(req) {
-          return new Response("request answered");
+        hostname: "192.0.2.1",
+        port: 0,
+        fetch() {
+          return new Response("ok");
         },
       });
-    }).toThrow("permission denied 0.0.0.0:1003");
-  });
+      throw new Error("should have thrown");
+    } catch (e: any) {
+      expect(e.code).toBe("EADDRNOTAVAIL");
+      expect(e.syscall).toBe("listen");
+    }
+  },
+);
 
 describe.concurrent("should error with invalid options", async () => {
   it("requestCert", () => {

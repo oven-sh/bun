@@ -1844,8 +1844,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return server;
         }
 
-        noinline fn onListenFailed(this: *ThisServer) void {
-            httplog("onListenFailed", .{});
+        noinline fn onListenFailed(this: *ThisServer, errno: c_int) void {
+            httplog("onListenFailed errno={d}", .{errno});
 
             const globalThis = this.globalThis;
 
@@ -1906,30 +1906,38 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (error_instance == .zero) {
+                // errno comes from the bind/listen syscall, plumbed up through
+                // the uSockets listen callback. On platforms where the syscall
+                // succeeded but uSockets still reported failure (e.g. getaddrinfo
+                // path) errno may be 0 — fall back to EADDRINUSE for parity with
+                // the historical message.
+                const e: bun.sys.E = if (errno != 0) @enumFromInt(errno) else .SUCCESS;
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_set: {
-                            if (comptime Environment.isLinux) {
-                                const rc: i32 = -1;
-                                const code = Sys.getErrno(rc);
-                                if (code == bun.sys.E.ACCES) {
-                                    error_instance = (jsc.SystemError{
-                                        .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
-                                        .code = bun.String.static("EACCES"),
-                                        .syscall = bun.String.static("listen"),
-                                    }).toErrorInstance(globalThis);
-                                    break :error_set;
-                                }
-                            }
-                            error_instance = (jsc.SystemError{
-                                .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                                .code = bun.String.static("EADDRINUSE"),
-                                .syscall = bun.String.static("listen"),
-                            }).toErrorInstance(globalThis);
+                        switch (e) {
+                            .SUCCESS, .ADDRINUSE => {
+                                error_instance = (jsc.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                    .code = bun.String.static("EADDRINUSE"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(globalThis);
+                            },
+                            .ACCES => {
+                                error_instance = (jsc.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
+                                    .code = bun.String.static("EACCES"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(globalThis);
+                            },
+                            else => {
+                                var sys_err = bun.sys.Error.fromCode(e, .listen);
+                                sys_err.path = if (tcp.hostname) |h| bun.span(h) else "0.0.0.0";
+                                error_instance = sys_err.toJS(globalThis) catch return;
+                            },
                         }
                     },
                     .unix => |unix| {
-                        switch (bun.sys.getErrno(@as(i32, -1))) {
+                        switch (e) {
                             .SUCCESS => {
                                 error_instance = (jsc.SystemError{
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
@@ -1937,7 +1945,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     .syscall = bun.String.static("listen"),
                                 }).toErrorInstance(globalThis);
                             },
-                            else => |e| {
+                            else => {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
                                 error_instance = sys_err.toJS(globalThis) catch return;
@@ -1951,9 +1959,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             globalThis.throwValue(error_instance) catch {};
         }
 
-        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
+        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket, errno: c_int) void {
             if (socket == null) {
-                return this.onListenFailed();
+                return this.onListenFailed(errno);
             }
 
             this.listener = socket;
@@ -3809,7 +3817,6 @@ extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 
-const Sys = @import("../../sys/sys.zig");
 const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const URL = @import("../../url/url.zig").URL;

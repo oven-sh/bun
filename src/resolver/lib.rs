@@ -270,6 +270,18 @@ pub mod fs {
                     DirnameStore::instance().append_slice(&buf[..n])?
                 }
             };
+            // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
+            // same cwd. `bun_paths::resolve_path::relative*` and
+            // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
+            // instance()` (a strict `OnceLock` — panics if unset), and the
+            // doc-comment on that `init` names this as the intended seeding
+            // point. Zig had a single `Fs.FileSystem.instance` global so the
+            // split is a porting artifact; this keeps both halves in lockstep.
+            // SAFETY: `cwd` is `'static` (interned in `DirnameStore`); the call
+            // is a no-op on subsequent inits (`OnceLock::set` returns `Err`).
+            bun_paths::fs::FileSystem::init(unsafe {
+                core::str::from_utf8_unchecked(cwd)
+            });
             // SAFETY: see above.
             unsafe {
                 (*(&raw mut INSTANCE)).write(FileSystem {

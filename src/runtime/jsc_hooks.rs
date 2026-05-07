@@ -4689,13 +4689,55 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
 // §Dispatch hot-path hooks (`RUN_TASK_HOOK` / `ON_POLL_DISPATCH`) and are
 // wired from [`crate::dispatch::install_dispatch_hooks`], not here.
 
+/// `bun_aio::GET_VM_CTX_HOOK` body — recover the global event-loop context
+/// for the requested arm. Zig had no crate split here: callers reached
+/// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Registered in
+/// [`install_jsc_hooks`] so `KeepAlive`/`FilePoll` (and the link-time
+/// `__bun_js_event_loop_put_file_poll` shim) can resolve the JS arm.
+fn get_vm_ctx_hook(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
+    match kind {
+        bun_aio::AllocatorType::Js => {
+            bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(
+                bun_jsc::virtual_machine::VirtualMachine::get(),
+            )
+        }
+        bun_aio::AllocatorType::Mini => {
+            // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
+            // any caller asks for `AllocatorType::Mini` (Zig: `MiniEventLoop.
+            // global` is the only mini loop and is init-once).
+            let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
+            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(mini)
+        }
+    }
+}
+
+/// `bun_event_loop::JS_VM_GET` body — erased `VirtualMachine::get()` for
+/// `AbstractVM::JsKind`'s `get_vm()`. Zig: `jsc.VirtualMachine.get()` inline.
+unsafe fn js_vm_get_hook() -> *mut () {
+    bun_jsc::virtual_machine::VirtualMachine::get().cast()
+}
+
 /// Wire the high-tier `RuntimeHooks` / `LoaderHooks` into `bun_jsc`. Called
 /// once from `main.rs` immediately after [`crate::dispatch::install_dispatch_hooks`]
 /// (and before the first `VirtualMachine::init`).
 pub fn install_jsc_hooks() {
+    use core::sync::atomic::Ordering;
     bun_jsc::virtual_machine::set_runtime_hooks(&RUNTIME_HOOKS_INSTANCE);
     bun_jsc::module_loader::set_loader_hooks(&LOADER_HOOKS_INSTANCE);
     bun_sql_jsc::jsc::set_sql_runtime_hooks(&crate::hw_exports::sql_hooks::INSTANCE);
+
+    // Low-tier upward hooks (cycle-break vtable slots): these have real impls
+    // here in tier-6 and are documented as "registered by bun_runtime::init()"
+    // at the static — this *is* that init. Ordered before any `VirtualMachine::
+    // init` so the first FilePoll/KeepAlive tick sees a non-null hook.
+    bun_aio::posix_event_loop::GET_VM_CTX_HOOK.store(
+        get_vm_ctx_hook as fn(bun_aio::AllocatorType) -> bun_aio::EventLoopCtx as *mut (),
+        Ordering::Release,
+    );
+    bun_event_loop::MiniEventLoop::JS_VM_GET.store(
+        js_vm_get_hook as unsafe fn() -> *mut () as *mut (),
+        Ordering::Release,
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -633,6 +633,10 @@ pub mod framework_router {
         JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
         RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
     };
+    /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
+    /// `framework_router::js_framework_router::get_bindings`; alias the type so
+    /// the associated-fn path resolves.
+    pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
 
     /// `FrameworkRouter.InsertionContext` — Zig used an `*anyopaque` +
     /// comptime fn-ptr `VTable` pair with a `wrap(T, ptr)` helper that

@@ -219,9 +219,7 @@ impl Cmd {
             );
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
-                    // SAFETY: `n.assigns` is an arena slice; see above.
-                    let has_assigns = unsafe { !(&*n.assigns).is_empty() };
-                    if has_assigns {
+                    if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let io = interp.as_cmd(this).io.clone();
                         let child =
@@ -260,8 +258,7 @@ impl Cmd {
                     continue;
                 }
                 CmdState::ExpandingArgs { idx } => {
-                    // SAFETY: `n.name_and_args` is an arena slice; see above.
-                    let args = unsafe { &*n.name_and_args };
+                    let args = n.name_and_args;
                     if (idx as usize) >= args.len() {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;

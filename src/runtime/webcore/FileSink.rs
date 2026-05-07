@@ -155,6 +155,9 @@ pub mod testing_apis {
         Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
     }
 }
+// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
+pub use testing_apis as testing_ap_is;
 
 /// Port of `bun.sys.isPollable` (sys.zig:4162) — `bun_sys` does not yet export
 /// this helper, so re-derive it locally from `S_IFMT`. Windows always returns

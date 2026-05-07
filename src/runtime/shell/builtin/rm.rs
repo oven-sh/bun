@@ -1365,14 +1365,18 @@ impl DirTask {
     /// # Safety
     /// `this` is a live DirTask; called from a worker thread.
     unsafe fn delete_after_waiting_for_children(this: *mut DirTask) {
-        // SAFETY: caller contract.
-        let me = unsafe { &mut *this };
-        // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
-        me.deleting_after_waiting_for_children.store(true, Ordering::SeqCst);
-        me.need_to_wait.store(false, Ordering::SeqCst);
+        // SAFETY: caller contract. Stay on raw `this` —
+        // `remove_entry_dir_after_children` reborrows `(*this).deleted_entries`
+        // mutably, so a long-lived `&mut *this` here would alias.
+        unsafe {
+            // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
+            (*this).deleting_after_waiting_for_children.store(true, Ordering::SeqCst);
+            (*this).need_to_wait.store(false, Ordering::SeqCst);
+        }
         let mut do_post_run = true;
-        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
-        let tm = unsafe { &*me.task_manager };
+        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0;
+        // separate allocation from every DirTask.
+        let tm = unsafe { &*(*this).task_manager };
         if !tm.error_signal().load(Ordering::SeqCst) {
             match tm.remove_entry_dir_after_children(this) {
                 Err(e) => tm.handle_err(e),
@@ -1401,13 +1405,16 @@ impl DirTask {
         let me = unsafe { &mut *this };
         if me.deleted_entries.is_empty() {
             // Spec: deinit non-root and bail. The pending count was already
-            // taken so release it again.
-            // SAFETY: `task_manager` is live (pending count > 0).
-            unsafe { ShellRmTask::decr_pending_and_maybe_deinit(me.task_manager) };
-            if !me.parent_task.is_null() {
+            // taken so release it again. Capture before the decrement —
+            // dropping the ShellRmTask drops the root DirTask, so for the root
+            // `me` may dangle immediately after.
+            let (tm, has_parent) = (me.task_manager, !me.parent_task.is_null());
+            if has_parent {
                 // SAFETY: non-root DirTask is its own Box.
                 unsafe { Self::deinit(this) };
             }
+            // SAFETY: `tm` is live (pending count > 0).
+            unsafe { ShellRmTask::decr_pending_and_maybe_deinit(tm) };
             return;
         }
         // SAFETY: `task_manager` is live (pending count > 0).
@@ -1442,9 +1449,8 @@ impl DirTask {
     /// `this` is a live heap-allocated (non-root) DirTask; reclaimed once.
     unsafe fn deinit(this: *mut DirTask) {
         debug_assert!(unsafe { !(*this).parent_task.is_null() });
-        // The root's path string is from Rm's argv so don't deallocate it,
-        // and the root task is a field on the ShellRmTask so don't destroy it
-        // either — both are handled by ShellRmTask's Drop.
+        // The root task is owned by `ShellRmTask` (freed in its `Drop`); only
+        // non-root children are reclaimed here.
         // SAFETY: caller contract.
         drop(unsafe { Box::from_raw(this) });
     }
@@ -1578,9 +1584,8 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
 //   source:     src/shell/builtin/rm.zig (1268 lines)
 //   confidence: medium — full DirTask tree-walk + verbose/err accounting
 //               ported; raw-ptr ownership matches Zig's WorkPool model.
-//   notes:      `remove_entry_file` borrows `path` from `buf` then passes
-//               `buf` mutably to the vtable callbacks (Zig aliased the same
-//               buffer). The callbacks never read `buf` on those paths so the
-//               aliasing is benign, but borrowck may need a `*mut PathBuffer`
-//               reshape in Phase B.
+//   notes:      `root_task` is heap-allocated separately (Zig embeds it) so
+//               `&ShellRmTask` and `&mut DirTask` provably never overlap; see
+//               PORT NOTE on the field. Worker-thread entry points stay on
+//               raw `*mut DirTask` and only reborrow disjoint fields.
 // ──────────────────────────────────────────────────────────────────────────

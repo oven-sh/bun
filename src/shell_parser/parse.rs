@@ -96,7 +96,7 @@ pub mod ast {
         }
     }
 
-    #[derive(strum::IntoStaticStr)]
+    #[derive(Clone, Copy, strum::IntoStaticStr)]
     pub enum Expr<'arena> {
         Assign(&'arena [Assign<'arena>]),
         Binary(&'arena Binary<'arena>),
@@ -410,6 +410,7 @@ pub mod ast {
         }
     }
 
+    #[derive(Clone, Copy)]
     pub enum PipelineItem<'arena> {
         Cmd(&'arena Cmd<'arena>),
         Assigns(&'arena [Assign<'arena>]),
@@ -4541,6 +4542,14 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
 
     pub fn last_unchecked_const(&self) -> &T {
         self.get_const(self.len() - 1)
+    }
+}
+
+impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
+    type Output = T;
+    #[inline]
+    fn index(&self, idx: usize) -> &T {
+        self.get_const(idx)
     }
 }
 

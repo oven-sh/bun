@@ -36,7 +36,9 @@ pub mod ssl_wrapper;
 mod tls_socket_functions;
 
 #[path = "udp_socket.rs"]
-pub mod udp_socket_draft;
+pub mod udp_socket;
+// Phase-B alias retained until callers stop spelling `udp_socket_draft` directly.
+pub use udp_socket as udp_socket_draft;
 
 #[path = "uws_dispatch.rs"]
 pub mod uws_dispatch;

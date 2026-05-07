@@ -128,7 +128,6 @@ impl Body {
             )
             .map_err(|_| core::fmt::Error)?;
 
-        let size = self.value.size();
         match &mut self.value {
             Value::Blob(blob) => {
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -136,11 +135,21 @@ impl Body {
                 formatter.write_indent(writer)?;
                 blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             }
-            Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
+            v @ (Value::InternalBlob(_) | Value::WTFStringImpl(_)) => {
+                // Zig calls `this.value.size()` *inside* this arm only — do not hoist:
+                // for `.Blob` it would stat the file, for `.Locked` it would deref the
+                // global. Compute the size from the matched payload directly.
+                let size = match v {
+                    Value::InternalBlob(b) => b.slice_const().len(),
+                    // SAFETY: `WTFStringImpl` newtype wraps a live `*const WTF::StringImpl`
+                    // (refcounted by JSC; held for the lifetime of this `Value`).
+                    Value::WTFStringImpl(s) => unsafe { (**s).utf8_byte_length() },
+                    _ => unreachable!(),
+                };
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
-                blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size as usize, writer)?;
+                blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
             }
             Value::Locked(locked) => {
                 // SAFETY: `locked.global` is stored from a live `&JSGlobalObject` at
@@ -2228,11 +2237,13 @@ impl<'a> ValueBufferer<'a> {
                 );
                 (self.on_finished_buffering)(self.ctx, data.buf, None, true);
                 if data.is_temporary {
-                    // SAFETY: `is_temporary` ⇒ `data.buf` was handed over from a
-                    // default-allocator Vec via `Vec::leak`/`into_raw_parts`; reclaim it.
-                    let len = data.buf.len();
+                    // SAFETY: `is_temporary` ⇒ every producer leaks a `Box<[u8]>`
+                    // (read_file.rs: `Vec::into_boxed_slice` → `Box::leak`), so the
+                    // allocation layout is exactly `(ptr, len)`. Reclaim via
+                    // `Box::from_raw` — `Vec::from_raw_parts(ptr, len, len)` would be
+                    // UB if any producer's underlying capacity ever exceeded `len`.
                     unsafe {
-                        drop(Vec::from_raw_parts(data.buf.as_mut_ptr(), len, len));
+                        drop(Box::<[u8]>::from_raw(data.buf as *mut [u8]));
                     }
                 }
             }

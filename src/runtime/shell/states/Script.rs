@@ -147,9 +147,8 @@ impl Script {
     fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
         let me = interp.as_script(this);
         // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
-        // `stmt_count` by the caller. Raw-pointer arithmetic avoids the
-        // implicit autoref that slice indexing would introduce.
-        unsafe { ((*me.node).stmts as *const ast::Stmt).add(idx) }
+        // `stmt_count` by the caller.
+        unsafe { &(*me.node).stmts[idx] }
     }
 }
 

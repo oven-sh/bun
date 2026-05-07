@@ -240,120 +240,36 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
     false
 }
 
-// ─── opaque type surface (still blocked) ─────────────────────────────────────
-// The shell parser/AST live in `shell_body.rs` (gated). State nodes hold
-// `*const ast::*` raw pointers into the bumpalo-allocated AST; until the
-// parser is un-gated we expose opaque ZSTs so the interpreter compiles.
-//
-// TODO(b2-blocked): bun_shell_parser ast — replace with `pub use shell_body::ast`.
-//
-// These shapes mirror `shell_body.rs` / `shell.zig` just enough for the
-// interpreter state machines to compile. State nodes hold `*const ast::*` raw
-// pointers into the (eventually bumpalo-allocated) AST; until the parser is
-// un-gated, no code constructs these — they're only dereferenced through
-// pointers the parser will hand out.
+// ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
+// State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
+// (`ShellArgs::__arena`). The arena outlives every state node, so the `'arena`
+// lifetime on `bun_shell_parser::ast::*<'arena>` carries no information the
+// interpreter can use — threading it through `Interpreter`/`Node`/every state
+// struct would be pure noise. Instead we erase it to `'static` here and store
+// raw pointers; `Interpreter::parse` performs the single lifetime-widening
+// transmute (`Script<'a>` → `Script<'static>`, identical layout) at the
+// arena/state-machine boundary.
 pub mod ast {
-    macro_rules! opaque_ast {
-        ($($name:ident),* $(,)?) => {
-            $(
-                #[repr(C)]
-                pub struct $name {
-                    _priv: [u8; 0],
-                }
-            )*
-        };
-    }
-    // Leaf nodes the interpreter never inspects (only holds pointers to).
-    opaque_ast!(Assign, Atom, CondExpr, CmdOrAssigns, SimpleAtom, CompoundAtom);
+    use bun_shell_parser::parse::ast as p;
+    pub use bun_shell_parser::parse::SmolList;
+    pub use p::{BinaryOp, IoKind, JSBuf, RedirectFlags};
 
-    /// `ast::If::else_parts` etc. — inline small-vec.
-    pub type SmolList<T, const N: usize> = crate::shell::interpreter::SmolList<T, N>;
-
-    #[repr(C)]
-    pub struct Script {
-        pub stmts: *const [Stmt],
-    }
-
-    #[repr(C)]
-    pub struct Stmt {
-        pub exprs: *const [Expr],
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub enum Expr {
-        Cmd(*const Cmd),
-        Binary(*const Binary),
-        Pipeline(*const Pipeline),
-        Assign(*const [Assign]),
-        If(*const If),
-        CondExpr(*const CondExpr),
-        Subshell(*const Subshell),
-        Async(*const Expr),
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub enum BinaryOp {
-        And,
-        Or,
-    }
-
-    #[repr(C)]
-    pub struct Binary {
-        pub op: BinaryOp,
-        pub left: Expr,
-        pub right: Expr,
-    }
-
-    #[repr(C)]
-    pub struct Pipeline {
-        pub items: *const [PipelineItem],
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub enum PipelineItem {
-        Cmd(*const Cmd),
-        Assigns(*const [Assign]),
-        If(*const If),
-        CondExpr(*const CondExpr),
-        Subshell(*const Subshell),
-    }
-
-    // `RedirectFlags` / `IoKind` are pure bitflags + Copy enum (no arena
-    // lifetime), so we re-export the real definitions from the gated parser
-    // module instead of duplicating them.
-    pub use super::shell_body::ast::{IoKind, RedirectFlags};
-
-    #[repr(C)]
-    pub struct Cmd {
-        pub assigns: *const [Assign],
-        pub name_and_args: *const [Atom],
-        pub redirect_file: Option<Redirect>,
-        pub redirect: RedirectFlags,
-    }
-
-    #[repr(C)]
-    pub enum Redirect {
-        Atom(Atom),
-        JsBuf(u32),
-    }
-
-    #[repr(C)]
-    pub struct If {
-        pub cond: SmolList<Stmt, 1>,
-        pub then: SmolList<Stmt, 1>,
-        /// Flat: [elif-cond, elif-then, ..., (final else)?]. See Zig
-        /// `ast.If.else_parts` doc comment.
-        pub else_parts: SmolList<SmolList<Stmt, 1>, 1>,
-    }
-
-    #[repr(C)]
-    pub struct Subshell {
-        pub script: Script,
-        // TODO(b2-blocked): `redirect: ?Redirect`, `redirect_flags: RedirectFlags`
-    }
+    pub type Script = p::Script<'static>;
+    pub type Stmt = p::Stmt<'static>;
+    pub type Expr = p::Expr<'static>;
+    pub type Binary = p::Binary<'static>;
+    pub type Pipeline = p::Pipeline<'static>;
+    pub type PipelineItem = p::PipelineItem<'static>;
+    pub type Cmd = p::Cmd<'static>;
+    pub type Redirect = p::Redirect<'static>;
+    pub type If = p::If<'static>;
+    pub type Subshell = p::Subshell<'static>;
+    pub type CondExpr = p::CondExpr<'static>;
+    pub type Assign = p::Assign<'static>;
+    pub type Atom = p::Atom<'static>;
+    pub type SimpleAtom = p::SimpleAtom<'static>;
+    pub type CompoundAtom = p::CompoundAtom<'static>;
+    pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
 }
 
 // Canonical 4-variant error enum (shell.zig `ShellErr`). Defined in

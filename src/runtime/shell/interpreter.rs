@@ -361,7 +361,7 @@ impl ShellArgs {
             __arena: bun_alloc::Arena::new(),
             // Zig: `.script_ast = undefined` — overwritten by `parse()` before
             // `run()`. An empty stmt list is a safe placeholder.
-            script_ast: ast::Script { stmts: &[] as *const [ast::Stmt] },
+            script_ast: ast::Script { stmts: &[] },
         })
     }
 
@@ -393,10 +393,6 @@ impl Interpreter {
     /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
     /// so the caller can `combineErrors()` for diagnostics; on parse error
     /// `out_parse_err` is populated likewise.
-    // TODO(b2-blocked): bun_shell_parser — `LexerAscii`/`LexerUnicode`/`Parser`
-    // live in `shell_body.rs` (gated). Body preserved verbatim below; until
-    // un-gated this returns `ParseUnavailable` so the standalone-shell path
-    // surfaces a clear error instead of UB-walking an empty AST.
     pub fn parse<'a>(
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
@@ -431,15 +427,15 @@ impl Interpreter {
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
         let script = out_parser.as_mut().unwrap().parse()?;
-        // `bun_shell_parser::ast::Script<'arena>` → `shell::ast::Script`:
-        // the local `ast` module (see `shell/mod.rs`) is a lifetime-
-        // erased, layout-compatible mirror so state nodes can hold
-        // `*const ast::*` into the arena without threading `'arena`.
+        // SAFETY: `ast::Script` is `bun_shell_parser::ast::Script<'static>` —
+        // identical type, only the lifetime parameter differs. State nodes
+        // hold `*const ast::*` raw pointers into `arena` (which the
+        // interpreter owns for its whole lifetime), so widening `'a` →
+        // `'static` here is sound: every dereference is guarded by `unsafe`
+        // and the arena outlives every state node. This is pure lifetime
+        // erasure, not a layout reinterpretation.
         Ok(unsafe {
-            core::mem::transmute::<
-                crate::shell::shell_body::AST::Script<'_>,
-                ast::Script,
-            >(script)
+            core::mem::transmute::<bun_shell_parser::ast::Script<'a>, ast::Script>(script)
         })
     }
 

@@ -27,7 +27,7 @@ use bun_sys::{self as sys, Fd, SystemError};
 // ───────────────────────────── re-exports ─────────────────────────────
 
 pub use super::interpreter as interpret; // ./interpreter.zig → crate::shell::interpret
-pub mod subproc; // ./subproc.zig → crate::shell::subproc
+pub use super::subproc; // ./subproc.zig — declared once in `shell/mod.rs`
 pub use super::alloc_scope; // ./AllocScope.zig
 pub use alloc_scope as AllocScope;
 
@@ -1330,14 +1330,8 @@ pub mod testing_apis {
         };
 
         // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(script_ast, .{})})`.
-        // `Interpreter::parse` returns the lifetime-erased local `ast::Script`
-        // (a layout-compatible mirror — see `shell/mod.rs` and the transmute
-        // in `Interpreter::parse`); transmute back for JSON formatting.
-        let script_ast: bun_shell_parser::ast::Script<'_> = unsafe {
-            core::mem::transmute::<crate::shell::ast::Script, bun_shell_parser::ast::Script<'_>>(
-                script_ast,
-            )
-        };
+        // `crate::shell::ast::Script` is a `'static`-erased alias of
+        // `bun_shell_parser::ast::Script`, so it formats directly.
         let str = format!("{}", bun_shell_parser::json_fmt::script_json_fmt(&script_ast));
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }

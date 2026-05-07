@@ -94,6 +94,10 @@ pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
     )
 }
 
+// codegen (`generated_js2native.rs`) snake-cases the Zig symbol; alias the
+// PascalCase fns so both spellings resolve.
+pub use self::{BlockList as block_list, SocketAddress as socket_address};
+
 // Zig: `pub const SocketAddress = bun.jsc.Codegen.JSSocketAddress.getConstructor;`
 // The per-class `JS${Type}` codegen modules are not yet emitted in Rust; bind the
 // `${Type}__getConstructor` externs directly (same symbols the `#[bun_jsc::JsClass]`

@@ -32,6 +32,8 @@ pub mod path;
 
 #[path = "node/node_os.rs"]
 pub mod os;
+// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
+pub use os as node_os;
 
 #[path = "node/node_process.rs"]
 pub mod process;
@@ -70,8 +72,14 @@ pub mod node_fs_constant;
 
 #[path = "node/util/validators.rs"]
 pub mod validators_impl;
+#[path = "node/util/parse_args.rs"]
+pub mod parse_args_impl;
+#[path = "node/util/parse_args_utils.rs"]
+pub mod parse_args_utils_impl;
 pub mod util {
     pub use super::validators_impl as validators;
+    pub use super::parse_args_impl as parse_args;
+    pub use super::parse_args_utils_impl as parse_args_utils;
 }
 pub use util::validators;
 
@@ -118,6 +126,18 @@ pub mod node_cluster_binding;
 
 #[path = "node/node_net_binding.rs"]
 pub mod node_net_binding;
+
+#[path = "node/node_http_binding.rs"]
+pub mod node_http_binding;
+
+#[path = "node/node_util_binding.rs"]
+pub mod node_util_binding;
+
+#[path = "node/node_assert_binding.rs"]
+pub mod node_assert_binding;
+
+#[path = "node/node_error_binding.rs"]
+pub mod node_error_binding;
 
 #[path = "node/node_zlib_binding.rs"]
 pub mod node_zlib_binding;

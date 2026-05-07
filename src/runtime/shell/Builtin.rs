@@ -602,9 +602,9 @@ impl Builtin {
                     });
                 }
             }
-            Some(ast::Redirect::JsBuf(idx)) => {
+            Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
-                let idx = *idx as usize;
+                let idx = jsbuf.idx as usize;
                 let global = interp.global_this;
                 if global.is_null() || idx >= interp.jsobjs.len() {
                     interp.throw(crate::shell::ShellErr::Custom(

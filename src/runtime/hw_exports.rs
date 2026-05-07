@@ -153,151 +153,131 @@ pub extern "C" fn Bun__closeChildIPC(global: *mut JSGlobalObject) {
     }
 }
 
-// ─── sql_jsc bridge (`Bun__VM__rareData` / `Bun__VM__timer` / Timer heap) ────
+// ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` keeps an opaque `#[repr(C)]` view of `RareData` whose first two
-// fields are the concrete `MySQLContext` / `PostgresSQLContext` (each is two
-// `Strong.Optional` handles). `bun_jsc::rare_data` stores those as ZST stubs,
-// so the real storage lives here in `RuntimeState` and `Bun__VM__rareData`
-// hands back its address.
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
+// `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
+// `extern "C"` re-decls (which let the two sides silently disagree on pointee
+// layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
+// crate registers a `&'static` instance from [`crate::jsc_hooks::
+// install_jsc_hooks`]. Every fn-pointer signature is type-checked at the
+// struct-literal below.
+//
+// Opaque-pointer protocol for `SSLConfig`: `ssl_config_from_js` returns a
+// `Box<socket::SSLConfig>::into_raw`; the SQL side holds it as `*mut c_void`
+// and frees via `ssl_config_free`. Scalar accessors borrow into that box.
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__rareData(_vm: *mut VirtualMachine) -> *mut c_void {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is an
-    // embedded field that stays at a stable address for the VM's lifetime.
-    unsafe { core::ptr::addr_of_mut!((*state).sql_rare) as *mut c_void }
-}
+pub(crate) mod sql_hooks {
+    use super::*;
+    use bun_event_loop::EventLoopTimer::EventLoopTimer;
+    use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__timer(_vm: *mut VirtualMachine) -> *mut c_void {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `state` is the boxed per-thread `RuntimeState`; `timer` is an
-    // embedded `timer::All` that stays at a stable address for the VM's lifetime.
-    unsafe { core::ptr::addr_of_mut!((*state).timer) as *mut c_void }
-}
-
-/// `Timer.All.insert` (Timer.zig:63) — push an `EventLoopTimer` into the
-/// per-VM intrusive pairing heap.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__All__insert(
-    heap: *mut c_void,
-    timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-) {
-    // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer` is
-    // a live intrusive heap node owned by the caller.
-    unsafe { (*(heap as *mut crate::timer::All)).timers.insert(timer) };
-}
-
-/// `Timer.All.remove` (Timer.zig:86).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Timer__All__remove(
-    heap: *mut c_void,
-    timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-) {
-    // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
-    // inserted by the caller.
-    unsafe { (*(heap as *mut crate::timer::All)).timers.remove(timer) };
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__RareData__sslCtxCache(_vm: *mut c_void) -> *mut c_void {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
-    // `SSLContextCache` has a stable address for the VM's lifetime.
-    unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) as *mut c_void }
-}
-
-/// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLContextCache__getOrCreateOpts(
-    cache: *mut c_void,
-    opts: *const bun_uws::SocketContext::BunSocketContextOptions,
-    err: *mut bun_uws::create_bun_socket_error_t,
-) -> *mut c_void {
-    // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`; `opts`/`err` are
-    // valid for reads/writes (caller stack locals in sql_jsc).
-    let cache = unsafe { &mut *(cache as *mut crate::api::SSLContextCache::SSLContextCache) };
-    let opts = unsafe { *opts };
-    let err = unsafe { &mut *err };
-    match cache.get_or_create_opts(opts, err) {
-        Some(ctx) => ctx as *mut c_void,
-        None => core::ptr::null_mut(),
+    unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
+        // an embedded field with stable address for the VM lifetime.
+        unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
-}
-
-/// `SSLConfig::fromJS` — parse a JS TLS-options object into the runtime
-/// `SSLConfig`. Returns a heap-allocated `SSLConfig` (ownership transfers to
-/// the caller — released via [`Bun__SSLConfig__free`]), or null on `None` /
-/// JS exception (caller distinguishes via `has_exception()`).
-///
-/// LAYERING: `bun_sql_jsc` cannot name `crate::socket::SSLConfig` (cycle), so
-/// it holds the result as an opaque `*mut c_void` and reads scalar fields via
-/// [`Bun__SSLConfig__serverName`] / [`Bun__SSLConfig__rejectUnauthorized`].
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__fromJS(
-    global: *mut JSGlobalObject,
-    value: JSValue,
-) -> *mut c_void {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value) {
-        Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)) as *mut c_void,
-        Ok(None) => core::ptr::null_mut(),
-        Err(bun_jsc::JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory();
-            core::ptr::null_mut()
+    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `timer` is the
+        // embedded `timer::All` with stable address for the VM lifetime.
+        unsafe { core::ptr::addr_of_mut!((*state).timer) as *mut c_void }
+    }
+    unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
+        // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
+        // is a live intrusive heap node owned by the caller.
+        unsafe { (*(heap as *mut crate::timer::All)).timers.insert(timer) };
+    }
+    unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
+        // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
+        // inserted by the caller.
+        unsafe { (*(heap as *mut crate::timer::All)).timers.remove(timer) };
+    }
+    unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
+        // `SSLContextCache` has stable address for the VM lifetime.
+        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) as *mut c_void }
+    }
+    unsafe fn ssl_ctx_get_or_create(
+        cache: *mut c_void,
+        opts: &bun_uws::us_bun_socket_context_options_t,
+        err: &mut bun_uws::create_bun_socket_error_t,
+    ) -> *mut bun_uws::SslCtx {
+        // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
+        let cache =
+            unsafe { &mut *(cache as *mut crate::api::SSLContextCache::SSLContextCache) };
+        cache.get_or_create_opts(*opts, err).unwrap_or(core::ptr::null_mut())
+    }
+    unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+        match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value) {
+            Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)) as *mut c_void,
+            Ok(None) => core::ptr::null_mut(),
+            Err(bun_jsc::JsError::OutOfMemory) => {
+                let _ = global.throw_out_of_memory();
+                core::ptr::null_mut()
+            }
+            Err(_) => core::ptr::null_mut(),
         }
-        Err(_) => core::ptr::null_mut(),
     }
-}
+    unsafe fn ssl_config_free(this: *mut c_void) {
+        // SAFETY: `this` was produced by `Box::into_raw` in
+        // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
+        drop(unsafe { Box::from_raw(this as *mut crate::socket::SSLConfig) });
+    }
+    unsafe fn ssl_config_as_usockets_client(
+        this: *const c_void,
+    ) -> bun_uws::us_bun_socket_context_options_t {
+        // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
+        unsafe { &*(this as *const crate::socket::SSLConfig) }
+            .as_usockets_for_client_verification()
+    }
+    unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
+        // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
+        // `Option<CString>` field, valid until `ssl_config_free`.
+        unsafe { &*(this as *const crate::socket::SSLConfig) }
+            .server_name
+            .as_deref()
+            .map_or(core::ptr::null(), |s| s.as_ptr())
+    }
+    unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
+        // SAFETY: `this` is a live boxed `SSLConfig`.
+        unsafe { (*(this as *const crate::socket::SSLConfig)).reject_unauthorized }
+    }
+    unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
+        // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
+        // `Blob__fromJS`).
+        unsafe { (*(this as *const crate::webcore::Blob)).needs_to_read_file() }
+    }
+    unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
+        // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
+        unsafe {
+            crate::webcore::Blob::Bun__Blob__sharedView(
+                this as *const crate::webcore::Blob,
+                out_len,
+            )
+        }
+    }
 
-/// Drop a `Bun__SSLConfig__fromJS`-allocated `SSLConfig`. No-op on null.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__free(this: *mut c_void) {
-    if this.is_null() { return; }
-    // SAFETY: `this` was produced by `Box::into_raw` in `Bun__SSLConfig__fromJS`.
-    drop(unsafe { Box::from_raw(this as *mut crate::socket::SSLConfig) });
-}
-
-/// `SSLConfig.server_name` — borrow the SNI C-string (null if unset). The
-/// returned pointer is valid until `Bun__SSLConfig__free(this)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__serverName(this: *const c_void) -> *const core::ffi::c_char {
-    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`.
-    let this = unsafe { &*(this as *const crate::socket::SSLConfig) };
-    this.server_name.as_deref().map_or(core::ptr::null(), |s| s.as_ptr())
-}
-
-/// `SSLConfig.reject_unauthorized` (0/1).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__rejectUnauthorized(this: *const c_void) -> i32 {
-    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`.
-    unsafe { (*(this as *const crate::socket::SSLConfig)).reject_unauthorized }
-}
-
-/// `SSLConfig::asUSockets` — project the runtime `SSLConfig` to the C-ABI
-/// `us_bun_socket_context_options_t` for client-mode verification.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__SSLConfig__asUSocketsClient(
-    this: *const c_void,
-    out: *mut bun_uws::SocketContext::BunSocketContextOptions,
-) {
-    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`;
-    // `out` is a caller stack out-param.
-    let this = unsafe { &*(this as *const crate::socket::SSLConfig) };
-    unsafe { *out = this.as_usockets_for_client_verification() };
-}
-
-/// `Blob::needsToReadFile` — true when the blob is backed by a file/fd that
-/// must be read (vs. an in-memory bytes store).
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Blob__needsToReadFile(this: *const c_void) -> bool {
-    // SAFETY: `this` is a live `Blob` (sql_jsc passes `&Blob as *const c_void`).
-    unsafe { (*(this as *const crate::webcore::Blob)).needs_to_read_file() }
+    pub(crate) static INSTANCE: SqlRuntimeHooks = SqlRuntimeHooks {
+        sql_rare,
+        timer_heap,
+        timer_insert,
+        timer_remove,
+        ssl_ctx_cache,
+        ssl_ctx_get_or_create,
+        ssl_config_from_js,
+        ssl_config_free,
+        ssl_config_as_usockets_client,
+        ssl_config_server_name,
+        ssl_config_reject_unauthorized,
+        blob_needs_to_read_file,
+        blob_shared_view,
+    };
 }
 
 // ─── bun.js.zig — entry-point promise reactions (used by `--print`) ──────────

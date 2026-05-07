@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
 use bun_paths::fs::Path as FsPath;
-use bun_string::String as BunString;
+use bun_string::{OwnedString, String as BunString};
 
 use crate::JSGlobalObject;
 
@@ -81,7 +81,10 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
 
-        let file_path = path_value.to_bun_string(global)?;
+        // Spec PluginRunner.zig:62 `defer file_path.deref()` — `bun_string::String`
+        // is `Copy` (no `Drop`), so RAII-wrap the +1 WTF ref across every
+        // remaining `?` / early-return.
+        let file_path = OwnedString::new(path_value.to_bun_string(global)?);
 
         if file_path.length() == 0 {
             log.add_error(
@@ -113,18 +116,22 @@ impl PluginResolver for PluginRunner {
 
                 let namespace_str = namespace_value.to_bun_string(global)?;
                 if namespace_str.length() == 0 {
+                    namespace_str.deref();
                     break 'brk BunString::init(b"file");
                 }
 
                 if namespace_str.eql_comptime(b"file") {
+                    namespace_str.deref();
                     break 'brk BunString::init(b"file");
                 }
 
                 if namespace_str.eql_comptime(b"bun") {
+                    namespace_str.deref();
                     break 'brk BunString::init(b"bun");
                 }
 
                 if namespace_str.eql_comptime(b"node") {
+                    namespace_str.deref();
                     break 'brk BunString::init(b"node");
                 }
 
@@ -135,6 +142,8 @@ impl PluginResolver for PluginRunner {
 
             break 'brk BunString::init(b"file");
         };
+        // Spec PluginRunner.zig:121 `defer user_namespace.deref()`.
+        let user_namespace = OwnedString::new(user_namespace);
 
         // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
         // returned the allocator-owned slice by value inside `Fs.Path`.

@@ -125,30 +125,6 @@ impl Status {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local helpers — intrusive ref/deref for `*mut PostgresSQLStatement`.
-// `PostgresSQLStatement` exposes `pub ref_count: Cell<u32>`; the canonical
-// `IntrusiveRc` wrapper is not used at these callsites (see PostgresSQLStatement.rs
-// header note), so bump the count directly to mirror Zig `stmt.ref()`/`stmt.deref()`.
-// ──────────────────────────────────────────────────────────────────────────
-#[inline]
-unsafe fn stmt_ref(stmt: *mut PostgresSQLStatement) {
-    // SAFETY: `stmt` points to a live boxed statement (caller invariant).
-    let rc = unsafe { &(*stmt).ref_count };
-    rc.set(rc.get() + 1);
-}
-#[inline]
-unsafe fn stmt_deref(stmt: *mut PostgresSQLStatement) {
-    // SAFETY: `stmt` points to a live boxed statement; on 0 the box is freed.
-    let rc = unsafe { &(*stmt).ref_count };
-    let n = rc.get() - 1;
-    rc.set(n);
-    if n == 0 {
-        // SAFETY: produced by `Box::into_raw` below or in PostgresSQLConnection.
-        drop(unsafe { Box::from_raw(stmt) });
-    }
-}
-
 impl PostgresSQLQuery {
     // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
     // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + Box::from_raw) at 0.
@@ -354,10 +330,10 @@ impl PostgresSQLQuery {
         let arguments = callframe.arguments();
         let mut args = crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // ArgumentsSlice has Drop.
-        let Some(query) = args.next() else {
+        let Some(query) = args.next_eat() else {
             return Err(global_this.throw(format_args!("query must be a string")));
         };
-        let Some(values) = args.next() else {
+        let Some(values) = args.next_eat() else {
             return Err(global_this.throw(format_args!("values must be an array")));
         };
 
@@ -369,10 +345,10 @@ impl PostgresSQLQuery {
             return Err(global_this.throw(format_args!("values must be an array")));
         }
 
-        let pending_value: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next().unwrap_or(JSValue::FALSE);
+        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
+        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
+        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
+        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
 
         let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
         let simple = js_simple.is_boolean() && js_simple.as_boolean();

@@ -27,16 +27,6 @@ fn cli_start_time() -> i128 {
     unsafe { crate::cli::START_TIME }
 }
 
-/// Port of `StandaloneModuleGraph.targetBasePublicPath` — Zig's version takes a
-/// `comptime suffix` and concatenates at comptime; the only call site here passes
-/// `"root/"`, so we materialize both branches as runtime constants.
-fn target_base_public_path_root(os: OperatingSystem) -> &'static [u8] {
-    match os {
-        OperatingSystem::Windows => b"B:/~BUN/root/",
-        _ => b"/$bunfs/root/",
-    }
-}
-
 /// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
 /// such method yet; loop on `write_all`.
 #[inline]

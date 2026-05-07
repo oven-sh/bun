@@ -2836,8 +2836,7 @@ pub(crate) mod __forward_decls {
     pub use ::bun_install_types::resolver_hooks as Install;
     pub use ::bun_install_types::resolver_hooks::Resolution;
     pub use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
-    /// Legacy alias for `Install` — kept until `package_json.rs` callers are
-    /// migrated to `bun_install_types::resolver_hooks` directly.
+}
 // bun_paths shim — adds the resolver-shaped wrappers (Option-returning dirname,
 // PosixToWinNormalizer, join helpers) until bun_paths exposes them at the root.
 mod bun_paths {

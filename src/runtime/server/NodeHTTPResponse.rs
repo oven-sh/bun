@@ -1075,9 +1075,10 @@ impl NodeHTTPResponse {
             chunk.len(),
             last
         );
-        let _ = self
-            .buffered_request_body_data_during_pause
-            .append_slice(chunk);
+        bun_core::handle_oom(
+            self.buffered_request_body_data_during_pause
+                .append_slice(chunk),
+        );
         if last {
             self.flags.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
             if self.body_read_ref.has {

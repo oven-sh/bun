@@ -430,9 +430,7 @@ impl BlobExt for Blob {
         ) -> JSValue {
             // SAFETY: `g` is the `&JSGlobalObject` stored on the task in `init`.
             let g = unsafe { &*g };
-            jsc::host_fn::to_js_host_call(g, core::panic::Location::caller(), || {
-                F::call(b, g, by, Lifetime::Clone)
-            })
+            jsc::host_fn::to_js_host_call(g, || F::call(b, g, by, Lifetime::Clone))
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
     }
@@ -750,7 +748,7 @@ impl BlobExt for Blob {
                 || e == bun_core::err!("TooSmall")
                 || e == bun_core::err!("InvalidValue") =>
             {
-                return Err(global_this.throw("Blob.onStructuredCloneDeserialize failed"));
+                return Err(global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed")));
             }
             Err(e) if e == bun_core::err!("OutOfMemory") => {
                 return Err(global_this.throw_out_of_memory());
@@ -1063,7 +1061,7 @@ impl BlobExt for Blob {
         let recommended_chunk_size_value = callframe.argument(0);
         if !recommended_chunk_size_value.is_undefined_or_null() {
             if !recommended_chunk_size_value.is_number() {
-                return Err(global_this.throw_invalid_arguments("chunkSize must be a number"));
+                return Err(global_this.throw_invalid_arguments(format_args!("chunkSize must be a number")));
             }
             // PERF(port): Zig used @truncate to i52 then @intCast to SizeType.
             recommended_chunk_size = SizeType::try_from(
@@ -1175,14 +1173,14 @@ impl BlobExt for Blob {
         validate_writable_blob(global_this, self)?;
 
         let Some(data) = args.next_eat() else {
-            return Err(global_this.throw_invalid_arguments(
-                "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-            ));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
+            )));
         };
         if data.is_empty_or_undefined_or_null() {
-            return Err(global_this.throw_invalid_arguments(
-                "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-            ));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
+            )));
         }
         let mut mkdirp_if_not_exists: Option<bool> = None;
         let options = args.next_eat();
@@ -1289,7 +1287,7 @@ impl BlobExt for Blob {
         let Some(store) = self.store.clone() else {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
-                global_this.create_error_instance("Blob is detached"),
+                global_this.create_error_instance(format_args!("Blob is detached")),
             ));
         };
 
@@ -1336,7 +1334,7 @@ impl BlobExt for Blob {
         if !matches!(store.data, store::Data::File(_)) {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
-                global_this.create_error_instance("Blob is read-only"),
+                global_this.create_error_instance(format_args!("Blob is read-only")),
             ));
         }
 
@@ -1552,7 +1550,7 @@ impl BlobExt for Blob {
         let has_args = arguments_.len > 0;
 
         if !arg0.is_empty_or_undefined_or_null() && !arg0.is_object() {
-            return Err(global_this.throw_invalid_arguments("options must be an object or undefined"));
+            return Err(global_this.throw_invalid_arguments(format_args!("options must be an object or undefined")));
         }
 
         validate_writable_blob(global_this, self)?;
@@ -3065,7 +3063,7 @@ impl BlobExt for Blob {
             // new Blob("ok")
             // new File("ok", "file.txt")
             if fail_if_top_value_is_not_typed_array_like {
-                return Err(global.throw_invalid_arguments("new Blob() expects an Array"));
+                return Err(global.throw_invalid_arguments(format_args!("new Blob() expects an Array")));
             }
         }
 
@@ -4259,7 +4257,7 @@ pub fn write_file_with_source_destination(
         } else {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 ctx,
-                ctx.create_error_instance("Failed to stream bytes from s3 bucket"),
+                ctx.create_error_instance(format_args!("Failed to stream bytes from s3 bucket")),
             ));
         }
     } else if destination_type == store::DataTag::Bytes && source_type == store::DataTag::Bytes {
@@ -4321,7 +4319,7 @@ pub fn write_file_with_source_destination(
                     } else {
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             ctx,
-                            ctx.create_error_instance("Failed to stream bytes to s3 bucket"),
+                            ctx.create_error_instance(format_args!("Failed to stream bytes to s3 bucket")),
                         ));
                     }
                 } else {
@@ -4407,7 +4405,7 @@ pub fn write_file_with_source_destination(
                 } else {
                     return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        ctx.create_error_instance("Failed to stream bytes to s3 bucket"),
+                        ctx.create_error_instance(format_args!("Failed to stream bytes to s3 bucket")),
                     ));
                 }
             }
@@ -4432,15 +4430,15 @@ pub fn write_file_internal(
     options: WriteFileOptions,
 ) -> JsResult<JSValue> {
     if data.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(
-            "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-        ));
+        return Err(global_this.throw_invalid_arguments(format_args!(
+                "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
+            )));
     }
     // PORT NOTE: Zig copies `path_or_blob_.*`; Blob is non-Clone, so reborrow.
     let path_or_blob = &mut *path_or_blob_;
     if let PathOrBlob::Blob(ref blob) = *path_or_blob {
         let Some(blob_store) = &blob.store else {
-            return Err(global_this.throw_invalid_arguments("Blob is detached"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Blob is detached")));
         };
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
         // TODO only reset last_modified on success paths instead of resetting
@@ -4465,7 +4463,7 @@ pub fn write_file_internal(
                         if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))))
         {
             return Err(global_this
-                .throw_invalid_arguments("Cannot create a directory for a file descriptor"));
+                .throw_invalid_arguments(format_args!("Cannot create a directory for a file descriptor")));
         }
     }
 
@@ -4526,7 +4524,7 @@ pub fn write_file_internal(
             let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
             if new_blob.store.is_none() {
                 return Err(global_this
-                    .throw_invalid_arguments("Writing to an empty blob is not implemented yet"));
+                    .throw_invalid_arguments(format_args!("Writing to an empty blob is not implemented yet")));
             }
             new_blob
         }
@@ -4587,9 +4585,9 @@ pub fn write_file_internal(
                         if let Some(readable) = readable_opt {
                             if readable.is_disturbed(global_this) {
                                 destination_blob.detach();
-                                return Err(global_this.throw_invalid_arguments(
-                                    "ReadableStream has already been used",
-                                ));
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                "ReadableStream has already been used"
+            )));
                             }
                             let proxy_owned = http_proxy_href(global_this);
                             let proxy_url = proxy_owned.as_deref();
@@ -4615,7 +4613,7 @@ pub fn write_file_internal(
                         }
                         destination_blob.detach();
                         return Err(global_this
-                            .throw_invalid_arguments("ReadableStream has already been used"));
+                            .throw_invalid_arguments(format_args!("ReadableStream has already been used")));
                     }
                     let task = Box::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                         global_this,
@@ -4675,12 +4673,12 @@ pub fn write_file_internal(
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
     let Some(store) = &blob.store else {
-        return Err(global_this.throw("Cannot write to a detached Blob"));
+        return Err(global_this.throw(format_args!("Cannot write to a detached Blob")));
     };
     if matches!(store.data, store::Data::Bytes(_)) {
-        return Err(global_this.throw_invalid_arguments(
-            "Cannot write to a Blob backed by bytes, which are always read-only",
-        ));
+        return Err(global_this.throw_invalid_arguments(format_args!(
+                "Cannot write to a Blob backed by bytes, which are always read-only"
+            )));
     }
     Ok(())
 }
@@ -4703,9 +4701,9 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     }
 
     let Some(data) = args.next_eat() else {
-        return Err(global_this.throw_invalid_arguments(
-            "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write",
-        ));
+        return Err(global_this.throw_invalid_arguments(format_args!(
+                "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
+            )));
     };
     let mut mkdirp_if_not_exists: Option<bool> = None;
     let mut mode: Option<bun_sys::Mode> = None;
@@ -4936,7 +4934,7 @@ pub fn jsdom_file_construct_(
 
     if args.len() < 2 {
         return Err(global_this
-            .throw_invalid_arguments("new File(bits, name) expects at least 2 arguments"));
+            .throw_invalid_arguments(format_args!("new File(bits, name) expects at least 2 arguments")));
     }
     {
         use bun_jsc::StringJsc as _;
@@ -5051,7 +5049,7 @@ pub fn construct_bun_file(
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
         return Err(global_object
-            .throw_invalid_arguments("Expected file path string or file descriptor"));
+            .throw_invalid_arguments(format_args!("Expected file path string or file descriptor")));
     };
     let options = if arguments_slice.len() >= 2 { Some(arguments_slice[1]) } else { None };
 

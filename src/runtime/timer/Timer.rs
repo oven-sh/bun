@@ -1,11 +1,11 @@
 //! Timer subsystem JS-facing surface: setTimeout/setInterval/setImmediate/
 //! Bun.sleep/clear* host functions.
 //!
-//! PORT NOTE: this file is loaded as `mod timer_draft;` from `mod.rs`. The
-//! canonical struct definitions (`All`, `Kind`, `Maps`, `TimeoutObject`,
-//! `ImmediateObject`, `TimerObjectInternals`, `DateHeaderTimer`, …) live in
-//! `mod.rs`; this module only adds the JS-facing `impl super::All { … }`
-//! surface plus the C-ABI export thunks.
+//! PORT NOTE: this file is loaded as `pub mod timer;` from `mod.rs` (codegen
+//! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
+//! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
+//! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
+//! `impl super::All { … }` surface plus the C-ABI export thunks.
 
 #![allow(clippy::missing_safety_doc)]
 

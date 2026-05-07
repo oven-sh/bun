@@ -11,7 +11,11 @@ use bun_dotenv as DotEnv;
 use bun_http::HTTPThread;
 use bun_jsc::{self as jsc};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str::{ZigString, ZigStringSlice};
+// `set_time_zone` / `delete_module_registry_entry` take the JSC-side
+// `ZigString` (repr(C)-identical to `bun_str::ZigString`, but with the
+// JSGlobalObject FFI methods); import that one so the call sites type-check.
+use bun_jsc::zig_string::ZigString;
+use bun_str::ZigStringSlice;
 use bun_js_parser as js_ast;
 use bun_options_types::CodeCoverageOptions::{CodeCoverageOptions, Reporter, Reporters};
 use bun_paths::{self as bun_path, PathBuffer};
@@ -1869,12 +1873,12 @@ impl TestCommand {
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
         // PORT NOTE (layering): `InitOptions` is the low-tier surface — it carries
-        // `log`/`env_loader`/`smol`/`is_main_thread`, but `args: api::TransformOptions`
+        // `log`/`env_loader`/`smol`/`is_main_thread`. `args: api::TransformOptions`
         // and `debugger: cli::Command::Debugger` live in forward-dep crates and are
         // routed through `RuntimeHooks::{init_runtime_state,ensure_debugger}` instead
-        // (see VirtualMachine.rs `Options` PORT NOTE). `store_fd` is patched post-init
-        // (matches `init_with_module_graph`/`init_worker`).
-        let _ = (&ctx.args, &ctx.runtime_options.debugger);
+        // (see VirtualMachine.rs `Options` PORT NOTE and `vm.ensure_debugger(false)`
+        // below). `store_fd` is patched post-init (matches `init_with_module_graph`
+        // / `init_worker`).
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
@@ -2204,11 +2208,7 @@ impl TestCommand {
             }
         }
 
-        // PORT NOTE: `CodeCoverageOptions` lacks `Clone` upstream; bitwise copy is sound
-        // (POD config struct, no Drop, no interior pointers).
-        // SAFETY: see note above — verified by inspection of `CodeCoverageOptions`.
-        let mut coverage_options: CodeCoverageOptions =
-            unsafe { core::ptr::read(&ctx.test_options.coverage) };
+        let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
 
         if !test_files.is_empty() {
@@ -2618,7 +2618,7 @@ impl TestCommand {
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
-        vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
+        vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`, matching Zig's `FilenameStore.append`.
@@ -2642,11 +2642,9 @@ impl TestCommand {
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
-                vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
+                vm.clear_entry_point()?;
                 let entry = ZigString::init(file_path);
-                vm.global()
-                    .delete_module_registry_entry(&entry)
-                    .map_err(|_| bun_core::err!(JSError))?;
+                vm.global().delete_module_registry_entry(&entry)?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();
@@ -2770,9 +2768,8 @@ impl TestCommand {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
                 // need tracking to remain enabled and populated until then.
-                // TODO(b2-cycle): vm.auto_killer is gated to `()` until ProcessAutoKiller
-                // is wired; restore `clear()` / `disable()` once available.
-                let _ = &vm.auto_killer;
+                vm.auto_killer.clear();
+                vm.auto_killer.disable();
             }
 
             repeat_index += 1;

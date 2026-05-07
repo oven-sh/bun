@@ -4019,28 +4019,23 @@ unsafe fn resolve_embedded_node_file_hook(
     // Spec ModuleLoader.zig:35-36 — `vm.standalone_module_graph orelse return
     // null` + `graph.find(input_path) orelse return null`.
     //
-    // `vm.standalone_module_graph` is `Option<NonNull<c_void>>` and the
-    // concrete `StandaloneModuleGraph`/`File` types live in
-    // `bun_standalone_graph`, which is not yet a `bun_runtime` dep.
-    // TODO(b2-blocked): un-gate once `bun_standalone_graph.workspace = true`
-    // lands in `src/runtime/Cargo.toml` (same blocker as the standalone-graph
-    // probe in `fetch_builtin_module` above).
-    
-    {
-        extern crate bun_standalone_graph;
-        use bun_standalone_graph::Graph as StandaloneModuleGraph;
-
-        // SAFETY: per fn contract — caller checked `is_some()`.
-        let graph = unsafe { (*vm).standalone_module_graph }
-            .expect("caller checked standalone_module_graph.is_some()")
-            .as_ptr()
-            .cast::<StandaloneModuleGraph>();
-        // SAFETY: graph is the live process-global standalone module graph.
-        let Some(file) = (unsafe { &mut *graph }).find(input_path) else {
-            return false;
-        };
-        let file_name: &[u8] = file.name;
-        let file_contents: &[u8] = file.contents.as_bytes();
+    // PORT NOTE: do NOT downcast the `&'static dyn StandaloneModuleGraph`
+    // stored on `vm` to `&mut Graph` — that shared-ref provenance is
+    // read-only (instant UB under Stacked Borrows). Reach the concrete graph
+    // via `Graph::get()` which hands out the `UnsafeCell` `*mut` (same path
+    // as `load_standalone_sourcemap` / `node_fs`).
+    let _ = vm;
+    let Some(graph) = bun_standalone_graph::Graph::get() else {
+        return false;
+    };
+    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
+    // process-lifetime singleton; this hook runs on the JS thread and `find`
+    // is read-only over the post-init `files` table.
+    let Some(file) = (unsafe { &mut *graph }).find(input_path) else {
+        return false;
+    };
+    let file_name: &[u8] = file.name;
+    let file_contents: &[u8] = file.contents.as_bytes();
 
         // Spec ModuleLoader.zig:43-45 — `tmpname("node", buf, bun.hash(file.name))`.
         let mut tmpname_buf = bun_paths::path_buffer_pool::get();

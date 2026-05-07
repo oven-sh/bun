@@ -43,10 +43,13 @@ impl FileJsc for File {
                     bun_alloc::basic::C_ALLOCATOR,
                 )
             };
+            // PORT NOTE: cannot use `..Default::default()` — `Store: Drop`
+            // forbids partial moves out of the temporary default.
             let store = StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),
+                mime_type: MimeType::NONE,
                 ref_count: AtomicU32::new(1),
-                ..Default::default()
+                is_all_ascii: None,
             }));
             // make it never free
             store.ref_();

@@ -1878,8 +1878,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 Ok(None) => {
                     if !global.has_exception() {
                         let _ = global.throw_invalid_argument_type_value(
-                            "data",
-                            "string, buffer, or blob",
+                            b"data",
+                            b"string, buffer, or blob",
                             data_value,
                         );
                     }
@@ -2053,7 +2053,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !encoding_value.is_undefined()
             && (!offset_value.is_undefined() || !length_value.is_undefined())
         {
-            let _ = global.throw_todo("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
+            let _ = global.throw_todo(b"Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
             return WriteResult::Fail;
         }
 
@@ -2071,8 +2071,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 Ok(None) => {
                     if !global.has_exception() {
                         let _ = global.throw_invalid_argument_type_value(
-                            "data",
-                            "string, buffer, or blob",
+                            b"data",
+                            b"string, buffer, or blob",
                             args[0],
                         );
                     }
@@ -2502,7 +2502,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-            global.throw("Expected \"socket\" option")
+            global.throw(format_args!("Expected \"socket\" option"))
         })?;
 
         // In Zig `this_handlers.* = handlers` overwrites the pointee so the
@@ -2604,7 +2604,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-            global.throw("Expected \"socket\" option")
+            global.throw(format_args!("Expected \"socket\" option"))
         })?;
         if global.has_exception() {
             return Ok(JSValue::ZERO);
@@ -2667,8 +2667,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !sc_js.is_empty() {
             let Some(sc) = SecureContext::from_js(sc_js) else {
                 return Err(global.throw_invalid_argument_type_value(
-                    "secureContext",
-                    "SecureContext",
+                    b"secureContext",
+                    b"SecureContext",
                     sc_js,
                 ));
             };
@@ -2698,7 +2698,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             let cfg = ssl_opts
                 .as_mut()
-                .ok_or_else(|| global.throw("Expected \"tls\" option"))?;
+                .ok_or_else(|| global.throw(format_args!("Expected \"tls\" option")))?;
             let mut create_err = uws::create_bun_socket_error_t::none;
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
@@ -2732,7 +2732,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             };
         } else {
-            return Err(global.throw("Expected \"tls\" option"));
+            return Err(global.throw(format_args!("Expected \"tls\" option")));
         }
         if global.has_exception() {
             return Err(jsc::JsError::Thrown);
@@ -2838,9 +2838,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
                 if !global.has_exception() {
-                    return Err(global.throw(
+                    return Err(global.throw(format_args!(
                         "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
-                    ));
+                    )));
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3532,7 +3532,7 @@ pub fn js_upgrade_duplex_to_tls(
     }
 
     let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-        global.throw("Expected \"socket\" option")
+        global.throw(format_args!("Expected \"socket\" option"))
     })?;
 
     let mut is_server = false;
@@ -3584,8 +3584,8 @@ pub fn js_upgrade_duplex_to_tls(
     if !sc_js.is_empty() {
         let Some(sc) = SecureContext::from_js(sc_js) else {
             return Err(global.throw_invalid_argument_type_value(
-                "secureContext",
-                "SecureContext",
+                b"secureContext",
+                b"SecureContext",
                 sc_js,
             ));
         };
@@ -3606,7 +3606,7 @@ pub fn js_upgrade_duplex_to_tls(
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
-        return Err(global.throw("Expected \"tls\" option"));
+        return Err(global.throw(format_args!("Expected \"tls\" option")));
     }
     let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
@@ -3799,7 +3799,7 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
 
     #[cfg(windows)]
     {
-        return global.throw("Not implemented on Windows", ());
+        return Err(global.throw(format_args!("Not implemented on Windows")));
     }
 
     #[cfg(not(windows))]

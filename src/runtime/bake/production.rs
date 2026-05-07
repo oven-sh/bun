@@ -215,14 +215,17 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
     // borrow `vm` (the VirtualMachine) and the body below can keep using it.
-    let api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
-    // defer api_lock.release() — handled by ApiLock's Drop
+    //
+    // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
+    // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
+    // releases the lock — matching Zig's `defer api_lock.release()` ordering.
+    let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
 
     // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
     // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
     // value living in this frame). Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
-    // LIFO order — after the API lock, before the VM is destroyed.
+    // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
     // PORT NOTE: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
@@ -250,8 +253,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         }
         Err(e) => return Err(e),
     }
-    // Explicitly end the API-lock scope here (mirrors Zig's `defer api_lock.release()`).
-    api_lock.release();
     Ok(())
 }
 

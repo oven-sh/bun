@@ -113,10 +113,11 @@ impl Binding {
         // SAFETY: called by codegen `finalize()` on the mutator thread with the
         // `m_ctx` payload pointer; `this` is valid and exclusively owned here.
         let this_ref = unsafe { &mut *this };
-        if let Some(vm) = this_ref.node_fs.vm {
+        if let Some(mut vm) = this_ref.node_fs.vm {
             // SAFETY: `vm` was stashed by `create_binding`; the VM outlives its
-            // global's finalizer pass.
-            if core::ptr::eq(unsafe { vm.as_ref() }.node_fs(), (&this_ref.node_fs as *const NodeFS).cast()) {
+            // global's finalizer pass. `node_fs()` only mutates to lazily box
+            // the singleton (idempotent here — it's already populated).
+            if core::ptr::eq(unsafe { vm.as_mut() }.node_fs(), (&this_ref.node_fs as *const NodeFS).cast()) {
                 return;
             }
         }
@@ -370,7 +371,7 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);
-                Ok(JSValue::js_number(fd.cast() as f64))
+                Ok(JSValue::js_number(fd.native() as f64))
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),
         }

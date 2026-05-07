@@ -915,12 +915,9 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
     let value = unsafe { core::ptr::read(body.cast::<Value>()) };
     let allocator: *mut crate::webcore::body::HiveAllocator =
         unsafe { &mut *(*state).body_value_hive_allocator };
-    match unsafe { HiveRef::init(value, allocator) } {
-        Ok(slot) => slot.cast::<c_void>(),
-        // Spec returns `!*HiveRef` with the only `try` site being the pool
-        // allocation; `bun.handleOom`-style crash matches Zig.
-        Err(_) => bun_core::out_of_memory(),
-    }
+    // Spec returns `!*HiveRef` with the only `try` site being the pool
+    // allocation; `bun.handleOom`-style crash matches Zig.
+    bun_core::handle_oom(unsafe { HiveRef::init(value, allocator) }).cast::<c_void>()
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
@@ -973,7 +970,8 @@ unsafe fn ipc_child_singleton_deinit() {
 
 mod vm_loader_vtable {
     use super::*;
-    use bun_bundler::options::{OpaqueBlob, StringArrayHashMap, VmLoaderVTable};
+    use bun_bundler::options::{OpaqueBlob, VmLoaderVTable};
+    use bun_collections::StringArrayHashMap;
     use bun_resolver::package_json::PackageJSON;
     use crate::webcore::Blob;
 

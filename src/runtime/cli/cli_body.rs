@@ -1465,7 +1465,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 break;
             }
         }
-        let mut prefilled_completions: [&[u8]; add_completions::BIGGEST_LIST] =
+        let mut prefilled_completions: [&'static [u8]; add_completions::BIGGEST_LIST] =
             [b""; add_completions::BIGGEST_LIST];
         let mut completions = ShellCompletions::ShellCompletions::default();
 

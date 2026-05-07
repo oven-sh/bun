@@ -3037,8 +3037,8 @@ impl Source {
         bytes == 0x6d73_6100 // "\0asm"
     }
 
-    pub fn init_empty_file(filepath: Str) -> Source {
-        let path = fs::Path::init(filepath);
+    pub fn init_empty_file(filepath: impl IntoStr) -> Source {
+        let path = fs::Path::init(filepath.into_str());
         Source { path, contents: Cow::Borrowed(b""), ..Default::default() }
     }
 

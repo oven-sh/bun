@@ -3547,7 +3547,7 @@ impl RunCommand {
                     descriptions.len(),
                 )
             },
-        );
+        ));
 
         Ok(shell_out)
     }

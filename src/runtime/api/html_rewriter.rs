@@ -53,62 +53,17 @@ use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use bun_str::String as BunString;
 use bun_sys;
 
-// ───────────────────── local upstream-shim helpers ───────────────────────
-// These wrap symbols that exist in upstream crates with a slightly different
-// shape (free fn vs method, missing trait impl, etc.). Kept local so we don't
-// edit non-runtime crates.
+// ───────────────────── local helpers ─────────────────────────────────────
 
-/// `HTMLString` → `JSValue`. Upstream `HTMLString::to_js` was deleted (lives in
-/// runtime per layering note in lol_html.rs); reimplemented here.
-fn html_string_to_js(s: lolhtml::HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let v = bun_string_jsc::create_utf8_for_js(global, s.slice());
-    s.deinit();
-    v
-}
+/// `HTMLString.toJS` — JSC bridge lives in the sibling `lolhtml_jsc` module
+/// (keeps `bun_lolhtml_sys` free of JSC types).
+use crate::api::lolhtml_jsc::html_string_to_js;
 
 /// `HTMLString` → owned `bun.String` (clone + free original).
 fn html_string_to_bun_string(s: lolhtml::HTMLString) -> BunString {
     let out = BunString::clone_utf8(s.slice());
     s.deinit();
     out
-}
-
-/// `bun.String.toJSArray` — the un-gated `bun_jsc::bun_string_jsc` module lacks
-/// `to_js_array`; declare the C++ symbol locally (matches
-/// src/jsc/bun_string_jsc.rs:111 / `BunString__createArray`).
-#[inline]
-fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        fn BunString__createArray(
-            global: *mut JSGlobalObject,
-            ptr: *const BunString,
-            len: usize,
-        ) -> JSValue;
-    }
-    // SAFETY: `array` ptr/len from a live slice; `global` borrowed for call duration.
-    let v = unsafe { BunString__createArray(global as *const _ as *mut _, array.as_ptr(), array.len()) };
-    if global.has_exception() { Err(jsc::JsError::Thrown) } else { Ok(v) }
-}
-
-/// Shim for `JSValue::createObject2` (not yet ported to Rust JSValue).
-fn create_object2(
-    global: &JSGlobalObject,
-    key1: &ZigString,
-    key2: &ZigString,
-    value1: JSValue,
-    value2: JSValue,
-) -> JSValue {
-    unsafe extern "C" {
-        fn JSC__JSValue__createObject2(
-            global: *const JSGlobalObject,
-            key1: *const ZigString,
-            key2: *const ZigString,
-            value1: JSValue,
-            value2: JSValue,
-        ) -> JSValue;
-    }
-    // SAFETY: keys/values are valid; global is live.
-    unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
 }
 
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
@@ -123,33 +78,6 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
         fd: core::ffi::c_int::MIN,
         dest: BunString::empty(),
     }
-}
-
-/// Wrap an already-heap-allocated native (intrusive-rc) payload in a fresh JS
-/// wrapper instance. Calls the C++-side `${T}__create` (codegen) which stores
-/// `ptr` in `m_ctx`; ownership is *shared* with the wrapper via the intrusive
-/// refcount (the codegen `${T}Class__finalize` thunk dispatches to
-/// `${T}::finalize` → `deref`). This is the `*mut Self` flavour of
-/// `JsClass::to_js` (which moves `self` and boxes it) — used by every
-/// `WrapperLike` impl below since `init()` already does `Box::into_raw`.
-macro_rules! wrap_ptr_as_js {
-    ($Ty:literal, $ptr:expr, $global:expr) => {{
-        // PORT NOTE: `JSC_CALLCONV` (sysv64 on win-x64) — match the codegen
-        // extern shape from `src/jsc/generated.rs::js_class_module!`.
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        unsafe extern "sysv64" {
-            #[link_name = concat!($Ty, "__create")]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
-        }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        unsafe extern "C" {
-            #[link_name = concat!($Ty, "__create")]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
-        }
-        // SAFETY: `ptr` is a live `Box::into_raw` allocation with refcount >= 1;
-        // C++ side stores it in `m_ctx` and the GC `finalize` calls `deref`.
-        unsafe { __create($global.as_mut_ptr(), ($ptr as *mut core::ffi::c_void)) }
-    }};
 }
 
 type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
@@ -1643,7 +1571,10 @@ impl WrapperLike for TextChunk {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("TextChunk", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount
+        // (`${T}Class__finalize` → `Self::finalize` → `deref`).
+        unsafe { Self::to_js_ptr(this, g) }
     }
 }
 

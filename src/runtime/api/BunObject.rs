@@ -1270,6 +1270,7 @@ pub extern "C" fn Bun__resolveSync(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1281,10 +1282,11 @@ pub extern "C" fn Bun__resolveSync(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, specifier_str, source_str, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1309,6 +1311,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1320,6 +1323,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = unsafe { &mut *global.bun_vm() };
@@ -1335,7 +1339,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, specifier_str, source_str, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1373,6 +1377,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     if specifier_str.length() == 0 {
         let _ = global
             .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("The argument 'id' must be a non-empty string. Received ''"))
@@ -1381,7 +1386,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     }
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>(global, specifier_str, *source, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, *specifier_str, *source, is_esm, is_user_require_resolve),
     )
 }
 

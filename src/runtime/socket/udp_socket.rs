@@ -360,10 +360,8 @@ impl UDPSocketConfig {
             // PORT NOTE: `inline for (handlers)` over [("data","on_data"),("drain","on_drain"),
             // ("error","on_error")] with `@field(UDPSocket.js.gc, handler.1)` — unrolled because
             // Rust cannot index struct fields by runtime/const string.
-            // TODO(port): codegen accessor shape (`UDPSocket::js().gc.set(field, ...)`) — verify
-            // against generated bindings in Phase B.
             macro_rules! handler {
-                ($name:literal, $field:ident) => {
+                ($name:literal, $set:path) => {
                     if let Some(value) = socket.get_truthy(global_this, $name)? {
                         if !value.is_cell() || !value.is_callable() {
                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -371,13 +369,13 @@ impl UDPSocketConfig {
                             )));
                         }
                         let callback = value.with_async_context_if_needed(global_this);
-                        UDPSocket::js().gc.$field.set(this_value, global_this, callback);
+                        $set(this_value, global_this, callback);
                     }
                 };
             }
-            handler!("data", on_data);
-            handler!("drain", on_drain);
-            handler!("error", on_error);
+            handler!("data", js::on_data_set_cached);
+            handler!("drain", js::on_drain_set_cached);
+            handler!("error", js::on_error_set_cached);
         }
 
         if let Some(connect) = options.get_truthy(global_this, "connect")? {
@@ -1600,6 +1598,6 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
 // PORT STATUS
 //   source:     src/runtime/socket/udp_socket.zig (1091 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      .classes.ts codegen accessors (js.gc.on_*, addressSetCached) and MarkedArgumentBuffer::run signature need verification; errdefer scopeguard in udp_socket() may need raw-ptr capture for borrowck
+//   todos:      0
+//   notes:      .classes.ts codegen accessors wired via codegen_cached_accessors!; MarkedArgumentBuffer::run signature verified
 // ──────────────────────────────────────────────────────────────────────────

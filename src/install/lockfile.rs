@@ -1549,7 +1549,7 @@ impl Lockfile {
                     builder.clamp();
 
                     if UPDATE_OS_CPU {
-                        let pkg_meta = &mut pkg_metas.as_mut().unwrap()[i];
+                        let pkg_meta = &mut pkg_metas[i];
                         // Update os/cpu metadata if not already set
                         if pkg_meta.os == Npm::OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;
@@ -1571,16 +1571,9 @@ impl Lockfile {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Port of `Lockfile.Printer` (src/install/lockfile.zig).
-/// Typed against the canonical exported `crate::Lockfile` /
-/// `crate::PackageManagerOptionsStub` (the column-vec stub shapes that
-/// `PackageManager` carries) so `print_install_summary` / `write_yarn_lock`
-/// can construct it directly off `manager.lockfile` / `manager.options`
-/// without a stub→real conversion. The standalone `Printer::print` /
-/// `print_with_lockfile` path also routes through the stub `Lockfile`'s
-/// `load_from_cwd` so there is a single `Printer` type.
 pub struct Printer<'a> {
-    pub lockfile: &'a crate::Lockfile,
-    pub options: &'a crate::PackageManagerOptionsStub,
+    pub lockfile: &'a Lockfile,
+    pub options: &'a PackageManagerOptions,
     pub successfully_installed: Option<&'a DynamicBitSet>,
     pub updates: &'a [UpdateRequest],
 }
@@ -1636,17 +1629,14 @@ impl<'a> Printer<'a> {
             );
         }
 
-        // Zig: `FileSystem.init(null)` — bootstraps the resolver FS singleton.
-        // The opaque `bun_sys::fs::FileSystem` is bootstrapped via the resolver
-        // crate's init (which installs the vtable); `instance()` here asserts it.
-        let _ = FileSystem::instance();
+        // Zig: `_ = try FileSystem.init(null);` — bootstraps the resolver FS
+        // singleton (and installs the `bun_sys::fs` vtable). `Printer::print`
+        // is an entry point (`bun bun.lockb`), so the singleton may not exist yet.
+        let _ = FileSystem::init(None)?;
 
-        // PORT NOTE: `Printer` is typed against the canonical `crate::Lockfile`
-        // (column-vec stub) so it matches `PackageManager.lockfile`; this
-        // standalone path routes through the same type and its `load_from_cwd`.
-        let mut lockfile = Box::<crate::Lockfile>::default();
+        let mut lockfile = Box::<Lockfile>::default();
 
-        let load_from_disk = lockfile.load_from_cwd(core::ptr::null_mut(), log, true);
+        let load_from_disk = lockfile.load_from_cwd::<false>(None, log);
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {

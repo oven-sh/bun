@@ -472,10 +472,9 @@ pub enum Value {
     Null,
 }
 
-// TODO(b2-blocked): bun_collections::HiveRef / hive_array::Fallback — not yet exported.
- const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED { 0 } else { 256 };
- pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
- pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
+const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED { 0 } else { 256 };
+pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
+pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
 
 pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
 

@@ -221,12 +221,14 @@ impl SpawnSyncEventLoop {
 
     /// Unique borrow of the isolated `uws::Loop`.
     ///
-    /// Re-entrancy note: on Windows, `uws::Loop::tick_with_timeout` (called via
-    /// this accessor) drives `uv_run`, which fires `on_uv_timer` re-entrantly.
-    /// That callback is carefully written to touch only `self.did_timeout`
-    /// (a `Cell`) and to obtain the uv loop from the timer handle itself — it
-    /// never reads `self.uws_loop` — so the `&mut uws::Loop` produced here is
-    /// not aliased. See the ALIASING comment on `on_uv_timer`.
+    /// Re-entrancy hazard: do **NOT** call this between the Windows
+    /// `timer.data = self as *mut Self` store and the uws tick in
+    /// `tick_with_timeout`. The `&mut self` receiver reborrow here is a Unique
+    /// retag over all of `*self` under Stacked Borrows, which pops the raw
+    /// pointer's tag at `did_timeout`'s bytes and makes the re-entrant
+    /// `on_uv_timer` write UB. `tick_with_timeout` therefore copies
+    /// `self.uws_loop` out *before* that store and ticks via the raw pointer
+    /// directly. This accessor is for non-re-entrant call sites (e.g. `init`).
     #[inline]
     pub fn uws_loop_mut(&mut self) -> &mut uws::Loop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
@@ -417,17 +419,29 @@ impl SpawnSyncEventLoop {
         // both mirroring `bun.timespec`). The C ABI only sees `*const timespec`,
         // so re-express the borrow as a `uws::Timespec` for `tick_with_timeout`.
         let uws_ts = duration.map(|ts| uws::Timespec { sec: ts.sec, nsec: ts.nsec });
+        // ALIASING: hoist the `uws_loop` pointer *before* storing `*mut Self` into `timer.data`
+        // below, so that between that store and the re-entrant `on_uv_timer` callback we touch
+        // *no* bytes of `*self` at all. Do NOT route the tick through `self.uws_loop_mut()` here:
+        // its `&mut self` receiver reborrow is a Unique retag over the full extent of `*self`
+        // under Stacked Borrows, which would pop the SharedReadWrite tag of the raw pointer just
+        // stored into `timer.data` at `did_timeout`'s bytes — making the callback's
+        // `(*this).did_timeout.set(true)` UB. The `uws::Loop` lives in a separate allocation, so
+        // forming `&mut uws::Loop` from the copied `NonNull` does not touch `*self`'s borrow
+        // stacks.
+        let loop_ = self.uws_loop;
         #[cfg(windows)]
         if let Some(t) = self.uv_timer {
             // ALIASING: store `*mut Self` here (not in `prepare_timer_on_windows`) so its
             // provenance is a direct child of *this* frame's `&mut self`. Between this store and
-            // the re-entrant `on_uv_timer` callback, the only `self` field accessed is `uws_loop`
-            // (next line), which the callback never reads — so the raw tag at `did_timeout`'s
-            // bytes survives under Stacked Borrows.
+            // the re-entrant `on_uv_timer` callback, no field of `*self` is accessed (`loop_` was
+            // copied out above), so the raw tag at `did_timeout`'s bytes survives under Stacked
+            // Borrows.
             // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
             unsafe { (*t.as_ptr()).data = (self as *mut Self).cast() };
         }
-        self.uws_loop_mut().tick_with_timeout(uws_ts.as_ref());
+        // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
+        // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

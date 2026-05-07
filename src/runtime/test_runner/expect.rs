@@ -310,13 +310,11 @@ impl Expect {
         // semantics of `Expect.throw` (expect.zig:373-379) instead: empty label
         // → default signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
-            // TODO(port): comptime fmt-string concatenation with autoFormatLabel; reconstruct in Phase B
-            let _ = message_fmt;
             global_this.throw_pretty(format_args!(
-                "<d>expect(<r><red>received<r><d>).<r>{chain}{matcher_name}<d>(<r>{matcher_params}<d>)<r>\n\n{message_args}",
+                "<d>expect(<r><red>received<r><d>).<r>{chain}{matcher_name}<d>(<r>{matcher_params}<d>)<r>\n\n{message}",
             ))
         } else {
-            global_this.throw_pretty(format_args!("{custom_label}\n\n{message_args}"))
+            global_this.throw_pretty(format_args!("{custom_label}\n\n{message}"))
         }
     }
 

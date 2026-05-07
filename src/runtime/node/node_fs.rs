@@ -654,7 +654,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                     sys::syslog!("uv close({}) SKIPPED", fd);
                     // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>, Ok(())) };
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task as *mut Self));
+                    let task_ptr: *mut Self = task;
+                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 // SAFETY: libuv async request.
@@ -708,7 +709,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 if bufs.is_empty() {
                     // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>, Ok(ret::Write { bytes_written: 0 })) };
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task as *mut Self));
+                    let task_ptr: *mut Self = task;
+                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -743,7 +745,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this));
+        let this_ptr: *mut Self = this;
+        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
     }
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
@@ -756,7 +759,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
         // No `err.clone()` needed — see `uv_callback` above.
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this));
+        let this_ptr: *mut Self = this;
+        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {

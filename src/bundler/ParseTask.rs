@@ -65,7 +65,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 // CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
 // `[u8; 0]` in `bundle_v2.rs`; the real bodies live in T6 (`jsc::api::JSBundler`).
 // These impls forward to the C++ entry points via FFI so ParseTask can call
-// them without naming the gated `__phase_a_draft::api` module.
+// them without depending on the higher-tier JSC crate.
 unsafe extern "C" {
     fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: *const bundler::JSBundlerPlugin) -> i32;
     fn JSBundlerPlugin__callOnBeforeParsePlugins(

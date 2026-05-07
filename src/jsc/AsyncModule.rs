@@ -138,11 +138,16 @@ impl bun_event_loop::Taskable for Queue {
 }
 
 impl AsyncModule {
-    /// SAFETY: `global_this` is the per-thread `JSGlobalObject` (set in
-    /// `init`); outlives every `AsyncModule` (both are VM-lifetime).
+    /// Reborrow the per-thread `JSGlobalObject` without tying the returned
+    /// reference to `&self` — `self.global_this` is a VM-lifetime backref
+    /// (BACKREF/JSC_BORROW), so outlives every `AsyncModule`. Returning a
+    /// detached `&'a JSGlobalObject` lets callers hold it across `&mut self`
+    /// reborrows (`self.promise.swap()`, `self.poll_ref.unref()`).
     #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        unsafe { self.global_this.as_ref() }
+    fn global_this<'a>(&self) -> &'a JSGlobalObject {
+        // SAFETY: see doc comment — `global_this` set in `init` from the live
+        // per-thread global; never null, never freed before this struct.
+        unsafe { &*self.global_this.as_ptr() }
     }
 
     #[inline]

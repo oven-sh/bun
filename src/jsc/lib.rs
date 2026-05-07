@@ -1176,72 +1176,9 @@ pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 /// via `jsc::PromiseResult::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Unwrapped as PromiseResult;
 
-/// `JSPropertyIteratorOptions` — comptime config struct in Zig; here a value type
-/// downstream can use as a runtime flag set. `Default` mirrors the Zig struct's
-/// field defaults (JSPropertyIterator.zig:1-7): `own_properties_only = true`,
-/// `observable = true`, `only_non_index_properties = false`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct JSPropertyIteratorOptions {
-    pub skip_empty_name: bool,
-    pub include_value: bool,
-    pub own_properties_only: bool,
-    pub observable: bool,
-    pub only_non_index_properties: bool,
-}
-impl Default for JSPropertyIteratorOptions {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            skip_empty_name: false,
-            include_value: false,
-            own_properties_only: true,
-            observable: true,
-            only_non_index_properties: false,
-        }
-    }
-}
-
-/// Shorthand of `JSPropertyIteratorOptions` matching the Zig spec's most common
-/// call-site shape (`.{ .skip_empty_name = …, .include_value = … }`). Runtime
-/// values are accepted by `JSPropertyIterator::init` for source-level parity
-/// with Zig; the remaining three options take the Zig struct defaults via the
-/// `From` conversion below.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PropertyIteratorOptions {
-    pub skip_empty_name: bool,
-    pub include_value: bool,
-}
-impl From<PropertyIteratorOptions> for JSPropertyIteratorOptions {
-    #[inline]
-    fn from(o: PropertyIteratorOptions) -> Self {
-        Self {
-            skip_empty_name: o.skip_empty_name,
-            include_value: o.include_value,
-            ..Self::default()
-        }
-    }
-}
-
-/// Conversion shim so `JSPropertyIterator::init`'s `object` argument accepts
-/// the same operand shapes Zig callers use (`JSValue`, `*JSObject`, `&JSObject`).
-pub trait IntoIterObject {
-    fn into_iter_object(self) -> JSValue;
-}
-impl IntoIterObject for JSValue {
-    #[inline] fn into_iter_object(self) -> JSValue { self }
-}
-impl IntoIterObject for *mut JSObject {
-    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
-}
-impl IntoIterObject for *const JSObject {
-    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
-}
-impl IntoIterObject for &JSObject {
-    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(self) }
-}
-impl IntoIterObject for &mut JSObject {
-    #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(&*self) }
-}
+// `JSPropertyIteratorOptions` / `PropertyIteratorOptions` / `IntoIterObject` are
+// defined in `js_property_iterator` and re-exported below alongside
+// `JSPropertyIterator`.
 
 // `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
 // (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).

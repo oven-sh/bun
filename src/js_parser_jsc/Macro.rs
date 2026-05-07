@@ -58,6 +58,15 @@ pub struct MacroContext {
     pub macros: MacroMap,
     pub remap: *const MacroRemap,
     pub javascript_object: JSValue,
+    /// PORT NOTE: Zig threads `default_allocator` (mimalloc, process-lifetime)
+    /// through `Runner::run` → `Run.allocator`; the slices it backs (property
+    /// keys / UTF-16 string data / `from_blob` JSON sub-parse) are never
+    /// individually freed and outlive the call frame. The Rust AST takes
+    /// lifetime-erased `&[u8]` arena slices, so we own the backing arena here
+    /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
+    /// every `Expr` it produces (the parser splices the result into the AST and
+    /// prints it before the `Transpiler` drops).
+    pub bump: bun_alloc::Arena,
 }
 
 pub type MacroMap = ArrayHashMap<i32, Macro>;
@@ -82,6 +91,7 @@ impl MacroContext {
             env: transpiler.env,
             remap: &transpiler.options.macro_remap,
             javascript_object: JSValue::ZERO,
+            bump: bun_alloc::Arena::new(),
         }
     }
 

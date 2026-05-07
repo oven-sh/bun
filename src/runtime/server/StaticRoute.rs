@@ -563,5 +563,3 @@ impl Drop for StaticRoute {
     }
 }
 
-#[allow(unused_imports)]
-use Blob as _BlobTypeAnchor; // keep `Blob` import live for `blob.dupe()` resolution

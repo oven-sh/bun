@@ -4657,13 +4657,6 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub fn print_github_annotation(exception: &ZigException) {
-        // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub +
-        // `bun_string::String::github_action()` — the body walks
-        // `exception.stack.frames()` and emits the GitHub `::error` annotation.
-        // `#[repr(C)]` stack types land.
-        let _ = exception;
-        return;
-        {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();

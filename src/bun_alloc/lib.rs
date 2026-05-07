@@ -1946,11 +1946,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<&[u8], AllocError> {
         let _guard = self.mutex.lock();
 
-        // Zig: `threadlocal var lowercase_buf: bun.PathBuffer = undefined;`
-        // (`bun.PathBuffer` = `[MAX_PATH_BYTES]u8` = `[4096]u8`.)
+        // Zig: `bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer })` — heap-backed
+        // so only a Box pointer lives in TLS (see test/js/bun/binary/tls-segment-size).
         thread_local! {
-            static LOWERCASE_BUF: core::cell::RefCell<[u8; 4096]> =
-                const { core::cell::RefCell::new([0u8; 4096]) };
+            static LOWERCASE_BUF: core::cell::RefCell<Box<[u8; 4096]>> =
+                core::cell::RefCell::new(Box::new([0u8; 4096]));
         }
         let (ptr, len) = LOWERCASE_BUF.with_borrow_mut(|buf| {
             for (i, &c) in value.iter().enumerate() {

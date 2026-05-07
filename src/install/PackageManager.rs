@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::cell::RefCell;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -784,15 +783,24 @@ static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
-    static CACHED_PACKAGE_FOLDER_NAME_BUFS: RefCell<PathBuffer> =
-        const { RefCell::new(PathBuffer::ZEROED) };
+    // bun.ThreadlocalBuffers: heap-backed so only a pointer lives in TLS
+    // (see test/js/bun/binary/tls-segment-size).
+    static CACHED_PACKAGE_FOLDER_NAME_BUFS: core::cell::Cell<*mut PathBuffer> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
 #[inline]
 pub fn cached_package_folder_name_buf() -> *mut PathBuffer {
-    // TODO(port): bun.ThreadlocalBuffers returns &mut PathBuffer; Rust thread_local
-    // can't return a bare &'static mut. Callers should use with_borrow_mut instead.
-    CACHED_PACKAGE_FOLDER_NAME_BUFS.with(|b| b.as_ptr())
+    // bun.ThreadlocalBuffers semantics: lazily heap-allocate, return raw ptr into
+    // thread-local storage. Callers reborrow per-field; valid for the thread's lifetime.
+    CACHED_PACKAGE_FOLDER_NAME_BUFS.with(|c| {
+        let mut p = c.get();
+        if p.is_null() {
+            p = Box::into_raw(Box::new(PathBuffer::ZEROED));
+            c.set(p);
+        }
+        p
+    })
 }
 
 mod holder {

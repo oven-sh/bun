@@ -723,7 +723,8 @@ impl RuntimeTranspilerCache {
     // can't easily borrow into itself across calls, so we cache the resolved
     // path bytes + length and re-copy into the caller's buffer on each call.
     thread_local! {
-        static CACHE_DIR_BUF: RefCell<PathBuffer> = const { RefCell::new(PathBuffer::ZEROED) };
+        // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS.
+        static CACHE_DIR_BUF: RefCell<Box<PathBuffer>> = RefCell::new(Box::new(PathBuffer::ZEROED));
         static RUNTIME_TRANSPILER_CACHE: Cell<Option<usize>> = const { Cell::new(None) };
     }
 

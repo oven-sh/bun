@@ -2205,21 +2205,15 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    let old_len = json_buf.data.len() as usize;
-                    debug_assert!(old_len + nread <= json_buf.data.capacity() as usize);
-                    // Re-derive the just-written tail with provenance rooted at
-                    // `send_queue` (libuv wrote `nread` bytes at `data[old_len..]`
-                    // via the slice returned from `on_read_alloc`).
-                    // SAFETY: `old_len + nread <= capacity` (asserted above);
-                    // libuv has initialised those bytes before invoking us.
-                    let buffer: &[u8] = unsafe {
-                        core::slice::from_raw_parts(
-                            json_buf.data.as_mut_ptr().cast::<u8>().add(old_len),
-                            nread,
-                        )
-                    };
-
-                    json_buf.notify_written(buffer);
+                    debug_assert!(
+                        json_buf.data.len() as usize + nread <= json_buf.data.capacity() as usize
+                    );
+                    // libuv wrote `nread` bytes at `data[old_len..]` via the
+                    // slice returned from `on_read_alloc`. Only the *count*
+                    // is forwarded — re-deriving a `&[u8]` over that region
+                    // and handing it to a `&mut self` method would alias
+                    // `json_buf.data`, undoing the Stacked-Borrows fix above.
+                    json_buf.notify_written(nread);
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
                     loop {

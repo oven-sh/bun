@@ -962,7 +962,10 @@ impl PathLikeExt for PathLike {
                 && (s[2] == b'.' || s[2] == b'?')
                 && bun_paths::is_sep_any(s[3])
             {
-                // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — alignment asserted by @alignCast in Zig.
+                // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
+                // alignment is runtime-asserted inside `bytes_as_slice_mut`
+                // (port of Zig `@alignCast`); see PathBuffer doc comment for
+                // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, s);
             }

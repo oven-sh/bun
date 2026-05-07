@@ -1312,7 +1312,10 @@ impl<'a> CopyFileWindows<'a> {
 
     fn copyfile(&mut self) {
         // This is for making it easier for us to test this code path
-        if bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get() {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
+            .get()
+            .unwrap_or(false)
+        {
             self.prepare_read_write_loop();
             return;
         }

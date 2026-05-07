@@ -198,14 +198,20 @@ pub use bun_core::windows_sys::{GetStdHandle, STD_INPUT_HANDLE, STD_OUTPUT_HANDL
 
 /// `std.os.windows.fromSysTime` — convert a 64-bit Windows `FILETIME`
 /// (100-ns intervals since 1601-01-01 UTC, as projected in
-/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into the same
-/// nanosecond clock `bun_core::time::nano_timestamp()` reports — i.e. ns
-/// since the 1601 epoch. This is `nt_time * 100`; the 1601→1970 epoch shift
-/// is *not* applied because `nano_timestamp()` on Windows is also FILETIME-
-/// derived (`GetSystemTimePreciseAsFileTime() * 100`).
+/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
+/// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
+/// `bun_core::time::nano_timestamp()` reports.
+///
+/// Spec (vendor/zig std/os/windows.zig `fromSysTime`):
+/// `(hns + epoch.windows * (ns_per_s/100)) * 100` where `epoch.windows` is
+/// `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
+/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
-    nt_time as i128 * 100
+    /// `std.time.epoch.windows * (std.time.ns_per_s / 100)` — the
+    /// 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
+    const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
+    (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
 }
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;

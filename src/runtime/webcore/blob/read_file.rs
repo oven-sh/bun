@@ -1114,8 +1114,10 @@ impl<'a> ReadFileUV<'a> {
             this.on_finish();
             return;
         }
-        this.total_size =
-            SizeType::try_from((stat.size() as i64).max(0).min(MAX_SIZE as i64)).unwrap();
+        // `uv_stat_t::st_size` is `u64` (never negative); clamp to MAX_SIZE
+        // without a signed detour so a hypothetical >i64::MAX value isn't
+        // wrapped to negative and then floored to 0.
+        this.total_size = stat.size().min(MAX_SIZE as u64) as SizeType;
         this.is_regular_file = bun_sys::is_regular_file(stat.mode() as bun_sys::Mode);
 
         log!("is_regular_file: {}", this.is_regular_file);

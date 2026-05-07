@@ -183,15 +183,24 @@ pub fn from_slice_boxed<T: Copy>(default: &[T]) -> Box<[T]> {
 /// Zig `std.mem.bytesAsSlice(T, bytes)` for `&mut [u8]` → `&mut [T]`.
 ///
 /// SAFETY (caller-upheld):
-/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()` (Zig spells this as
-///   `@alignCast`; we `debug_assert!` it),
+/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()` — Zig spells this
+///   as `@alignCast`, which is a *checked* operation (illegal-behavior trap in
+///   safe builds). We mirror that with a hard `assert!` rather than
+///   `debug_assert!`: forming a misaligned `&mut [T]` is instant UB in Rust
+///   even if never dereferenced, so this must not be silently elided in
+///   release. The check is a single AND+CMP and every current call site is
+///   immediately followed by a syscall, so the cost is negligible.
 /// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
 ///   must be a valid `T` (callers use `u16`/`u32` only),
 /// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
 ///   reinterpreted view, matching Zig's `bytesAsSlice` semantics.
 #[inline]
 pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
-    debug_assert!(bytes.as_ptr().cast::<T>().is_aligned());
+    assert!(
+        bytes.as_ptr().cast::<T>().is_aligned(),
+        "bytes_as_slice_mut: misaligned for {}",
+        core::any::type_name::<T>(),
+    );
     let len = bytes.len() / core::mem::size_of::<T>();
     // SAFETY: alignment + validity preconditions documented above.
     unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
@@ -628,6 +637,16 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
+///
+/// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
+/// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
+/// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
+/// hard `assert!` (mirroring Zig `@alignCast`). We do *not* bump this struct
+/// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
+/// `&mut [u8]` *as* `PathBuffer`, and raising the nominal alignment would
+/// make *those* casts unsound instead. In practice every `PathBuffer` fed to
+/// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
+/// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {

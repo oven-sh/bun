@@ -280,11 +280,11 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
         #[cfg(windows)]
         {
-            // Trait return type is `*mut bun_uws_sys::Loop` (= `WindowsLoop` on
-            // Windows) but the spec (FileReader.zig:163) returns the libuv
-            // `uv_loop_t*`. The vtable consumers `.cast()` immediately
-            // (PipeReader.rs:354) so erase the nominal mismatch here rather
-            // than fan a trait-signature change across every implementor.
+            // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
+            // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
+            // `bun_uws_sys::Loop` nominal with `bun_aio::Loop` (= `uv::Loop`);
+            // the trait-side alias (PipeReader.rs) already resolves to the
+            // libuv loop on Windows, so this is a nominal-only erasure.
             ev.uv_loop().cast()
         }
         #[cfg(not(windows))]

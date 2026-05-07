@@ -295,7 +295,11 @@ impl BunxCommand {
 
         // SAFETY: `transpiler.log` is set by `Transpiler::init` and is process-lifetime.
         let log = unsafe { &mut *transpiler.log };
-        let expr = json::parse_package_json_utf8(&source, log, bunx_bump())?;
+        // PORT NOTE: Zig passed `transpiler.allocator` (global mimalloc). The
+        // Rust JSON parser takes a bump arena; everything we keep is cloned
+        // into `Box<[u8]>` before returning, so a local arena suffices.
+        let bump = bun_alloc::Arena::new();
+        let expr = json::parse_package_json_utf8(&source, log, &bump)?;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {

@@ -1333,8 +1333,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 root: bake_options.root,
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
                 vm: unsafe { &*jsc::VirtualMachine::get() },
-                framework: core::mem::take(&mut bake_options.framework),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options),
+                // LAYERING: `UserOptions` carries the `bake_body` shapes;
+                // `DevServer::Options` consumes the keystone shapes. In Zig
+                // these are one type — `From` impls in `bake/mod.rs` bridge
+                // until the duplicates are collapsed.
+                framework: core::mem::take(&mut bake_options.framework).into(),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
                 broadcast_console_log_from_browser_to_server: broadcast,
                 dump_sources: crate::bake::DevServer::Options::DEFAULT_DUMP_SOURCES,
                 dump_state_on_crash: None,

@@ -3599,7 +3599,7 @@ pub fn finalize_bundle(
     // PORT NOTE: snapshot `result.chunks` ptr/len before `split_at_mut` so the
     // CSS-chunk loop can re-form the full slice for `intermediate_output.code()`
     // without re-borrowing `result.chunks` (already split).
-    let chunks_ptr: *mut bun_bundler::bundle_v2::Chunk = result.chunks.as_mut_ptr();
+    let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
     let chunks_len = result.chunks.len();
     let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
     let js_chunk = &mut js_chunk_slice[0];

@@ -510,6 +510,18 @@ pub struct Framework {
     pub built_in_modules: ArrayHashMap<&'static [u8], BuiltInModule>,
 }
 
+impl Default for Framework {
+    fn default() -> Self {
+        Self {
+            is_built_in_react: false,
+            file_system_router_types: Vec::new(),
+            server_components: None,
+            react_fast_refresh: None,
+            built_in_modules: ArrayHashMap::new(),
+        }
+    }
+}
+
 impl Framework {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React

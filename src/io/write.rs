@@ -528,7 +528,12 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
     }
 }
 
-impl<W: fmt::Write + ?Sized> Write for FmtAdapter<'_, W> {
+// `W: Sized` (no `?Sized`) — together with `pretty_format::IoFmt` (the inverse
+// adapter), `?Sized` here lets rustc probe the infinite tower
+// `FmtAdapter<IoFmt<FmtAdapter<IoFmt<…>>>>` when checking `dyn Write: Write`,
+// which is E0275. Every caller wraps a concrete sized formatter, so dropping
+// `?Sized` on this side breaks the cycle without losing any instantiation.
+impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
         let r = match core::str::from_utf8(buf) {

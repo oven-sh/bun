@@ -933,8 +933,15 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
 /// `core::fmt::Write`; this file's `Formatter` is byte-oriented. Route
 /// `write_str` through `write_all` so the same underlying sink is used end to
 /// end with no intermediate `String` buffer.
-struct IoFmt<'a, W: bun_io::Write + ?Sized>(&'a mut W);
-impl<W: bun_io::Write + ?Sized> core::fmt::Write for IoFmt<'_, W> {
+///
+/// Non-generic by design — a generic `IoFmt<W: bun_io::Write>` together with
+/// `bun_io::FmtAdapter<F: fmt::Write>: bun_io::Write` forms two mutually-
+/// recursive blanket impls (`IoFmt<FmtAdapter<IoFmt<…>>>`), which is E0275 at
+/// monomorphization. Erasing to `dyn bun_io::Write` keeps a single concrete
+/// `fmt::Write` impl with no blanket cycle. The 3 callers below already pass
+/// `&mut dyn` so this costs nothing.
+struct IoFmt<'a>(&'a mut dyn bun_io::Write);
+impl core::fmt::Write for IoFmt<'_> {
     #[inline]
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)

@@ -7,6 +7,7 @@ use bun_semver as semver;
 use bun_str::strings;
 
 use bun_install::dependency::{self, Behavior};
+use bun_install::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
 use bun_install::{resolution, Dependency, INVALID_PACKAGE_ID};
 
 use super::package_manager_options::{Do, Enable};
@@ -62,6 +63,14 @@ pub fn edit_patched_dependencies(
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
         if let js_ast::ExprData::EObject(obj) = &query.expr.data {
+            // Zig dereferences `query.expr.data.e_object.*` to bit-copy the whole
+            // E.Object — preserve the formatting fields so the printed
+            // `patchedDependencies` keeps its original single-line / brace layout.
+            patched_dependencies.is_single_line = obj.is_single_line;
+            patched_dependencies.close_brace_loc = obj.close_brace_loc;
+            patched_dependencies.comma_after_spread = obj.comma_after_spread;
+            patched_dependencies.is_parenthesized = obj.is_parenthesized;
+            patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
                 patched_dependencies.properties.append(copy_property(p))?;
             }

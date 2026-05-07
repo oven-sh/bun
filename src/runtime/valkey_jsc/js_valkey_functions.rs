@@ -12,103 +12,6 @@ use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMe
 
 type Slice = bun_jsc::ZigStringSlice;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local `JSGlobalObject` extension — `validate_integer_range`.
-//
-// LAYERING: the canonical port lives on `bun_jsc::js_global_object::JSGlobalObject`
-// but that impl block (a) takes the module-local `js_global_object::IntegerRange`
-// (not the crate-root `bun_jsc::IntegerRange` every `bun_runtime` caller passes),
-// and (b) is currently uncompilable behind cycle imports (`bun_runtime::napi`,
-// `bun_webcore`). Until those are unwound this trait carries the *real* body
-// (ported 1:1 from `JSGlobalObject.zig::validateIntegerRange`) against the
-// crate-root `IntegerRange`. Same pattern as `webcore/Crypto.rs`.
-// ──────────────────────────────────────────────────────────────────────────
-trait JSGlobalObjectValkeyExt {
-    fn validate_integer_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: jsc::IntegerRange,
-    ) -> JsResult<T>;
-}
-
-impl JSGlobalObjectValkeyExt for JSGlobalObject {
-    fn validate_integer_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: jsc::IntegerRange,
-    ) -> JsResult<T> {
-        if value.is_undefined() || value.is_empty() {
-            return Ok(default);
-        }
-
-        let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(jsc::MIN_SAFE_INTEGER));
-        let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(jsc::MAX_SAFE_INTEGER));
-        // Zig: `comptime { if (min_t > max_t) @compileError(...) }`.
-        debug_assert!(min_t <= max_t, "max must be less than min");
-
-        let field_name = range.field_name;
-        // Zig: `comptime if (field_name.len == 0) @compileError(...)`.
-        debug_assert!(!field_name.is_empty(), "field_name must not be empty");
-        let always_allow_zero = range.always_allow_zero;
-        // After the safe-integer clamp above, both bounds fit in i64 for the
-        // `OutOfRange` formatter.
-        let min_i64 = min_t as i64;
-        let max_i64 = max_t as i64;
-
-        if value.is_int32() {
-            let int = value.to_int32();
-            if always_allow_zero && int == 0 {
-                return Ok(T::ZERO);
-            }
-            if i128::from(int) < min_t || i128::from(int) > max_t {
-                return Err(self.throw_range_error(
-                    i64::from(int),
-                    jsc::RangeErrorOptions {
-                        field_name,
-                        min: min_i64,
-                        max: max_i64,
-                        ..Default::default()
-                    },
-                ));
-            }
-            return Ok(T::from_i32(int));
-        }
-
-        if !value.is_number() {
-            return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
-        }
-        let f64_val = value.as_number();
-        if always_allow_zero && f64_val == 0.0 {
-            return Ok(T::ZERO);
-        }
-
-        if f64_val.is_nan() {
-            // node treats NaN as default
-            return Ok(default);
-        }
-        if f64_val.floor() != f64_val {
-            return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
-        }
-        // i128→f64 rounds beyond 2^53; bounds are already clamped to the
-        // safe-integer range so the comparison is exact.
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
-            return Err(self.throw_range_error(
-                f64_val,
-                jsc::RangeErrorOptions {
-                    field_name,
-                    min: min_i64,
-                    max: max_i64,
-                    ..Default::default()
-                },
-            ));
-        }
-
-        Ok(T::from_f64(f64_val))
-    }
-}
-
 /// Reinterpret an ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).
 /// SAFETY: every command/method name passed to the `cmd_*!` macros is a
@@ -175,18 +78,17 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `bun_core::Error`; the Zig spec uses an open `!` set), and
+///    (presently `bun_core::Error`; the Zig spec uses an open `!` set) and
+///    converts it to `RedisError` so the user-visible error code matches the
+///    real failure variant, and
 /// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
 ///    host functions.
-// TODO(port): once `send`'s error set is narrowed back to `RedisError`,
-// forward `_err` instead of defaulting to `ConnectionClosed`.
 #[inline]
-fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, _err: E) -> JsResult<JSValue> {
-    Ok(protocol::valkey_error_to_js(
-        global,
-        message,
-        bun_valkey::valkey_protocol::RedisError::ConnectionClosed,
-    ))
+fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, err: E) -> JsResult<JSValue>
+where
+    E: Into<bun_valkey::valkey_protocol::RedisError>,
+{
+    Ok(protocol::valkey_error_to_js(global, message, err.into()))
 }
 
 /// `JSValkeyClient::send` returns a `*mut JSPromise`; raw pointers don't

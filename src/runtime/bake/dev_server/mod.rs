@@ -272,131 +272,19 @@ impl GraphTraceState {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// DeferredRequest / DeferredPromise
-// ──────────────────────────────────────────────────────────────────────────
-pub mod deferred_request {
-    use super::*;
-    pub const MAX_PREALLOCATED: usize = 16;
-
-    pub enum Handler {
-        ServerHandler(SavedRequest),
-        BundledHtmlPage(ResponseAndMethod),
-        Aborted,
-    }
-    pub struct ResponseAndMethod {
-        pub resp: bun_uws::AnyResponse,
-        pub method: bun_http_types::Method::Method,
-    }
-
-    pub struct DeferredRequest {
-        pub route_bundle_index: route_bundle::Index,
-        pub handler: Handler,
-        /// BACKREF: owned by `dev.deferred_request_pool` (LIFETIMES.tsv).
-        pub dev: *const DevServer,
-        pub referenced_by_devserver: bool,
-        pub weakly_referenced_by_requestcontext: bool,
-    }
-
-    /// Intrusive singly-linked list node.
-    pub struct Node {
-        pub data: DeferredRequest,
-        pub next: Option<core::ptr::NonNull<Node>>,
-    }
-    #[derive(Default)]
-    pub struct List {
-        pub first: Option<core::ptr::NonNull<Node>>,
-    }
-    impl List {
-        /// `std.SinglyLinkedList.popFirst` — detach and return the head node.
-        pub fn pop_first(&mut self) -> Option<core::ptr::NonNull<Node>> {
-            let n = self.first?;
-            // SAFETY: nodes are owned by `dev.deferred_request_pool` and remain
-            // valid until `put()`; the list is single-threaded.
-            self.first = unsafe { (*n.as_ptr()).next.take() };
-            Some(n)
-        }
-    }
-
-    impl DeferredRequest {
-        /// `DeferredRequest.abort` — DevServer.zig:1841. Aborts the connection
-        /// associated with this deferred request and marks it `Aborted`.
-        pub fn abort(&mut self) {
-            bun_core::scoped_log!(super::DevServer, "DeferredRequest({:p}) abort", self as *mut _);
-            let handler = core::mem::replace(&mut self.handler, Handler::Aborted);
-            match handler {
-                Handler::ServerHandler(mut saved) => {
-                    saved.ctx.set_signal_aborted(crate::server::jsc::CommonAbortReason::ConnectionClosed);
-                    saved.js_request.deinit();
-                }
-                Handler::BundledHtmlPage(r) => {
-                    r.resp.end_without_body(true);
-                }
-                Handler::Aborted => {}
-            }
-        }
-
-        /// `DeferredRequest.deref` — DevServer.zig:1758. Only callable from
-        /// DevServer (the sole strong-ref holder).
-        ///
-        /// SAFETY: `self` must be the `data` field of a `Node` allocated from
-        /// `(*self.dev).deferred_request_pool`. After this returns the storage
-        /// may have been recycled; do not touch `self`.
-        pub unsafe fn deref_(&mut self) {
-            self.referenced_by_devserver = false;
-            let should_free = !self.weakly_referenced_by_requestcontext;
-            // __deinit
-            bun_core::scoped_log!(super::DevServer, "DeferredRequest({:p}) deinitImpl", self as *mut _);
-            if let Handler::ServerHandler(saved) = &mut self.handler {
-                saved.deinit();
-            }
-            if should_free {
-                // __free: `dev.deferred_request_pool.put(@fieldParentPtr("data", this))`
-                // SAFETY: `self` is the `data` field of a `Node`; recover the parent.
-                let node = (self as *mut Self)
-                    .cast::<u8>()
-                    .sub(core::mem::offset_of!(Node, data))
-                    .cast::<Node>();
-                // SAFETY: `dev` is a BACKREF to the owning DevServer (LIFETIMES.tsv).
-                (*(self.dev as *mut DevServer)).deferred_request_pool.put(node);
-            }
-        }
-    }
-}
-pub use deferred_request::DeferredRequest;
-
-// PORT NOTE: `init` lives in the Phase-A body draft (`../DevServer.rs` →
-// `super::dev_server_body`). Re-export so callers that name
-// `crate::bake::dev_server::init` (the canonical path) resolve until the two
-// `DevServer` shapes are unified.
 pub use super::dev_server_body::init;
 
-#[derive(Default)]
-pub struct DeferredPromise {
-    pub strong: jsc::JSPromiseStrong,
-    pub route_bundle_indices: ArrayHashMap<route_bundle::Index, ()>,
-}
+// PORT NOTE: `CurrentBundle`/`NextBundle`/`HTMLRouter` moved to body file
+// (re-exported above). Stale local stubs left here only for the
+// `IncrementalGraph` `memory_cost` impl below — removed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// CurrentBundle / NextBundle
-// ──────────────────────────────────────────────────────────────────────────
-/// One bundle executes at a time; this holds its in-flight state.
-pub struct CurrentBundle {
-    /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
-    /// PORT NOTE: `'static` is a stand-in for the DevServer-self lifetime —
-    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
-    /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
-    /// (stable address, never moved post-init). Threading a real `'dev` would
-    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
-    /// already encodes that contract.
-    pub bv2: Box<bun_bundler::BundleV2<'static>>,
-    /// `bundle_v2.DevServerInput` (was `BakeBundleStart` in Zig). Stored erased
-    /// because the concrete type lives in the gated `__phase_a_draft` of
-    /// `bundle_v2.rs`; `current_bundle_start_data` vtable slot casts back.
-    // TODO(b2): `bun_bundler::bundle_v2::DevServerInput` once un-gated.
-    pub start_data: *mut (),
-    pub timer: std::time::Instant,
-    pub had_reload_event: bool,
+// (start_data type stub kept for the vtable's `current_bundle_start_data` slot)
+#[allow(dead_code)]
+struct _CurrentBundleStub {
+    bv2: Box<bun_bundler::BundleV2<'static>>,
+    start_data: *mut (),
+    timer: std::time::Instant,
+    had_reload_event: bool,
     pub requests: deferred_request::List,
     pub resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
     pub promise: DeferredPromise,

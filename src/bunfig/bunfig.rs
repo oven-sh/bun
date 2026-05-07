@@ -1518,16 +1518,12 @@ mod install_registry_serve {
             }
 
             if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
-                install.public_hoist_pattern = Some(
-                    api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
-                        .map_err(|_| bun_core::Error::ParserError)?,
-                );
+                install.public_hoist_pattern =
+                    Some(api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)?);
             }
             if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
-                install.hoist_pattern = Some(
-                    api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
-                        .map_err(|_| bun_core::Error::ParserError)?,
-                );
+                install.hoist_pattern =
+                    Some(api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)?);
             }
 
             Ok(())

@@ -636,8 +636,17 @@ impl Process {
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
+            // Zig gates on `.waiter_thread, .fd` but `.detached` is the only
+            // other arm and is reached either (a) post-detach — which the
+            // caller's `has_exited()` already short-circuits — or (b) in the
+            // pre-`watch()` window during spawnSync's initial `read_all()`,
+            // where the maxBuffer overflow callback fires before any poller is
+            // installed. Silently dropping the signal there leaves `yes`
+            // running and the read loop spinning forever (test/js/bun/spawn/
+            // spawn-maxbuf.test.ts). Sending kill with a valid pid is harmless
+            // regardless of poller state.
             match &self.poller {
-                Poller::WaiterThread(_) | Poller::Fd(_) => {
+                Poller::WaiterThread(_) | Poller::Fd(_) | Poller::Detached => {
                     // SAFETY: libc kill
                     let err = unsafe { libc::kill(self.pid, signal as c_int) };
                     if err != 0 {
@@ -648,7 +657,6 @@ impl Process {
                         }
                     }
                 }
-                _ => {}
             }
         }
         #[cfg(windows)]

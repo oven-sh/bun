@@ -10,16 +10,15 @@ use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw(
     this: &mut Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
-    // post_match on drop; the body re-borrows `this` through DerefMut so post_match
-    // runs on every exit path (Ok and Err alike).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is modeled by
+    // wrapping `this` in a scopeguard so `post_match` runs on every exit path while the body
+    // still has `&mut Expect` access via DerefMut.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments = frame.arguments_as_array::<1>();
@@ -68,8 +67,7 @@ pub fn to_throw(
     let did_throw = result_.is_some();
 
     if not {
-        // PERF(port): was comptime — get_signature should be const fn returning &'static str
-        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
+        let signature = get_signature("toThrow", "<green>expected<r>", true);
 
         if !did_throw {
             return Ok(JSValue::UNDEFINED);
@@ -79,7 +77,7 @@ pub fn to_throw(
         let mut formatter = Formatter::new(global).with_quote_strings(true);
 
         if expected_value.is_empty() || expected_value.is_undefined() {
-            let signature_no_args: &'static str = get_signature("toThrow", "", true);
+            let signature_no_args = get_signature("toThrow", "", true);
             if let Some(err) = result.to_error() {
                 let name: JSValue = err
                     .get_truthy(global, "name")?
@@ -87,9 +85,10 @@ pub fn to_throw(
                 let message: JSValue = err
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
-                let mut formatter2 = super::make_formatter(global);
+                let mut formatter2 = make_formatter(global);
                 return Err(global.throw_pretty(format_args!(
-                    "{signature_no_args}\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
+                    "{}\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
+                    signature_no_args,
                     name.to_fmt(&mut formatter),
                     message.to_fmt(&mut formatter2),
                 )));
@@ -97,7 +96,8 @@ pub fn to_throw(
 
             // non error thrown
             return Err(global.throw_pretty(format_args!(
-                "{signature_no_args}\n\nThrown value: <red>{}<r>\n",
+                "{}\n\nThrown value: <red>{}<r>\n",
+                signature_no_args,
                 result.to_fmt(&mut formatter),
             )));
         }
@@ -123,7 +123,7 @@ pub fn to_throw(
                 }
             }
 
-            let mut formatter2 = super::make_formatter(global);
+            let mut formatter2 = make_formatter(global);
             return this.throw(
                 global,
                 signature,
@@ -156,7 +156,7 @@ pub fn to_throw(
                 }
             }
 
-            let mut formatter2 = super::make_formatter(global);
+            let mut formatter2 = make_formatter(global);
             return this.throw(
                 global,
                 signature,
@@ -244,31 +244,28 @@ pub fn to_throw(
 
             // error: message from received error does not match expected string
             let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter2 = make_formatter(global);
+            let signature = get_signature("toThrow", "<green>expected<r>", false);
 
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
-            let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
-                let expected_value_fmt = expected_value.to_fmt(&mut formatter);
-                let received_message_fmt = received_message.to_fmt(&mut formatter2);
                 return this.throw(
                     global,
                     signature,
                     format_args!(
                         "\n\nExpected substring: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value_fmt, received_message_fmt,
+                        expected_value.to_fmt(&mut formatter),
+                        received_message.to_fmt(&mut formatter2),
                     ),
                 );
             }
 
-            let expected_fmt = expected_value.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter2);
             return this.throw(
                 global,
                 signature,
                 format_args!(
                     "\n\nExpected substring: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_fmt, received_fmt,
+                    expected_value.to_fmt(&mut formatter),
+                    result.to_fmt(&mut formatter2),
                 ),
             );
         }
@@ -288,38 +285,34 @@ pub fn to_throw(
 
             // error: message from received error does not match expected pattern
             let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter2 = make_formatter(global);
+            let signature = get_signature("toThrow", "<green>expected<r>", false);
 
-            let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
-                let expected_value_fmt = expected_value.to_fmt(&mut formatter);
-                let received_message_fmt = received_message.to_fmt(&mut formatter2);
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-
                 return this.throw(
                     global,
                     signature,
                     format_args!(
                         "\n\nExpected pattern: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value_fmt, received_message_fmt,
+                        expected_value.to_fmt(&mut formatter),
+                        received_message.to_fmt(&mut formatter2),
                     ),
                 );
             }
 
-            let expected_fmt = expected_value.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter2);
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
             return this.throw(
                 global,
                 signature,
                 format_args!(
                     "\n\nExpected pattern: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_fmt, received_fmt,
+                    expected_value.to_fmt(&mut formatter),
+                    result.to_fmt(&mut formatter2),
                 ),
             );
         }
 
         if Expect::is_asymmetric_matcher(expected_value) {
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature = get_signature("toThrow", "<green>expected<r>", false);
             let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
 
             if global.has_exception() {
@@ -331,15 +324,14 @@ pub fn to_throw(
             }
 
             let mut formatter = Formatter::new(global).with_quote_strings(true);
-            let mut formatter2 = super::make_formatter(global);
-            let received_fmt = result.to_fmt(&mut formatter);
-            let expected_fmt = expected_value.to_fmt(&mut formatter2);
+            let mut formatter2 = make_formatter(global);
             return this.throw(
                 global,
                 signature,
                 format_args!(
                     "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
-                    expected_fmt, received_fmt,
+                    expected_value.to_fmt(&mut formatter),
+                    result.to_fmt(&mut formatter2),
                 ),
             );
         }
@@ -348,7 +340,7 @@ pub fn to_throw(
         debug_assert!(expected_value.is_object());
 
         if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature = get_signature("toThrow", "<green>expected<r>", false);
 
             if let Some(received_message) = received_message_opt {
                 if received_message.is_same_value(expected_message, global)? {
@@ -358,29 +350,27 @@ pub fn to_throw(
 
             // error: message from received error does not match expected error message.
             let mut formatter = Formatter::new(global).with_quote_strings(true);
-            let mut formatter2 = super::make_formatter(global);
+            let mut formatter2 = make_formatter(global);
 
             if let Some(received_message) = received_message_opt {
-                let expected_fmt = expected_message.to_fmt(&mut formatter);
-                let received_fmt = received_message.to_fmt(&mut formatter2);
                 return this.throw(
                     global,
                     signature,
                     format_args!(
                         "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_fmt, received_fmt,
+                        expected_message.to_fmt(&mut formatter),
+                        received_message.to_fmt(&mut formatter2),
                     ),
                 );
             }
 
-            let expected_fmt = expected_message.to_fmt(&mut formatter);
-            let received_fmt = result.to_fmt(&mut formatter2);
             return this.throw(
                 global,
                 signature,
                 format_args!(
                     "\n\nExpected message: <green>{}<r>\nReceived value: <red>{}<r>\n",
-                    expected_fmt, received_fmt,
+                    expected_message.to_fmt(&mut formatter),
+                    result.to_fmt(&mut formatter2),
                 ),
             );
         }
@@ -395,54 +385,52 @@ pub fn to_throw(
         let mut received_class = ZigString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         result.get_class_name(global, &mut received_class)?;
-        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+        let signature = get_signature("toThrow", "<green>expected<r>", false);
 
         if let Some(received_message) = received_message_opt {
-            let received_message_fmt = received_message.to_fmt(&mut formatter);
-
             return Err(global.throw_pretty(format_args!(
-                "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
-                expected_class, received_class, received_message_fmt,
+                "{}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+                signature,
+                expected_class,
+                received_class,
+                received_message.to_fmt(&mut formatter),
             )));
         }
 
-        let received_fmt = result.to_fmt(&mut formatter);
-
         return Err(global.throw_pretty(format_args!(
-            "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
-            expected_class, received_class, received_fmt,
+            "{}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
+            signature,
+            expected_class,
+            received_class,
+            result.to_fmt(&mut formatter),
         )));
     }
 
     // did not throw
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
-    let mut formatter2 = super::make_formatter(global);
-    // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
-    // below; Rust `concat!` only accepts literals so the value is inlined at each site.
-    // received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n"
+    let mut formatter2 = make_formatter(global);
+    const RECEIVED_LINE: &str = "Received function did not throw\nReceived value: <red>";
 
     if expected_value.is_empty() || expected_value.is_undefined() {
-        let signature: &'static str = get_signature("toThrow", "", false);
+        let signature = get_signature("toThrow", "", false);
         return this.throw(
             global,
             signature,
-            format_args!(
-                "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                result.to_fmt(&mut formatter),
-            ),
+            format_args!("\n\n{}{}<r>\n", RECEIVED_LINE, result.to_fmt(&mut formatter)),
         );
     }
 
-    let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+    let signature = get_signature("toThrow", "<green>expected<r>", false);
 
     if expected_value.is_string() {
         return this.throw(
             global,
             signature,
             format_args!(
-                "\n\nExpected substring: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                "\n\nExpected substring: <green>{}<r>\n\n{}{}<r>\n",
                 expected_value.to_fmt(&mut formatter),
+                RECEIVED_LINE,
                 result.to_fmt(&mut formatter2),
             ),
         );
@@ -453,8 +441,9 @@ pub fn to_throw(
             global,
             signature,
             format_args!(
-                "\n\nExpected pattern: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                "\n\nExpected pattern: <green>{}<r>\n\n{}{}<r>\n",
                 expected_value.to_fmt(&mut formatter),
+                RECEIVED_LINE,
                 result.to_fmt(&mut formatter2),
             ),
         );
@@ -465,8 +454,9 @@ pub fn to_throw(
             global,
             signature,
             format_args!(
-                "\n\nExpected message: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+                "\n\nExpected message: <green>{}<r>\n\n{}{}<r>\n",
                 expected_message.to_fmt(&mut formatter),
+                RECEIVED_LINE,
                 result.to_fmt(&mut formatter2),
             ),
         );
@@ -478,8 +468,9 @@ pub fn to_throw(
         global,
         signature,
         format_args!(
-            "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            "\n\nExpected constructor: <green>{}<r>\n\n{}{}<r>\n",
             expected_class,
+            RECEIVED_LINE,
             result.to_fmt(&mut formatter),
         ),
     )
@@ -489,8 +480,6 @@ pub fn to_throw(
 // PORT STATUS
 //   source:     src/test_runner/expect/toThrow.zig (319 lines)
 //   confidence: high
-//   notes:      Zig `globalThis.throwPretty(signature ++ tail, args)` ported as
-//               inherent `JSGlobalObject::throw_pretty(format_args!("{signature}{tail}", ..))`;
-//               Zig `this.throw(..)` ported as `Expect::throw` (custom_label-aware).
-//               `defer postMatch` reshaped via scopeguard owning &mut Expect.
+//   todos:      0
+//   notes:      `defer postMatch` via scopeguard; dual Formatter instances satisfy borrowck for two `to_fmt(&mut _)` in one format_args!; Zig comptime `signature ++ fmt` rendered at runtime by Expect::throw / throw_pretty.
 // ──────────────────────────────────────────────────────────────────────────

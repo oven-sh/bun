@@ -9,53 +9,10 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc, URL};
 use bun_str::{self as strings, String as BunString, OwnedString, ZStr};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
-use bun_jsc::URL;
-use crate::test_runner::expect::JSValueTestExt;
-
-// ─── Local upstream shims (gated bun_jsc modules) ─────────────────────────
-// declare the FFI symbols and extension methods we need locally until they
-// land in the active stub.
-// TODO(port): drop once bun_jsc un-gates URL.rs / JSGlobalObject.rs.
-mod url_ffi {
-    use super::*;
-    unsafe extern "C" {
-        pub(super) fn URL__fromString(input: *mut BunString) -> *mut URL;
-        pub(super) fn URL__host(url: *const URL) -> BunString;
-        pub(super) fn URL__port(url: *const URL) -> u32;
-        pub(super) fn URL__deinit(url: *mut URL);
-    }
-}
-trait UrlExt {
-    fn from_string(str: BunString) -> Option<NonNull<URL>>;
-    fn host_(this: &URL) -> BunString;
-    fn port_(this: &URL) -> u32;
-    unsafe fn destroy(this: *mut URL);
-}
-impl UrlExt for URL {
-    fn from_string(str: BunString) -> Option<NonNull<URL>> {
-        let mut input = str;
-        // SAFETY: input lives for the duration of the call.
-        NonNull::new(unsafe { url_ffi::URL__fromString(&mut input) })
-    }
-    fn host_(this: &URL) -> BunString {
-        // SAFETY: `this` is a valid opaque *URL handle from C++.
-        unsafe { url_ffi::URL__host(this) }
-    }
-    fn port_(this: &URL) -> u32 {
-        // SAFETY: `this` is a valid opaque *URL handle from C++.
-        unsafe { url_ffi::URL__port(this) }
-    }
-    unsafe fn destroy(this: *mut URL) {
-        // SAFETY: caller guarantees `this` is a valid *URL freed exactly once.
-        unsafe { url_ffi::URL__deinit(this) }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.

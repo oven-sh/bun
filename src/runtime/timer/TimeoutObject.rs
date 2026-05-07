@@ -263,7 +263,6 @@ impl TimeoutObject {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/timer/TimeoutObject.zig (144 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      .classes.ts codegen (JSTimeout) stubbed; cached-prop getter/setter ABI + internals in-place init need Phase B wiring
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

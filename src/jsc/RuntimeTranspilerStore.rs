@@ -959,7 +959,7 @@ impl TranspilerJob {
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
         let module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
-            if vm.use_isolation_source_provider_cache()
+            if use_isolation_source_provider_cache
                 && !is_commonjs_module
                 && loader.is_java_script_like()
             {
@@ -972,8 +972,13 @@ impl TranspilerJob {
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
             module_info.as_ref().map(|b| &**b as *const _ as *mut _);
 
-        {
-            let mut mapper = vm.source_map_handler(&mut printer as *mut BufferPrinter);
+        let print_result = {
+            // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw
+            // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
+            // inside `get()`. No `&mut VirtualMachine` is ever formed.
+            let mut mapper = unsafe {
+                SourceMapHandlerGetter::from_raw(vm, &mut printer as *mut BufferPrinter)
+            };
             let _writeback = scopeguard::guard(
                 (
                     source_code_printer as *mut BufferPrinter,
@@ -986,22 +991,20 @@ impl TranspilerJob {
                     };
                 },
             );
-            match transpiler.print_with_source_map(
+            transpiler.print_with_source_map(
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
                 module_info_ptr,
-            ) {
-                Ok(_) => {}
-                Err(err) => {
-                    if let Some(mi) = module_info {
-                        mi.destroy();
-                    }
-                    self.parse_error = Some(err);
-                    return;
-                }
+            )
+        };
+        if let Err(err) = print_result {
+            if let Some(mi) = module_info {
+                mi.destroy();
             }
+            self.parse_error = Some(err);
+            return;
         }
 
         if bun_core::env::DUMP_SOURCE {
@@ -1016,7 +1019,8 @@ impl TranspilerJob {
                 .take()
                 .unwrap_or_else(|| String::clone_latin1(written));
 
-            if written.len() > 1024 * 1024 * 2 || vm.smol {
+            // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
+            if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);

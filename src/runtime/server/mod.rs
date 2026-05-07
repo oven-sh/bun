@@ -826,19 +826,174 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Dispatch the user `fetch` handler for an incoming request.
-    // TODO(b2-blocked): full body in `server_body.rs::NewServer::on_request`
-    // (server.zig:2720-2830) — depends on Request::new_/WebCore::Body and the
-    // JS RouteList codegen extern. Until that wiring lands, fall through to a
-    // 404 so the listen socket stays usable for smoke tests (matches the
-    // `trampoline::on_request` behaviour).
-    pub fn on_request(
-        &mut self,
-        _req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+    /// `server.zig:handleRequest` — common tail of `on_request` /
+    /// `on_user_route_request`: hand the user-handler's return value to the
+    /// `RequestContext`, then either tear down synchronously or transition to
+    /// the async path.
+    fn handle_request(
+        this: *mut Self,
+        should_deinit_context: &mut bool,
+        prepared: PreparedRequest<SSL, DEBUG>,
+        req: &mut uws_sys::Request,
+        response_value: JSValue,
     ) {
-        resp.write_status(b"404 Not Found");
-        resp.end(b"", false);
+        let ctx = prepared.ctx;
+        let request_object = prepared.request_object;
+
+        // uWS request will not live longer than this function
+        let _detach_guard = scopeguard::guard((), move |_| {
+            // SAFETY: `request_object` is the heap allocation produced by
+            // `Request::new`; kept alive by `ctx.request_weakref` until
+            // `RequestContext::deinit` releases it.
+            unsafe { (*request_object).request_context.detach_request() };
+        });
+
+        // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
+        // frame; no other borrow is live across this scope.
+        unsafe { (*ctx).on_response(&*this, prepared.js_request, response_value) };
+        // Reference in the stack here in case it is not for whatever reason
+        prepared.js_request.ensure_still_alive();
+
+        // SAFETY: re-borrow after `on_response` returned (which may have run
+        // arbitrary JS but cannot free `ctx` while `defer_deinit_…` is set).
+        unsafe { (*ctx).defer_deinit_until_callback_completes = None };
+
+        if *should_deinit_context {
+            // SAFETY: `on_response` set the deferred flag instead of freeing
+            // in-place; we own the slot now.
+            unsafe { (*ctx).deinit() };
+            return;
+        }
+
+        // SAFETY: ctx not yet freed (should_deinit_context == false).
+        if unsafe { (*ctx).should_render_missing() } {
+            unsafe { (*ctx).render_missing() };
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be
+        // copied since the provided uws.Request will be re-used for future
+        // requests (stack allocated).
+        // SAFETY: `req`/`request_object` live for this frame; `ctx` not freed.
+        unsafe {
+            (*ctx).to_async(
+                req as *mut uws_sys::Request as *mut c_void,
+                &mut *request_object,
+            );
+        }
+    }
+
+    /// `server.zig:onRequest` — dispatch the user `fetch` handler.
+    pub fn on_request(
+        this: *mut Self,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        let mut should_deinit_context = false;
+        let Some(prepared) = Self::prepare_js_request_context(
+            this,
+            req,
+            resp,
+            Some(&mut should_deinit_context),
+            CreateJsRequest::Yes,
+            None,
+        ) else {
+            return;
+        };
+
+        // SAFETY: `this` is the live server backref for this request.
+        let server = unsafe { &*this };
+        let on_request = server
+            .config
+            .on_request
+            .as_ref()
+            .map(|s| s.get())
+            .unwrap_or(JSValue::ZERO);
+        debug_assert!(!on_request.is_empty());
+
+        let global = unsafe { &*server.global_this };
+        let js_value = server.js_value_assert_alive();
+        let response_value = match on_request.call(
+            global,
+            js_value,
+            &[prepared.js_request, js_value],
+        ) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        Self::handle_request(this, &mut should_deinit_context, prepared, req, response_value);
+    }
+
+    /// `server.zig:onUserRouteRequest` — dispatch a per-route handler
+    /// (`routes: { "/path": handler }`).
+    pub fn on_user_route_request(
+        user_route: *const UserRoute<SSL, DEBUG>,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        // SAFETY: `user_route` is the live entry in `server.user_routes` whose
+        // address was registered as the uws callback userdata.
+        let user_route = unsafe { &*user_route };
+        let server = user_route.server as *mut Self;
+        let index = user_route.id;
+
+        let mut should_deinit_context = false;
+        let Some(mut prepared) = Self::prepare_js_request_context(
+            server,
+            req,
+            resp,
+            Some(&mut should_deinit_context),
+            CreateJsRequest::No,
+            match &user_route.route.method {
+                server_config::RouteMethod::Any => None,
+                server_config::RouteMethod::Specific(m) => Some(*m),
+            },
+        ) else {
+            return;
+        };
+
+        // SAFETY: `server` is the live backref stored in `user_route`.
+        let server_ref = unsafe { &*server };
+        let global = unsafe { &*server_ref.global_this };
+        let server_js = server_ref.js_value_assert_alive();
+        let server_request_list = Self::js_route_list_get_cached(server_js)
+            .expect("routeList cached value missing");
+        let response_value = bun_jsc::host_fn::from_js_host_call(global, || {
+            // SAFETY: FFI — `Bun__ServerRouteList__callRoute` is the
+            // generated C++ dispatcher; all pointer args are live for this
+            // frame, `js_request` is an out-param overwritten in place.
+            unsafe {
+                Bun__ServerRouteList__callRoute(
+                    global,
+                    index,
+                    prepared.request_object,
+                    server_js,
+                    server_request_list,
+                    &mut prepared.js_request,
+                    req,
+                )
+            }
+        })
+        .unwrap_or_else(|err| global.take_exception(err));
+
+        Self::handle_request(
+            server,
+            &mut should_deinit_context,
+            prepared,
+            req,
+            response_value,
+        );
+    }
+
+    /// `js.routeListGetCached` — read back the codegen'd `WriteBarrier` slot.
+    fn js_route_list_get_cached(server_js: JSValue) -> Option<JSValue> {
+        match (SSL, DEBUG) {
+            (false, false) => route_list_cached::http::route_list_get_cached(server_js),
+            (true, false) => route_list_cached::https::route_list_get_cached(server_js),
+            (false, true) => route_list_cached::debug_http::route_list_get_cached(server_js),
+            (true, true) => route_list_cached::debug_https::route_list_get_cached(server_js),
+        }
     }
 
     pub fn on_static_request_complete(&mut self) {
@@ -1563,6 +1718,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
+// ─── route-list codegen externs ──────────────────────────────────────────────
+unsafe extern "C" {
+    /// Generated C++ dispatcher (RouteList.cpp): wraps the JS Request object,
+    /// resolves URL params for `:id`-style segments, and invokes the route
+    /// callback at `index`.
+    fn Bun__ServerRouteList__callRoute(
+        global_object: *const jsc::JSGlobalObject,
+        index: u32,
+        request_ptr: *mut crate::webcore::Request,
+        server_object: jsc::JSValue,
+        route_list_object: jsc::JSValue,
+        request_object: *mut jsc::JSValue,
+        req: *mut uws_sys::Request,
+    ) -> jsc::JSValue;
+}
+
+/// Per-type cached-accessor shims for the `routeList` `WriteBarrier` slot.
+/// `codegen_cached_accessors!` emits `route_list_{get,set}_cached` wrapping
+/// `${T}Prototype__routeList{Get,Set}CachedValue` (generate-classes.ts).
+mod route_list_cached {
+    pub mod http { bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList); }
+    pub mod https { bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList); }
+    pub mod debug_http { bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList); }
+    pub mod debug_https { bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList); }
+}
+
 // ─── extern "C" trampolines ──────────────────────────────────────────────────
 // Zig generated these per (UserData, handler) pair at comptime via
 // `RouteHandler(..)`. Rust monomorphizes on the const-generic server params
@@ -1610,14 +1791,13 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
-        let _server = unsafe { &mut *(user_data as *mut NewServer<SSL, DEBUG>) };
-        let _req = req;
-        // TODO(b2-blocked): NewServer::on_request body (server_body.rs:2720-2830)
-        // depends on Request::new_/WebCore::Body wiring inside bun_runtime that
-        // is still gated. Until then route to 404 so the listen socket is usable
-        // for smoke tests.
-        on_404::<SSL, DEBUG>(res, req, user_data);
+        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
+        // req/res are live uws handles for the duration of the callback.
+        NewServer::<SSL, DEBUG>::on_request(
+            user_data.cast(),
+            unsafe { &mut *req },
+            res.cast(),
+        );
     }
 
     pub extern "C" fn on_user_route_request<const SSL: bool, const DEBUG: bool>(
@@ -1625,11 +1805,13 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // SAFETY: user_data is the `*mut UserRoute<..>` registered in set_routes.
-        let route = unsafe { &*(user_data as *const UserRoute<SSL, DEBUG>) };
-        // TODO(b2-blocked): NewServer::on_user_route_request body
-        // (server_body.rs:3009-3040) — same blocker as on_request.
-        on_request::<SSL, DEBUG>(res, req, route.server as *mut c_void);
+        // SAFETY: user_data is the `*mut UserRoute<..>` registered in set_routes;
+        // req/res are live uws handles for the duration of the callback.
+        NewServer::<SSL, DEBUG>::on_user_route_request(
+            user_data.cast::<UserRoute<SSL, DEBUG>>(),
+            unsafe { &mut *req },
+            res.cast(),
+        );
     }
 
     pub extern "C" fn on_node_http_request<const SSL: bool, const DEBUG: bool>(
@@ -1637,8 +1819,11 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // TODO(b2-blocked): NewServer::on_node_http_request body
-        // (server_body.rs:2583-2720) — needs NodeHTTPResponse + Socket FFI.
+        // TODO(port): `NewServer::on_node_http_request` body
+        // (server_body.rs:3246-3433) needs `NodeHTTPResponse` + Socket FFI.
+        // The node:http compat path registers this only when
+        // `config.on_node_http_request` is set; until that body lands the
+        // plain `fetch` handler is the closest behavioural match.
         on_request::<SSL, DEBUG>(res, req, user_data);
     }
 }

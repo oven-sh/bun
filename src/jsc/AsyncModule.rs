@@ -1236,8 +1236,7 @@ impl<'a> AsyncModule<'a> {
         #[cfg(feature = "dump_source")]
         {
             crate::runtime_transpiler_store::dump_source_string(
-                // SAFETY: per-thread VM.
-                unsafe { &*jsc_vm },
+                jsc_vm as *mut VirtualMachine,
                 specifier,
                 printer.ctx.get_written(),
             );

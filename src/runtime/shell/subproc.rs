@@ -953,22 +953,23 @@ impl Writable {
         // is never assigned (always .zero) — dead code path under Zig lazy compilation.
         // Dropped along with the `this_jsvalue` field.
 
-        match core::mem::replace(self, Writable::Ignore) {
-            Writable::Pipe(pipe) => {
-                drop(pipe); // deref
+        match self {
+            Writable::Pipe(_) => {
+                // deref via drop-on-reassign
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
                 unsafe { (*buffer.data.as_ptr()).update_ref(false) };
-                drop(buffer); // deref
+                // Spec: `this.buffer.deref()` but does NOT reassign `this.*` —
+                // the variant tag is left as `.buffer`. RefPtr's Drop (on
+                // Subprocess teardown) handles the final deref.
             }
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
             }
             Writable::Ignore => {}
-            // PORT NOTE: reshaped — Zig left .fd/.inherit/.buffer in place after finalize.
             Writable::Fd(_) | Writable::Inherit => {}
         }
     }
@@ -1318,16 +1319,22 @@ impl<'a> SpawnArgs<'a> {
             let key = entry.key_ptr.slice();
             let value = entry.value_ptr.slice();
 
-            let mut line = Vec::<u8>::with_capacity(key.len() + 1 + value.len() + 1);
-            use std::io::Write;
-            let _ = write!(&mut line, "{}={}", bstr::BStr::new(key), bstr::BStr::new(value));
-            line.push(0);
-            // PERF(port): was arena allocPrintSentinel — profile in Phase B
-            let line = line.leak();
-            // TODO(port): leaked — Zig used arena bulk-free.
+            // Spec: `std.fmt.allocPrintSentinel(arena, "{s}={s}", .{key, value}, 0)`.
+            // Bumpalo owns the bytes; freed when the spawn arena is reset.
+            let len = key.len() + 1 + value.len();
+            let line: &mut [u8] = self.arena.alloc_slice_fill_default(len + 1);
+            line[..key.len()].copy_from_slice(key);
+            line[key.len()] = b'=';
+            line[key.len() + 1..len].copy_from_slice(value);
+            line[len] = 0;
+            // SAFETY: `self.arena: &'a Arena` outlives `'a`; bumpalo allocations
+            // are address-stable until the arena is reset (after spawn returns).
+            // Reborrow to `'a` so `self.path` (which is `&'a [u8]`) can alias it.
+            let line: &'a [u8] =
+                unsafe { core::slice::from_raw_parts(line.as_ptr(), line.len()) };
 
             if key == b"PATH" {
-                self.path = &line[b"PATH=".len()..line.len() - 1];
+                self.path = &line[b"PATH=".len()..len];
             }
 
             self.env_array.push(line.as_ptr() as *const c_char);
@@ -1602,15 +1609,19 @@ impl Drop for CapturedWriter {
 }
 
 impl PipeReader {
-    pub fn detach(self: &Arc<Self>) {
-        // TODO(port): Arc interior mutability — Zig clears self.process then derefs.
+    pub fn detach(self: Arc<Self>) {
         log!(
             "PipeReader(0x{:x}, {}) detach()",
-            Arc::as_ptr(self) as usize,
+            Arc::as_ptr(&self) as usize,
             out_kind_str(self.out_type)
         );
-        // self.process = None;  // needs Cell<Option<*mut _>>
-        // drop(self) — caller drops the Arc.
+        // Spec: `this.process = null; this.deref();` — clear the backref so any
+        // late `on_reader_done`/`on_reader_error` after the Subprocess is freed
+        // can't follow it. Arc only yields `&Self`; write through the
+        // allocation pointer (single-threaded shell, no live `&`/`&mut` here).
+        // SAFETY: see `arc_mut` rationale; field is a plain `Option<*mut _>`.
+        unsafe { (*(Arc::as_ptr(&self) as *mut PipeReader)).process = None };
+        // Dropping `self` releases the strong ref (Zig `this.deref()`).
     }
 
     pub fn is_done(&self) -> bool {
@@ -1657,7 +1668,11 @@ impl PipeReader {
         capture: Option<Arc<IOWriter>>,
         out_type: OutKind,
     ) -> Arc<PipeReader> {
-        let mut this = Box::new(PipeReader {
+        // Allocate directly into the Arc so the address is stable BEFORE we
+        // hand it to `reader.set_parent` / @fieldParentPtr consumers.
+        // `Arc::from(Box<T>)` would reallocate into a new ArcInner and leave
+        // every BufferedReader callback with a dangling parent pointer.
+        let arc = Arc::new(PipeReader {
             process: Some(process),
             reader: IOReader::init::<PipeReader>(),
             event_loop,
@@ -1671,9 +1686,13 @@ impl PipeReader {
             // pass it through.
             interp: core::ptr::null_mut(),
         });
+        let this_ptr: *mut PipeReader = Arc::as_ptr(&arc).cast_mut();
+        // SAFETY: `arc` is uniquely held; no other `&`/`&mut` to the payload
+        // exists. Single-threaded shell.
+        let this = unsafe { &mut *this_ptr };
         log!(
             "PipeReader(0x{:x}, {}) create()",
-            &*this as *const _ as usize,
+            this_ptr as usize,
             out_kind_str(this.out_type)
         );
 
@@ -1690,14 +1709,9 @@ impl PipeReader {
                 StdioResult::Unavailable => panic!("Shouldn't happen."),
             };
         }
-        let this_ptr: *mut PipeReader = &mut *this;
         this.reader.set_parent(this_ptr.cast::<c_void>());
 
-        // TODO(port): converting Box → Arc here; @fieldParentPtr from CapturedWriter
-        // requires the PipeReader address to be stable post-Arc::from. Arc::from(Box)
-        // reallocates — Phase B must switch to IntrusiveRc to preserve the address
-        // captured by reader.set_parent().
-        Arc::from(this)
+        arc
     }
 
     pub fn read_all(&mut self) {
@@ -1726,10 +1740,10 @@ impl PipeReader {
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
-                    // TODO(port): `bun_io::FilePoll` is an opaque CYCLEBREAK
-                    // handle here with no `.flags` accessor; the Zig
-                    // `poll.flags.insert(.socket)` needs a setter on the
-                    // opaque type. Tracked separately.
+                    // Spec: `poll.flags.insert(.socket); reader.flags.socket = true`.
+                    if let Some(poll) = self.reader.handle.get_poll() {
+                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                    }
                     self.reader
                         .flags
                         .insert(bun_io::pipe_reader::PosixFlags::SOCKET);

@@ -952,6 +952,52 @@ pub mod expr {
                 Data::EMissing(_) => ExprTag::EMissing,
             }
         }
+        /// Zig `Expr.Data.deepClone` — recursively re-allocate boxed payloads
+        /// into the thread-local `DATA_STORE` so the result outlives a
+        /// `data_store_reset()`. Inline scalar variants are `Copy` and pass
+        /// through unchanged.
+        pub fn deep_clone(&self) -> Result<Data, AllocError> {
+            use super::IntoExprData;
+            Ok(match *self {
+                Data::EArray(a) => {
+                    let mut items = ExprNodeList::default();
+                    for item in a.slice() {
+                        items.append(item.deep_clone()?)?;
+                    }
+                    E::Array { items, ..*a }.into_data_store()
+                }
+                Data::EObject(o) => {
+                    let mut properties = super::G::PropertyList::default();
+                    for prop in o.properties.slice() {
+                        properties.append(super::G::Property {
+                            initializer: match &prop.initializer {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                            kind: prop.kind,
+                            flags: prop.flags,
+                            key: match &prop.key {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                            value: match &prop.value {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                        })?;
+                    }
+                    E::Object { properties, ..*o }.into_data_store()
+                }
+                Data::EString(s) => s.shallow_clone().into_data_store(),
+                // Inline `Copy` payloads — no heap to clone.
+                d @ (Data::EBoolean(_)
+                | Data::ENumber(_)
+                | Data::ENull(_)
+                | Data::EUndefined(_)
+                | Data::EMissing(_)) => d,
+            })
+        }
+
         #[inline]
         pub fn is_e_string(&self) -> bool { matches!(self, Data::EString(_)) }
         #[inline]

@@ -1570,22 +1570,40 @@ pub fn generic_path_with_pretty_initialized<'a>(
 
 /// PORT NOTE: `bun_logger::fs::Path`, `bun_resolver::fs::Path<'a>`, and
 /// `bun_paths::fs::Path<'a>` are field-identical mirrors of `fs.zig:Path` that
-/// haven't been unified yet (TYPE_ONLY split). These shims bit-cast between
-/// them at the few construction sites in this file.
-/// SAFETY: all three share the *exact* same field set (`pretty`/`text`/
-/// `namespace`/`name{dir,base,ext,filename}`/`is_disabled`/`is_symlink`);
-/// callers feed slices interned in `FilenameStore`/`DirnameStore`
-/// (process-static), so the `'static` bound on `bun_logger::fs::Path` holds.
+/// haven't been unified yet (TYPE_ONLY split). These shims rebuild one from the
+/// other field-by-field; the previous whole-struct `transmute` was removed
+/// (PORTING.md §Forbidden — lifetime extension via cast). The proper fix is to
+/// collapse all three into a single `bun_paths::fs::Path<'a>` re-exported by
+/// `bun_logger`/`bun_resolver`; until then, callers must pass slices that are
+/// either `'static` literals, `FilenameStore`/`DirnameStore`-interned, or
+/// allocated from `BundleV2::allocator()` (the bundle-pass arena).
+///
+/// Erase `&[u8]` to `&'static [u8]` for storage in the lifetime-erased
+/// `Logger::fs::Path`/`bun_paths::fs::Path<'static>` mirrors.
+///
+/// # Safety
+/// Caller guarantees `s` is one of:
+///   - a `'static` literal,
+///   - interned in `FilenameStore`/`DirnameStore` (process-lifetime BSS lists),
+///   - allocated from the bundle-pass arena (`BundleV2::allocator()`), in which
+///     case the returned reference is valid only for the bundle pass and the
+///     consuming `Path` must not outlive it.
+/// All call sites in this file satisfy one of these; this is the documented
+/// Phase-A ARENA convention (PORTING.md §Type Mapping: arena-owned struct
+/// fields use erased lifetimes pending the `Path<'a>` unification).
+#[inline(always)]
+pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
+    // SAFETY: upheld by caller per fn contract.
+    unsafe { &*(s as *const [u8]) }
+}
 #[inline]
 pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
-    // SAFETY: see fn doc — identical layout, slices are interned `'static`.
-    unsafe { core::mem::transmute::<Fs::Path<'_>, Logger::fs::Path>(p) }
+    logger_path_from_fs(&p)
 }
 #[inline]
 #[allow(dead_code)]
 pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    // SAFETY: see `fs_path_to_logger` — identical layout.
-    unsafe { core::mem::transmute::<Logger::fs::Path, bun_paths::fs::Path<'static>>(p.clone()) }
+    ir_path_from_logger(p)
 }
 #[inline]
 pub(crate) fn fs_path_from_logger(p: &Logger::fs::Path) -> Fs::Path<'static> {
@@ -4952,19 +4970,21 @@ pub(crate) fn fs_path_from_ir(p: &bun_paths::fs::Path<'static>) -> Fs::Path<'sta
 
 #[inline]
 pub(crate) fn ir_path_from_fs(p: &Fs::Path<'_>) -> bun_paths::fs::Path<'static> {
-    let s = |b: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(b) } };
-    bun_paths::fs::Path {
-        pretty: s(p.pretty),
-        text: s(p.text),
-        namespace: s(p.namespace),
-        name: bun_paths::fs::PathName {
-            base: s(p.name.base),
-            dir: s(p.name.dir),
-            ext: s(p.name.ext),
-            filename: s(p.name.filename),
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
+    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
+    unsafe {
+        bun_paths::fs::Path {
+            pretty: interned_slice(p.pretty),
+            text: interned_slice(p.text),
+            namespace: interned_slice(p.namespace),
+            name: bun_paths::fs::PathName {
+                base: interned_slice(p.name.base),
+                dir: interned_slice(p.name.dir),
+                ext: interned_slice(p.name.ext),
+                filename: interned_slice(p.name.filename),
+            },
+            is_disabled: p.is_disabled,
+            is_symlink: p.is_symlink,
+        }
     }
 }
 
@@ -4987,19 +5007,21 @@ pub(crate) fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Pa
 
 #[inline]
 pub(crate) fn logger_path_from_fs(p: &Fs::Path<'_>) -> bun_logger::fs::Path {
-    let s = |b: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(b) } };
-    bun_logger::fs::Path {
-        pretty: s(p.pretty),
-        text: s(p.text),
-        namespace: s(p.namespace),
-        name: bun_logger::fs::PathName {
-            base: s(p.name.base),
-            dir: s(p.name.dir),
-            ext: s(p.name.ext),
-            filename: s(p.name.filename),
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
+    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
+    unsafe {
+        bun_logger::fs::Path {
+            pretty: interned_slice(p.pretty),
+            text: interned_slice(p.text),
+            namespace: interned_slice(p.namespace),
+            name: bun_logger::fs::PathName {
+                base: interned_slice(p.name.base),
+                dir: interned_slice(p.name.dir),
+                ext: interned_slice(p.name.ext),
+                filename: interned_slice(p.name.filename),
+            },
+            is_disabled: p.is_disabled,
+            is_symlink: p.is_symlink,
+        }
     }
 }
 

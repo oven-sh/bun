@@ -114,15 +114,6 @@ pub mod lib {
         fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
         fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
         fn archive_write_finish_entry(a: *mut Archive) -> Result;
-        fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
-        fn archive_write_set_filter_option(
-            a: *mut Archive,
-            module: *const c_char,
-            option: *const c_char,
-            value: *const c_char,
-        ) -> Result;
-        fn archive_write_set_options(a: *mut Archive, opts: *const c_char) -> Result;
-        fn archive_write_open_filename(a: *mut Archive, file: *const c_char) -> Result;
         #[link_name = "archive_write_open2"]
         fn archive_write_open2_raw(
             a: *mut Archive,
@@ -785,9 +776,10 @@ pub mod lib {
             Archive::error_string(self.archive)
         }
     }
-    /// Port of `Iterator.Result(T)` — `Ok`/`Err` carry the same shapes as the
-    /// Zig `union(enum) { .err, .result }`.
-    pub type IteratorResult<T> = core::result::Result<T, IteratorError>;
+    /// `Iterator.Result(T)` for the std-`Result`-shaped iterator below. Named
+    /// distinctly from the legacy `IteratorResult` enum higher in this module
+    /// (kept for `ArchiveIterator`); callers of `Iterator` use this alias.
+    pub type IterResult<T> = core::result::Result<T, IteratorError>;
 
     /// Port of `Iterator.NextEntry` (bindings.zig).
     pub struct IteratorEntry {
@@ -807,7 +799,7 @@ pub mod lib {
         pub fn read_entry_data(
             &self,
             archive: *mut Archive,
-        ) -> core::result::Result<IteratorResult<Vec<u8>>, bun_core::OOM> {
+        ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
             let size = self.entry().size();
             if size < 0 {
                 return Ok(Err(IteratorError { archive, message: b"invalid archive entry size" }));
@@ -834,7 +826,7 @@ pub mod lib {
     impl Iterator {
         /// Port of `Iterator.init` (bindings.zig). Opens `tarball_bytes` as a
         /// gzip-compressed (gnu)tar archive.
-        pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
+        pub fn init(tarball_bytes: &[u8]) -> IterResult<Self> {
             let archive = Archive::read_new();
             // SAFETY: `archive` is a fresh non-null `*mut Archive`.
             let a = unsafe { &*archive };
@@ -874,7 +866,7 @@ pub mod lib {
         }
 
         /// Port of `Iterator.next` (bindings.zig).
-        pub fn next(&mut self) -> IteratorResult<Option<IteratorEntry>> {
+        pub fn next(&mut self) -> IterResult<Option<IteratorEntry>> {
             // SAFETY: `archive` came from `Archive::read_new()`.
             let a = unsafe { &*self.archive };
             let mut entry: *mut Entry = core::ptr::null_mut();
@@ -900,7 +892,7 @@ pub mod lib {
         /// Port of `Iterator.deinit` (bindings.zig). Closes & frees the
         /// underlying `*mut Archive`. NOT a `Drop` impl because the Zig
         /// returns a `Result` the caller inspects for error reporting.
-        pub fn deinit(&mut self) -> IteratorResult<()> {
+        pub fn deinit(&mut self) -> IterResult<()> {
             // SAFETY: `archive` came from `Archive::read_new()`.
             let a = unsafe { &*self.archive };
             match a.read_close() {

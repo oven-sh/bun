@@ -779,7 +779,10 @@ impl Lockfile {
             old.packages.items_dependencies()[workspace_package_id as usize];
 
         if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
-            let mut string_builder = old.string_builder();
+            // PORT NOTE: split-borrow — `string_builder!` only takes
+            // `old.buffers.string_bytes` + `old.string_pool`, leaving
+            // `old.packages` / `old.buffers.{dependencies,resolutions}` free.
+            let mut string_builder = string_builder!(old);
 
             {
                 let root_deps: &[Dependency] =
@@ -789,13 +792,14 @@ impl Lockfile {
                 let old_resolutions: &[PackageID] =
                     old_resolutions_list.get(old.buffers.resolutions.as_slice());
                 let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+                let packages_len = old.packages.len();
 
                 for update in updates.iter() {
                     if update.package_id == invalid_package_id {
                         debug_assert_eq!(root_deps.len(), old_resolutions.len());
                         for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
                             if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= old.packages.len() {
+                                if old_resolution as usize >= packages_len {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
@@ -809,10 +813,12 @@ impl Lockfile {
 
                                 // PORT NOTE: Zig's `switch (exact_versions) { else => |exact| ... }` is just a
                                 // way to capture a comptime-ish bool; in Rust we use it directly.
+                                // SAFETY: tag checked == .npm above; `npm` is the active union field.
+                                let npm_ver = unsafe { res.value.npm.version };
                                 let len = bun_core::fmt::count(format_args!(
                                     "{}{}",
                                     if exact_versions { "" } else { "^" },
-                                    res.value.npm.version.fmt(old.buffers.string_bytes.as_slice()),
+                                    npm_ver.fmt(string_builder.string_bytes.as_slice()),
                                 ));
 
                                 if len >= SemverString::MAX_INLINE_LEN {
@@ -830,9 +836,6 @@ impl Lockfile {
             // `string_builder`, conflicting with the `append` calls below. Call `clamp()`
             // explicitly at the end of this block instead (the inner loop has no `?` exits;
             // the only fallible call above is `allocate()`, which precedes this point).
-            // PORT NOTE: reshaped for borrowck — string_builder borrows `old` mutably; the
-            // following block also needs &mut access to old.buffers.dependencies. Phase B may
-            // need to split borrows.
 
             {
                 let mut temp_buf = [0u8; 513];
@@ -844,6 +847,7 @@ impl Lockfile {
                 let old_resolutions: &[PackageID] =
                     old_resolutions_list.get(old.buffers.resolutions.as_slice());
                 let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+                let packages_len = old.packages.len();
 
                 for update in updates.iter_mut() {
                     if update.package_id == invalid_package_id {
@@ -852,7 +856,7 @@ impl Lockfile {
                             root_deps.iter_mut().zip(old_resolutions.iter())
                         {
                             if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
-                                if old_resolution as usize >= old.packages.len() {
+                                if old_resolution as usize >= packages_len {
                                     continue;
                                 }
                                 let res = resolutions_of_yore[old_resolution as usize];
@@ -864,6 +868,8 @@ impl Lockfile {
 
                                 // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
+                                // SAFETY: tag checked == .npm above; `npm` is the active union field.
+                                let npm_ver = unsafe { res.value.npm.version };
                                 let buf = {
                                     let mut cursor: &mut [u8] = &mut temp_buf[..];
                                     let start_len = cursor.len();
@@ -871,10 +877,7 @@ impl Lockfile {
                                         cursor,
                                         "{}{}",
                                         if exact_versions { "" } else { "^" },
-                                        res.value
-                                            .npm
-                                            .version
-                                            .fmt(old.buffers.string_bytes.as_slice()),
+                                        npm_ver.fmt(string_builder.string_bytes.as_slice()),
                                     )
                                     .is_err()
                                     {
@@ -889,14 +892,14 @@ impl Lockfile {
                                     string_builder.append::<ExternalString>(buf);
                                 let sliced = external_version
                                     .value
-                                    .sliced(old.buffers.string_bytes.as_slice());
+                                    .sliced(string_builder.string_bytes.as_slice());
                                 dep.version = Dependency::parse(
                                     dep.name,
                                     dep.name_hash,
                                     sliced.slice,
                                     &sliced,
                                     None,
-                                    manager,
+                                    &mut *manager,
                                 )
                                 .unwrap_or_default();
                             }
@@ -1085,14 +1088,16 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
+        // PORT NOTE: explicit `&mut *` reborrows so `old`/`manager`/`new` are
+        // released back to this scope once `cloner` is dropped.
         let mut cloner = Cloner {
-            old,
+            old: &mut *old,
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
             log,
             old_preinstall_state,
-            manager,
+            manager: &mut *manager,
             trees: tree::List::default(),
             trees_count: 1,
         };
@@ -1100,98 +1105,104 @@ impl Lockfile {
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
         let _ = root.clone(&mut cloner)?;
 
-        // Clone workspace_paths and workspace_versions at the end.
-        if old.workspace_paths.count() > 0 || old.workspace_versions.count() > 0 {
-            new.workspace_paths
-                .ensure_total_capacity(old.workspace_paths.count())?;
-            new.workspace_versions
-                .ensure_total_capacity(old.workspace_versions.count())?;
+        // PORT NOTE: between here and `cloner.flush()`, `old`/`new`/`manager`
+        // are live inside `cloner`. Reach them via `cloner.old` /
+        // `cloner.lockfile` so borrowck sees disjoint field paths.
+        {
+            let old = &mut *cloner.old;
+            let new = &mut *cloner.lockfile;
 
-            let mut workspace_paths_builder = new.string_builder();
+            // Clone workspace_paths and workspace_versions at the end.
+            if old.workspace_paths.count() > 0 || old.workspace_versions.count() > 0 {
+                new.workspace_paths
+                    .ensure_total_capacity(old.workspace_paths.count())?;
+                new.workspace_versions
+                    .ensure_total_capacity(old.workspace_versions.count())?;
 
-            // Sort by name for determinism
-            // PORT NOTE: Zig defines a local `WorkspacePathSorter` struct; in Rust we use a closure.
-            {
-                let string_buf = old.buffers.string_bytes.as_slice();
-                // `ArrayHashMap::sort` mirrors Zig's `entries.sort(ctx)` —
-                // `(keys, values, a, b) -> bool` (less-than).
-                old.workspace_paths.sort(|_keys, values, a, b| {
-                    let left = values[a];
-                    let right = values[b];
-                    strings::order(left.slice(string_buf), right.slice(string_buf))
-                        == Ordering::Less
-                });
-            }
+                // Field-level split borrow of `new` (string_bytes + string_pool).
+                let mut workspace_paths_builder = string_builder!(new);
 
-            for path in old.workspace_paths.values() {
-                workspace_paths_builder.count(old.str(path));
-            }
-            let versions: &[Semver::Version] = old.workspace_versions.values();
-            for version in versions {
-                version.count(
-                    old.buffers.string_bytes.as_slice(),
-                    &mut workspace_paths_builder,
+                // Sort by name for determinism
+                // PORT NOTE: Zig defines a local `WorkspacePathSorter` struct; in Rust we use a closure.
+                {
+                    let string_buf = old.buffers.string_bytes.as_slice();
+                    // `ArrayHashMap::sort` mirrors Zig's `entries.sort(ctx)` —
+                    // `(keys, values, a, b) -> bool` (less-than).
+                    old.workspace_paths.sort(|_keys, values, a, b| {
+                        let left = values[a];
+                        let right = values[b];
+                        strings::order(left.slice(string_buf), right.slice(string_buf))
+                            == Ordering::Less
+                    });
+                }
+
+                let old_string_buf = old.buffers.string_bytes.as_slice();
+                for path in old.workspace_paths.values() {
+                    workspace_paths_builder.count(path.slice(old_string_buf));
+                }
+                let versions: &[Semver::Version] = old.workspace_versions.values();
+                for version in versions {
+                    version.count(old_string_buf, &mut workspace_paths_builder);
+                }
+
+                workspace_paths_builder.allocate()?;
+
+                // SAFETY: capacity reserved by `ensure_total_capacity` above; every
+                // slot in `0..old.count()` is overwritten by the copy/zip loops below
+                // before `re_index()` reads them. Mirrors Zig `entries.len = n`.
+                unsafe { new.workspace_paths.set_entries_len(old.workspace_paths.count()) };
+
+                debug_assert_eq!(
+                    old.workspace_paths.values().len(),
+                    new.workspace_paths.values().len()
                 );
+                for (src, dest) in old
+                    .workspace_paths
+                    .values()
+                    .iter()
+                    .zip(new.workspace_paths.values_mut().iter_mut())
+                {
+                    *dest = workspace_paths_builder.append::<SemverString>(src.slice(old_string_buf));
+                }
+                new.workspace_paths
+                    .keys_mut()
+                    .copy_from_slice(old.workspace_paths.keys());
+
+                new.workspace_versions
+                    .ensure_total_capacity(old.workspace_versions.count())?;
+                // SAFETY: capacity reserved immediately above; every slot is filled by
+                // the zip loop below before `re_index()`. Mirrors Zig `entries.len = n`.
+                unsafe { new.workspace_versions.set_entries_len(old.workspace_versions.count()) };
+                for (src, dest) in versions
+                    .iter()
+                    .zip(new.workspace_versions.values_mut().iter_mut())
+                {
+                    *dest = src.append(old_string_buf, &mut workspace_paths_builder);
+                }
+
+                new.workspace_versions
+                    .keys_mut()
+                    .copy_from_slice(old.workspace_versions.keys());
+
+                workspace_paths_builder.clamp();
+
+                new.workspace_versions.re_index()?;
+                new.workspace_paths.re_index()?;
             }
-
-            workspace_paths_builder.allocate()?;
-
-            // SAFETY: capacity reserved by `ensure_total_capacity` above; every
-            // slot in `0..old.count()` is overwritten by the copy/zip loops below
-            // before `re_index()` reads them. Mirrors Zig `entries.len = n`.
-            unsafe { new.workspace_paths.set_entries_len(old.workspace_paths.count()) };
-
-            debug_assert_eq!(
-                old.workspace_paths.values().len(),
-                new.workspace_paths.values().len()
-            );
-            for (src, dest) in old
-                .workspace_paths
-                .values()
-                .iter()
-                .zip(new.workspace_paths.values_mut().iter_mut())
-            {
-                *dest = workspace_paths_builder.append::<SemverString>(old.str(src));
-            }
-            new.workspace_paths
-                .keys_mut()
-                .copy_from_slice(old.workspace_paths.keys());
-
-            new.workspace_versions
-                .ensure_total_capacity(old.workspace_versions.count())?;
-            // SAFETY: capacity reserved immediately above; every slot is filled by
-            // the zip loop below before `re_index()`. Mirrors Zig `entries.len = n`.
-            unsafe { new.workspace_versions.set_entries_len(old.workspace_versions.count()) };
-            for (src, dest) in versions
-                .iter()
-                .zip(new.workspace_versions.values_mut().iter_mut())
-            {
-                *dest = src.append(
-                    old.buffers.string_bytes.as_slice(),
-                    &mut workspace_paths_builder,
-                );
-            }
-
-            new.workspace_versions
-                .keys_mut()
-                .copy_from_slice(old.workspace_versions.keys());
-
-            workspace_paths_builder.clamp();
-
-            new.workspace_versions.re_index()?;
-            new.workspace_paths.re_index()?;
         }
 
         // When you run `"bun add react"
         // This is where we update it in the lockfile from "latest" to "^17.0.2"
         cloner.flush()?;
+        // `cloner` no longer needed — release the reborrows of `old`/`new`/`manager`.
+        drop(cloner);
 
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
 
         {
-            let mut builder = new.string_builder();
+            let mut builder = string_builder!(new);
             for patched_dep in old.patched_dependencies.values() {
                 builder.count(patched_dep.path.slice(old.buffers.string_bytes.as_slice()));
             }

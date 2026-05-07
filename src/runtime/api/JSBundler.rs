@@ -1570,6 +1570,11 @@ pub mod js_bundler {
             is_last: JSValue,
             is_bake: JSValue,
         ) -> JSValue;
+        fn JSBundlerPlugin__loadAndResolvePluginsForServe(
+            plugin: *const Plugin,
+            plugins: JSValue,
+            bunfig_folder: JSValue,
+        ) -> JSValue;
     }
 
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
@@ -1608,6 +1613,13 @@ pub mod js_bundler {
         ) -> JsResult<JSValue>;
         fn drain_deferred(&mut self, rejected: bool) -> JsResult<()>;
         fn set_config(&mut self, config: *mut c_void);
+        /// Thin FFI forward; the host-call wrapper / exception check is the
+        /// caller's responsibility (`jsc::host_fn::from_js_host_call`).
+        fn load_and_resolve_plugins_for_serve(
+            &self,
+            plugins: JSValue,
+            bunfig_folder: JSValue,
+        ) -> JSValue;
     }
 
     impl PluginJscExt for Plugin {
@@ -1744,6 +1756,17 @@ pub mod js_bundler {
             jsc::mark_binding();
             // SAFETY: self is valid opaque FFI handle
             unsafe { JSBundlerPlugin__setConfig(self, config) };
+        }
+
+        fn load_and_resolve_plugins_for_serve(
+            &self,
+            plugins: JSValue,
+            bunfig_folder: JSValue,
+        ) -> JSValue {
+            jsc::mark_binding();
+            // SAFETY: self is a valid opaque FFI handle; arguments are valid
+            // JSValues. Exception handling is the caller's responsibility.
+            unsafe { JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder) }
         }
     }
 

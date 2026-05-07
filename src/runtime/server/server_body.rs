@@ -4999,7 +4999,6 @@ impl AnyServer {
     }
 
     pub fn plugins(&self) -> Option<&ServePlugins> {
-        // TODO(port): returns Option<Rc<ServePlugins>> deref
         // SAFETY: `plugins` holds a counted ref; live while the server is.
         any_server_dispatch!(self, |s| s.plugins.map(|p| unsafe { &*p.as_ptr() }))
     }
@@ -5295,18 +5294,116 @@ pub fn server_set_max_http_header_size_(
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(port): @export — host_fn.wrap{3,4} generates the C-ABI shim. Phase B: emit via proc-macro.
-#[unsafe(no_mangle)]
-pub extern "C" fn Server__setAppFlags() {
-    // TODO(port): proc-macro — wrap4(server_set_app_flags_)
+// `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
+// (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
+// exception left on the global. Signatures match the C++ callers in
+// `node:http`/`node:https` (`bindings/BunJSCHost.cpp`).
+#[bun_jsc::host_call]
+#[unsafe(export_name = "Server__setAppFlags")]
+fn server_set_app_flags_shim(
+    global: *mut JSGlobalObject,
+    server: JSValue,
+    require_host_header: bool,
+    use_strict_method_validation: bool,
+) -> JSValue {
+    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
+    let global = unsafe { &*global };
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_app_flags_(global, server, require_host_header, use_strict_method_validation),
+    )
 }
-#[unsafe(no_mangle)]
-pub extern "C" fn Server__setOnClientError() {
-    // TODO(port): proc-macro — wrap3(server_set_on_client_error_)
+
+#[bun_jsc::host_call]
+#[unsafe(export_name = "Server__setOnClientError")]
+fn server_set_on_client_error_shim(
+    global: *mut JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
+    let global = unsafe { &*global };
+    host_fn::to_js_host_fn_result(global, server_set_on_client_error_(global, server, callback))
 }
-#[unsafe(no_mangle)]
-pub extern "C" fn Server__setMaxHTTPHeaderSize() {
-    // TODO(port): proc-macro — wrap3(server_set_max_http_header_size_)
+
+#[bun_jsc::host_call]
+#[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
+fn server_set_max_http_header_size_shim(
+    global: *mut JSGlobalObject,
+    server: JSValue,
+    max_header_size: u64,
+) -> JSValue {
+    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
+    let global = unsafe { &*global };
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_max_http_header_size_(global, server, max_header_size),
+    )
+}
+
+// ─── HTTPServerAgent event body (runtime-tier) ───────────────────────────────
+//
+// `jsc.Debugger.HTTPServerAgent.notifyServerRoutesUpdated` (HTTPServerAgent.zig)
+// reaches into `AnyServer`/`ServerConfig`, which live in this crate; the FFI
+// pointer + `Route` payload type live in `bun_jsc::http_server_agent`. The
+// event body therefore lives here and consumes the lower-crate types.
+fn http_server_agent_notify_routes_updated<const SSL: bool, const DEBUG: bool>(
+    agent: &http_server_agent::HTTPServerAgent,
+    server_id: http_server_agent::ServerId,
+    user_routes: &[UserRoute<SSL, DEBUG>],
+    static_routes: &[server_config::StaticRouteEntry],
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(handle) = agent.agent else { return Ok(()) };
+
+    let mut routes: Vec<http_server_agent::Route> = Vec::new();
+    let mut max_id: u32 = 0;
+
+    for user_route in user_routes {
+        max_id = max_id.max(user_route.id);
+        routes.push(http_server_agent::Route {
+            route_id: user_route.id as http_server_agent::RouteId,
+            path: BunString::init(user_route.route.path.to_bytes()),
+            r#type: http_server_agent::RouteType::Api,
+            ..Default::default()
+        });
+    }
+
+    for entry in static_routes {
+        max_id += 1;
+        let (rtype, file_path) = match &entry.route {
+            super::AnyRoute::Html(html) => (
+                http_server_agent::RouteType::Html,
+                // SAFETY: RefPtr.data is a live NonNull while in the route table;
+                // the inner `bundle` RefPtr is likewise live for the route's lifetime.
+                BunString::init(unsafe { &(*html.data.as_ref().bundle.data.as_ptr()).path }),
+            ),
+            super::AnyRoute::Static(_) => (http_server_agent::RouteType::Static, BunString::EMPTY),
+            _ => (http_server_agent::RouteType::Default, BunString::EMPTY),
+        };
+        routes.push(http_server_agent::Route {
+            route_id: max_id as http_server_agent::RouteId,
+            path: BunString::init(&entry.path),
+            r#type: rtype,
+            file_path,
+            ..Default::default()
+        });
+    }
+
+    // SAFETY: `VirtualMachine::get()` is the JS-thread singleton.
+    let hot_reload_id =
+        unsafe { (*jsc::virtual_machine::VirtualMachine::get()).hot_reload_counter } as http_server_agent::HotReloadId;
+    // SAFETY: `handle` is a live C++ `InspectorHTTPServerAgent` (set via
+    // `Bun__HTTPServerAgent__setEnabled`); `routes` borrowed for the FFI call.
+    unsafe {
+        InspectorHTTPServerAgent::notify_server_routes_updated(
+            handle.as_ptr(),
+            server_id,
+            hot_reload_id,
+            &mut routes,
+        );
+    }
+    // `routes` (and each `Route`'s BunStrings) drop here per `impl Drop for Route`.
+    Ok(())
 }
 
 // ─── Externs ─────────────────────────────────────────────────────────────────

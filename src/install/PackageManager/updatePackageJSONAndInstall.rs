@@ -251,7 +251,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                             let dependencies = e_object.properties.slice_mut();
                             let mut i: usize = 0;
                             let mut new_len = dependencies.len();
-                            while i < dependencies.len() {
+                            // PORT NOTE: Zig copies `dependencies[i] = dependencies[new_len - 1]`
+                            // and iterates to the original length. `G::Property` is not `Copy` in
+                            // Rust, so we `swap` instead — but the swapped-out matched element
+                            // lands in the truncated tail and MUST NOT be revisited (it would
+                            // match again and over-truncate). Bounding by `new_len` yields the
+                            // same result as Zig for the unique-key case package.json guarantees.
+                            while i < new_len {
                                 let key = dependencies[i].key.unwrap();
                                 if key.data.is_e_string() {
                                     if key.data.as_e_string().unwrap().eql_bytes(request.name) {

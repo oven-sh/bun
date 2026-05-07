@@ -816,7 +816,9 @@ impl BufferOutputSink {
         unsafe { (*sink).response_value.set(global, response_js_value) };
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
-        unsafe { (*result).set_url((*original).url()) };
+        // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump
+        // (html_rewriter.zig:492 `original.getUrl().clone()`).
+        unsafe { (*result).set_url((*original).url().clone()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };

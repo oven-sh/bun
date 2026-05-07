@@ -445,7 +445,7 @@ impl FileRoute {
         // the handler bails with NO response written (the defer above closes
         // the fd and decrements the route ref, leaving the client hung until
         // timeout). That `catch return` is itself flagged as a TODO in the
-        // .zig. The Rust `PARSE_DATE_HOOK` instead maps a parse failure to
+        // .zig. The Rust `__bun_uws_parse_date` instead maps a parse failure to
         // `None`, so a malformed If-Modified-Since header degrades to "serve
         // the file unconditionally" — the RFC 9110 §13.1.3-correct behaviour
         // and what the Zig TODO is asking for. Kept divergent on purpose.

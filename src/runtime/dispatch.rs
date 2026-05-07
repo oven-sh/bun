@@ -751,6 +751,87 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// io::Poll dispatch (src/io/io.zig `Poll.onUpdateKqueue`/`onUpdateEpoll` switch)
+// ════════════════════════════════════════════════════════════════════════════
+
+use crate::webcore::blob::read_file::ReadFile;
+use crate::webcore::blob::write_file::WriteFile;
+
+/// Recover the `ReadFile`/`WriteFile` parent from its embedded `io_poll` field.
+/// SAFETY: `poll` must be `&parent.io_poll` of a live `T`.
+#[inline]
+unsafe fn container_of_io_poll<T>(poll: *mut bun_io::Poll, off: usize) -> *mut T {
+    // SAFETY: per fn contract — `poll` is interior; `off` is `offset_of!(T, io_poll)`.
+    unsafe { poll.cast::<u8>().sub(off).cast::<T>() }
+}
+
+/// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
+/// `bun_io`. Spec `io.zig:626`: `inline else => |t| { var this:
+/// *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll); this.onReady(); }`.
+///
+/// # Safety
+/// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+    match tag {
+        bun_io::PollableTag::ReadFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe {
+                &mut *container_of_io_poll::<ReadFile>(poll, core::mem::offset_of!(ReadFile, io_poll))
+            };
+            this.on_ready();
+        }
+        bun_io::PollableTag::WriteFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe {
+                &mut *container_of_io_poll::<WriteFile>(poll, core::mem::offset_of!(WriteFile, io_poll))
+            };
+            this.on_ready();
+        }
+        bun_io::PollableTag::Empty => {
+            // Waker / unblock-only — caller already filtered this out.
+            debug_assert!(false, "io::Poll on_ready with Empty tag");
+        }
+    }
+}
+
+/// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
+/// `bun_io`. Spec `io.zig:629`: `this.onIOError(err)`.
+///
+/// # Safety
+/// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_pollable_on_io_error(
+    tag: bun_io::PollableTag,
+    poll: *mut bun_io::Poll,
+    err: bun_sys::Error,
+) {
+    match tag {
+        bun_io::PollableTag::ReadFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe {
+                &mut *container_of_io_poll::<ReadFile>(poll, core::mem::offset_of!(ReadFile, io_poll))
+            };
+            this.on_io_error(err);
+        }
+        bun_io::PollableTag::WriteFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe {
+                container_of_io_poll::<WriteFile>(poll, core::mem::offset_of!(WriteFile, io_poll))
+            };
+            // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
+            // self-recovers via the io_request path elsewhere); reuse that
+            // shape rather than reborrowing `&mut`.
+            WriteFile::on_io_error(this.cast(), err);
+        }
+        bun_io::PollableTag::Empty => {
+            debug_assert!(false, "io::Poll on_io_error with Empty tag");
+            let _ = err;
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 

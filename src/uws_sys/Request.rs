@@ -184,5 +184,5 @@ mod c {
 //   source:     src/uws_sys/Request.zig (97 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      H3Request import path + PARSE_DATE_HOOK registration need Phase B verification; returned &[u8] lifetimes tied to &self
+//   notes:      H3Request import path needs Phase B verification; returned &[u8] lifetimes tied to &self
 // ──────────────────────────────────────────────────────────────────────────

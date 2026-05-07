@@ -825,5 +825,5 @@ mod c {
 //               assert, `mem::zeroed::<H>()` inside the `extern "C"` trampoline) —
 //               same shape as Response.rs so AnyResponse can dispatch uniformly.
 //               `date_for_header` reaches into bun_jsc/bun_str — routed through
-//               `crate::request::PARSE_DATE_HOOK`.
+//               link-time `extern "Rust"` `__bun_uws_parse_date`.
 // ──────────────────────────────────────────────────────────────────────────

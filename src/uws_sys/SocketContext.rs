@@ -245,5 +245,5 @@ pub mod c {
 //   source:     src/uws_sys/SocketContext.zig (139 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      bun_boringssl_sys::Sha256 (forward-ref) / STAT_FILE_HOOK / ZStr API names assumed; verify in Phase B
+//   notes:      bun_boringssl_sys::Sha256 (forward-ref) / ZStr API names assumed; verify in Phase B
 // ──────────────────────────────────────────────────────────────────────────

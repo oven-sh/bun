@@ -678,6 +678,189 @@ impl EventLoopHandle {
     // PORT NOTE: Zig `allocator()` dropped per §Allocators (non-AST crate).
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// bun_io FilePoll link-time bodies (CYCLEBREAK §io)
+//
+// `bun_io` (T2) cannot name `bun_aio::FilePoll` (T3) or this crate's
+// `EventLoopHandle` (T4). It declares the surface below as `extern "Rust"` and
+// stores opaque `*mut c_void` handles; the bodies live here because this is
+// the lowest tier that can name *both* concrete types. Zig
+// (`PipeReader.zig` / `PipeWriter.zig`) reached `bun.aio.FilePoll` directly.
+// ════════════════════════════════════════════════════════════════════════════
+
+use bun_aio::posix_event_loop::{
+    FilePoll as AioFilePoll, Flags as AioFlags, FlagsSet as AioFlagsSet, OneShotFlag, Owner,
+};
+use bun_io::{FilePollFlag, FilePollKind, FilePollPtr};
+use bun_sys::Fd;
+
+/// Recover the typed `EventLoopHandle` from `bun_io`'s opaque newtype. Every
+/// `bun_io::EventLoopHandle` is constructed by a `bun_runtime` caller as
+/// `bun_io::EventLoopHandle(&handle as *const EventLoopHandle as *mut c_void)`,
+/// so the pointee is always one of ours.
+///
+/// SAFETY: `ev.0` must point to a live `EventLoopHandle` for the call.
+#[inline]
+unsafe fn io_ev(ev: bun_io::EventLoopHandle) -> EventLoopHandle {
+    // SAFETY: per fn contract; `EventLoopHandle` is `Copy`.
+    unsafe { *(ev.0 as *const EventLoopHandle) }
+}
+
+#[inline]
+fn io_flag(f: FilePollFlag) -> AioFlags {
+    match f {
+        FilePollFlag::PollWritable => AioFlags::PollWritable,
+        FilePollFlag::Nonblocking => AioFlags::Nonblocking,
+        FilePollFlag::Hup => AioFlags::Hup,
+        FilePollFlag::WasEverRegistered => AioFlags::WasEverRegistered,
+        FilePollFlag::Socket => AioFlags::Socket,
+        FilePollFlag::Fifo => AioFlags::Fifo,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_init(
+    ev: bun_io::EventLoopHandle,
+    fd: Fd,
+    owner_tag: u8,
+    owner: *mut core::ffi::c_void,
+) -> FilePollPtr {
+    // SAFETY: see `io_ev`.
+    let ctx = unsafe { io_ev(ev) }.as_event_loop_ctx();
+    AioFilePoll::init(ctx, fd, AioFlagsSet::empty(), Owner::new(owner_tag, owner.cast()))
+        .cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_fd(p: FilePollPtr) -> Fd {
+    // SAFETY: `p` is a hive slot returned by `__bun_io_file_poll_init`.
+    unsafe { (*p.cast::<AioFilePoll>()).fd }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_set_owner(p: FilePollPtr, owner_tag: u8, owner: *mut core::ffi::c_void) {
+    // SAFETY: `p` is a live hive slot; field write only.
+    unsafe { (*p.cast::<AioFilePoll>()).owner = Owner::new(owner_tag, owner.cast()) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_deinit_force_unregister(p: FilePollPtr) {
+    // SAFETY: `p` is a live hive slot; `deinit_force_unregister` returns it to
+    // the pool (caller must not touch `p` afterwards — matches Zig).
+    unsafe { (*p.cast::<AioFilePoll>()).deinit_force_unregister() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_register(
+    p: FilePollPtr,
+    loop_: *mut core::ffi::c_void,
+    kind: FilePollKind,
+    fd: Fd,
+) -> bun_sys::Result<()> {
+    let flag = match kind {
+        FilePollKind::Readable => AioFlags::PollReadable,
+        FilePollKind::Writable => AioFlags::PollWritable,
+    };
+    // Spec PipeReader.zig:330 / PipeWriter.zig:64: `registerWithFd(loop,
+    // .{read,writ}able, .dispatch, fd)`.
+    // SAFETY: `p` is a live hive slot; `loop_` is the `*mut UwsLoop` returned
+    // by `__bun_io_event_loop_to_loop` (same ev handle).
+    unsafe {
+        (*p.cast::<AioFilePoll>()).register_with_fd(
+            &mut *loop_.cast::<UwsLoop>(),
+            flag,
+            OneShotFlag::Dispatch,
+            fd,
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_unregister(
+    p: FilePollPtr,
+    loop_: *mut core::ffi::c_void,
+    force_unregister: bool,
+) -> bun_sys::Result<()> {
+    // SAFETY: see `__bun_io_file_poll_register`.
+    unsafe {
+        (*p.cast::<AioFilePoll>()).unregister(&mut *loop_.cast::<UwsLoop>(), force_unregister)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_has_flag(p: FilePollPtr, f: FilePollFlag) -> bool {
+    // SAFETY: `p` is a live hive slot; field read only.
+    unsafe { (*p.cast::<AioFilePoll>()).flags.contains(io_flag(f)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_set_flag(p: FilePollPtr, f: FilePollFlag) {
+    // SAFETY: `p` is a live hive slot; field write only.
+    unsafe { (*p.cast::<AioFilePoll>()).flags.insert(io_flag(f)) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_file_type(p: FilePollPtr) -> bun_io::FileType {
+    // SAFETY: `p` is a live hive slot.
+    unsafe { (*p.cast::<AioFilePoll>()).file_type() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_is_registered(p: FilePollPtr) -> bool {
+    // SAFETY: `p` is a live hive slot.
+    unsafe { (*p.cast::<AioFilePoll>()).is_registered() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_is_watching(p: FilePollPtr) -> bool {
+    // SAFETY: `p` is a live hive slot.
+    unsafe { (*p.cast::<AioFilePoll>()).is_watching() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_is_active(p: FilePollPtr) -> bool {
+    // SAFETY: `p` is a live hive slot.
+    unsafe { (*p.cast::<AioFilePoll>()).is_active() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_can_enable_keeping_process_alive(p: FilePollPtr) -> bool {
+    // SAFETY: `p` is a live hive slot.
+    unsafe { (*p.cast::<AioFilePoll>()).can_enable_keeping_process_alive() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_enable_keeping_process_alive(
+    p: FilePollPtr,
+    ev: bun_io::EventLoopHandle,
+) {
+    // SAFETY: `p` is a live hive slot; see `io_ev`.
+    let ctx = unsafe { io_ev(ev) }.as_event_loop_ctx();
+    unsafe { (*p.cast::<AioFilePoll>()).enable_keeping_process_alive(ctx) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_file_poll_disable_keeping_process_alive(
+    p: FilePollPtr,
+    ev: bun_io::EventLoopHandle,
+) {
+    // SAFETY: `p` is a live hive slot; see `io_ev`.
+    let ctx = unsafe { io_ev(ev) }.as_event_loop_ctx();
+    unsafe { (*p.cast::<AioFilePoll>()).disable_keeping_process_alive(ctx) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_event_loop_to_loop(ev: bun_io::EventLoopHandle) -> *mut core::ffi::c_void {
+    // SAFETY: see `io_ev`.
+    unsafe { io_ev(ev) }.loop_().cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_io_pipe_read_buffer(ev: bun_io::EventLoopHandle) -> *mut [u8] {
+    // SAFETY: see `io_ev`.
+    unsafe { io_ev(ev) }.pipe_read_buffer()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/event_loop/AnyEventLoop.zig (123 lines)

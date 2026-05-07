@@ -446,7 +446,7 @@ impl HardLinkWindowsInstallTask {
         };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { HARDLINK_QUEUE.assume_init_ref() };
-        let _guard = scopeguard::guard((), |_| queue.complete_one());
+        scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: self_ is valid until deinit().
         if let Some(err) = unsafe { (*self_).run() } {
@@ -558,7 +558,7 @@ impl UninstallTask {
         let uninstall_task = unsafe { Box::from_raw(uninstall_task) };
 
         let mut debug_timer = Output::DebugTimer::start();
-        let _guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             let pm = crate::package_manager::get();
             // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection
             // avoids materializing `&mut PackageManager` from a worker thread (the
@@ -568,7 +568,7 @@ impl UninstallTask {
                 (*pm).pending_tasks.fetch_sub(1, Ordering::Release);
                 PackageManager::wake_raw(pm);
             }
-        });
+        }
 
         let dirname =
             path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);

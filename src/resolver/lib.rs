@@ -2887,14 +2887,6 @@ mod bun_paths {
     pub fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts))
     }
-    /// Port of `bun.PosixToWinNormalizer` — on POSIX it's a no-op pass-through.
-    // TODO(b2-blocked): real Windows long-path / drive-relative normalization.
-    #[derive(Default)]
-    pub struct PosixToWinNormalizer;
-    impl PosixToWinNormalizer {
-        pub fn resolve_cwd<'b>(&mut self, p: &'b [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> { Ok(p) }
-        pub fn resolve<'b>(&mut self, _source_dir: &[u8], p: &'b [u8]) -> &'b [u8] { p }
-    }
     /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Type-only
     /// here; callers pass it to `open_dir_z` which wants a `&ZStr`.
     pub fn path_literal(p: &'static [u8]) -> &'static [u8] { p }

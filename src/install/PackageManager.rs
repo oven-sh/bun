@@ -1541,7 +1541,6 @@ pub fn init(
         // PORT NOTE: reshaped — Zig uses withoutSuffixComptime(.., sep_str ++ "package.json")
 
         // Check if this is a workspace; if so, use root package
-        let mut found = false;
         if subcommand.should_chdir_to_root() {
             if !created_package_json {
                 while let Some(parent) = bun_core::dirname(this_cwd) {

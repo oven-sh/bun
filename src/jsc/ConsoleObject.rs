@@ -3087,17 +3087,12 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ZigString>> {
-        // TODO(phase-c): body re-gated — `JSValue::get_class_name` /
-        // `get_prototype` not yet ported.
-
-        {
-            let mut name_str = ZigString::init(b"");
-            value.get_class_name(global_this, &mut name_str)?;
-            if !name_str.eql_comptime(b"Object") {
-                return Ok(Some(name_str));
-            } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-                return Ok(Some(ZigString::static_("[Object: null prototype]")));
-            }
+        let mut name_str = ZigString::init(b"");
+        value.get_class_name(global_this, &mut name_str)?;
+        if !name_str.eql_comptime(b"Object") {
+            return Ok(Some(name_str));
+        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+            return Ok(Some(ZigString::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3120,10 +3115,6 @@ pub mod formatter {
     // print_as — the big tag-dispatched printer
     // ───────────────────────────────────────────────────────────────────────
 
-    // TODO(phase-c): re-gated — `print_as` body (~700L) references ~22
-    // unported `JSValue`/`ZigString`/`VirtualMachine` methods. Stub provided
-    // below; restore arm-by-arm as the missing surface lands.
-    
     impl<'a> Formatter<'a> {
         pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
             &mut self,

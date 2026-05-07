@@ -660,8 +660,8 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
 // UrlProtocol / UrlProtocolPair
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): lifetime on transient struct — `Custom` borrows from the input
-// `npa_str`. This is BORROW_PARAM-shaped; verify in Phase B.
+// PORT NOTE: Zig `union(enum) { custom: []const u8 }` borrowed the input `npa_str`.
+// Carries a BORROW_PARAM lifetime; lives only for the duration of `parse_url`.
 #[derive(Debug, Clone, Copy)]
 pub enum UrlProtocol<'a> {
     WellFormed(WellDefinedProtocol),
@@ -1832,10 +1832,10 @@ pub mod formatters {
 // configs (std.enums.EnumArray)
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.enums.EnumArray(Self, Config).init(.{...})` is a const dense
-// array indexed by enum. `enum_map::EnumMap` can't be const-initialized with fn
-// pointers easily; using a `once_cell`/`LazyLock` static here. Phase B may
-// flatten this into a `match`-based accessor for zero overhead.
+// PERF(port): was `std.enums.EnumArray(Self, Config).init(.{...})` (comptime
+// dense array indexed by enum). `enum_map::EnumMap` can't be const-initialized
+// with fn pointers, so this uses a `OnceLock` static — profile in Phase B and
+// flatten into a `match`-based accessor if it shows up.
 fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();

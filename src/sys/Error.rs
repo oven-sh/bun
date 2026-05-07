@@ -439,3 +439,12 @@ impl bun_core::output::ErrName for Error {
         })
     }
 }
+// `&Error` — lets callers print-then-propagate without a clone
+// (`Output::err(&e, …); return Err(e.into())`), matching Zig's
+// `Output.err(err, …); return err` where `err` is Copy.
+impl bun_core::output::ErrName for &Error {
+    fn name(&self) -> &[u8] { Error::name(self) }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+        (**self).as_sys_err_info()
+    }
+}

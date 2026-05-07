@@ -98,8 +98,17 @@ pub fn run_as_coordinator(
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 
     // Owned NUL-terminated path bytes (Zig: `[:0]const u8` from allocPrintSentinel).
+<<<<<<< Updated upstream
     // ZStr is a borrow header; we must own the backing storage here.
     let mut worker_tmpdir = WorkerTmpdir(None);
+||||||| Stash base
+    // ZStr is a borrow header; we must own the backing storage here.
+    let mut worker_tmpdir: Option<Box<[u8]>> = None;
+=======
+    // ZStr is a borrow header; we must own the backing storage here. Drop
+    // recursively removes the directory once the run finishes.
+    let mut worker_tmpdir = WorkerTmpdir(None);
+>>>>>>> Stashed changes
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {

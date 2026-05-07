@@ -2534,6 +2534,8 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            // Zig: `errdefer path.deinit()` — covers the `try get_boolean_strict` throw.
+            let path = scopeguard::guard(path, |p| p.deinit());
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
                     if next_val.is_object() {
@@ -2544,7 +2546,7 @@ pub mod args {
                 }
                 false
             };
-            Ok(StatFS { path, big_int })
+            Ok(StatFS { path: scopeguard::ScopeGuard::into_inner(path), big_int })
         }
     }
 
@@ -2560,6 +2562,8 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            // Zig: `errdefer path.deinit()` (node_fs.zig:1756).
+            let path = scopeguard::guard(path, |p| p.deinit());
             let mut throw_if_no_entry = true;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
@@ -2572,7 +2576,7 @@ pub mod args {
                 }
                 false
             };
-            Ok(Stat { path, big_int, throw_if_no_entry })
+            Ok(Stat { path: scopeguard::ScopeGuard::into_inner(path), big_int, throw_if_no_entry })
         }
     }
 

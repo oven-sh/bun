@@ -98,7 +98,9 @@ pub fn testing_impl(
             "minifyTestWithOptions: expected source to be a string"
         )));
     }
-    let source_bunstr = source_arg.to_bun_string(global)?;
+    // Zig: `defer source_bunstr.deref()` — `to_bun_string` returns a +1 ref and
+    // `bun_string::String` is `Copy` (no `Drop`), so wrap in `OwnedString` for RAII release.
+    let source_bunstr = OwnedString::new(source_arg.to_bun_string(global)?);
     let source = source_bunstr.to_utf8();
 
     let Some(expected_arg) = arguments.next_eat() else {
@@ -111,7 +113,8 @@ pub fn testing_impl(
             "minifyTestWithOptions: expected `expected` arg to be a string"
         )));
     }
-    let expected_bunstr = expected_arg.to_bun_string(global)?;
+    // Zig: `defer expected_bunstr.deref()`
+    let expected_bunstr = OwnedString::new(expected_arg.to_bun_string(global)?);
     let _expected = expected_bunstr.to_utf8();
 
     let browser_options_arg = arguments.next_eat();
@@ -218,7 +221,8 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                let bunstr = item.to_bun_string(global)?;
+                // Zig: `defer bunstr.deref()` — release the +1 ref each iteration.
+                let bunstr = OwnedString::new(item.to_bun_string(global)?);
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
                     opts.flags |= bun_css::ParserFlags::DEEP_SELECTOR_COMBINATOR;
@@ -348,7 +352,9 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     if !source_arg.is_string() {
         return Err(global.throw(format_args!("attrTest: expected source to be a string")));
     }
-    let source_bunstr = source_arg.to_bun_string(global)?;
+    // Zig: `defer source_bunstr.deref()` — `to_bun_string` returns a +1 ref;
+    // `bun_string::String` is `Copy` (no `Drop`), so wrap in `OwnedString` for RAII release.
+    let source_bunstr = OwnedString::new(source_arg.to_bun_string(global)?);
     let source = source_bunstr.to_utf8();
 
     let Some(expected_arg) = arguments.next_eat() else {
@@ -359,7 +365,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             "attrTest: expected `expected` arg to be a string"
         )));
     }
-    let expected_bunstr = expected_arg.to_bun_string(global)?;
+    // Zig: `defer expected_bunstr.deref()`
+    let expected_bunstr = OwnedString::new(expected_arg.to_bun_string(global)?);
     let _expected = expected_bunstr.to_utf8();
 
     let Some(minify_arg) = arguments.next_eat() else {

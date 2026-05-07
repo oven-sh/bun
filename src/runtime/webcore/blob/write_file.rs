@@ -252,11 +252,11 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // SAFETY: just allocated; sole owner until returned.
-        unsafe {
-            (*write_file).file_blob.store.as_ref().unwrap().ref_();
-            (*write_file).bytes_blob.store.as_ref().unwrap().ref_();
-        }
+        // PORT NOTE: Zig followed with `file_blob.store.?.ref()` because Zig
+        // passes `Blob` by bitcopy (no ref bump) and has no destructors. In
+        // Rust the caller passes a `+1` Blob (via `dupe()`/`StoreRef::clone`)
+        // and `WriteFile::then` releases it via `Box::from_raw → StoreRef::Drop`,
+        // so the explicit ref/deref pair is folded into RAII.
         Ok(write_file)
     }
 
@@ -337,9 +337,9 @@ impl WriteFile {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;
 
-            (*this).bytes_blob.store.as_ref().unwrap().deref();
-            (*this).file_blob.store.as_ref().unwrap().deref();
-
+            // PORT NOTE: Zig `bytes_blob.store.?.deref()` → handled by
+            // `StoreRef::Drop` when the Box is reclaimed below (paired with the
+            // RAII note in `create_with_ctx`).
             system_error = (*this).system_error.take();
             total_written = (*this).total_written;
             drop(Box::from_raw(this));

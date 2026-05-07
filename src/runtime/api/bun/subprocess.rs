@@ -731,7 +731,7 @@ impl Subprocess<'_> {
         let arguments = callframe.arguments_old::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = signal_code_from_js(arguments.ptr[0], global_this)?;
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
 
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);
@@ -1106,7 +1106,7 @@ impl Subprocess<'_> {
 
                     match status {
                         Status::Exited(exited) => {
-                            promise
+                            let _ = promise
                                 .as_any_promise()
                                 .unwrap()
                                 .resolve(global_this, JSValue::js_number(exited.code as f64));
@@ -1114,14 +1114,14 @@ impl Subprocess<'_> {
                         }
                         Status::Err(ref err) => {
                             let js_err = err.to_js(global_this);
-                            promise
+                            let _ = promise
                                 .as_any_promise()
                                 .unwrap()
                                 .reject_with_async_stack(global_this, js_err);
                             // TODO: properly propagate exception upwards
                         }
                         Status::Signaled(signaled) => {
-                            promise.as_any_promise().unwrap().resolve(
+                            let _ = promise.as_any_promise().unwrap().resolve(
                                 global_this,
                                 JSValue::js_number(128u8.wrapping_add(signaled) as f64),
                             );

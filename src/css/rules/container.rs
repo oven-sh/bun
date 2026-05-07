@@ -391,8 +391,9 @@ impl<R> ContainerRule<R> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/css/rules/container.zig (350 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      structs/enums un-gated (data-only); Vec<T> kept over bumpalo Vec (PERF-tagged) — Phase B picks arena vs global crate-wide; parse/to_css/deep_clone gated on media_query parse_query_condition/operation_to_css + Property/PropertyId behavior + enum_property_util/FeatureIdTrait derive + CssRuleList::to_css + DeepClone
+//   source:     src/css/rules/container.zig
+//   confidence: high
+//   todos:      0
+//   notes:      Vec<T> kept over bumpalo Vec (PERF-tagged) — arena vs global
+//               decision is crate-wide and revisited when bumpalo lands.
 // ──────────────────────────────────────────────────────────────────────────

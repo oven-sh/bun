@@ -4185,6 +4185,30 @@ impl<'a> Resolver<'a> {
         self.log
     }
 
+    /// Temporarily redirect `self.log` to `log`, returning a guard that
+    /// restores the previous pointer on drop. Port of the Zig
+    /// `const orig = r.log; r.log = &tmp; defer r.log = orig;` pattern.
+    ///
+    /// Takes a raw `*mut Self` (not `&mut self`) so the stored slot pointer
+    /// carries SharedReadWrite provenance and stays valid under Stacked
+    /// Borrows when the caller subsequently reborrows the resolver
+    /// (`read_dir_info` etc.) before the guard drops.
+    ///
+    /// # Safety
+    /// `self_` must point at a `Resolver` that outlives the returned guard,
+    /// and `log` must remain valid for that same duration (declare the guard
+    /// *after* the temporary `Log` so it drops first).
+    #[inline]
+    pub unsafe fn scoped_log(self_: *mut Self, log: *mut logger::Log) -> ResolverLogScope {
+        // SAFETY: caller contract — `self_` is live; `addr_of_mut!` projects
+        // the field place without an intermediate `&mut Resolver`.
+        let slot = unsafe { core::ptr::addr_of_mut!((*self_).log) };
+        // SAFETY: `slot` just derived from a live resolver.
+        let prev = unsafe { *slot };
+        unsafe { *slot = log };
+        ResolverLogScope { slot, prev }
+    }
+
     /// Port of Zig `r.dir_cache` deref.
     ///
     /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —

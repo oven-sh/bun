@@ -30,6 +30,15 @@ impl Value {
             _ => unreachable!("manifest_mut on non-Manifest value"),
         }
     }
+
+    /// Immutable counterpart of `manifest_mut`.
+    #[inline]
+    pub fn manifest(&self) -> &npm::PackageManifest {
+        match self {
+            Value::Manifest(m) => m,
+            _ => unreachable!("manifest on non-Manifest value"),
+        }
+    }
 }
 
 // Zig used `IdentityContext(PackageNameHash)` (key is already a hash) with load factor 80.

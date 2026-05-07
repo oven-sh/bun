@@ -711,7 +711,18 @@ pub mod abort_handler {
         }
     }
 
-    pub fn install() {
+    /// Restores the previous SIGINT/SIGTERM (or Windows console-ctrl) handlers
+    /// when dropped. Returned by [`install`].
+    #[must_use = "dropping the guard uninstalls the abort handler"]
+    pub struct Guard(());
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            uninstall();
+        }
+    }
+
+    pub fn install() -> Guard {
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before

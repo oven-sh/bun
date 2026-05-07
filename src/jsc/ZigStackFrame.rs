@@ -28,8 +28,9 @@ pub struct ZigStackFrame {
 
 impl Drop for ZigStackFrame {
     fn drop(&mut self) {
-        // TODO(port): verify bun_str::String does not also deref on its own Drop (would double-deref).
-        // This is a #[repr(C)] FFI type; C++ may construct/destroy it — confirm ownership in Phase B.
+        // `bun_string::String` is `Copy` and has no `Drop` of its own (string/lib.rs:1013), so
+        // explicit `.deref()` here is required and cannot double-deref. This is a `#[repr(C)]`
+        // FFI type; C++-owned buffers call `deinit()` directly instead of relying on `Drop`.
         self.function_name.deref();
         self.source_url.deref();
     }

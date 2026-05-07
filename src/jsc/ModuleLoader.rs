@@ -620,8 +620,7 @@ pub extern "C" fn Bun__getDefaultLoader(
     str: &bun_string::String,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
-    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
-    let jsc_vm = unsafe { &mut *global.bun_vm() };
+    let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
     let loader = jsc_vm
         .transpiler
@@ -673,8 +672,7 @@ pub extern "C" fn Bun__runVirtualModule(
     jsc::mark_binding();
     // SAFETY: C++ passed the live JS-thread global; never null.
     let global = unsafe { &*global };
-    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
-    if unsafe { (*global.bun_vm()).plugin_runner.is_none() } {
+    if global.bun_vm().plugin_runner.is_none() {
         return JSValue::ZERO;
     }
 

@@ -13,7 +13,7 @@
 //!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`
 //!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
-//!       → `src/jsc/JSGlobalObject.rs`
+//!       → `src/runtime/webcore/wasm_streaming.rs`
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
 //!   - `Bun__JSSourceMap__find`

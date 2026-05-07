@@ -705,8 +705,8 @@ impl JSGlobalObject {
     ///
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
-    pub fn throw(&self, fmt: &'static str, args: Arguments<'_>) -> JsError {
-        let instance = self.create_error_instance(fmt, args);
+    pub fn throw(&self, args: Arguments<'_>) -> JsError {
+        let instance = self.create_error_instance(args);
         if instance.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
@@ -714,7 +714,7 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_pretty(&self, fmt: &'static str, args: Arguments<'_>) -> JsError {
+    pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
         // PORT NOTE: Zig used `switch (Output.enable_ansi_colors_stderr) { inline else => |enabled| ... }`
         // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting (strip
         // `<r>`/`<red>` markers when colors disabled). The `pretty_fmt!` macro provides the
@@ -724,9 +724,9 @@ impl JSGlobalObject {
         let instance = if bun_core::output::ENABLE_ANSI_COLORS_STDERR
             .load(core::sync::atomic::Ordering::Relaxed)
         {
-            self.create_error_instance(fmt, args)
+            self.create_error_instance(args)
         } else {
-            self.create_error_instance(fmt, args)
+            self.create_error_instance(args)
         };
         if instance.is_empty() {
             debug_assert!(self.has_exception());
@@ -790,8 +790,8 @@ impl JSGlobalObject {
         self.vm().throw_error(self, value)
     }
 
-    pub fn throw_type_error(&self, fmt: &'static str, args: Arguments<'_>) -> JsError {
-        let instance = self.create_type_error_instance(fmt, args);
+    pub fn throw_type_error(&self, args: Arguments<'_>) -> JsError {
+        let instance = self.create_type_error_instance(args);
         self.throw_value(instance)
     }
 

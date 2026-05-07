@@ -60,9 +60,11 @@ impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
 
 impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
-        // VirtualMachine outlives every WorkTask scheduled on it.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        // SAFETY: `bun_vm_ptr()` never returns null for a Bun-owned global; the
+        // VirtualMachine outlives every WorkTask scheduled on it. Using the raw
+        // `*mut` accessor (not `bun_vm() -> &VirtualMachine`) so the &mut borrow
+        // for `next_async_task_id` carries write provenance.
+        let vm = unsafe { &mut *global_this.bun_vm_ptr() };
         let event_loop = vm.event_loop();
         let mut this = Box::new(Self {
             event_loop,

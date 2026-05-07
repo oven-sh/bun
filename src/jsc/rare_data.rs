@@ -585,7 +585,10 @@ impl AWSSignatureCache {
             self.cache = StringArrayHashMap::new();
         } else if self.date != numeric_day {
             // day changed so we clean the old cache
-            self.clean();
+            // PORT NOTE: reshaped for borrowck — `self.clean()` would require
+            // `&mut self` while `_g` still borrows `self.lock`; inline the body
+            // (it's just `cache.clear()`) so the borrow stays on a disjoint field.
+            self.cache.clear();
         }
         self.date = numeric_day;
         bun_core::handle_oom(self.cache.put(key, value));
@@ -929,7 +932,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stderr(&mut self) -> *mut c_void {
-        bun_analytics::Features::bun_stderr.fetch_add(1, Ordering::Relaxed);
+        bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
         if self.stderr_store.is_none() {
             let fd = Fd::from_uv(2);
             let mode: Mode = match syscall::fstat(fd) {
@@ -947,7 +950,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdout(&mut self) -> *mut c_void {
-        bun_analytics::Features::bun_stdout.fetch_add(1, Ordering::Relaxed);
+        bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
         if self.stdout_store.is_none() {
             let fd = Fd::from_uv(1);
             let mode: Mode = match syscall::fstat(fd) {
@@ -965,7 +968,7 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdin(&mut self) -> *mut c_void {
-        bun_analytics::Features::bun_stdin.fetch_add(1, Ordering::Relaxed);
+        bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
         if self.stdin_store.is_none() {
             let fd = Fd::from_uv(0);
             let mode: Mode = match syscall::fstat(fd) {

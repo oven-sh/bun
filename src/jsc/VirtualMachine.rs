@@ -1356,6 +1356,15 @@ pub struct RuntimeHooks {
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
+    /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec
+    /// Debugger.zig:351. Walks `Jest.runner.?.bun_test_root.active_file`'s
+    /// scope tree and emits `reportTestFoundWithLocation` for every test
+    /// discovered before the inspector connected. `Jest` / `DescribeScope`
+    /// live in `bun_runtime::test_runner` (forward-dep cycle), so the body is
+    /// hoisted to the high tier; low-tier `Bun__TestReporterAgentEnable`
+    /// dispatches here. No-op when `bun test` isn't running.
+    pub retroactively_report_discovered_tests:
+        unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
 }
 
 /// Subset of [`InitOptions`] passed to [`RuntimeHooks::init_worker_vm`].

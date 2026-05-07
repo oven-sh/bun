@@ -7,6 +7,17 @@ use crate::{self as jsc, JSValue, Strong};
 use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 use bun_string::wtf::{WTFString, WTFStringImplStruct};
 
+// `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
+// them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.
+// That is only sound because mimalloc's `mi_free` ignores the allocation layout;
+// the Rust `GlobalAlloc::dealloc` contract would otherwise be violated. Pin the
+// invariant at compile time so a non-mimalloc build fails loudly here rather
+// than corrupting the heap at runtime.
+const _: () = assert!(
+    bun_alloc::USE_MIMALLOC,
+    "bindgen array reuse assumes mimalloc (layout-agnostic free)",
+);
+
 // ──────────────────────────────────────────────────────────────────────────
 // The Zig file defines a family of "Bindgen*" comptime structs that all share
 // the same shape: associated `ZigType`/`ExternType` plus `convertFromExtern`,

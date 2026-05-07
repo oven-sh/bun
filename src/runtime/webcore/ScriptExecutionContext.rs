@@ -1,35 +1,27 @@
-use crate::jsc::{virtual_machine::VirtualMachine, JSGlobalObject};
+/// LAYERING: the `Identifier` newtype + `global_object()`/`bun_vm()` accessors
+/// were moved DOWN into `bun_jsc` so that
+/// [`JSGlobalObject::script_execution_context_identifier`][gid] can return the
+/// concrete type without `bun_jsc → bun_runtime` (a cycle). Re-exported here so
+/// `bun_runtime::webcore::script_execution_context::Identifier` keeps resolving.
+///
+/// [gid]: bun_jsc::JSGlobalObject::script_execution_context_identifier
+pub use bun_jsc::js_global_object::ScriptExecutionContextIdentifier as Identifier;
 
-// TODO(port): move to runtime_sys
-unsafe extern "C" {
-    fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+use crate::jsc::virtual_machine::VirtualMachine;
+
+/// Runtime-tier convenience: typed `&VirtualMachine` view of [`Identifier::bun_vm`]
+/// (the bun_jsc method returns `*mut VirtualMachine` to avoid lifetime claims).
+pub trait IdentifierExt {
+    fn bun_vm_ref(self) -> Option<&'static VirtualMachine>;
+    fn valid(self) -> bool;
 }
-
-/// Safe handle to a JavaScript execution environment that may have exited.
-/// Obtain with `global_object.script_execution_context_identifier()`
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct Identifier(u32);
-
-impl Identifier {
-    /// Returns `None` if the context referred to by `self` no longer exists
-    // TODO(port): lifetime — returned ref is valid only while the context lives; not tied to `self`
-    pub fn global_object(self) -> Option<&'static JSGlobalObject> {
-        // SAFETY: FFI call returns a valid pointer or null; JSGlobalObject is owned by the VM
-        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }
+impl IdentifierExt for Identifier {
+    fn bun_vm_ref(self) -> Option<&'static VirtualMachine> {
+        // SAFETY: the VM outlives all ScriptExecutionContexts it owns; pointer is
+        // non-null when `global_object()` is `Some`.
+        self.bun_vm().map(|p| unsafe { &*p })
     }
-
-    /// Returns `None` if the context referred to by `self` no longer exists
-    pub fn bun_vm(self) -> Option<&'static VirtualMachine> {
-        // concurrently because we expect these identifiers are mostly used by off-thread tasks.
-        // `JSGlobalObject::bun_vm()` in bun_jsc is the raw FFI call with no threadlocal
-        // assertion, so it is already safe to call off-thread (≡ Zig `bunVMConcurrently`).
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM outlives all
-        // ScriptExecutionContexts it owns.
-        Some(unsafe { &*self.global_object()?.bun_vm() })
-    }
-
-    pub fn valid(self) -> bool {
+    fn valid(self) -> bool {
         self.global_object().is_some()
     }
 }

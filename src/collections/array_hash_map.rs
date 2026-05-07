@@ -296,6 +296,31 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.keys.is_empty()
     }
 
+    /// Zig: `capacity()` — number of entries the backing storage can hold
+    /// without reallocating.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.keys.capacity()
+    }
+
+    /// Zig: `pop()` — remove and return the last entry in insertion order, or
+    /// `None` when empty. O(1); no rehash needed (the removed slot is the tail).
+    pub fn pop(&mut self) -> Option<KV<K, V>> {
+        let key = self.keys.pop()?;
+        // SAFETY: keys/values/hashes always share the same length.
+        let value = self.values.pop().unwrap();
+        self.hashes.pop();
+        Some(KV { key, value })
+    }
+
+    /// Zig: `clearAndFree(allocator)` — drop every entry and release the
+    /// backing allocations (capacity goes to zero).
+    pub fn clear_and_free(&mut self) {
+        self.keys = Vec::new();
+        self.values = Vec::new();
+        self.hashes = Vec::new();
+    }
+
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
         let need = n.saturating_sub(self.keys.len());
         self.keys.reserve(need);

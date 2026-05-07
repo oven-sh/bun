@@ -454,7 +454,13 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // SAFETY: Zig by-value copy of arena-backed rule.
                                 new_rules.v.push(unsafe { core::ptr::read(rule) });
                             }
-                            ast.rules = new_rules;
+                            // `ast.rules` is the shallow-copied header aliasing the
+                            // source stylesheet's arena buffer (see `ptr::read` above).
+                            // Dropping it would `drop_in_place` the aliased rules and
+                            // free the shared backing array. Leak the header (Zig
+                            // semantics: bitwise overwrite) before installing the
+                            // freshly-allocated list.
+                            core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
                         }
                     }
 

@@ -426,6 +426,21 @@ pub struct HmrRuntime {
 }
 pub use bake_body::get_hmr_runtime;
 
+/// One-time registration of the bundler-side HMR-runtime loader. The bundler
+/// crate (`bun_bundler::bake_types`) cannot embed `bake.client.js`/
+/// `bake.server.js` itself (those are T6 codegen artifacts), so it consults a
+/// `OnceLock<fn(Side) -> HmrRuntime>` that this crate fills in. Call once at
+/// process init (DevServer/BundleThread startup).
+pub fn register_bundler_hmr_runtime_loader() {
+    bun_bundler::bake_types::set_hmr_runtime_loader(|side| {
+        let rt = bake_body::get_hmr_runtime(side);
+        bun_bundler::bake_types::HmrRuntime {
+            code: rt.code.as_bytes(),
+            line_count: rt.line_count,
+        }
+    });
+}
+
 // `bake.UserOptions` — top-level JS-facing options struct. Full body (with
 // `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
 // above; the keystone `(())` stub is gone now that `bake_body` compiles.

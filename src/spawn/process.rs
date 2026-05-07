@@ -35,24 +35,21 @@ mod uv {
 //   };
 // and constructs `ProcessExitHandler { owner, vtable: &EXIT_VTABLE }`.
 
-mod _exit_handler_variants {
-    // Preserved for diff-pass: the Zig union members. All un-declared in B-2.
-    use crate::cli::filter_run::ProcessHandle;
-    use crate::cli::multi_run::ProcessHandle as MultiRunProcessHandle;
-    use crate::cli::test::parallel_runner::Worker as TestWorkerHandle;
-    // crate::api::cron::{CronRegisterJob, CronRemoveJob} — gated behind
-    // cron::_jsc_gated (bun_jsc surface); vtable wired from there once un-gated.
-    // crate::webview::{ChromeProcess, HostProcess} — `webview` module not yet
-    // declared in runtime/lib.rs (blocked on bun_jsc method surface).
-    use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
-    use crate::shell::Subprocess as ShellSubprocess;
-    use crate::api::bun_subprocess::Subprocess;
-}
+// MOVE_DOWN: this file was `src/runtime/api/bun/process.rs`. Moved into
+// `bun_spawn` so `bun_install`, `bun_jsc`, and `bun_patch` can spawn / track
+// processes without depending on `bun_runtime` (cycle: runtime → install/jsc).
+//
+// The Zig `ProcessExitHandler.ptr` was a `bun.TaggedPointerUnion` over 12
+// concrete handler types living across cli/install/shell/webview/subprocess.
+// Per PORTING.md §Dispatch (cold path — fired once per process exit), the low
+// tier (this crate) defines `ProcessExitVTable` and high-tier handlers each
+// supply their own static vtable instance; the vtable travels with the value
+// (`ProcessExitHandler { owner, vtable }`), so no global hook registration is
+// required.
 
-// posix_spawn(2) wrappers live in the sibling `bun_spawn` module
-// (src/runtime/api/bun/spawn.rs → `crate::api::bun_spawn::posix_spawn`).
+// posix_spawn(2) wrappers — moved alongside this file into `bun_spawn`.
 #[allow(unused_imports)]
-use super::bun_spawn::posix_spawn;
+use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
 #[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
@@ -351,7 +348,7 @@ impl Process {
 // TODO(port): once a `JS_EVENT_LOOP_CTX_VTABLE` static lands in bun_runtime,
 // build the ctx from `owner` directly instead of the global hook.
 #[inline]
-pub(crate) fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCtx {
+pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCtx {
     match handle {
         EventLoopHandle::Js { .. } => {
             bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
@@ -766,8 +763,7 @@ impl Process {
                         let errno_ = bun_sys::get_errno(err as isize);
                         // if the process was already killed don't throw
                         if errno_ != bun_sys::E::ESRCH {
-                            // TODO(port): bun_sys::Tag::kill — placeholder until full table.
-                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::TODO));
+                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
                         }
                     }
                 }
@@ -778,7 +774,7 @@ impl Process {
         {
             match &mut self.poller {
                 Poller::Uv(handle) => {
-                    if let Some(err) = handle.kill(signal).to_error(bun_sys::Tag::TODO) {
+                    if let Some(err) = handle.kill(signal).to_error(bun_sys::Tag::kill) {
                         // if the process was already killed don't throw
                         if err.errno != bun_sys::E::ESRCH as i32 {
                             return Err(err);
@@ -2021,7 +2017,7 @@ pub type SpawnProcessResult = WindowsSpawnResult;
 // locally in `spawn_sys` so this file stays edit-only while the `bun_sys`
 // crate catches up. All shims call straight through to libc / extern "C".
 #[allow(dead_code)]
-pub(crate) mod spawn_sys {
+pub mod spawn_sys {
     use super::*;
     use core::ffi::c_int;
 

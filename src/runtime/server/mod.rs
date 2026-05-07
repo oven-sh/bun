@@ -830,9 +830,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `on_user_route_request`: hand the user-handler's return value to the
     /// `RequestContext`, then either tear down synchronously or transition to
     /// the async path.
+    ///
+    /// PORT NOTE: `should_deinit_context` is the same `*mut bool` already
+    /// stored in `ctx.defer_deinit_until_callback_completes` by
+    /// `prepare_js_request_context`; taking it as a raw pointer (not `&mut
+    /// bool`) avoids materializing a second exclusive borrow that would
+    /// invalidate the stored pointer under Stacked Borrows before
+    /// `on_response` writes through it.
     fn handle_request(
         this: *mut Self,
-        should_deinit_context: &mut bool,
+        should_deinit_context: *mut bool,
         prepared: PreparedRequest<SSL, DEBUG>,
         req: &mut uws_sys::Request,
         response_value: JSValue,
@@ -858,7 +865,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // arbitrary JS but cannot free `ctx` while `defer_deinit_…` is set).
         unsafe { (*ctx).defer_deinit_until_callback_completes = None };
 
-        if *should_deinit_context {
+        // SAFETY: `should_deinit_context` points at the caller's stack local;
+        // `on_response` may have written `true` through the alias stored in ctx.
+        if unsafe { *should_deinit_context } {
             // SAFETY: `on_response` set the deferred flag instead of freeing
             // in-place; we own the slot now.
             unsafe { (*ctx).deinit() };
@@ -890,11 +899,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
         let mut should_deinit_context = false;
+        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
         let Some(prepared) = Self::prepare_js_request_context(
             this,
             req,
             resp,
-            Some(&mut should_deinit_context),
+            Some(should_deinit_ptr),
             CreateJsRequest::Yes,
             None,
         ) else {
@@ -922,7 +932,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(this, &mut should_deinit_context, prepared, req, response_value);
+        Self::handle_request(this, should_deinit_ptr, prepared, req, response_value);
     }
 
     /// `server.zig:onUserRouteRequest` — dispatch a per-route handler
@@ -939,11 +949,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let index = user_route.id;
 
         let mut should_deinit_context = false;
+        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
         let Some(mut prepared) = Self::prepare_js_request_context(
             server,
             req,
             resp,
-            Some(&mut should_deinit_context),
+            Some(should_deinit_ptr),
             CreateJsRequest::No,
             match &user_route.route.method {
                 server_config::RouteMethod::Any => None,
@@ -977,13 +988,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        Self::handle_request(
-            server,
-            &mut should_deinit_context,
-            prepared,
-            req,
-            response_value,
-        );
+        Self::handle_request(server, should_deinit_ptr, prepared, req, response_value);
     }
 
     /// `js.routeListGetCached` — read back the codegen'd `WriteBarrier` slot.

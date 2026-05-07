@@ -9,7 +9,7 @@ use crate::bun_fs::FileSystem;
 use bun_install::lockfile::{self, Lockfile, LoadResult, Format as LockfileFormat};
 use crate::lockfile_real::package::{PackageListExt, PackageSliceExt};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{Npm, PackageID, Repository, Resolution};
+use bun_install::{PackageID, Repository, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::{strings, ZStr};
@@ -1016,13 +1016,13 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let mut base64_bytes = [0u8; 64];
     bun_core::csprng(&mut base64_bytes);
 
-    // TODO(port): Zig `std.fmt.bufPrint(buf, "{x}", .{&base64_bytes})` formats each u8 as
-    // lower-hex WITHOUT zero-pad (1–2 chars/byte); length is computed from the returned slice.
+    // Zig `std.fmt.bufPrint(buf, "{x}", .{&base64_bytes})` on a `*[64]u8` formats
+    // each byte as zero-padded 2-char lower hex (128 chars total).
     let tmpname_len = {
         let mut cursor = &mut tmpname_buf[8..];
         let initial_len = cursor.len();
         for b in &base64_bytes {
-            write!(cursor, "{:x}", b).expect("unreachable");
+            write!(cursor, "{:02x}", b).expect("unreachable");
         }
         initial_len - cursor.len()
     };
@@ -1161,6 +1161,6 @@ fn buf_print(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<usize, fmt::Err
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerDirectories.zig (783 lines)
 //   confidence: medium
-//   todos:      9
+//   todos:      8
 //   notes:      bun.once → std::sync::OnceLock; bufPrintZ helper inlined locally; threadlocal cached_package_folder_name_buf returns &'static mut — Phase B must verify lifetimes; std.fs.Dir mapped to bun_sys::Dir
 // ──────────────────────────────────────────────────────────────────────────

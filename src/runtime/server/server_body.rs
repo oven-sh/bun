@@ -991,7 +991,9 @@ impl ServePlugins {
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         // SAFETY: `bun_vm()` returns the JS-thread singleton; `transpiler.options` is
         // process-lifetime once VM is initialized.
-        let bunfig_folder: &[u8] = unsafe { &(*global.bun_vm()).transpiler.options.bunfig_path };
+        let bunfig_path: &[u8] = unsafe { &(*global.bun_vm()).transpiler.options.bunfig_path };
+        let bunfig_folder: &[u8] =
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
         self.ref_();
         let this_ptr: *const Self = self;
@@ -1021,15 +1023,12 @@ impl ServePlugins {
         // `event_loop()` returns a live raw `*mut EventLoop`. Reborrowed for
         // each call so no aliased `&mut` outlives the statement.
         unsafe { (*(*global.bun_vm()).event_loop()).enter() };
-        let result = jsc::host_fn::from_js_host_call(global, || unsafe {
-            JSBundlerPlugin__loadAndResolvePluginsForServe(
-                match &self.state {
-                    ServePluginsState::Pending { plugin, .. } => &**plugin,
-                    _ => unreachable!(),
-                },
-                plugin_js_array,
-                bunfig_folder_bunstr,
-            )
+        let result = jsc::host_fn::from_js_host_call(global, || {
+            match &self.state {
+                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
+                _ => unreachable!(),
+            }
+            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
         // SAFETY: see `enter()` above.
         unsafe { (*(*global.bun_vm()).event_loop()).exit() };
@@ -1175,17 +1174,6 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 
     Ok(JSValue::UNDEFINED)
-}
-
-// FFI: implemented in C++ (`JSBundler.cpp`); not surfaced through `bun_jsc`
-// because `JSBundler::Plugin` lives in `bun_runtime` (forward dep).
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    fn JSBundlerPlugin__loadAndResolvePluginsForServe(
-        plugin: *const JSBundler::Plugin,
-        plugins: JSValue,
-        bunfig_folder: JSValue,
-    ) -> JSValue;
 }
 
 #[inline]
@@ -1468,7 +1456,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn do_subscriber_count(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         if arguments.len < 1 {
-            return Err(throw_not_enough_arguments(global, "subscriberCount", 1, 0));
+            return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
         if arguments.ptr[0].is_empty_or_undefined_or_null() {
@@ -1526,7 +1514,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let arguments_buf = callframe.arguments_old::<2>();
         let arguments = arguments_buf.slice();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
-            return Err(throw_not_enough_arguments(global, "timeout", 2, arguments.len()));
+            return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
         }
 
         let seconds = arguments[1];
@@ -1541,10 +1529,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         let value = seconds.to_int32() as c_uint;
 
-        if let Some(request) = request_from_js(arguments[0], global) {
+        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request
             let _ = unsafe { &mut *request }.request_context.set_timeout(value);
-        } else if let Some(response) = node_http_response_from_js(arguments[0], global) {
+        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { &mut *response }.set_timeout((value % 255) as u8);
         } else {
@@ -1657,7 +1645,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(JSValue::FALSE);
         }
 
-        if let Some(node_http_response) = node_http_response_from_js(object, global) {
+        if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             let node_http_response = unsafe { &mut *node_http_response };
             if node_http_response.flags.contains(NodeHTTPResponseFlags::ENDED)
@@ -1768,7 +1756,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         }
 
-        let Some(request) = request_from_js(object, global) else {
+        let Some(request) = <Request as bun_jsc::JsClass>::from_js(object) else {
             return Err(global.throw_invalid_arguments(format_args!("upgrade requires a Request object")));
         };
         // SAFETY: from_js returns a live *mut Request
@@ -2436,7 +2424,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut url = self.get_url_as_string().map_err(|_| global.throw_out_of_memory())?;
-        let r = bun_string_jsc_shim::to_jsdomurl(&mut url, global);
+        let r = bun_string_jsc::to_jsdomurl(&mut url, global);
         url.deref();
         Ok(r)
     }

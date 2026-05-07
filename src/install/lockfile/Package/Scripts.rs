@@ -7,7 +7,7 @@ use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{initialize_store, Resolution, ResolutionTag};
 use bun_js_parser::Expr;
 use bun_logger as logger;
-use bun_paths::{self, AbsPath, SEP_STR};
+use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_str::strings;
 use bun_sys::{self, Fd};

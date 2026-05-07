@@ -163,17 +163,67 @@ impl UpdateInteractiveCommand {
 
     // Helper to update a catalog entry at a specific path in the package.json AST
     fn save_package_json(
-        manager: &mut PackageManager,
-        // TODO(port): `anytype` — MapEntry from WorkspacePackageJSONCache
-        package_json: &mut bun_install::WorkspacePackageJsonCacheEntry,
+        _manager: &mut PackageManager,
+        package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
     ) -> Result<(), bun_core::Error> {
-        let _ = (manager, package_json, package_json_path);
-        // Real body requires `js_printer::print_json` shape + `bun_sys::File`
-        // write API + mutable `Source.contents` (Cow vs Box) which are still
-        // settling. Body preserved in the .zig spec; re-port once
-        // `package_manager_real` un-gates.
-        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        let preserve_trailing_newline = !package_json.source.contents.is_empty()
+            && *package_json.source.contents.last().unwrap() == b'\n';
+
+        let mut buffer_writer = BufferWriter::init();
+        buffer_writer
+            .buffer
+            .list
+            .reserve(package_json.source.contents.len() + 1);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        let mut package_json_writer = BufferPrinter::init(buffer_writer);
+
+        if let Err(err) = js_printer::print_json(
+            &mut package_json_writer,
+            package_json.root,
+            &package_json.source,
+            PrintJsonOptions {
+                indent: package_json.indentation,
+                mangled_props: None,
+                ..Default::default()
+            },
+        ) {
+            Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
+            return Err(err);
+        }
+
+        let new_package_json_source: Box<[u8]> =
+            Box::from(package_json_writer.ctx.written_without_trailing_zero());
+
+        // Write the updated package.json
+        // PORT NOTE: Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
+        // Rust port routes through `bun_sys::File::write_file` (cwd-relative
+        // open + write + close) per src/CLAUDE.md.
+        let path_z = bun_str::ZStr::from_bytes(package_json_path);
+        if let Err(err) = bun_sys::File::write_file(
+            bun_sys::Fd::cwd(),
+            &path_z,
+            &new_package_json_source,
+        )
+        .into_result()
+        {
+            Output::err_generic(
+                "Failed to write package.json at {s}: {s}",
+                (BStr::new(package_json_path), err.name()),
+            );
+            return Err(err.into());
+        }
+
+        // Update the cache so installWithManager sees the new package.json
+        // This is critical - without this, installWithManager will use the cached old version
+        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`; the new buffer
+        // is owned for the process lifetime via the singleton cache (Zig leaked
+        // via `manager.allocator.dupe`), so leak the Box to obtain `&'static`.
+        // PERF(port): Zig leaked into the singleton allocator; matching that
+        // here is intentional — `WorkspacePackageJSONCache` is process-lifetime.
+        package_json.source.contents =
+            Cow::Owned(new_package_json_source.into_vec());
+        Ok(())
     }
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
@@ -183,10 +233,33 @@ impl UpdateInteractiveCommand {
         ));
         Output::flush();
 
-        let _ = ctx;
-        // Zig: `PackageManager.CommandLineArguments.parse(.update)` +
-        // `PackageManager.init(ctx, cli, .update)` — both gated behind
-        todo!("blocked_on: bun_install::PackageManager::init / CommandLineArguments (package_manager_real un-gate)")
+        let cli = CommandLineArguments::parse(Subcommand::Update)?;
+        let silent = cli.silent;
+
+        let (pm_ptr, original_cwd) =
+            match PackageManager::init(&mut *ctx, cli, Subcommand::Update) {
+                Ok(v) => v,
+                Err(err) => {
+                    if !silent {
+                        if err == bun_core::err!("MissingPackageJSON") {
+                            Output::err_generic("missing package.json, nothing outdated", ());
+                        }
+                        Output::err_generic(
+                            "failed to initialize bun install: {s}",
+                            (err.name(),),
+                        );
+                    }
+                    Global::crash();
+                }
+            };
+        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
+        // non-null and exclusively owned by this thread for the command's
+        // duration (mirrors Zig's `*PackageManager`).
+        let manager: &'static mut PackageManager = unsafe { &mut *pm_ptr };
+        // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
+        // is implicit via Drop at scope exit.
+
+        Self::update_interactive(ctx, &original_cwd, manager)
     }
 
     #[allow(dead_code)]

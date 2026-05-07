@@ -2,14 +2,13 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_aio::Loop as AsyncLoop;
+use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriter, WriteStatus};
-use bun_jsc::EventLoopHandle;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_sys;
 
-use super::{Source, StdioResult};
-// TODO(port): `StdioKind::Stdin` — Zig passes `.stdin` to `process.onCloseIO`; confirm enum path.
-use super::StdioKind;
+use crate::process::StdioKind;
+use crate::subprocess::{Source, StdioResult};
 
 bun_output::declare_scope!(StaticPipeWriter, hidden);
 
@@ -157,15 +156,15 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
-    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the
-    /// io-layer `FilePollVTable` round-trips back to the runtime. We pass the
-    /// address of the stored `bun_jsc::EventLoopHandle` so the (runtime-registered)
+    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
+    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
-        // (`*const bun_jsc::EventLoopHandle`) and never write through it.
+        // (`*const bun_event_loop::EventLoopHandle`) and never write through it.
         bun_io::EventLoopHandle(&self.event_loop as *const _ as *mut c_void)
     }
 

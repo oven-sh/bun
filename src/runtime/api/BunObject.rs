@@ -2183,16 +2183,13 @@ pub mod environment_variables {
         let vm = unsafe { &mut *global_object.bun_vm() };
         let name_slice = unsafe { (*name).to_utf8() };
 
-        let storage = &mut vm.proxy_env_storage;
-
         // Synchronize the slot swap + env.map.put against a concurrently
         // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
-        // this, the worker could load the slot pointer between our deref
-        // (refcount → 0 → free) and the null write below, then call ref()
-        // on freed memory.
-        let _guard = storage.lock.lock();
+        // this, the worker could clone the slot `Arc` between our drop
+        // (refcount → 0 → free) and the `None` write below.
+        let mut slots = vm.proxy_env_storage.lock();
 
-        let Some(slot) = storage.slot(name_slice.slice()) else {
+        let Some(slot) = slots.slot(name_slice.slice()) else {
             return;
         };
 

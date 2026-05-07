@@ -22,7 +22,9 @@ use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
-use crate::transpiler::{ParseResult, PluginRunner, PluginTarget, ResolveQueue, ResolveResults};
+use crate::transpiler::{
+    BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
+};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum CSSResolveError {
@@ -67,7 +69,7 @@ pub struct Linker {
     pub import_counter: usize,
     pub tagged_resolutions: TaggedResolution,
 
-    pub plugin_runner: Option<*mut PluginRunner>,
+    pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
 pub const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -434,18 +436,17 @@ impl Linker {
                             // of `on_resolve`. Shared access here matches Zig
                             // `*PluginRunner` (linker.zig:176-193).
                             let runner = unsafe { &*runner };
-                            if let Some(path) = (runner.on_resolve)(
-                                runner.global_object,
+                            if let Some(path) = runner.on_resolve(
                                 import_record.path.text,
                                 file_path.text,
                                 log,
                                 import_record.range.loc,
                                 if IS_BUN {
-                                    PluginTarget::Bun
+                                    BunPluginTarget::Bun
                                 } else if opts.target == options::Target::Browser {
-                                    PluginTarget::Browser
+                                    BunPluginTarget::Browser
                                 } else {
-                                    PluginTarget::Node
+                                    BunPluginTarget::Node
                                 },
                             )? {
                                 import_record.path = self.generate_import_path(

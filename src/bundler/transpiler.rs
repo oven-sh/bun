@@ -25,48 +25,41 @@ pub type ResolveResults = HashMap<u64, ()>;
 pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
 /// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Defined at
-/// this tier so the `OnResolveHook` signature is nameable without `bun_jsc`;
-/// `#[repr(u8)]` discriminants match `bun_jsc::BunPluginTarget` 1:1 so the JSC
-/// thunk transmutes the tag.
+/// this tier (lowest crate that needs to name it) and re-exported from
+/// `bun_jsc::BunPluginTarget` so there is exactly one enum — no transmute
+/// between mirror types.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum PluginTarget {
+pub enum BunPluginTarget {
     Bun = 0,
     Node = 1,
     Browser = 2,
 }
 
-/// Dispatch slot for `PluginRunner.onResolve` (PluginRunner.zig:34). The body
-/// calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be defined here
-/// (`bun_jsc` depends on this crate). The construction site
-/// (`bun_jsc::Bun__onDidAppendPlugin`) populates this with the real
-/// implementation; `Linker::link` calls through it.
-pub type OnResolveHook = fn(
-    global_object: *mut core::ffi::c_void,
-    specifier: &[u8],
-    importer: &[u8],
-    log: &mut logger::Log,
-    loc: logger::Loc,
-    target: PluginTarget,
-) -> Result<Option<bun_paths::fs::Path<'static>>, bun_core::Error>;
-
-/// Spec PluginRunner.zig — the resolver-side hook record. Lives at this tier
-/// (not `bundler_jsc`) so both `bun_jsc::VirtualMachine.plugin_runner` and
-/// `Linker.plugin_runner` can name it without a crate cycle. `global_object`
-/// is type-erased (`*mut JSGlobalObject` lives in `bun_jsc`, which depends on
-/// this crate); `on_resolve` is the JSC-aware dispatch slot wired at
-/// construction time by `bun_jsc`.
-#[repr(C)]
-pub struct PluginRunner {
-    /// `*mut bun_jsc::JSGlobalObject` — erased to break the dep cycle.
-    pub global_object: *mut core::ffi::c_void,
-    /// Spec PluginRunner.zig:34 `onResolve` — populated by `bun_jsc` at
-    /// construction. Not `Option`: a `PluginRunner` is only created after the
-    /// first `Bun.plugin()` call, at which point the global is live.
-    pub on_resolve: OnResolveHook,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
-    // PORTING.md (global mimalloc).
+/// Spec PluginRunner.zig:34 `onResolve` — the JSC-aware resolve hook.
+///
+/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be
+/// defined at this tier (`bun_jsc` depends on this crate). `bun_jsc` provides
+/// the concrete `PluginRunner { global_object: *mut JSGlobalObject }` and
+/// implements this trait; `Linker.plugin_runner` holds it as
+/// `*mut dyn PluginResolver` so the linker stays JSC-free while the body lives
+/// in exactly one place (no fn-ptr field, no `*mut c_void` erasure).
+pub trait PluginResolver {
+    fn on_resolve(
+        &self,
+        specifier: &[u8],
+        importer: &[u8],
+        log: &mut logger::Log,
+        loc: logger::Loc,
+        target: BunPluginTarget,
+    ) -> Result<Option<bun_paths::fs::Path<'static>>, bun_core::Error>;
 }
+
+/// Spec PluginRunner.zig — namespace for the static byte-level helpers
+/// (`extractNamespace` / `couldBePlugin`). The stateful struct (with
+/// `global_object`) lives in `bun_jsc::PluginRunner` where `JSGlobalObject` is
+/// nameable; only the JSC-free helpers stay at this tier.
+pub struct PluginRunner;
 
 impl PluginRunner {
     /// Spec PluginRunner.zig:14 `extractNamespace`.

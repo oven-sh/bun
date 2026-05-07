@@ -761,11 +761,11 @@ impl WebWorker {
         // Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage. We need a consistent snapshot of
         // (storage slots + env.map entries) so every slice we copy is backed
-        // by a ref we hold. The parent's storage.lock serialises against
-        // Bun__setEnvValue on the main thread — it covers both the slot swap
-        // and the map.put, so cloneFrom and cloneWithAllocator see the same
-        // state.
-        let mut temp_proxy_storage = jsc::rare_data::ProxyEnvStorage::default();
+        // by a ref we hold. The parent's `proxy_env_storage` mutex serialises
+        // against `Bun__setEnvValue` on the main thread — it covers both the
+        // slot swap and the env-map `put`, so `clone_from` and
+        // `clone_with_allocator` see the same state.
+        let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
         // PORT NOTE: Zig allocated Map/Loader on the worker arena (bulk-freed
         // in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run Drop, so
@@ -774,15 +774,15 @@ impl WebWorker {
         // PERF(port): MimallocArena bulk-free — profile in Phase B.
         let mut map = Box::new(bun_dotenv::Map::default());
         {
-            let parent_storage = &parent.proxy_env_storage;
-            let _guard = parent_storage.lock.lock();
-            temp_proxy_storage.clone_from(parent_storage);
+            let parent_slots = parent.proxy_env_storage.lock();
+            temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
-            // set in `Transpiler::init`; valid while `parent` lives. Read-only.
+            // set in `Transpiler::init`; valid while `parent` lives. Read-only
+            // (guard held — the mutex doubles as the env-map serialisation point).
             *map = unsafe { (*parent.transpiler.env).map.clone_with_allocator()? };
         }
         // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_storage.sync_into(&mut map);
+        temp_proxy_slots.sync_into(&mut map);
 
         // TODO(port): ownership — `Loader<'static>` borrows `map` for its
         // lifetime. In Zig both lived on the worker arena; here both are
@@ -800,7 +800,7 @@ impl WebWorker {
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
-            drop(temp_proxy_storage);
+            drop(temp_proxy_slots);
             self.shutdown();
         }
 
@@ -828,8 +828,10 @@ impl WebWorker {
             vm_ref.arena =
                 NonNull::new(unsafe { (*self.arena.get()).as_mut().unwrap() } as *mut _);
 
-            // Move the pre-cloned proxy storage into the worker VM.
-            vm_ref.proxy_env_storage = core::mem::take(&mut temp_proxy_storage);
+            // Move the pre-cloned proxy slots into the worker VM. The worker's
+            // own `proxy_env_storage` mutex hasn't been published yet, so this
+            // uncontended lock is purely structural.
+            *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);

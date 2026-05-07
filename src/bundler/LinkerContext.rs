@@ -1943,15 +1943,19 @@ impl<'a> LinkerContext<'a> {
                         // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
                         // pointer; valid for the link step.
                         let original_name: &[u8] = unsafe { &*symbol.original_name };
-                        // CYCLEBREAK FORWARD_DECL: `bun_css::css_modules::hash`
-                        // is feature-gated; route through the local shim until
-                        // the `css` feature is the default. The shim mirrors the
-                        // real signature (path → fixed-width base62 hash).
-                        let path_hash = css_modules_hash_shim(&source.path.pretty);
+                        // PERF(port): was stack-fallback alloc. The hash itself
+                        // is short-lived; use a scratch bump.
+                        let scratch = ::bumpalo::Bump::new();
+                        let path_hash = ::bun_base64::wyhash_url_safe(
+                            &scratch,
+                            // use path relative to cwd for determinism
+                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
+                            false,
+                        );
 
                         let mut final_generated_name = Vec::<u8>::new();
                         use std::io::Write;
-                        write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(&path_hash)).unwrap();
+                        write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(path_hash)).unwrap();
                         // TODO(port): allocator() is arena; mangled_props key/value lifetime
                         self.mangled_props.put(r#ref, final_generated_name.into_boxed_slice()).expect("OOM");
                     }
@@ -2081,36 +2085,6 @@ impl<'a> LinkerContext<'a> {
         });
     }
 } // end  — split: tree-shaking trio un-gated below (B-2 second pass)
-
-/// CYCLEBREAK FORWARD_DECL: `bun_css::css_modules::hash` — the real CSS-modules
-/// hasher is feature-gated (`feature = "css"`). With the feature on, delegate;
-/// without it, mirror its shape (32-bit wyhash truncation, base62-ish encoding)
-/// so `mangle_local_css` produces deterministic names. The hash *value* only
-/// matters for cross-bundle determinism, not correctness.
-#[cfg(feature = "css")]
-#[inline]
-fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
-    let bump = ::bumpalo::Bump::new();
-    let hashed = ::bun_css::css_modules::hash(
-        &bump,
-        format_args!("{}", bstr::BStr::new(pretty_path)),
-        false,
-    );
-    Box::<[u8]>::from(hashed)
-}
-#[cfg(not(feature = "css"))]
-#[inline]
-fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
-    let h = bun_core::hash::wyhash(pretty_path) as u32;
-    let mut out = Vec::with_capacity(6);
-    let mut n = h;
-    const ALPHA: &[u8; 62] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    for _ in 0..6 {
-        out.push(ALPHA[(n % 62) as usize]);
-        n /= 62;
-    }
-    out.into_boxed_slice()
-}
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.

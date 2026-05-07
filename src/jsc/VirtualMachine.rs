@@ -1337,34 +1337,26 @@ pub struct RuntimeHooks {
         name_buf: &'a mut [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
-    /// `jsc.VirtualMachine.initWorker(worker, opts)` — build a fresh
-    /// per-thread VM for a Web/Node Worker (spec VirtualMachine.zig:1390).
-    /// `worker` is a `*const jsc::WebWorker` (erased so the hook table stays
-    /// declarable before `web_worker.rs`); the high tier casts it back to
-    /// read `mini`/`execution_context_id`/`cpp_worker`. Returns the freshly-
-    /// boxed VM with `vm.worker` already set, or an error.
-    pub init_worker_vm: unsafe fn(
-        worker: *const c_void,
-        opts: WorkerInitOptions,
-    ) -> Result<*mut VirtualMachine, bun_core::Error>,
     /// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec
     /// web_worker.zig:552. Applies `--compile`-baked runtime flags to the
     /// worker's transpiler. `graph` is the same trait object stored in
     /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
-    /// `bun_standalone::StandaloneModuleGraph`).
+    /// `bun_standalone_graph::Graph` — the sole implementor).
     pub apply_standalone_runtime_flags:
         unsafe fn(transpiler: *mut Transpiler<'static>, graph: &'static dyn bun_resolver::StandaloneModuleGraph),
-    /// Spec web_worker.zig:445-476 — parse `execArgv` with the `RunCommand`
-    /// param table and apply recognised flags to `transform_options`. The
-    /// param table lives in `bun_runtime::cli` (forward-dep). Currently only
-    /// honours `--no-addons`.
-    pub parse_worker_exec_argv: unsafe fn(
-        exec_argv: &[bun_string::WTFStringImpl],
-        transform_options: &mut bun_options_types::schema::api::TransformOptions,
-    ),
+    /// Spec web_worker.zig:445-476 — parse `execArgv` against the `RunCommand`
+    /// param table and return the resulting `allow_addons` value
+    /// (`!args.flag("--no-addons")`), or `None` if parsing failed (Zig's
+    /// `catch break :parse_new_args`). The param table lives in
+    /// `bun_runtime::cli` (forward-dep). Spec only honours `--no-addons`;
+    /// the caller writes the returned bool back into
+    /// `transform_options.allow_addons` so the override semantics
+    /// ("override the existing even if it was set") match.
+    pub parse_worker_exec_argv_allow_addons:
+        unsafe fn(exec_argv: &[bun_string::WTFStringImpl]) -> Option<bool>,
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
-    pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
+    pub cron_clear_all_teardown: unsafe fn(vm: *mut VirtualMachine),
     /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier downcasts the trait-object data
@@ -1384,9 +1376,6 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
-    /// `bun.deleteAllPoolsForThreadExit()` — spec web_worker.zig:766. The full
-    /// pool-set spans `bun_runtime` thread-locals; high tier owns the body.
-    pub delete_all_pools_for_thread_exit: unsafe fn(),
 }
 
 /// `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — supplies the
@@ -1436,15 +1425,6 @@ impl VirtualMachine {
     pub fn event_loop_ctx(this: *mut Self) -> bun_aio::EventLoopCtx {
         bun_aio::EventLoopCtx { owner: this.cast(), vtable: &VM_EVENT_LOOP_CTX_VTABLE }
     }
-}
-
-/// Subset of [`InitOptions`] passed to [`RuntimeHooks::init_worker_vm`].
-/// Mirrors VirtualMachine.zig `Options` for the `initWorker` path.
-pub struct WorkerInitOptions {
-    pub args: bun_options_types::schema::api::TransformOptions,
-    pub env_loader: NonNull<bun_dotenv::Loader<'static>>,
-    pub store_fd: bool,
-    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
 }
 
 impl VirtualMachine {

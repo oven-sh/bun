@@ -33,7 +33,6 @@ use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_str::{self as str, strings, OwnedString, String as BunString, ZStr};
 use bun_jsc::StringJsc as _;
-use bun_jsc::event_loop::EventLoop as JscEventLoop;
 use bun_sys as sys;
 use bun_watcher::WatchItemColumns as _;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext};

@@ -120,6 +120,14 @@ pub struct List {
     pub next: Option<Box<List>>,
 }
 
+// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
+// by this `List` (see `and_range`); it never aliases data owned by another
+// thread. Zig models this as a plain `*Query` and freely sends `Group`/`List`
+// across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
+// conservative here.
+unsafe impl Send for List {}
+unsafe impl Sync for List {}
+
 pub struct ListFormatter<'a> {
     list: &'a List,
     buffer: &'a [u8],

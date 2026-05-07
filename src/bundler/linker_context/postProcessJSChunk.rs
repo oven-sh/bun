@@ -79,7 +79,7 @@ pub fn post_process_js_chunk(
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
-    let loader = unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize];
+    let loader = c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
@@ -147,7 +147,7 @@ pub fn post_process_js_chunk(
             .to_ast(),
         );
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = unsafe { &(*c.resolver).opts }.target;
+        let target = c.resolver().opts.target;
 
         // Hoist `*mut [Stmt]` extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
@@ -234,7 +234,7 @@ pub fn post_process_js_chunk(
         // generator is dropped — the entry promise resolves immediately and the
         // process exits before the awaited value lands.
         {
-            let tla_keywords = unsafe { &(*c.parse_graph).ast }.items_top_level_await_keyword();
+            let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
             let wraps = c.graph.meta.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
                 let idx = part_range.source_index.get() as usize;
@@ -563,8 +563,8 @@ pub fn post_process_js_chunk(
             false
         });
 
-    let sources: &[Logger::Source] = unsafe { &(*c.parse_graph).input_files }.items_source();
-    let targets: &[options::Target] = unsafe { &(*c.parse_graph).ast }.items_target();
+    let sources: &[Logger::Source] = c.parse_graph().input_files.items_source();
+    let targets: &[options::Target] = c.parse_graph().ast.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
         let is_runtime = source_index == Index::RUNTIME.value;
@@ -709,7 +709,7 @@ pub fn post_process_js_chunk(
             }
             {
                 let input =
-                    &unsafe { &(*c.parse_graph).input_files }.items_source()[chunk.entry_point.source_index() as usize].path;
+                    &c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.allocator is an arena in Zig
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
@@ -767,7 +767,9 @@ pub fn post_process_js_chunk(
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            &unsafe { &(*c.resolver).opts }.output_dir,
+            // SAFETY: resolver backref; raw deref because this arg is passed
+            // to `c.generate_source_map_for_chunk(&mut self, …)` (split borrow).
+            unsafe { &(*c.resolver).opts.output_dir },
             can_have_shifts,
         )?;
     }
@@ -1267,7 +1269,7 @@ pub fn generate_entry_point_tail_js<'a>(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             allocator,
-            unsafe { &(*c.resolver).opts }.target,
+            c.resolver().opts.target,
             &ast_view,
             c.get_source(source_index),
             print_options,

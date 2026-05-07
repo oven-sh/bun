@@ -165,8 +165,8 @@ pub fn init_global(
     // tag 2 = mini (matches Zig `EventLoopHandle` discriminant + 1).
     {
         let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
-        // SAFETY: `loop_` is the live C-owned uws loop set in `MiniEventLoop::init`.
-        unsafe { (*global.loop_).internal_loop_data.set_parent_raw(tag, ptr) };
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*global.loop_ptr()).internal_loop_data.set_parent_raw(tag, ptr) };
     }
 
     // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
@@ -214,6 +214,45 @@ pub fn init_global(
 }
 
 impl<'a> MiniEventLoop<'a> {
+    /// Raw `*mut uws::Loop` (Zig: `this.loop`).
+    ///
+    /// This is the sole accessor for the `loop_` field. A `&mut UwsLoop`-
+    /// returning accessor is intentionally **not** provided: `UwsLoop::tick()`
+    /// fires FilePoll callbacks which re-enter this struct via the
+    /// `EventLoopCtx` vtable (`platform_event_loop`) and via
+    /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent` → `wakeup()`),
+    /// so a held `&mut UwsLoop` across `.tick()` would alias. The loop is also
+    /// a C-owned handle whose internals are mutated by uSockets itself. All
+    /// access goes through the raw pointer instead.
+    ///
+    /// SAFETY (invariant): `self.loop_` is the live C-owned uws loop set in
+    /// [`init`](Self::init) via `UwsLoop::get()`; never null, outlives `self`.
+    #[inline]
+    pub fn loop_ptr(&self) -> *mut UwsLoop {
+        self.loop_
+    }
+
+    /// Raw pointer to the `DotEnv::Loader` backref (Zig: `this.env.?`).
+    ///
+    /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
+    /// a `&mut`-returning accessor is provided: the loader may be shared via
+    /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
+    /// other safe paths (`GlobalMini::create_null_delimited_env_map`,
+    /// `EventLoopHandle::create_null_delimited_env_map`, `interpreter.rs`)
+    /// materialize `&mut DotEnvLoader` from the same allocation via raw deref.
+    /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
+    /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
+    /// deref the returned `NonNull` for a tightly-scoped borrow under their
+    /// own SAFETY contract instead (mirrors [`loop_ptr`](Self::loop_ptr)).
+    ///
+    /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
+    /// loader set in `init_global` that outlives `self` (never freed — Zig
+    /// parity).
+    #[inline]
+    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader<'a>>> {
+        self.env
+    }
+
     #[inline]
     pub fn get_vm_impl(&mut self) -> &mut MiniEventLoop<'a> {
         self
@@ -344,11 +383,11 @@ impl<'a> MiniEventLoop<'a> {
 
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+            // SAFETY: see `loop_ptr()` invariant.
             unsafe {
-                (*self.loop_).inc();
-                (*self.loop_).tick();
-                (*self.loop_).dec();
+                (*self.loop_ptr()).inc();
+                (*self.loop_ptr()).tick();
+                (*self.loop_ptr()).dec();
             }
             // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
             self.on_after_event_loop();
@@ -368,8 +407,8 @@ impl<'a> MiniEventLoop<'a> {
                 unsafe { (*task).run(context) };
             }
 
-            // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
-            unsafe { (*self.loop_).tick_without_idle() };
+            // SAFETY: see `loop_ptr()` invariant.
+            unsafe { (*self.loop_ptr()).tick_without_idle() };
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
@@ -387,11 +426,11 @@ impl<'a> MiniEventLoop<'a> {
         // here also monomorphizes — should match.
         while !is_done(context) {
             if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
+                // SAFETY: see `loop_ptr()` invariant.
                 unsafe {
-                    (*self.loop_).inc();
-                    (*self.loop_).tick();
-                    (*self.loop_).dec();
+                    (*self.loop_ptr()).inc();
+                    (*self.loop_ptr()).tick();
+                    (*self.loop_ptr()).dec();
                 }
                 // PORT NOTE: Zig `defer` was block-scoped to this `if`.
                 self.on_after_event_loop();
@@ -433,8 +472,8 @@ impl<'a> MiniEventLoop<'a> {
 
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
         self.concurrent_tasks.push(task);
-        // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
-        unsafe { (*self.loop_).wakeup() };
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*self.loop_ptr()).wakeup() };
     }
 
     /// Zig: `enqueueTaskConcurrentWithExtraCtx(comptime Context, comptime ParentContext,
@@ -460,8 +499,8 @@ impl<'a> MiniEventLoop<'a> {
 
         self.concurrent_tasks.push(task);
 
-        // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
-        unsafe { (*self.loop_).wakeup() };
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*self.loop_ptr()).wakeup() };
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
@@ -524,7 +563,7 @@ mod mini_ctx {
     }
 
     unsafe fn platform_event_loop(owner: *mut ()) -> *mut UwsLoop {
-        unsafe { (*cast(owner)).loop_ }
+        unsafe { (*cast(owner)).loop_ptr() }
     }
     unsafe fn file_polls(owner: *mut ()) -> *mut FilePollStore {
         // SAFETY: see `MiniEventLoop::file_polls_raw` — avoids aliased
@@ -699,12 +738,12 @@ impl<'a> MiniVM<'a> {
         #[cfg(windows)]
         {
             // TODO(b2-blocked): bun_uws::Loop::uv_loop
-            return self.mini.loop_.uv_loop();
+            return self.mini.loop_ptr().uv_loop();
         }
         #[cfg(not(windows))]
         {
             // On POSIX, `PlatformEventLoop` is `uws::Loop` (alias defined above).
-            self.mini.loop_
+            self.mini.loop_ptr()
         }
     }
 

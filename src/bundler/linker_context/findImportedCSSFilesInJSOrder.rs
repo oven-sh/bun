@@ -34,8 +34,7 @@ pub fn find_imported_css_files_in_js_order(
     let mut order: Vec<Index> = Vec::new();
 
     let all_import_records = this.graph.ast.items_import_records();
-    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the bundle lifetime.
-    let all_loaders = unsafe { &*this.parse_graph }.input_files.items_loader();
+    let all_loaders = this.parse_graph().input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
 
     // Zig uses a local `struct { fn visit }.visit` to get a recursive local fn.

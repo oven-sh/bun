@@ -59,8 +59,7 @@ pub fn post_process_css_chunk(
         MultiArrayList::default();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
-    // SAFETY: `parse_graph` backref valid for the link pass.
-    let sources: &[logger::Source] = unsafe { (*c.parse_graph).input_files.items_source() };
+    let sources: &[logger::Source] = c.parse_graph().input_files.items_source();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
 
@@ -143,7 +142,8 @@ pub fn post_process_css_chunk(
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // SAFETY: `c.resolver` backref valid for the link pass.
+        // SAFETY: resolver backref; raw deref because `output_dir` is passed to
+        // `c.generate_source_map_for_chunk(&mut self, …)` (split borrow).
         let output_dir = unsafe { &(*c.resolver).opts.output_dir };
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,

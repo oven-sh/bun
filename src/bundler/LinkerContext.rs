@@ -69,9 +69,7 @@ pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkV
             let ctx = unsafe { &*context.cast::<LinkerContext>() };
             let chunk = unsafe { &*chunk.cast::<Chunk>() };
             let pr = unsafe { &*part_range.cast::<PartRange>() };
-            // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
-            // the lifetime of the link step that constructed this Action.
-            let parse_graph = unsafe { &*ctx.parse_graph };
+            let parse_graph = ctx.parse_graph();
             let sources = parse_graph.input_files.items_source();
             let entry = if pr.source_index.is_valid() {
                 sources
@@ -247,6 +245,50 @@ impl<'a> Default for LinkerContext<'a> {
 }
 
 impl<'a> LinkerContext<'a> {
+    /// Shared-read accessor for the parse-side graph.
+    ///
+    /// `parse_graph` is a backref into `BundleV2.graph`, a sibling field of
+    /// `BundleV2.linker` (= `*self`), assigned in [`Self::load`]. It is
+    /// non-null and valid for the entire link step; the pointee is disjoint
+    /// from `*self` (LIFETIMES.tsv: GRAPHBACKED).
+    ///
+    /// The returned borrow is tied to `&self`. Callers that need to hold a
+    /// `&Graph` across a `&mut self` borrow (split-borrow patterns — e.g.
+    /// `process_html_import_files`, TLA-check column caching, or
+    /// `generate_isolated_hash`) must continue to deref the raw
+    /// `self.parse_graph` field directly.
+    #[inline]
+    pub fn parse_graph(&self) -> &Graph {
+        debug_assert!(!self.parse_graph.is_null(), "LinkerContext.parse_graph accessed before load()");
+        // SAFETY: non-null backref into `BundleV2.graph`, valid for the link
+        // step, disjoint from `*self` (= `BundleV2.linker`).
+        unsafe { &*self.parse_graph }
+    }
+
+    /// Exclusive accessor for the parse-side graph. See [`Self::parse_graph`]
+    /// for the lifetime invariant. Prefer the raw `self.parse_graph` field for
+    /// split-borrow patterns that interleave `&mut Graph` with other `self`
+    /// borrows.
+    #[inline]
+    pub fn parse_graph_mut(&mut self) -> &mut Graph {
+        debug_assert!(!self.parse_graph.is_null(), "LinkerContext.parse_graph accessed before load()");
+        // SAFETY: non-null backref into `BundleV2.graph`, disjoint from
+        // `*self`; `&mut self` excludes other safe borrows of the linker.
+        unsafe { &mut *self.parse_graph }
+    }
+
+    /// Shared-read accessor for the resolver.
+    ///
+    /// `resolver` is a backref into `BundleV2.transpiler.resolver`, assigned
+    /// in [`Self::load`] (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for
+    /// the link step; never mutated through this pointer.
+    #[inline]
+    pub fn resolver(&self) -> &Resolver<'a> {
+        debug_assert!(!self.resolver.is_null(), "LinkerContext.resolver accessed before load()");
+        // SAFETY: non-null backref valid for the link step; read-only access.
+        unsafe { &*self.resolver }
+    }
+
     pub fn mark_pending_task_done(&self) {
         // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
@@ -304,9 +346,8 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn path_with_pretty_initialized(&mut self, path: Logger::fs::Path) -> Result<Logger::fs::Path, BunError> {
-        // SAFETY: resolver is a backref into BundleV2.transpiler.resolver, valid for self's lifetime;
-        // resolver.fs is a `*mut Fs::FileSystem` backref into the singleton FS.
-        let top_level_dir = unsafe { (*(*self.resolver).fs).top_level_dir };
+        // SAFETY: `resolver.fs` is a `*mut Fs::FileSystem` backref into the singleton FS.
+        let top_level_dir = unsafe { (*self.resolver().fs).top_level_dir };
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.allocator())
     }
 
@@ -498,10 +539,9 @@ impl<'a> LinkerContext<'a> {
 
     pub fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
         let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).expect("int cast"), Ordering::Relaxed);
-        // SAFETY: parse_graph backref valid for self lifetime; `pool` is a
-        // `NonNull<ThreadPool>` whose `worker_pool` is the live worker-pool
-        // backref (initialized by `ThreadPool::start`).
-        unsafe { (*(*self.parse_graph).pool.as_ref().worker_pool).schedule(batch) };
+        // SAFETY: `pool` is a `NonNull<ThreadPool>` whose `worker_pool` is the
+        // live worker-pool backref (initialized by `ThreadPool::start`).
+        unsafe { (*self.parse_graph().pool.as_ref().worker_pool).schedule(batch) };
     }
 
     fn process_html_import_files(&mut self) {
@@ -713,8 +753,7 @@ impl<'a> LinkerContext<'a> {
         let parts: *mut [Vec<Part>] = self.graph.ast.items_parts_mut();
         let import_records: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
         let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
-        // SAFETY: parse_graph backref
-        let side_effects: *const [SideEffects] = unsafe { (*self.parse_graph).input_files.items_side_effects() };
+        let side_effects: *const [SideEffects] = self.parse_graph().input_files.items_side_effects();
         let entry_point_kinds: *const [EntryPoint::Kind] = std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
@@ -851,8 +890,7 @@ impl<'a> LinkerContext<'a> {
         // is allocator-free here. Revisit when arena threading lands.
         let mut j = StringJoiner::default();
 
-        // SAFETY: parse_graph backref
-        let sources = unsafe { (*self.parse_graph).input_files.items_source() };
+        let sources = self.parse_graph().input_files.items_source();
         let quoted_source_map_contents = self.graph.files.items_quoted_source_contents();
 
         // Entries in `results` do not 1:1 map to source files, the mapping
@@ -1734,7 +1772,8 @@ impl<'a> LinkerContext<'a> {
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part { stmts: std::ptr::from_mut::<[Stmt]>(out_stmts), ..Default::default() }];
 
-        // SAFETY: parse_graph backref
+        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
+        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
         // PORT NOTE: `Options.allocator` / `source_map_allocator` were removed in
@@ -1895,7 +1934,8 @@ impl<'a> LinkerContext<'a> {
 
         let all_css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
-        // SAFETY: parse_graph backref
+        // SAFETY: parse_graph backref; raw deref because `all_sources` is held
+        // across `&mut self.mangled_props` below (split borrow).
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
         // Collect all local css names
@@ -2014,8 +2054,7 @@ impl<'a> LinkerContext<'a> {
                     }
 
                     let source_index = piece_index;
-                    // SAFETY: parse_graph backref
-                    let parse_graph = unsafe { &*self.parse_graph };
+                    let parse_graph = self.parse_graph();
                     let additional_files: &[AdditionalFile] =
                         parse_graph.input_files.items_additional_files()[source_index as usize].slice();
                     debug_assert!(!additional_files.is_empty());
@@ -2067,10 +2106,10 @@ impl<'a> LinkerContext<'a> {
                 debug_tree_shake!(
                     "Export name: {} (in {})",
                     bstr::BStr::new(unsafe { &*sym.original_name }),
-                    bstr::BStr::new(unsafe {
-                        &(*self.parse_graph).input_files.items_source()
+                    bstr::BStr::new(
+                        &self.parse_graph().input_files.items_source()
                             [export_ref.source_index() as usize].path.text
-                    }),
+                    ),
                 );
             }
             list.push(StableRef {
@@ -2137,8 +2176,7 @@ impl<'a> LinkerContext<'a> {
 
         #[cfg(feature = "debug_logs")]
         {
-            // SAFETY: parse_graph backref
-            let parse_graph = unsafe { &*self.parse_graph };
+            let parse_graph = self.parse_graph();
             debug_tree_shake!(
                 "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
                 entry_points_count,
@@ -2211,8 +2249,7 @@ impl<'a> LinkerContext<'a> {
     ) {
         #[cfg(debug_assertions)]
         {
-            // SAFETY: parse_graph backref
-            let parse_graph = unsafe { &*self.parse_graph };
+            let parse_graph = self.parse_graph();
             debug_tree_shake!(
                 "markFileLiveForTreeShaking({}, {} {}) = {}",
                 source_index,
@@ -2259,8 +2296,7 @@ impl<'a> LinkerContext<'a> {
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
-        // SAFETY: parse_graph backref
-        if unsafe { (*self.parse_graph).input_files.items_loader()[source_index as usize] } == Loader::Html {
+        if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
             for record in import_records[source_index as usize].slice() {
                 if record.source_index.is_valid() {
                     self.mark_file_live_for_tree_shaking(
@@ -2369,8 +2405,7 @@ impl<'a> LinkerContext<'a> {
 
         #[cfg(debug_assertions)]
         {
-            // SAFETY: parse_graph backref
-            let parse_graph = unsafe { &*self.parse_graph };
+            let parse_graph = self.parse_graph();
             // SAFETY: `part.stmts` is `*mut [Stmt]` (arena slice); reborrow for the
             // debug print only.
             let stmts: &[Stmt] = unsafe { &*part.stmts };
@@ -2822,9 +2857,8 @@ impl<'a> LinkerContext<'a> {
         let other_source_index = record.source_index.get();
         let other_id = other_source_index;
 
-        // SAFETY: parse_graph backref
         if other_id as usize > self.graph.ast.len()
-            || unsafe { (*self.parse_graph).input_files.items_source()[other_source_index as usize].path.is_disabled }
+            || self.parse_graph().input_files.items_source()[other_source_index as usize].path.is_disabled
         {
             return ImportTrackerIterator {
                 value: ImportTracker { source_index: record.source_index, ..Default::default() },
@@ -2920,8 +2954,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Missing re-exports in TypeScript files are indistinguishable from types
-        // SAFETY: parse_graph backref
-        let other_loader = unsafe { (*self.parse_graph).input_files.items_loader()[other_id as usize] };
+        let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
         if named_import.is_exported && other_loader.is_typescript() {
             return ImportTrackerIterator {
                 value: Default::default(),
@@ -3114,8 +3147,7 @@ impl<'a> LinkerContext<'a> {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = ImportItemStatus::Missing;
 
-                        // SAFETY: resolver backref into BundleV2.transpiler.resolver (LIFETIMES.tsv)
-                        if unsafe { (*self.resolver).opts.target } == Target::Browser
+                        if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 &next_source.path.pretty,
                                 Target::Bun,
@@ -3142,10 +3174,7 @@ impl<'a> LinkerContext<'a> {
                                 ),
                             ).expect("unreachable");
                         }
-                    } else if unsafe {
-                        // SAFETY: resolver is a BACKREF into BundleV2.transpiler.resolver (LIFETIMES.tsv)
-                        (*self.resolver).opts.target
-                    } == Target::Browser
+                    } else if self.resolver().opts.target == Target::Browser
                         && next_source.path.text.starts_with(NodeFallbackModules::IMPORT_PATH)
                     {
                         self.log.add_range_error_fmt_with_note(
@@ -3558,8 +3587,7 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
                 crate::chunk::QueryKind::HtmlImport => {
-                    // SAFETY: parse_graph backref
-                    if index >= unsafe { (*self.parse_graph).html_imports.server_source_indices.len() } as usize {
+                    if index >= self.parse_graph().html_imports.server_source_indices.len() as usize {
                         if cfg!(debug_assertions) {
                             Output::debug_warn(format_args!("Invalid output piece boundary"));
                         }

@@ -205,7 +205,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         }
 
         let pkg_manager = unsafe { &mut *pkg_manager };
-        if let Some(mut node) = pkg_manager.scripts_node {
+        if let Some(node) = pkg_manager.scripts_node_mut() {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -213,10 +213,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             let pending_lifecycle_scripts = pkg_manager.pending_lifecycle_script_tasks.load(Ordering::Relaxed);
             // `+ 1` because the root task needs to wait for everything
             if pending_lifecycle_scripts > 0 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1 {
-                // SAFETY: scripts_node points at a stack-local Progress::Node
-                // owned by the calling install loop; alive for the duration
-                // of `Wait::is_done`.
-                unsafe { node.as_mut() }.activate();
+                node.activate();
                 pkg_manager.progress.refresh();
             }
         }
@@ -1978,6 +1975,11 @@ pub fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
+        // Reuse the `NonNull` already stored in `manager.scripts_node` rather
+        // than taking a fresh `&mut scripts_node` below — a second `&mut` from
+        // the local would pop the stored raw's Stacked Borrows tag, and the
+        // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
+        let scripts_node_ptr = manager.scripts_node;
         // PORT NOTE: reshaped for borrowck — Zig holds `*PackageManager` while
         // also borrowing `manager.lockfile`; raw-reborrow so both `&mut`s exist.
         let manager_ptr: *mut PackageManager = manager;
@@ -1987,7 +1989,7 @@ pub fn install_isolated_packages(
             command_ctx,
             installed,
             install_node: if show_progress { Some(&mut install_node) } else { None },
-            scripts_node: if show_progress { Some(&mut scripts_node) } else { None },
+            scripts_node: if show_progress { scripts_node_ptr } else { None },
             store: &store,
             tasks,
             trusted_dependencies_mutex: Default::default(),
@@ -2440,6 +2442,10 @@ pub fn install_isolated_packages(
             progress.root.end();
             *progress = Progress::default();
         }
+        // Defensive: clear the stack-local progress-node pointers so the
+        // accessors can't observe dangling pointers after this frame returns.
+        manager.scripts_node = None;
+        manager.downloads_node = None;
 
         if Environment::CI_ASSERT {
             let mut done = true;

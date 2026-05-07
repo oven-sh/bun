@@ -66,7 +66,7 @@ pub fn create_and_schedule_completion_task<'a>(
     });
     // SAFETY: freshly-boxed allocation with ref_count == 1; we hold the only handle, so
     // forming a temporary `&mut` through the intrusive pointer cannot alias.
-    let c: *mut JSBundleCompletionTask<'a> = completion.data.as_ptr();
+    let c: *mut JSBundleCompletionTask<'a> = completion.as_ptr();
     unsafe {
         (*c).task = AnyTaskNew::<JSBundleCompletionTask<'a>>::init(&mut *c);
 
@@ -99,7 +99,7 @@ pub fn generate_from_javascript<'a>(
     // SAFETY: `completion` holds a live ref; mutating `promise` here mirrors Zig's
     // post-construction assignment (single-threaded JS-side init).
     unsafe {
-        (*completion.data.as_ptr()).promise = jsc::JSPromiseStrong::init(global_this);
+        (*completion.as_ptr()).promise = jsc::JSPromiseStrong::init(global_this);
     }
     Ok(completion.promise.value())
 }

@@ -502,9 +502,7 @@ impl<'a> Printer<'a> {
     ) -> PrintResult<()> {
         if !handle_css_module {
             if let Some(identifier) = ident.as_ident() {
-                // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-                let v: &[u8] = unsafe { &*identifier.v };
-                return css::serializer::serialize_identifier(v, self)
+                return css::serializer::serialize_identifier(identifier.v(), self)
                     .map_err(|_| self.add_fmt_error());
             } else {
                 let ref_ = ident.as_ref().unwrap();
@@ -589,6 +587,8 @@ impl<'a> Printer<'a> {
     ) -> PrintResult<()> {
         self.write_str(b"--")?;
 
+        // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
+        // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
         // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
         let ident_v: &'a [u8] = unsafe { &*ident.v };
 

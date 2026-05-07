@@ -178,6 +178,39 @@ impl Default for Node {
 }
 
 impl Node {
+    /// Raw pointer to the owning `Progress`.
+    ///
+    /// A `&`/`&mut`-returning accessor is intentionally **not** provided:
+    /// `Progress` embeds `root: Node` and `refresh_with_held_lock` walks the
+    /// `recently_updated_child` chain, so materializing a `&mut Progress` while
+    /// any `&Node`/`&mut Node` is live would alias. Callers must go through the
+    /// raw pointer and keep each access narrowly scoped.
+    #[inline]
+    pub fn context_ptr(&self) -> *mut Progress {
+        self.context
+    }
+
+    /// Shared reference to the parent node, or `None` for the root.
+    ///
+    /// Safe for read-only use (atomic field access, walking `parent.parent()`).
+    /// For paths that must call `&mut self` methods on the parent (e.g.
+    /// `complete_one`), use [`parent_ptr`](Self::parent_ptr) instead.
+    #[inline]
+    pub fn parent(&self) -> Option<&Node> {
+        // SAFETY: parent backref points into caller-provided storage that
+        // outlives this node per the non-allocating API contract (see module
+        // docs); null only for the root node.
+        unsafe { self.parent.as_ref() }
+    }
+
+    /// Raw pointer to the parent node for paths that must mutate it
+    /// (e.g. `end` → `parent.complete_one`, which re-enters `maybe_refresh`).
+    /// See [`context_ptr`](Self::context_ptr) for the aliasing rationale.
+    #[inline]
+    pub fn parent_ptr(&self) -> *mut Node {
+        self.parent
+    }
+
     /// Create a new child progress node. Thread-safe.
     /// Call `Node.end` when done.
     /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
@@ -198,25 +231,26 @@ impl Node {
 
     /// This is the same as calling `start` and then `end` on the returned `Node`. Thread-safe.
     pub fn complete_one(&mut self) {
-        // SAFETY: parent backref is valid for the lifetime of this Node (caller-provided storage).
-        if let Some(parent) = unsafe { self.parent.as_mut() } {
+        let self_ptr: *mut Node = self;
+        if let Some(parent) = self.parent() {
             parent
                 .recently_updated_child
-                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
+                .store(self_ptr, Ordering::Release);
         }
         self.unprotected_completed_items
             .fetch_add(1, Ordering::Relaxed);
-        // SAFETY: context backref set in `Progress::start`, valid while Progress lives.
-        unsafe { &mut *self.context }.maybe_refresh();
+        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+        unsafe { (*self.context_ptr()).maybe_refresh() };
     }
 
     /// Finish a started `Node`. Thread-safe.
     pub fn end(&mut self) {
-        // SAFETY: context backref set in `Progress::start`, valid while Progress lives.
-        let context = unsafe { &mut *self.context };
+        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+        let context = unsafe { &mut *self.context_ptr() };
         context.maybe_refresh();
-        // SAFETY: parent backref is valid for the lifetime of this Node.
-        if let Some(parent) = unsafe { self.parent.as_mut() } {
+        // SAFETY: parent backref valid; `complete_one` below needs `&mut` and
+        // re-enters `maybe_refresh`, so this stays a raw deref (see `parent_ptr`).
+        if let Some(parent) = unsafe { self.parent_ptr().as_mut() } {
             {
                 let _g = context.update_mutex.lock();
                 let _ = parent.recently_updated_child.compare_exchange(
@@ -242,33 +276,34 @@ impl Node {
 
     /// Tell the parent node that this node is actively being worked on. Thread-safe.
     pub fn activate(&mut self) {
-        // SAFETY: parent backref is valid for the lifetime of this Node.
-        if let Some(parent) = unsafe { self.parent.as_mut() } {
+        let self_ptr: *mut Node = self;
+        let ctx_ptr = self.context_ptr();
+        if let Some(parent) = self.parent() {
             parent
                 .recently_updated_child
-                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
-            // SAFETY: context backref valid while Progress lives.
-            unsafe { &mut *self.context }.maybe_refresh();
+                .store(self_ptr, Ordering::Release);
+            // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+            unsafe { (*ctx_ptr).maybe_refresh() };
         }
     }
 
     /// Thread-safe.
     pub fn set_name(&mut self, name: &'static [u8]) {
-        // SAFETY: context backref valid while Progress lives.
-        let progress = unsafe { &mut *self.context };
-        let ctx_ptr = std::ptr::from_mut::<Progress>(progress);
+        let ctx_ptr = self.context_ptr();
+        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+        let progress = unsafe { &mut *ctx_ptr };
         let _g = progress.update_mutex.lock();
         self.name = name;
-        // SAFETY: parent backref is valid for the lifetime of this Node.
-        if let Some(parent) = unsafe { self.parent.as_mut() } {
+        let self_ptr: *mut Node = self;
+        let parent_ptr = self.parent_ptr();
+        if let Some(parent) = self.parent() {
             parent
                 .recently_updated_child
-                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
-            // SAFETY: parent.parent backref is valid for the lifetime of parent.
-            if let Some(grand_parent) = unsafe { parent.parent.as_mut() } {
+                .store(self_ptr, Ordering::Release);
+            if let Some(grand_parent) = parent.parent() {
                 grand_parent
                     .recently_updated_child
-                    .store(std::ptr::from_mut::<Node>(parent), Ordering::Release);
+                    .store(parent_ptr, Ordering::Release);
             }
             // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
             if let Some(timer) = unsafe { (*ctx_ptr).timer } {
@@ -282,21 +317,21 @@ impl Node {
         // TODO(port): Zig signature was `unit: []const u8` assigned to an enum field —
         // dead code in Zig (lazy compilation never type-checked it). Ported with the
         // enum type to keep it well-typed; revisit if any caller appears.
-        // SAFETY: context backref valid while Progress lives.
-        let progress = unsafe { &mut *self.context };
-        let ctx_ptr = std::ptr::from_mut::<Progress>(progress);
+        let ctx_ptr = self.context_ptr();
+        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+        let progress = unsafe { &mut *ctx_ptr };
         let _g = progress.update_mutex.lock();
         self.unit = unit;
-        // SAFETY: parent backref is valid for the lifetime of this Node.
-        if let Some(parent) = unsafe { self.parent.as_mut() } {
+        let self_ptr: *mut Node = self;
+        let parent_ptr = self.parent_ptr();
+        if let Some(parent) = self.parent() {
             parent
                 .recently_updated_child
-                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
-            // SAFETY: parent.parent backref is valid for the lifetime of parent.
-            if let Some(grand_parent) = unsafe { parent.parent.as_mut() } {
+                .store(self_ptr, Ordering::Release);
+            if let Some(grand_parent) = parent.parent() {
                 grand_parent
                     .recently_updated_child
-                    .store(std::ptr::from_mut::<Node>(parent), Ordering::Release);
+                    .store(parent_ptr, Ordering::Release);
             }
             // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
             if let Some(timer) = unsafe { (*ctx_ptr).timer } {
@@ -718,8 +753,8 @@ mod tests {
             thread::sleep(Duration::from_nanos(10 * speed_factor));
             // PORT NOTE: reshaped for borrowck — cannot borrow `progress` while `root_node`
             // (a &mut into progress.root) is live; refresh via the node's context backref.
-            // SAFETY: context backref valid while Progress lives.
-            unsafe { &mut *node.context }.refresh();
+            // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+            unsafe { (*node.context_ptr()).refresh() };
             thread::sleep(Duration::from_nanos(10 * speed_factor));
             node.end();
         }

@@ -881,10 +881,10 @@ impl<T: AnyRefCounted> RefPtr<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(self.data.as_ptr())).release(self.debug, return_address()) };
+            unsafe { (*T::rc_debug_data(self.as_ptr())).release(self.debug, return_address()) };
         }
         // SAFETY: data is live (we hold a ref)
-        unsafe { T::rc_deref_with_context(self.data.as_ptr(), ctx) };
+        unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
         // make UAF fail faster (ideally integrate this with ASAN)
         // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust we
         // cannot mutate through `&self` without UnsafeCell; and `RefPtr` is
@@ -894,7 +894,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
 
     pub fn dupe_ref(&self) -> Self {
         // SAFETY: data is live (we hold a ref)
-        unsafe { Self::init_ref(self.data.as_ptr()) }
+        unsafe { Self::init_ref(self.as_ptr()) }
     }
 
     /// Allocate a new object, returning a RefPtr to it.
@@ -950,9 +950,28 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// provenance, so it is sound to thread it back through APIs that may
     /// eventually `Box::from_raw` it (e.g. allocator-vtable `free`), provided
     /// the caller still holds a ref for the duration.
+    ///
+    /// This is the only sanctioned way to mutate the pointee: `RefPtr` is a
+    /// shared-ownership handle, so a `&mut T` accessor would alias with any
+    /// other live `RefPtr`/`&T` to the same allocation. Callers that need
+    /// mutation must go through this raw pointer and uphold the no-alias
+    /// invariant themselves.
     #[inline]
     pub fn as_ptr(&self) -> *mut T {
         self.data.as_ptr()
+    }
+
+    /// Borrow the pointee immutably. Named accessor equivalent to
+    /// `<RefPtr<T> as Deref>::deref` — provided so call sites can be explicit
+    /// (the inherent `RefPtr::deref` *decrements the refcount*, so `r.deref()`
+    /// is not the borrow you want).
+    #[inline]
+    pub fn data(&self) -> &T {
+        // SAFETY: holding a `RefPtr` means we own at least one ref, so the
+        // pointee is live for the borrow. Single-threaded `RefCount` hosts are
+        // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
+        // their own interior mutability.
+        unsafe { self.data.as_ref() }
     }
 
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
@@ -1013,8 +1032,8 @@ impl<T: AnyRefCounted> RefPtr<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
-            let debug = unsafe { &mut *T::rc_debug_data(self.data.as_ptr()) };
-            debug.track_in_scope(scope, self.data.as_ptr().cast::<c_void>(), size_of::<T>(), ret_addr);
+            let debug = unsafe { &mut *T::rc_debug_data(self.as_ptr()) };
+            debug.track_in_scope(scope, self.as_ptr().cast::<c_void>(), size_of::<T>(), ret_addr);
         }
     }
 
@@ -1045,11 +1064,7 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY: holding a `RefPtr` means we own at least one ref, so the
-        // pointee is live for the borrow. Single-threaded `RefCount` hosts are
-        // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
-        // their own interior mutability.
-        unsafe { self.data.as_ref() }
+        self.data()
     }
 }
 

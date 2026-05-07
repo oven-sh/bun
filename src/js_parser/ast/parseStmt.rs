@@ -1264,8 +1264,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .flags
                             .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
                     }
-                    // SAFETY: current_scope is always a live arena pointer during parsing.
-                    unsafe { (*p.current_scope).is_after_const_local_prefix = true; }
+                    p.current_scope_mut().is_after_const_local_prefix = true;
                     p.has_es_module_syntax = true;
                     return Ok(p.s(
                         S::ExportFrom {

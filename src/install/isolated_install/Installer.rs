@@ -78,7 +78,12 @@ pub struct Installer<'a> {
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
     pub install_node: Option<&'a mut ProgressNode>,
-    pub scripts_node: Option<&'a mut ProgressNode>,
+    /// Mirrors Zig's `?*Progress.Node`. Stored as `NonNull` (not `&mut`)
+    /// because `PackageManager.scripts_node` already holds a raw pointer to the
+    /// same stack local; materializing a second long-lived `&mut` here would
+    /// invalidate that pointer's provenance under Stacked Borrows. Currently
+    /// unread on the Rust side — kept for layout/port parity.
+    pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
     pub manager: &'a mut PackageManager,
@@ -729,9 +734,20 @@ impl Task {
             Step::Done | Step::Blocked => unreachable!("unexpected step"),
         };
 
-        // SAFETY: installer outlives all tasks (BACKREF)
-        let installer = unsafe { &*self.installer };
-        installer.store.entries.items_step()[self.entry_id.get() as usize]
+        // SAFETY: `installer` is a BACKREF — the `Installer` owns `tasks[]` and
+        // outlives every `Task` it schedules; the pointer is never null.
+        //
+        // We deliberately do **not** materialize `&Installer` here: this runs on
+        // a thread-pool worker while the main thread may concurrently hold
+        // `&mut Installer` (e.g. `start_task` writing `tasks[i].result`, or
+        // `on_package_extracted`). A worker-side `&Installer` would alias that
+        // `&mut` under Stacked Borrows. Instead, raw-read the `store: &Store`
+        // field by value via `addr_of!` so no `&Installer` is formed — `Store`
+        // lives outside the `Installer` allocation and `items_step()` is atomic.
+        // This also avoids leaking the erased `'static` from
+        // `*mut Installer<'static>` into a whole-struct borrow.
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer).store) };
+        store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
         next_step

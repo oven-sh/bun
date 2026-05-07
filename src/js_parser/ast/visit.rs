@@ -40,17 +40,10 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
-    // `pushScopeForVisitPass`/`popScope` keep it non-dangling. Aliasing: scopes
-    // are reached only via raw `*mut Scope` (P.current_scope / P.module_scope /
-    // Scope.parent / Scope.children) — no long-lived `&`/`&mut Scope` is ever
-    // held across a `&mut self` call, so `&mut self` here is the sole live
-    // borrow of this allocation and the returned `&mut` is unique for its
-    // (elided, tied-to-`&mut self`) lifetime. Private to this impl block
-    // (sibling files have their own copy).
+    // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {
-        unsafe { &mut *self.current_scope }
+        self.current_scope_mut()
     }
 
     pub fn visit_stmts_and_prepend_temp_refs(
@@ -1365,7 +1358,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if !unsafe { &*p.current_scope }.kind_stops_hoisting()
+                            if !p.current_scope().kind_stops_hoisting()
                                 && p.symbols
                                     [data.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
                                 .kind
@@ -1417,7 +1410,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let name = data.func.name.unwrap();
                             let name_ref = name.ref_.expect("infallible: ref bound");
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if unsafe { &*p.current_scope }.contains_direct_eval {
+                            if p.current_scope().contains_direct_eval {
                                 if let Some(hoisted_ref) =
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
                                 {
@@ -1549,7 +1542,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let raw =
                 unsafe { core::slice::from_raw_parts_mut(stmts.as_mut_ptr(), stmts.len()) };
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            let parent_is_none = unsafe { &*p.current_scope }.parent.is_none();
+            let parent_is_none = p.current_scope().parent.is_none();
             *stmts = ctx.finalize(p, raw, parent_is_none);
         }
 
@@ -1562,8 +1555,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // SAFETY: current_scope is a valid arena ptr for the parse.
-        if unsafe { &*p.current_scope }.parent.is_some()
-            && !unsafe { &*p.current_scope }.contains_direct_eval
+        if p.current_scope().parent.is_some()
+            && !p.current_scope().contains_direct_eval
         {
             // Remove inlined constants now that we know whether any of these statements
             // contained a direct eval() or not. This can't be done earlier when we
@@ -1664,7 +1657,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
             if !core::ptr::eq(p.current_scope, p.module_scope)
-                && !unsafe { &*p.current_scope }.contains_direct_eval
+                && !p.current_scope().contains_direct_eval
             {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:

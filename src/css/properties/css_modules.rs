@@ -75,9 +75,7 @@ impl Composes {
     fn parse_one_ident(input: &mut Parser) -> css::Result<CustomIdent> {
         let name: CustomIdent = CustomIdent::parse(input)?;
 
-        // SAFETY: `CustomIdent.v` is an arena-owned slice valid for the parse session.
-        let v = unsafe { &*name.v };
-        if bun_string::strings::eql_case_insensitive_ascii_check_length(v, b"from") {
+        if bun_string::strings::eql_case_insensitive_ascii_check_length(name.v(), b"from") {
             return Err(input.new_error_for_next_token());
         }
 
@@ -106,8 +104,7 @@ impl Composes {
             return false;
         }
         for (a, b) in lhs.names.slice().iter().zip(rhs.names.slice().iter()) {
-            // SAFETY: arena-owned slices valid for the parse session.
-            if unsafe { &*a.v } != unsafe { &*b.v } {
+            if a.v() != b.v() {
                 return false;
             }
         }

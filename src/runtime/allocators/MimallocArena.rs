@@ -146,18 +146,33 @@ impl<'a> Borrowed<'a> {
         { Borrowed { heap: unsafe { NonNull::new_unchecked(ptr.cast::<mimalloc::Heap>()) }, _lt: PhantomData } }
     }
 
+    /// Shared-borrow accessor for the `DebugHeap` wrapper (ci_assert builds only).
+    ///
+    /// No `&mimalloc::Heap` accessor is provided for the non-ci_assert field: the
+    /// underlying `mi_heap_t` is mutated by FFI (`mi_heap_malloc`, `mi_heap_collect`, …)
+    /// while such a reference could be live, so deriving `*mut` from a shared `&` would
+    /// be UB. Use `get_mimalloc_heap()` for the raw `*mut mimalloc::Heap` instead.
+    #[cfg(feature = "ci_assert")]
+    fn heap(&self) -> &DebugHeap {
+        // SAFETY: `self.heap` is non-null and points at a `DebugHeap` that is live for at
+        // least `'a` — it originates either from a `Box<DebugHeap>` owned by a
+        // `MimallocArena` (via `borrow()`) or from the once-initialized thread-local in
+        // `get_default()`, both of which outlive `'a`. `Borrowed` only ever *reads*
+        // `DebugHeap`'s fields (`.inner`, `.thread_lock` via `&self` methods); the wrapper
+        // itself is never mutated after construction, so a shared reference is sound.
+        unsafe { self.heap.as_ref() }
+    }
+
     fn get_mimalloc_heap(self) -> *mut mimalloc::Heap {
         #[cfg(feature = "ci_assert")]
-        // SAFETY: `heap` points at a live DebugHeap for `'a`; we only read the `inner` field.
-        { unsafe { (*self.heap.as_ptr()).inner.as_ptr() } }
+        { self.heap().inner.as_ptr() }
         #[cfg(not(feature = "ci_assert"))]
         { self.heap.as_ptr() }
     }
 
     fn assert_thread_lock(self) {
         #[cfg(feature = "ci_assert")]
-        // SAFETY: `heap` points at a live DebugHeap for `'a`; `assert_locked` takes `&self`.
-        unsafe { (*self.heap.as_ptr()).thread_lock.assert_locked() };
+        self.heap().thread_lock.assert_locked();
     }
 
     fn aligned_alloc(self, len: usize, alignment: Alignment) -> Option<NonNull<u8>> {

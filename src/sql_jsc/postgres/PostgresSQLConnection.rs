@@ -197,6 +197,49 @@ impl PostgresSQLConnection {
         bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
     }
 
+    // ---- self-referential connection-string slices ----------------------------
+    // `database`/`user`/`password`/`path`/`options` are raw `*const [u8]` fat
+    // pointers into `self.options_buf`. They are populated once in `call()` (each
+    // initialised to `b""` then re-pointed at the StringBuilder allocation that
+    // becomes `options_buf`) and never reassigned. The struct is Box-allocated
+    // via `Box::into_raw` and freed only when the intrusive refcount hits zero,
+    // so `options_buf` — and thus every slice — remains valid for any `&self`.
+    //
+    // NOTE: the returned borrow is tied to `&self`. Call sites that must hold a
+    // slice across a `&mut self` reborrow (e.g. the SASLContinue password hoist)
+    // still go through the raw field directly; see PORT NOTEs at those sites.
+
+    #[inline]
+    pub fn database(&self) -> &[u8] {
+        // SAFETY: points into `self.options_buf`; set once at construction, never
+        // null, never reassigned. Valid for the lifetime of `&self`.
+        unsafe { &*self.database }
+    }
+
+    #[inline]
+    pub fn user(&self) -> &[u8] {
+        // SAFETY: see `database()` — slice into `self.options_buf`.
+        unsafe { &*self.user }
+    }
+
+    #[inline]
+    pub fn password(&self) -> &[u8] {
+        // SAFETY: see `database()` — slice into `self.options_buf`.
+        unsafe { &*self.password }
+    }
+
+    #[inline]
+    pub fn path(&self) -> &[u8] {
+        // SAFETY: see `database()` — slice into `self.options_buf`.
+        unsafe { &*self.path }
+    }
+
+    #[inline]
+    pub fn options(&self) -> &[u8] {
+        // SAFETY: see `database()` — slice into `self.options_buf`.
+        unsafe { &*self.options }
+    }
+
     #[inline]
     fn socket_is_closed(&self) -> bool {
         match &self.socket {
@@ -707,11 +750,10 @@ impl PostgresSQLConnection {
         }
         debug!("sendStartupMessage");
         self.status = Status::SentStartupMessage;
-        // SAFETY: user/database/options are valid slices into options_buf for the lifetime of self.
         let mut msg = protocol::StartupMessage {
-            user: Data::Temporary(unsafe { &raw const *self.user }),
-            database: Data::Temporary(unsafe { &raw const *self.database }),
-            options: Data::Temporary(unsafe { &raw const *self.options }),
+            user: Data::Temporary(std::ptr::from_ref::<[u8]>(self.user())),
+            database: Data::Temporary(std::ptr::from_ref::<[u8]>(self.database())),
+            options: Data::Temporary(std::ptr::from_ref::<[u8]>(self.options())),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
             self.fail(b"Failed to write startup message", AnyPostgresError::from(err));
@@ -2527,9 +2569,8 @@ impl PostgresSQLConnection {
 
                         // First hash: md5(password + username)
                         let mut first_hasher = bun_sha_hmac::MD5::init();
-                        // SAFETY: password/user are valid slices into options_buf.
-                        first_hasher.update(unsafe { &*self.password });
-                        first_hasher.update(unsafe { &*self.user });
+                        first_hasher.update(self.password());
+                        first_hasher.update(self.user());
                         first_hasher.r#final(&mut first_hash_buf);
                         let first_hash_str_output = {
                             let n = bun_core::fmt::bytes_to_hex_lower(&first_hash_buf, &mut first_hash_str);

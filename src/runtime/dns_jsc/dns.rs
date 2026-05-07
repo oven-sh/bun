@@ -374,8 +374,7 @@ pub mod lib_uv_backend {
         // SAFETY: holder is a valid heap allocation
         unsafe {
             (*holder).task = jsc::AnyTask::new::<Holder>(Holder::run, holder);
-            // SAFETY: JSGlobalObject outlives the request.
-            (*(*this).head.global_this)
+            (*this).head.global_this()
                 .bun_vm()
                 .enqueue_task(jsc::Task::init(&mut (*holder).task));
         }
@@ -442,7 +441,7 @@ pub mod lib_uv_backend {
                     if (*request).cache.pending_cache() {
                         (*resolver).drain_pending_host_native(
                             (*request).cache.pos_in_pending(),
-                            &*(*request).head.global_this,
+                            (*request).head.global_this(),
                             rc.int(),
                             GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
                         );
@@ -570,6 +569,14 @@ pub mod resolve_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut ResolveInfoRequest<T> { self.lookup }
     }
 }
 
@@ -700,6 +707,14 @@ pub mod get_host_by_addr_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetHostByAddrInfoRequest { self.lookup }
     }
 }
 
@@ -804,6 +819,15 @@ pub struct CAresNameInfo {
 }
 
 impl CAresNameInfo {
+    /// SAFETY: `global_this` is a JSC_BORROW backref set at construction (both
+    /// `init()` and the inline `head` of `GetNameInfoRequest::init()`) from a
+    /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
+    /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     pub fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -826,8 +850,8 @@ impl CAresNameInfo {
         _timeout: i32,
         result: Option<c_ares::struct_nameinfo>,
     ) {
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = unsafe { &*(*this).global_this };
+        // SAFETY: see fn contract — `this` is a live node.
+        let global_this = unsafe { (*this).global_this() };
         if let Some(err) = err_ {
             // SAFETY: see fn contract.
             unsafe {
@@ -856,8 +880,8 @@ impl CAresNameInfo {
     pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: see fn contract — `this` is a live node.
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = unsafe { &*(*this).global_this };
+        // SAFETY: see fn contract — `this` is a live node.
+        let global_this = unsafe { (*this).global_this() };
         let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
@@ -922,6 +946,14 @@ pub mod get_name_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetNameInfoRequest { self.lookup }
     }
 }
 
@@ -1055,6 +1087,14 @@ pub mod get_addr_info_request {
                 lookup: ptr::null_mut(),
             }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetAddrInfoRequest { self.lookup }
     }
 
     pub struct BackendLibInfo {
@@ -1289,7 +1329,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        &*(*this).head.global_this,
+                        (*this).head.global_this(),
                         status,
                         GetAddrInfoResultAny::Addrinfo(addr_info),
                     );
@@ -1340,7 +1380,7 @@ impl GetAddrInfoRequest {
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
-                                &*(*this).head.global_this,
+                                (*this).head.global_this(),
                                 0,
                                 any,
                             );
@@ -1414,7 +1454,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        &*(*this).head.global_this,
+                        (*this).head.global_this(),
                         retcode,
                         GetAddrInfoResultAny::Addrinfo((*uv_info).addrinfo),
                     );
@@ -1464,6 +1504,18 @@ pub struct CAresReverse {
 }
 
 impl CAresReverse {
+    /// Borrow the owning `JSGlobalObject`.
+    ///
+    /// SAFETY: `global_this` is a JSC_BORROW backref set from a live
+    /// `&JSGlobalObject` in `init()` / `GetHostByAddrInfoRequest::init()`; the
+    /// global outlives every DNS request hung off of it (Zig spec:
+    /// `*jsc.JSGlobalObject`, non-optional), so the pointer is always non-null
+    /// and valid for the lifetime of `self`.
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     pub fn init(resolver: Option<*mut Resolver>, global_this: &JSGlobalObject, name: &[u8]) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -1490,7 +1542,7 @@ impl CAresReverse {
     ) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, b"getHostByAddr", Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
@@ -1515,11 +1567,11 @@ impl CAresReverse {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }
@@ -1539,8 +1591,7 @@ impl CAresReverse {
 
 impl Drop for CAresReverse {
     fn drop(&mut self) {
-        // SAFETY: JSGlobalObject outlives the request.
-        let _ = unsafe { &*self.global_this };
+        let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
@@ -1583,6 +1634,17 @@ impl<T: CAresRecordType> CAresLookup<T> {
         })
     }
 
+    /// Borrow the owning [`JSGlobalObject`].
+    ///
+    /// SAFETY: `global_this` is a JSC_BORROW backref set at construction (both
+    /// `init()` and the inline `head` of `ResolveInfoRequest::init()`) from a
+    /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
+    /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
@@ -1602,7 +1664,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, syscall.as_bytes(), Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
@@ -1628,11 +1690,11 @@ impl<T: CAresRecordType> CAresLookup<T> {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }
@@ -1652,8 +1714,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
-        // SAFETY: JSGlobalObject outlives the request.
-        let _ = unsafe { &*self.global_this };
+        let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
@@ -1673,6 +1734,20 @@ pub struct DNSLookup {
 }
 
 impl DNSLookup {
+    /// Borrow the owning `JSGlobalObject`.
+    ///
+    /// SAFETY (encapsulated): `global_this` is assigned exactly once at
+    /// construction from a live `&JSGlobalObject` (never null) and is a
+    /// JSC_BORROW backref — the global outlives every `DNSLookup` it spawns.
+    /// The pointee is the JSC heap global, not memory owned by `self`, so the
+    /// returned `&` remains valid even after `self` is dropped (drain loops
+    /// rely on this when caching the ref across `Box::from_raw`).
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: see doc comment — non-null backref that outlives `self`.
+        unsafe { &*self.global_this }
+    }
+
     pub fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
@@ -1697,7 +1772,7 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::options_jsc::result_any_to_js(&result, &*(*this).global_this)
+            let array = super::options_jsc::result_any_to_js(&result, (*this).global_this())
                 .ok()
                 .flatten()
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
@@ -1712,7 +1787,7 @@ impl DNSLookup {
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later(&*(*this).global_this);
+                    .reject_later((*this).global_this());
                 Self::destroy(this);
                 return;
             }
@@ -1740,7 +1815,7 @@ impl DNSLookup {
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
@@ -1765,7 +1840,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, &*(*this).global_this)
+            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             Self::on_complete_with_array(this, array);
         }
@@ -1777,11 +1852,11 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-                (*resolver.data.as_ptr()).request_completed();
+                (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
         }
@@ -1804,8 +1879,7 @@ impl DNSLookup {
 impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
-        // SAFETY: JSGlobalObject outlives the request.
-        let _ = unsafe { &*self.global_this };
+        let _ = self.global_this();
         // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
         // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js));
@@ -3668,8 +3742,8 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = (*addr).to_js_response(&*prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut prev_global = (*key.lookup).head.global_this();
+            let mut array = (*addr).to_js_response(prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
             array.ensure_still_alive();
@@ -3679,9 +3753,9 @@ impl Resolver {
             array.ensure_still_alive();
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_response(&*new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = (*addr).to_js_response(new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3722,8 +3796,8 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut prev_global = (*key.lookup).head.global_this();
+            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
@@ -3735,9 +3809,9 @@ impl Resolver {
             // std.c.addrinfo
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3784,7 +3858,7 @@ impl Resolver {
         };
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
+            let mut prev_global = (*key.lookup).head.global_this();
 
             {
                 array.ensure_still_alive();
@@ -3796,10 +3870,10 @@ impl Resolver {
             // std.c.addrinfo
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::options_jsc::result_any_to_js(&result, &*new_global).unwrap_or(None).unwrap(); // TODO: properly propagate exception upwards
+                    array = super::options_jsc::result_any_to_js(&result, new_global).unwrap_or(None).unwrap(); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
 
@@ -3839,11 +3913,11 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
+            let mut prev_global = (*key.lookup).head.global_this();
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, &*prev_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
             CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
@@ -3851,9 +3925,9 @@ impl Resolver {
             array.ensure_still_alive();
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::hostent_to_js_response(&mut *addr, &*new_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3894,9 +3968,9 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
+            let mut prev_global = (*key.lookup).head.global_this();
 
-            let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
             CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
@@ -3904,9 +3978,9 @@ impl Resolver {
             array.ensure_still_alive();
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, &*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;

@@ -1155,7 +1155,10 @@ impl DevServer {
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
         );
 
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
+        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime.
+        // Raw-ptr deref (not `self.vm().global()`) so `global`'s lifetime is
+        // decoupled from `&self` — it's held across the `&mut self` field
+        // assignments below.
         let global = unsafe { &*(*self.vm).global };
         let interface = match c::bake_load_initial_server_code(
             global,
@@ -2060,8 +2063,7 @@ impl DevServer {
                 deferred_request::HandlerKind::ServerHandler => 'brk: {
                     let server_handler: SavedRequest = match req {
                         ReqOrSaved::Req(r) => {
-                            // SAFETY: vm.global is JSC_BORROW, valid for VM lifetime.
-                            let global = unsafe { &*(*self.vm).global };
+                            let global = self.vm().global();
                             match self
                                 .server
                                 .as_ref()
@@ -2494,8 +2496,7 @@ impl DevServer {
 
         // Create params JSValue
         // TODO: lazy structure caching since we are making these objects a lot
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-        let global = unsafe { &*(*self.vm).global };
+        let global = self.vm().global();
         let params_js_value = if self.router.match_slow(pathname, &mut params).is_some() {
             params.to_js(global)
         } else {
@@ -3003,10 +3004,7 @@ impl DevServer {
         // as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime.
-                    unsafe { &*self.vm }.event_loop().cast(),
-                ),
+                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
         // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
@@ -3345,8 +3343,7 @@ impl DevServer {
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
 
         let names: &[u64] = &self.client_graph.current_css_files;
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-        let global = unsafe { &*(*self.vm).global };
+        let global = self.vm().global();
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {
             let mut buf = [0u8; ASSET_PREFIX.len() + ::core::mem::size_of::<u64>() * 2 + "/.css".len()];
@@ -4372,8 +4369,8 @@ pub fn finalize_bundle(
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                && !unsafe { &*(*dev.vm).transpiler.env }
+                // SAFETY: `transpiler.env` is set during VM init and live for VM lifetime
+                && !unsafe { &*dev.vm().transpiler.env }
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
                 Output::disable_buffering();
@@ -4498,8 +4495,7 @@ pub fn finalize_bundle(
         let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
         scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.deinit_idempotently() } };
         current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-        let vm = unsafe { &*dev.vm };
+        let vm = dev.vm();
         let _exit = vm.enter_event_loop_scope();
         current_bundle!().promise.strong.resolve(vm.global(), JSValue::TRUE)?;
     }
@@ -4776,8 +4772,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Ok(()) => {}
             Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
-                // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                unsafe { &*(*dev.vm).global }.report_active_exception_as_unhandled(e),
+                dev.vm().global().report_active_exception_as_unhandled(e),
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
         }
         return;
@@ -4818,8 +4813,7 @@ impl DevServer {
                 Ok(()) => {}
                 Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory).into()),
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                    // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                    unsafe { &*(*self.vm).global }.report_active_exception_as_unhandled(e);
+                    self.vm().global().report_active_exception_as_unhandled(e);
                 }
             }
             return Ok(());
@@ -4850,8 +4844,7 @@ impl DevServer {
         match ensure_route_is_bundled(self, rbi, &mut ctx) {
             Ok(()) => {}
             Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) =>
-                // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-                unsafe { &*(*self.vm).global }.report_active_exception_as_unhandled(e),
+                self.vm().global().report_active_exception_as_unhandled(e),
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())
@@ -5097,8 +5090,7 @@ impl DevServer {
                     BunString::empty(),
                     false,
                 );
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                let vm = unsafe { &*self.vm };
+                let vm = self.vm();
                 let _exit = vm.enter_event_loop_scope();
                 r.promise.reject(global, Ok(response.to_js(global)))?;
             }
@@ -5629,8 +5621,7 @@ impl DevServer {
     /// the same agent. Caller must not hold another live `&mut` to it.
     /// JS-thread only.
     pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-        if let Some(debugger) = unsafe { &*self.vm }.debugger.as_ref() {
+        if let Some(debugger) = self.vm().debugger.as_ref() {
             #[cold]
             fn cold() {}
             cold();

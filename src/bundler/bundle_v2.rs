@@ -1171,10 +1171,40 @@ pub mod api {
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
             }
+            /// Raw backref to the owning `BundleV2`.
+            ///
+            /// No `&`/`&mut`-returning accessor is provided: the bundle is
+            /// reachable from both the bundler thread and JS-thread plugin
+            /// callbacks, and several callers (`on_load_async`,
+            /// `on_load_from_js_loop`) need `&mut BundleV2` *alongside*
+            /// `&mut Load`, which a borrowing accessor cannot express. Callers
+            /// must keep the raw deref + SAFETY note locally.
+            #[inline]
+            pub fn bv2_ptr(&self) -> *mut BundleV2<'static> {
+                self.bv2
+            }
+            /// Shared access to the heap-allocated `ParseTask` this load wraps.
+            ///
+            /// SAFETY (encapsulated): `parse_task` is set from `&mut ParseTask`
+            /// in `init` (never null) and the task outlives the `Load` — it is
+            /// only handed to the thread-pool *after* the plugin load resolves,
+            /// so no concurrent mutation overlaps a `&` borrow here.
+            #[inline]
+            pub fn parse_task(&self) -> &ParseTask {
+                unsafe { &*self.parse_task }
+            }
+            /// Exclusive access to the wrapped `ParseTask`.
+            ///
+            /// SAFETY (encapsulated): see `parse_task()`. `&mut self` guarantees
+            /// the `Load` itself is uniquely borrowed; the `ParseTask` is not
+            /// yet scheduled at any call site that uses this accessor.
+            #[inline]
+            pub fn parse_task_mut(&mut self) -> &mut ParseTask {
+                unsafe { &mut *self.parse_task }
+            }
             #[inline]
             pub fn bake_graph(&self) -> crate::bake_types::Graph {
-                // SAFETY: parse_task is live for the duration of the load.
-                unsafe { (*self.parse_task).known_target.bake_graph() }
+                self.parse_task().known_target.bake_graph()
             }
             /// Hops to the JS thread to call the `onLoad` plugin chain.
             /// Zig spec (JSBundler.zig:1449):
@@ -3834,7 +3864,7 @@ impl<'a> BundleV2<'a> {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if source.path.is_file() {
-                    unsafe { this.graph.pool.as_mut() }.schedule(unsafe { &raw mut *load.parse_task });
+                    unsafe { this.graph.pool.as_mut() }.schedule(load.parse_task_mut());
                     return;
                 }
 
@@ -3892,8 +3922,7 @@ impl<'a> BundleV2<'a> {
                     s
                 };
                 this.graph.input_files.items_flags_mut()[load.source_index.get() as usize].insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
-                // SAFETY: `parse_task` was set in `Load::init` and is live for the load.
-                let parse_task = unsafe { &mut *load.parse_task };
+                let parse_task = load.parse_task_mut();
                 parse_task.loader = Some(code.loader);
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 unsafe { this.graph.pool.as_mut() }.schedule(parse_task);

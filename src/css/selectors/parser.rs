@@ -2436,8 +2436,7 @@ impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
         // TODO(port): Zig matches on a few variants and falls through to `@tagName`.
         // Rust enums need `strum::IntoStaticStr` for the tag name; Phase B.
         match self {
-            // SAFETY: `Ident.v` borrows the parser arena (Phase-A `'static` placeholder).
-            Self::LocalName(ln) => write!(f, "local_name={}", bstr::BStr::new(unsafe { &*ln.name.v })),
+            Self::LocalName(ln) => write!(f, "local_name={}", bstr::BStr::new(ln.name.v())),
             Self::Combinator(c) => write!(f, "combinator='{}'", c),
             Self::PseudoElement(_) => write!(f, "pseudo_element=<..>"),
             Self::Class(_) => write!(f, "class=<..>"),
@@ -3431,8 +3430,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         }
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
-        // SAFETY: `Ident.v` borrows the parser arena (Phase-A `'static` placeholder).
-        attribute_flags.to_case_sensitivity(unsafe { &*local_name_lower.v }, namespace.is_some());
+        attribute_flags.to_case_sensitivity(local_name_lower.v(), namespace.is_some());
     if namespace.is_some() && !local_name_is_ascii_lowercase {
         Ok(GenericComponent::AttributeOther(Box::new(
             attrs::AttrSelectorWithOptionalNamespace::<Impl> {
@@ -3979,9 +3977,8 @@ impl ViewTransitionPartName {
         // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
         // serializer concern, not a grammar concern — the gated impl just
         // toggles the second arg).
-        // SAFETY: `CustomIdent.v` borrows the parser arena.
         let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            css::serializer::serialize_identifier(unsafe { &*name.v }, dest)
+            css::serializer::serialize_identifier(name.v(), dest)
                 .map_err(|_| PrintErr::CSSPrintError)
         };
         match self {

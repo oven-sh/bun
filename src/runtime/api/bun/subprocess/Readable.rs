@@ -59,7 +59,7 @@ impl Readable {
         match self {
             Readable::Pipe(pipe) => {
                 // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.data.as_ptr()).update_ref(true) };
+                unsafe { (*pipe.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -69,7 +69,7 @@ impl Readable {
         match self {
             Readable::Pipe(pipe) => {
                 // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.data.as_ptr()).update_ref(false) };
+                unsafe { (*pipe.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -166,7 +166,7 @@ impl Readable {
             }
             Readable::Pipe(pipe) => {
                 // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.data.as_ptr()).close() };
+                unsafe { (*pipe.as_ptr()).close() };
             }
             _ => {}
         }

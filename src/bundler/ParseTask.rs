@@ -1226,7 +1226,7 @@ fn get_ast(
             // of the bundle, the key is replaced with the actual URL.
             let content_hash = ContentHasher::run(&source.contents);
 
-            let unique_key: &'static [u8] = if !topts.dev_server.is_null() {
+            let unique_key: &'static [u8] = if topts.has_dev_server() {
                 // With DevServer, the actual URL is added now, since it can be
                 // known this far ahead of time, and it means the unique key code
                 // does not have to perform an additional pass over files.
@@ -2210,7 +2210,7 @@ fn run_with_source_code(
             .separate_ssr_graph)
         ||
         // set the target to the client when bundling client-side files
-        ((topts.server_components || !topts.dev_server.is_null())
+        ((topts.server_components || topts.has_dev_server())
             && task.known_target == options::Target::Browser)
     {
         // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
@@ -2417,7 +2417,7 @@ fn run_with_source_code(
     // in which we inline `true`.
     if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
         opts.import_meta_main_value =
-            Some(task.is_entry_point && topts.dev_server.is_null());
+            Some(task.is_entry_point && !topts.has_dev_server());
     } else if target == options::Target::Node {
         opts.lower_import_meta_main_for_node_js = true;
     }
@@ -2601,7 +2601,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
             Ok(ast) => {
                 // When using HMR, always flag asts with errors as parse failures.
                 // Not done outside of the dev server out of fear of breaking existing code.
-                if !ctx.transpiler().options.dev_server.is_null() && ast.log.has_errors() {
+                if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
                     break 'value ResultValue::Err(ResultError {
                         err: err!("SyntaxError"),
                         step: Step::Parse,

@@ -478,9 +478,7 @@ impl ParsedComponent {
             ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
             ParsedComponent::Literal(v) => {
-                // SAFETY: arena-owned slice valid for the printer's lifetime.
-                let s = unsafe { &*v.v };
-                css::serializer::serialize_identifier(s, dest).map_err(|_| dest.add_fmt_error())
+                css::serializer::serialize_identifier(v.v(), dest).map_err(|_| dest.add_fmt_error())
             }
             ParsedComponent::Repeated(r) => {
                 let mut first = true;

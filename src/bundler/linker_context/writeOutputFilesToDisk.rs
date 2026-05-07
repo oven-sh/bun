@@ -161,8 +161,7 @@ pub fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
-        // SAFETY: `c.resolver` is set during LinkerContext init and lives for the build.
-        let resolver_opts = unsafe { &(*c.resolver).opts };
+        let resolver_opts = &c.resolver().opts;
         let public_path: &[u8] =
             if chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
                 &bv2.transpiler_for_target(options::Target::Browser).options.public_path
@@ -175,8 +174,7 @@ pub fn write_output_files_to_disk(
         let mut intermediate_output =
             core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
         let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
-        // SAFETY: parse_graph set during init; outlives this call.
-        let parse_graph = unsafe { &*c.parse_graph };
+        let parse_graph = c.parse_graph();
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
@@ -581,7 +579,8 @@ pub fn write_output_files_to_disk(
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files =
             &mut output_files.output_files[additional_start..];
-        // SAFETY: parse_graph set during init; outlives this call.
+        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
+        // across `&mut *c.log` below (split borrow).
         let parse_graph = unsafe { &mut *c.parse_graph };
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),

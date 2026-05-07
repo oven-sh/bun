@@ -94,10 +94,7 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
     ) -> (u32, u32) {
-        // SAFETY: `parse_graph` is set by `LinkerContext::load` before any chunk
-        // generation runs and outlives the linker context for the duration of the
-        // bundle. This mirrors the Zig `c.parse_graph.*` field access.
-        let parse_graph = unsafe { &*c.parse_graph };
+        let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
                 let mut count: usize = 0;

@@ -693,6 +693,34 @@ impl VirtualMachine {
         unsafe { &*self.jsc_vm }
     }
 
+    /// Safe `&mut VM` accessor for the JSC VM. Set once in `init()` and live
+    /// for the VM lifetime; the JSC `VM` lives in a separate heap allocation
+    /// so this never aliases another field of `self`.
+    #[inline]
+    pub fn jsc_vm_mut(&mut self) -> &mut VM {
+        // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime; unique
+        // access guaranteed by `&mut self`.
+        unsafe { &mut *self.jsc_vm }
+    }
+
+    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
+    /// type-erased `*mut ImportWatcher` installed by
+    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
+    /// `Box` heap allocation), or null when hot reload is disabled.
+    ///
+    /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
+    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
+    /// the spawned file-watcher thread (`Watcher::thread_main`), and
+    /// `RuntimeTranspilerStore` reads it from transpiler workers. The Zig spec
+    /// models this as an alias-allowed `*Watcher` with an internal mutex, so we
+    /// return the raw pointer and leave the `unsafe` deref at the call site to
+    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
+    /// a single mutex-guarded `Watcher` operation.
+    #[inline]
+    pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+        self.bun_watcher as *mut crate::hot_reloader::ImportWatcher
+    }
+
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
     /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
     #[inline]
@@ -883,8 +911,7 @@ impl VirtualMachine {
     #[cold]
     pub fn garbage_collect(&self, sync: bool) -> usize {
         bun_core::Global::mimalloc_cleanup(false);
-        // SAFETY: global is valid for VM lifetime
-        let vm = unsafe { (*self.global).vm() };
+        let vm = self.global().vm();
         if sync {
             return vm.run_gc(true);
         }
@@ -1035,8 +1062,7 @@ impl VirtualMachine {
             // without the high tier is the value's own `toString`.
             let _ = exception_list;
             let writer = bun_core::Output::error_writer();
-            // SAFETY: `global` is set during init and live for VM lifetime.
-            let global = unsafe { &*self.global };
+            let global = self.global();
             let display = result
                 .to_error()
                 .unwrap_or(result)
@@ -1247,9 +1273,8 @@ impl VirtualMachine {
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
         if let Some(config) = self.cpu_profiler_config.take() {
-            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
             if let Err(e) = crate::bun_cpu_profiler::stop_and_write_profile(
-                unsafe { &mut *self.jsc_vm },
+                self.jsc_vm_mut(),
                 &config,
             ) {
                 bun_core::Output::err(
@@ -1262,9 +1287,8 @@ impl VirtualMachine {
         // Write heap profile if profiling was enabled - do this after CPU
         // profile but before shutdown.
         if let Some(config) = self.heap_profiler_config.take() {
-            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
             if let Err(e) = crate::bun_heap_profiler::generate_and_write_profile(
-                unsafe { &mut *self.jsc_vm },
+                self.jsc_vm_mut(),
                 config,
             ) {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
@@ -2096,8 +2120,7 @@ impl VirtualMachine {
                 self.pending_internal_promise = None;
                 self.pending_internal_promise_is_protected = false;
                 let global = self.global;
-                // SAFETY: `global` is set during init and live for the VM lifetime.
-                let global_ref = unsafe { &*global };
+                let global_ref = self.global();
                 let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                     .map_err(|_| bun_core::err!("JSError"))?;
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
@@ -2120,8 +2143,7 @@ impl VirtualMachine {
 
             // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
-            // SAFETY: `global` is set during init and live for the VM lifetime.
-            let global_ref = unsafe { &*global };
+            let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
@@ -2207,8 +2229,7 @@ impl VirtualMachine {
         }
         self.event_loop_mut().tick();
         let _ = self.event_loop_mut().drain_microtasks();
-        // SAFETY: global is valid for VM lifetime.
-        unsafe { (*self.global).handle_rejected_promises() };
+        self.global().handle_rejected_promises();
     }
 }
 
@@ -2363,25 +2384,68 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self { vm, printer, _marker: core::marker::PhantomData }
     }
 
+    /// Read-only view of `(*vm).debugger` via raw place projection.
+    ///
+    /// SAFETY: `vm` is never null (set from a live `&'a mut VirtualMachine` in
+    /// `source_map_handler`, or via `from_raw` whose caller guarantees the VM
+    /// outlives `'a`). Deliberately projects through the raw pointer to the
+    /// leaf field WITHOUT forming an intermediate `&VirtualMachine` /
+    /// `&mut VirtualMachine`: on the off-JS-thread `TranspilerJob::run` path
+    /// the JS thread is concurrently live on the same VM, AND the running
+    /// `&mut TranspilerJob` is itself stored inside
+    /// `(*vm).transpiler_store.store`, so a whole-VM retag would be a data
+    /// race and would invalidate the caller's `&mut self` tag (Stacked
+    /// Borrows). Only the worker-safe `debugger` bytes are retagged here.
+    #[inline]
+    fn vm_debugger(&self) -> Option<&crate::debugger::Debugger> {
+        unsafe { (*self.vm).debugger.as_deref() }
+    }
+
+    /// Exclusive access to `(*vm).source_mappings` via raw place projection.
+    ///
+    /// SAFETY: as for `vm_debugger` — `vm` is never null, and we project
+    /// `(*self.vm).source_mappings` directly so only the leaf field's bytes
+    /// are retagged. A whole-VM `&mut *self.vm` here would (a) race with the
+    /// JS thread on the `from_raw` worker path, (b) overlap the caller's own
+    /// `&mut TranspilerJob` storage inside `vm.transpiler_store`, and (c) on
+    /// the main-thread jsc_hooks path, overlap the already-formed
+    /// `&mut (*jsc_vm).transpiler` receiver borrow. The leaf projection
+    /// touches none of those bytes.
+    #[inline]
+    fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
+        unsafe { &mut (*self.vm).source_mappings }
+    }
+
+    /// Raw pointer to the active `BufferPrinter`.
+    ///
+    /// Intentionally NOT a `&mut`-returning accessor: the same
+    /// `BufferPrinter` is concurrently the live `writer` argument inside
+    /// `print_with_source_map`, so materializing a `&mut` here while the
+    /// printer is mid-write would alias. Callers must only dereference this
+    /// pointer once the writer's last byte has been emitted (i.e. inside
+    /// `on_source_map_chunk`, which the printer invokes from its tail).
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
+        self.printer
+    }
+
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
-        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
-        // `source_map_handler`; the getter's lifetime `'a` bounds the borrow.
         // VirtualMachine.zig:408: take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
         // (VSCode-extension) clients fall through to the `source_mappings`
         // fast-path handler.
-        let wants_inline_source_map = unsafe {
-            matches!(
-                (*self.vm).debugger,
-                Some(ref d) if d.mode != crate::debugger::Mode::Connect
-            )
-        };
+        let wants_inline_source_map = matches!(
+            self.vm_debugger(),
+            Some(d) if d.mode != crate::debugger::Mode::Connect
+        );
         if !wants_inline_source_map {
-            // SAFETY: same provenance as above; `source_mappings` is a value
-            // field on the VM, exclusively borrowed for the returned handler's
-            // lifetime (which is bounded by `&mut self`).
-            let source_mappings = unsafe { &mut (*self.vm).source_mappings };
-            return bun_js_printer::SourceMapHandler::for_(source_mappings);
+            // `source_mappings` is a value field on the VM, exclusively
+            // borrowed for the returned handler's lifetime (bounded by
+            // `&mut self`).
+            return bun_js_printer::SourceMapHandler::for_(
+                self.vm_source_mappings_mut(),
+            );
         }
         bun_js_printer::SourceMapHandler::for_(self)
     }
@@ -2413,20 +2477,20 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         let prefix_len =
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
-        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
-        // `source_map_handler`. `printer` is the raw `*mut BufferPrinter`
-        // passed in by the caller (jsc_hooks.rs), with the SAME provenance as
-        // the `writer` arg to `print_with_source_map`. By the time
-        // `on_source_map_chunk` runs (js_printer/lib.rs `print_ast` /
-        // `print_common_js` tail), the writer has emitted its last byte; we
-        // reborrow from the raw pointer here rather than from a stashed
-        // `&'a mut` so no Unique tag is held across the writer's lifetime.
-        // The caller MUST rederive its own `&mut BufferPrinter` from the raw
-        // pointer after `print_with_source_map` returns (see jsc_hooks.rs).
-        let vm = unsafe { &mut *self.vm };
+        self.vm_source_mappings_mut().put_mappings(source, chunk.buffer)?;
+
+        // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
+        // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
+        // to `print_with_source_map`. By the time `on_source_map_chunk` runs
+        // (js_printer/lib.rs `print_ast` / `print_common_js` tail), the writer
+        // has emitted its last byte; we reborrow from the raw pointer here
+        // rather than from a stashed `&'a mut` so no Unique tag is held across
+        // the writer's lifetime. The caller MUST rederive its own
+        // `&mut BufferPrinter` from the raw pointer after
+        // `print_with_source_map` returns (see jsc_hooks.rs). See
+        // `printer_ptr()` for why this is not a `&mut`-returning accessor.
         let printer = unsafe { &mut *self.printer };
 
-        vm.source_mappings.put_mappings(source, chunk.buffer)?;
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
         printer.ctx.buffer.grow_if_needed(encode_len + prefix_len + 2)?;
         // Zig: "\n" ++ source_map_url_prefix_start
@@ -2595,8 +2659,7 @@ impl IPCInstance {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.
         let vm = VirtualMachine::get().as_mut();
-        // SAFETY: event loop is process-lifetime.
-        let event_loop = unsafe { &mut *vm.event_loop() };
+        let event_loop = vm.event_loop_mut();
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook fn is supplied by `bun_runtime` at startup.
             unsafe { (hooks.ipc_child_singleton_deinit)() };
@@ -2947,8 +3010,7 @@ impl VirtualMachine {
         // PORT NOTE: Zig `defer eventLoop().drainMicrotasks()` per-arm —
         // hoisted into a closure.
         let drain = |this: &mut Self| {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            let _ = unsafe { (*this.event_loop()).drain_microtasks() };
+            let _ = this.event_loop_mut().drain_microtasks();
         };
         let emit_warning = |this: &mut Self| {
             let r = jsc::from_js_host_call_generic(global_object, || unsafe {
@@ -3086,11 +3148,16 @@ impl VirtualMachine {
         }
         let ext = bun_paths::extension(main);
         let loader = self.transpiler.options.loader(ext);
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-        // `is_watcher_enabled()`; the cast recovers the concrete type.
-        unsafe {
-            let watcher = &mut *self.bun_watcher.cast::<crate::hot_reloader::ImportWatcher>();
-            let _ = watcher.add_file_by_path_slow(main, loader);
+        let watcher = self.bun_watcher_ptr();
+        if !watcher.is_null() {
+            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
+            // `enable_hot_module_reloading`. The pointee is shared with the
+            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
+            // discriminant is write-once at install and read-only thereafter,
+            // and `add_file_by_path_slow` serializes the inner watchlist write
+            // via `Watcher.mutex`. Borrow is scoped to this single
+            // mutex-guarded call (Zig spec uses alias-allowed `*Watcher`).
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
         }
     }
 
@@ -3155,10 +3222,9 @@ impl VirtualMachine {
             // new global can re-register them post-reload.
             unsafe { (hooks.cron_clear_all_reload)(self) };
         }
-        // SAFETY: `global` valid for VM lifetime; `JSGlobalObject::reload`
-        // drains microtasks + collects async + clears the JSC module loader
-        // registry.
-        unsafe { &*self.global }.reload().expect("Failed to reload");
+        // `JSGlobalObject::reload` drains microtasks + collects async + clears
+        // the JSC module loader registry.
+        self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
@@ -3352,8 +3418,7 @@ impl VirtualMachine {
         vm_ref.jsc_vm = unsafe { (*new_global).vm_ptr() };
         // SAFETY: per-thread uws loop is live.
         unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*vm_ref.event_loop()).ensure_waker() };
+        vm_ref.event_loop_mut().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -4125,8 +4190,7 @@ impl VirtualMachine {
             return Ok(());
         }
         let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
-        // SAFETY: `global` valid for VM lifetime.
-        unsafe { (*self.global).delete_module_registry_entry(&str) }
+        self.global().delete_module_registry_entry(&str)
     }
 
     /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
@@ -4593,8 +4657,7 @@ impl VirtualMachine {
             allow_side_effects,
         ) {
             if err == bun_core::err!("JSError") {
-                // SAFETY: `self.global` valid for VM lifetime.
-                unsafe { (*self.global).clear_exception() };
+                self.global().clear_exception();
             } else {
                 #[cfg(debug_assertions)]
                 {
@@ -4773,6 +4836,10 @@ impl VirtualMachine {
         source_code_slice: &mut Option<bun_string::ZigStringSlice>,
         allow_source_code_preview: bool,
     ) {
+        // NOTE: cannot use `self.global()` — its return borrows `&self`, but the
+        // body below needs `&mut self` (Tail guard, source-map resolution) while
+        // `global` stays live. Raw-deref the field so the borrow is on the
+        // pointee (VM-lifetime) instead.
         // SAFETY: `global` valid for VM lifetime.
         let global = unsafe { &*self.global };
         error_instance.to_zig_exception(global, exception);
@@ -5350,6 +5417,10 @@ impl VirtualMachine {
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
             && error_instance.js_type() == JSType::ErrorInstance;
+        // NOTE: cannot use `self.global()` — `global_ref` outlives a
+        // `&mut self` recursion (`print_error_instance_js`) and is passed to
+        // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
+        // borrow. Raw-deref the field so the borrow is on the pointee instead.
         // SAFETY: `self.global` valid for VM lifetime.
         let global_ref = unsafe { &*self.global };
         // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
@@ -6110,9 +6181,8 @@ impl VirtualMachine {
             instance
         };
 
-        // SAFETY: `instance` is the live boxed IPCInstance; `self.global` is
-        // the live VM global.
-        unsafe { (*instance).data.write_version_packet(&*self.global) };
+        // SAFETY: `instance` is the live boxed IPCInstance.
+        unsafe { (*instance).data.write_version_packet(self.global()) };
 
         Some(instance)
     }

@@ -206,8 +206,8 @@ impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Standard(a), Self::Standard(b)) => a == b,
+            (Self::Custom(a), Self::Custom(b)) => a.v() == b.v(),
             // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Custom(a), Self::Custom(b)) => unsafe { *a.v == *b.v },
             (Self::Unknown(a), Self::Unknown(b)) => unsafe { *a.v == *b.v },
             _ => false,
         }
@@ -312,8 +312,7 @@ impl PartialEq for MediaFeatureValue {
             (V::Boolean(a), V::Boolean(b)) => a == b,
             (V::Resolution(a), V::Resolution(b)) => a == b,
             (V::Ratio(a), V::Ratio(b)) => a == b,
-            // SAFETY: arena-owned slice valid for the MediaList lifetime.
-            (V::Ident(a), V::Ident(b)) => unsafe { *a.v == *b.v },
+            (V::Ident(a), V::Ident(b)) => a.v() == b.v(),
             // Zig: `css.implementEql` recurses into `EnvironmentVariable.eql` —
             // ported via the `CssEql` derive on `EnvironmentVariable`
             // (name + indices + fallback structural equality).

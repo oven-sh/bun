@@ -116,6 +116,17 @@ impl MimallocArena {
     }
 
     /// Raw `mi_heap_t*` (Zig: `Borrowed.getMimallocHeap`).
+    ///
+    /// This is the sole accessor for the `heap` field. A `&Heap`-returning
+    /// accessor is intentionally **not** provided: `mimalloc::Heap` is an
+    /// opaque C handle whose internal state is mutated by every `mi_heap_*`
+    /// FFI call (alloc/realloc/free/collect), so holding a `&Heap` across any
+    /// such call would alias a mutated pointee. All access goes through the
+    /// raw pointer instead.
+    ///
+    /// SAFETY (invariant): `self.heap` is always a live heap obtained from
+    /// `mi_heap_new()` — non-null by `NonNull`, and destroyed exactly once in
+    /// `Drop`/`reset()`.
     #[inline]
     pub fn heap_ptr(&self) -> *mut mimalloc::Heap {
         self.heap.as_ptr()
@@ -131,7 +142,7 @@ impl MimallocArena {
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
-        unsafe { mimalloc::mi_heap_destroy(self.heap.as_ptr()) };
+        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
@@ -146,7 +157,7 @@ impl MimallocArena {
     #[inline]
     pub fn gc(&self) {
         // SAFETY: `self.heap` is a live heap.
-        unsafe { mimalloc::mi_heap_collect(self.heap.as_ptr(), false) };
+        unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
     }
 
     /// Zig: `MimallocArena.helpCatchMemoryIssues()` — debug-only collect of
@@ -184,7 +195,7 @@ impl MimallocArena {
         // SAFETY: `self.heap` is live; `visit` upholds the callback contract.
         unsafe {
             mimalloc::mi_heap_visit_blocks(
-                self.heap.as_ptr(),
+                self.heap_ptr(),
                 false,
                 Some(visit),
                 (&raw mut total).cast(),
@@ -197,7 +208,7 @@ impl MimallocArena {
     #[inline]
     pub fn owns_ptr(&self, p: *const c_void) -> bool {
         // SAFETY: `self.heap` is a live heap; `p` may be any pointer.
-        unsafe { mimalloc::mi_heap_contains(self.heap.as_ptr(), p) }
+        unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
     }
 
     // ── Zig vtable parity (alloc / resize / remap / free) ────────────────
@@ -207,7 +218,7 @@ impl MimallocArena {
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
-        let heap = self.heap.as_ptr();
+        let heap = self.heap_ptr();
         // SAFETY: `heap` is live.
         let p = unsafe {
             if mimalloc::must_use_aligned_alloc(align) {
@@ -243,7 +254,7 @@ impl MimallocArena {
         // SAFETY: `self.heap` is live; `ptr` was allocated by this heap (or by
         // any mimalloc heap — `mi_free`/realloc accept cross-heap pointers).
         unsafe {
-            mimalloc::mi_heap_realloc_aligned(self.heap.as_ptr(), ptr.as_ptr().cast(), new_len, align)
+            mimalloc::mi_heap_realloc_aligned(self.heap_ptr(), ptr.as_ptr().cast(), new_len, align)
                 .cast()
         }
     }
@@ -373,7 +384,7 @@ impl MimallocArena {
     #[inline]
     pub fn std_allocator(&self) -> crate::StdAllocator {
         crate::StdAllocator {
-            ptr: self.heap.as_ptr().cast(),
+            ptr: self.heap_ptr().cast(),
             vtable: &HEAP_ALLOCATOR_VTABLE,
         }
     }
@@ -394,7 +405,7 @@ impl Drop for MimallocArena {
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
-        unsafe { mimalloc::mi_heap_destroy(self.heap.as_ptr()) };
+        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }
 
@@ -427,7 +438,7 @@ unsafe impl Allocator for &MimallocArena {
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.assert_owning_thread();
-        let heap = self.heap.as_ptr();
+        let heap = self.heap_ptr();
         // SAFETY: `heap` is live.
         let p = unsafe {
             if mimalloc::must_use_aligned_alloc(layout.align()) {
@@ -475,7 +486,7 @@ unsafe impl Allocator for &MimallocArena {
         // `_old`; `new.size() >= _old.size()`.
         let p = unsafe {
             mimalloc::mi_heap_realloc_aligned(
-                self.heap.as_ptr(),
+                self.heap_ptr(),
                 ptr.as_ptr().cast(),
                 new.size(),
                 new.align(),
@@ -498,7 +509,7 @@ unsafe impl Allocator for &MimallocArena {
         // SAFETY: see `grow`.
         let p = unsafe {
             mimalloc::mi_heap_rezalloc_aligned(
-                self.heap.as_ptr(),
+                self.heap_ptr(),
                 ptr.as_ptr().cast(),
                 new.size(),
                 new.align(),
@@ -521,7 +532,7 @@ unsafe impl Allocator for &MimallocArena {
         // SAFETY: see `grow`; `new.size() <= _old.size()`.
         let p = unsafe {
             mimalloc::mi_heap_realloc_aligned(
-                self.heap.as_ptr(),
+                self.heap_ptr(),
                 ptr.as_ptr().cast(),
                 new.size(),
                 new.align(),

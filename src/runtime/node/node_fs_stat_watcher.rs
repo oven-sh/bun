@@ -676,7 +676,7 @@ impl StatWatcher {
         };
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
-        StatWatcherScheduler::append(this_ref.scheduler.data.as_ptr(), this);
+        StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
         Ok(())
     }
 
@@ -717,7 +717,7 @@ impl StatWatcher {
         if this_ref.closed {
             return Ok(());
         }
-        StatWatcherScheduler::append(this_ref.scheduler.data.as_ptr(), this);
+        StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
         Ok(())
     }
 

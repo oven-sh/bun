@@ -355,6 +355,13 @@ impl JSValue {
         // SAFETY: cell pointer; caller is expected to have checked `is_cell()`.
         unsafe { JSC__JSValue__jsType(self) }
     }
+
+    /// `jsTypeLoose()` (JSValue.zig:291) — `js_type` but maps non-cell numbers
+    /// to `NumberObject` so callers can switch on `JSType` without a separate
+    /// `is_number()` arm.
+    #[inline] pub fn js_type_loose(self) -> JSType {
+        if self.is_number() { JSType::NumberObject } else { self.js_type() }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -213,6 +213,19 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
+  // Regression for the globalThis base case added to isDotDefineMatch: an explicit
+  // `--define:globalThis.X.Y` must not be shadowed by a built-in valueless define
+  // for `["X","Y"]` (e.g. `Math.PI`) when matching a `globalThis.X.Y` expression.
+  itBundled("edgecase/NodeEnvDefineOverridesBuiltinThroughGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.Math.PI);
+      `,
+    },
+    target: "browser",
+    define: { "globalThis.Math.PI": "3" },
+    capture: ["3"],
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

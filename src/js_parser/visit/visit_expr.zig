@@ -858,7 +858,10 @@ pub fn VisitExpr(
                                 }
                             }
 
-                            break;
+                            // Keep scanning on valueless matches — an expression like
+                            // `globalThis.Math.PI` can match both the built-in valueless
+                            // `["Math","PI"]` and a user `--define:globalThis.Math.PI=3`;
+                            // stopping on the first would shadow the user's value.
                         }
                     }
                 }

@@ -1,6 +1,6 @@
 //! Port of src/runtime/server/server.zig
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;

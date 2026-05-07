@@ -17,7 +17,7 @@ pub fn to_throw(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
-    // post_match on drop; the body re-borrows `this` through DerefMut so post_match
+    // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
     // runs on every exit path (Ok and Err alike).
     let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
@@ -60,14 +60,15 @@ pub fn to_throw(
 
     let not = this.flags.not();
 
-    let (result_, return_value_from_function) = {
-        let value = this.get_value(global, this_value, "toThrow", "<green>expected<r>")?;
-        this.get_value_as_to_throw(global, value)?
-    };
+    let (result_, return_value_from_function) = this.get_value_as_to_throw(
+        global,
+        this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
+    )?;
 
     let did_throw = result_.is_some();
 
     if not {
+        // PERF(port): was comptime — get_signature should be const fn returning &'static str
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
 
         if !did_throw {
@@ -410,8 +411,8 @@ pub fn to_throw(
     let mut formatter = Formatter::new(global).with_quote_strings(true);
     let mut formatter2 = super::make_formatter(global);
     // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
-    // below; Rust `format_args!` only accepts a literal so the value is inlined at each site.
-    // received_line = "Received function did not throw\nReceived value: <red>{}<r>\n"
+    // below; Rust `format_args!` only accepts literals so the value is inlined at each site.
+    // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
     if expected_value.is_empty() || expected_value.is_undefined() {
         let signature: &'static str = get_signature("toThrow", "", false);
@@ -482,7 +483,6 @@ pub fn to_throw(
 //   confidence: high
 //   notes:      Zig `globalThis.throwPretty(signature ++ tail, args)` ported as
 //               inherent `JSGlobalObject::throw_pretty(format_args!("{signature}{tail}", ..))`;
-//               Zig `this.throw(..)` ported as `Expect::throw` (custom_label-aware)
-//               with the literal tail folded into format_args!.
+//               Zig `this.throw(..)` ported as `Expect::throw` (custom_label-aware).
 //               `defer postMatch` reshaped via scopeguard owning &mut Expect.
 // ──────────────────────────────────────────────────────────────────────────

@@ -2275,7 +2275,7 @@ pub mod args {
     }
     impl Rename {
         pub fn deinit(&self) { self.old_path.deinit(); self.new_path.deinit(); }
-        pub fn deinit_and_unprotect(&self) { self.old_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.old_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -2321,7 +2321,7 @@ pub mod args {
     }
     impl Writev {
         pub fn deinit(&self) {}
-        pub fn deinit_and_unprotect(&self) {
+        pub fn deinit_and_unprotect(&mut self) {
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
@@ -2357,7 +2357,7 @@ pub mod args {
     }
     impl Readv {
         pub fn deinit(&self) {}
-        pub fn deinit_and_unprotect(&self) {
+        pub fn deinit_and_unprotect(&mut self) {
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
@@ -2578,7 +2578,7 @@ pub mod args {
     impl Default for Stat { fn default() -> Self { Self { path: PathLike::default(), big_int: false, throw_if_no_entry: true } } }
     impl Stat {
         pub fn deinit(&self) { self.path.deinit(); }
-        pub fn deinit_and_unprotect(&self) { self.path.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
@@ -2660,7 +2660,7 @@ pub mod args {
     }
     impl Symlink {
         pub fn deinit(&self) { self.target_path.deinit(); self.new_path.deinit(); }
-        pub fn deinit_and_unprotect(&self) { self.target_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.target_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.target_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("target must be a string or TypedArray")))?;
@@ -2898,7 +2898,7 @@ pub mod args {
     }
     impl Readdir {
         pub fn deinit(&self) { self.path.deinit(); }
-        pub fn deinit_and_unprotect(&self) { self.path.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn tag(&self) -> ret::ReaddirTag {
             match self.encoding {
@@ -2947,7 +2947,7 @@ pub mod args {
     impl Default for Open { fn default() -> Self { Self { path: PathLike::default(), flags: FileSystemFlags::R, mode: DEFAULT_PERMISSION } } }
     impl Open {
         pub fn deinit(&self) { self.path.deinit(); }
-        pub fn deinit_and_unprotect(&self) { self.path.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Open> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
@@ -3236,7 +3236,7 @@ pub mod args {
             self.path.deinit();
             if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
-        pub fn deinit_and_unprotect(&self) {
+        pub fn deinit_and_unprotect(&mut self) {
             self.path.deinit_and_unprotect();
             if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
@@ -3447,7 +3447,7 @@ pub mod args {
     impl CopyFile {
         pub fn deinit(&self) { self.src.deinit(); self.dest.deinit(); }
         pub fn to_thread_safe(&mut self) { self.src.to_thread_safe(); self.dest.to_thread_safe(); }
-        pub fn deinit_and_unprotect(&self) { self.src.deinit_and_unprotect(); self.dest.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { self.src.deinit_and_unprotect(); self.dest.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<CopyFile> {
             let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
             let dest = match PathLike::from_js(ctx, arguments)? {

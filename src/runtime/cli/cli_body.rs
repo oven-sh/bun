@@ -961,9 +961,11 @@ pub mod command {
                 }
 
                 if !ctx.positionals.is_empty() {
-                    // TODO(port): RunCommand::ExecOptions { log_errors, allow_fast_run_for_extensions }
-                    // collapsed to `bin_dirs_only` until run_command::exec grows the full struct.
-                    if RunCommand::exec(ctx, /* bin_dirs_only */ false)? {
+                    if RunCommand::exec_with_cfg(ctx, run_command::ExecCfg {
+                        bin_dirs_only: false,
+                        log_errors: true,
+                        allow_fast_run_for_extensions: false,
+                    })? {
                         return Ok(());
                     }
 

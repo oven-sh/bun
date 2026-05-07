@@ -476,8 +476,12 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const installStamp = emitBunInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "node-fallbacks");
-  // One output per source, same basename.
-  const outputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
+  // Two outputs per source: the bundled .js (read at runtime in debug builds)
+  // and a zstd-compressed .js.zst (@embedFile'd in release builds).
+  const outputs = sources.nodeFallbacks.flatMap(s => [
+    resolve(outDir, basename(s)),
+    resolve(outDir, basename(s) + ".zst"),
+  ]);
 
   // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
   // but actually ignores the sources — it does readdirSync(".") to discover

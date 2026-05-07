@@ -11,17 +11,25 @@ pub const FallbackModule = struct {
     package_json: *const PackageJSON,
     code: *const fn () string,
 
-    // This workaround exists to allow bun.runtimeEmbedFile to work.
-    // Using `@embedFile` forces you to wait for the Zig build to finish in
-    // debug builds, even when you only changed JS builtins.
+    // Release builds embed the zstd-compressed `.js.zst` and decompress it on
+    // first access (cached for the process lifetime); these polyfills are only
+    // touched by `bun build --target=browser` so the one-time cost is invisible.
+    // Debug builds read the uncompressed `.js` at runtime so editing JS
+    // builtins doesn't require waiting for a Zig rebuild.
     fn createSourceCodeGetter(comptime code_path: string) *const fn () string {
         const Getter = struct {
-            fn get() string {
-                if (bun.Environment.codegen_embed) {
-                    return @embedFile(code_path);
-                }
+            var cached: ?[]const u8 = null;
 
-                return bun.runtimeEmbedFile(.codegen, code_path);
+            fn get() string {
+                if (cached) |c| return c;
+                if (bun.Environment.codegen_embed) {
+                    const compressed = @embedFile(code_path ++ ".zst");
+                    cached = bun.zstd.decompressAlloc(bun.default_allocator, compressed) catch
+                        @panic("failed to decompress embedded " ++ code_path ++ ".zst");
+                } else {
+                    cached = bun.runtimeEmbedFile(.codegen, code_path);
+                }
+                return cached.?;
             }
         };
 

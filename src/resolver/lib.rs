@@ -4607,19 +4607,17 @@ impl<'a> Resolver<'a> {
         }
 
         // Spec resolver.zig:703-707: `defer { if (tracing) r.elapsed += r.timer.read() }`
-        // — fires on EVERY return path. Capture raw field ptrs (Copy) so the guard does
-        // not hold a `&mut self` borrow across the function body.
-        let _elapsed_guard = {
-            let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
-            let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
-            scopeguard::guard((), move |_| {
-                if FeatureFlags::TRACING {
-                    // SAFETY: `self` outlives this guard (drops at end of fn body);
-                    // `elapsed`/`timer` are not borrowed when the guard fires.
-                    unsafe { *elapsed_ptr += (*timer_ptr).read(); }
-                }
-            })
-        };
+        // — fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
+        // does not hold a `&mut self` borrow across the function body.
+        let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
+        let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
+        scopeguard::defer! {
+            if FeatureFlags::TRACING {
+                // SAFETY: `self` outlives this guard (drops at end of fn body);
+                // `elapsed`/`timer` are not borrowed when the guard fires.
+                unsafe { *elapsed_ptr += (*timer_ptr).read(); }
+            }
+        }
 
         if unsafe { &*self.log() }.level == logger::Level::Verbose {
             if self.debug_logs.is_some() {

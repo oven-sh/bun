@@ -12,8 +12,7 @@ use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
 // Zig: `bun.crash_handler.WriteStackTraceLimits` — bun_core renamed it `DumpStackTraceOptions`.
 use bun_core::{dump_stack_trace, StoredTrace, DumpStackTraceOptions as WriteStackTraceLimits};
-use bun_threading::Guarded;
-use parking_lot::Mutex;
+use bun_threading::{Guarded, GuardedLock, Mutex};
 
 // `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle. This module
 // was hoisted out of `bun_alloc` (CYCLEBREAK), so the parent-allocator plumbing now resolves

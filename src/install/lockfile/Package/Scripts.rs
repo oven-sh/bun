@@ -11,7 +11,7 @@ use bun_semver::String as SemverString;
 use bun_str::strings;
 use bun_sys::{self, Fd};
 
-use crate::bun_json;
+use crate::bun_json::{self, Expr};
 // PORT NOTE: Zig used `comptime Builder: type` duck-typing for the builder
 // param. The only concrete instantiation in install is `*Lockfile.StringBuilder`,
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).

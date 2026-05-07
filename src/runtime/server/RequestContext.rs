@@ -1154,18 +1154,18 @@ where
         let server = unsafe { &*this.server.unwrap() };
         let vm = server.vm() as *const VirtualMachine as *mut VirtualMachine;
         let global_this = server.global_this();
-        // PORT NOTE: reshaped for borrowck — defer block captures `this` and `any_js_calls`
-        let this_ptr = this as *mut Self;
-        let _guard = scopeguard::guard((), |_| {
-            // This is a task in the event loop.
-            // If we called into JavaScript, we must drain the microtask queue
+        // Drop one ref on every exit path. Declared before the microtask drain
+        // so it runs *after* (LIFO) — matches Zig `defer this.deref()` ordered
+        // after `defer drainMicrotasks()`.
+        let _ref = RequestContextRef(this as *mut Self);
+        // This is a task in the event loop.
+        // If we called into JavaScript, we must drain the microtask queue.
+        scopeguard::defer! {
             if any_js_calls.get() {
                 // SAFETY: vm is live for the request duration.
                 unsafe { (*vm).drain_microtasks() };
             }
-            // SAFETY: this outlives the guard
-            unsafe { (*this_ptr).deref() };
-        });
+        }
 
         if let Some(request) = this.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
@@ -2449,9 +2449,7 @@ where
         let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
-        let req_ptr = req as *mut Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref() });
+        let _ref = RequestContextRef(req as *mut Self);
         Self::handle_resolve_stream(req);
         Ok(JSValue::UNDEFINED)
     }
@@ -2464,9 +2462,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let err = args.ptr[0];
-        // PORT NOTE: reshaped for borrowck — defer captures raw ptr.
-        let req_ptr = req as *mut Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref() });
+        let _ref = RequestContextRef(req as *mut Self);
 
         Self::handle_reject_stream(req, global_this, err);
         Ok(JSValue::UNDEFINED)

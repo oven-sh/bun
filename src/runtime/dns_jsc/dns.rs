@@ -11,6 +11,7 @@ use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
     SystemError,
 };
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_aio::{self as Async, FilePoll, KeepAlive};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
@@ -616,7 +617,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                let _guard = scopeguard::guard((), |_| (*resolver).request_completed());
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_cares::<T>(
                         (*this).cache.pos_in_pending(),

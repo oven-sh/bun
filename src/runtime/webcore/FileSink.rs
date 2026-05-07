@@ -396,9 +396,8 @@ impl FileSink {
         // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
         // releases the keep-alive ref. Hold a local ref so `this` stays valid
         // for the rest of this function (same pattern as `runPending`/`onAutoFlush`).
-        self.ref_();
-        let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
+        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
+        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
 
         self.written += amount;
 
@@ -793,9 +792,8 @@ impl FileSink {
             return false;
         }
 
-        self.ref_();
-        let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
+        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
+        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
 
         let amount_buffered = self.writer.outgoing.size();
 
@@ -1236,7 +1234,9 @@ impl FlushPendingTask {
                 .sub(offset_of!(FileSink, run_pending_later))
                 .cast::<FileSink>()
         };
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
+        // SAFETY: balances the `ref_()` taken in `run_pending_later()` when
+        // this task was enqueued; `this` is live for at least that ref.
+        let _guard = unsafe { FileSinkRef::adopt(this) };
         if had {
             unsafe { (*this).run_pending() };
         }
@@ -1273,8 +1273,8 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this deref balances it.
-    let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
+    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe { (*this).handle_resolve_stream(global_this) };
     Ok(JSValue::UNDEFINED)
@@ -1286,8 +1286,8 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     let err = args[0];
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this deref balances it.
-    let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
+    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe { (*this).handle_reject_stream(global_this, err) };
     Ok(JSValue::UNDEFINED)
@@ -1301,9 +1301,8 @@ impl FileSink {
     ) -> JSValue {
         let signal = &mut self.signal;
         *signal = SinkSignal::init(JSValue::ZERO);
-        self.ref_();
-        let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
+        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
+        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1401,5 +1400,5 @@ pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream_s
 //   source:     src/runtime/webcore/FileSink.zig (862 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      intrusive refcount + @fieldParentPtr kept raw; scopeguard used for ref/deref defers; JSSink/StreamingWriter generic instantiation and host-fn export wiring need Phase B verification
+//   notes:      intrusive refcount + @fieldParentPtr kept raw; FileSinkRef RAII guard for ref/deref; JSSink/StreamingWriter generic instantiation and host-fn export wiring need Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

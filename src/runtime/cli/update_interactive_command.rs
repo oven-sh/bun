@@ -127,8 +127,8 @@ struct ColumnWidths {
     show_workspace: bool,
 }
 
-struct MultiSelectState<'a, 's> {
-    packages: &'s mut [OutdatedPackage<'a>],
+struct MultiSelectState<'s> {
+    packages: &'s mut [OutdatedPackage],
     selected: &'s mut [bool],
     cursor: usize,
     viewport_start: usize,
@@ -1347,7 +1347,7 @@ impl UpdateInteractiveCommand {
         Ok(Box::from(result))
     }
 
-    fn ensure_cursor_in_viewport(state: &mut MultiSelectState<'_, '_>) {
+    fn ensure_cursor_in_viewport(state: &mut MultiSelectState<'_>) {
         // If cursor is not in viewport, position it sensibly
         if state.cursor < state.viewport_start {
             // Cursor is above viewport - put it at the start of viewport
@@ -1366,7 +1366,7 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    fn update_viewport(state: &mut MultiSelectState<'_, '_>) {
+    fn update_viewport(state: &mut MultiSelectState<'_>) {
         // Ensure cursor is visible with context (2 packages below, 2 above if possible)
         let context_below: usize = 2;
         let context_above: usize = 1;

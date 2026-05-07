@@ -1128,6 +1128,31 @@ impl ServePlugins {
     }
 }
 
+/// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
+/// reference via [`ServePlugins::deref_`] on scope exit — the Rust spelling of
+/// Zig's `defer this.deref()`.
+struct ServePluginsRef(*const ServePlugins);
+
+impl ServePluginsRef {
+    /// Adopt an existing +1 reference (no increment).
+    ///
+    /// # Safety
+    /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
+    /// `Box::into_raw` provenance from [`ServePlugins::init`].
+    #[inline]
+    unsafe fn adopt(ptr: *const ServePlugins) -> Self {
+        Self(ptr)
+    }
+}
+
+impl Drop for ServePluginsRef {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: constructed via `adopt`/`guard_ref` with a live counted ref.
+        unsafe { ServePlugins::deref_(self.0) };
+    }
+}
+
 impl Drop for ServePlugins {
     fn drop(&mut self) {
         match &self.state {

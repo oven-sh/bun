@@ -1162,7 +1162,9 @@ unsafe extern "C" fn archive_read_callback(
     // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
     // the single active drain task.
     unsafe {
-        let remaining = &(*this).reading[(*this).read_pos..];
+        // Explicit `&` on the `Vec` field (no implicit autoref through the
+        // raw-ptr deref) for `Index::index`.
+        let remaining = &(&(*this).reading)[(*this).read_pos..];
         if !remaining.is_empty() {
             *out_buffer = remaining.as_ptr().cast();
             (*this).read_pos = (*this).reading.len();
@@ -1193,7 +1195,9 @@ unsafe extern "C" fn archive_read_callback(
         // re-entered us.
         unsafe {
             let _ = TarballStream::take_pending(this);
-            let again = &(*this).reading[(*this).read_pos..];
+            // Explicit `&` on the `Vec` field (no implicit autoref through
+            // the raw-ptr deref) for `Index::index`.
+            let again = &(&(*this).reading)[(*this).read_pos..];
             if !again.is_empty() {
                 *out_buffer = again.as_ptr().cast();
                 (*this).read_pos = (*this).reading.len();

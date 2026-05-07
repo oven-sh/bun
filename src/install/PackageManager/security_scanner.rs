@@ -37,7 +37,7 @@ fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
-struct PackagePath {
+pub(crate) struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
 }

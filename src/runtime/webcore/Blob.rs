@@ -4741,7 +4741,6 @@ impl Blob {
         if view_ptr.len() == 0 {
             return Ok(ZigString::EMPTY.to_js(global));
         }
-        // TODO(port): dispatch on `lifetime` (was comptime in Zig). Phase B.
         match lifetime {
             Lifetime::Clone => self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr),
             Lifetime::Transfer => self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr),

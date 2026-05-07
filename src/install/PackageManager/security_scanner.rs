@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 use std::io::Write as _;
-use std::rc::Rc;
-use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -20,7 +18,8 @@ use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_logger as logger;
-use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
+use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_spawn::{self as spawn, Exited, Process, ProcessExitVTable, Rusage, SpawnOptions, Status, Stdio};
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _};
 

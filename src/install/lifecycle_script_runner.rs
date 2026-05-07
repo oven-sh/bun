@@ -367,9 +367,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             return;
         }
 
-        let Some(process) = self.process.clone() else { return };
-
-        self.handle_exit(process.status.clone());
+        let process = self.process;
+        if process.is_null() {
+            return;
+        }
+        // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
+        // `spawn_next_script`; we hold a strong ref until `reset_polls`.
+        let status = unsafe { (*process).status.clone() };
+        self.handle_exit(status);
     }
 
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
@@ -597,7 +602,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bun_spawn::Stdio::Buffer(stderr_pipe_ptr as bun_spawn::windows::UvPipePtr)
                 }
             },
-            cwd,
+            cwd: Box::<[u8]>::from(cwd),
 
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {

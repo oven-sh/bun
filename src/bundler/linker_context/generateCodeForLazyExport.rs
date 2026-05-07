@@ -470,8 +470,12 @@ pub fn generate_code_for_lazy_export(
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
-                    let Some(key) = &property.key else { continue };
-                    let ExprData::EString(key_str) = &key.data else { continue };
+                    // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
+                    // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
+                    // the rope in-place via `DerefMut` into the arena slot (matches Zig's
+                    // `property.key.?.data.e_string.slice(...)` which takes `*String`).
+                    let Some(key) = property.key else { continue };
+                    let ExprData::EString(mut key_str) = key.data else { continue };
                     let Some(value) = property.value else { continue };
                     if key_str.eql_comptime(b"default") || key_str.eql_comptime(b"__esModule") {
                         continue;

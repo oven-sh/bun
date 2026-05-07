@@ -1204,6 +1204,9 @@ impl WebWorker {
             unsafe { (*vm_ptr).destroy() };
         }
         bun_core::delete_all_pools_for_thread_exit();
+        // Loader borrows Map; drop loader first.
+        drop(env_loader);
+        drop(env_map);
         drop(arena.take());
 
         bun_core::exit_thread();

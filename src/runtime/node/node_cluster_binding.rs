@@ -15,32 +15,8 @@ use crate::api::bun::subprocess::Subprocess;
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
 pub use bun_jsc::ipc::InternalMsgHolder;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local shim — `throw_missing_arguments_value` lives in the gated
-// `bun_jsc/JSGlobalObject.rs` impl, not on the `lib.rs` surface this crate
-// links against. Re-implement the single-arg case (only shape used here)
-// against the public `err()`/`throw()` API.
-// TODO(port): drop once `bun_jsc::JSGlobalObject` un-gates this.
-// ──────────────────────────────────────────────────────────────────────────
-trait JSGlobalObjectClusterExt {
-    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError;
-}
-
-impl JSGlobalObjectClusterExt for JSGlobalObject {
-    #[inline]
-    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
-        debug_assert_eq!(arg_names.len(), 1);
-        self.err(
-            ErrorCode::MISSING_ARGS,
-            format_args!("The \"{}\" argument must be specified", arg_names[0]),
-        )
-        .throw()
-    }
-}
-
 bun_output::declare_scope!(IPC, visible);
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     pub fn Bun__Process__queueNextTick1(global: *mut JSGlobalObject, f: JSValue, arg: JSValue);
     pub fn Process__emitErrorEvent(global: *const JSGlobalObject, value: JSValue);

@@ -36,6 +36,7 @@ pub mod cli;
 #[path = "../bun.js.rs"]
 pub mod run_main;
 pub mod napi;
+pub mod ipc_host;
 #[path = "api.rs"]
 pub mod api;
 pub mod timer;

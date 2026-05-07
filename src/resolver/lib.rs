@@ -315,6 +315,23 @@ pub mod fs {
             // the resolver's `&'static [u8]` storage contract holds.
             DirnameStore::instance().append_slice(joined).map_err(|_| bun_alloc::AllocError)
         }
+
+        /// Port of `FileSystem.relative` in `fs.zig` — `bun.path.relative(from, to)`.
+        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
+            bun_paths::resolve_path::relative(from, to)
+        }
+
+        /// Port of `FileSystem.relativeTo` in `fs.zig` — relative path from
+        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
+        /// threadlocal relative buffer; caller must dup before the next call.
+        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
+            bun_paths::resolve_path::relative(self.top_level_dir, to)
+        }
+
+        /// Port of `FileSystem.relativeFrom` in `fs.zig`.
+        pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
+            bun_paths::resolve_path::relative(from, self.top_level_dir)
+        }
     }
 
     // ── PathName ─────────────────────────────────────────────────────────

@@ -1098,27 +1098,15 @@ unsafe extern "C" {
     // MarkedArgumentBuffer
     fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));
 
-    // VirtualMachine accessors — TODO(port): export from Zig.
-    fn Bun__getVM() -> *mut c_void;
-    fn Bun__VirtualMachine__isShuttingDown(vm: *mut c_void) -> bool;
+    // ── bun_runtime/hw_exports.rs (forward-dep; RuntimeState owns the
+    // backing storage). VirtualMachine / EventLoop / RareData themselves are
+    // imported directly from bun_jsc above; only the higher-tier state
+    // (sql_rare, timer heap, ssl_ctx_cache, SSLConfig parser) crosses the
+    // C ABI here.
     fn Bun__VM__rareData(vm: *mut VirtualMachine) -> *mut RareData;
-    fn Bun__VM__global(vm: *mut VirtualMachine) -> *mut JSGlobalObject;
-    fn Bun__VM__eventLoop(vm: *mut VirtualMachine) -> *mut EventLoop;
     fn Bun__VM__timer(vm: *mut VirtualMachine) -> *mut TimerHeap;
-    fn Bun__VM__loopRef(vm: *mut c_void);
-    fn Bun__VM__loopUnref(vm: *mut c_void);
-    fn Bun__VM__postDeferredTask(vm: *mut VirtualMachine, ctx: *mut c_void, cb: Option<unsafe extern "C" fn(*mut c_void) -> bool>);
-    fn Bun__VM__unregisterDeferredTask(vm: *mut VirtualMachine, ctx: *mut c_void) -> bool;
-
-    // EventLoop / Timer — TODO(port): export from Zig.
-    fn Bun__EventLoop__enterLoop(loop_: *mut EventLoop);
-    fn Bun__EventLoop__exitLoop(loop_: *mut EventLoop);
     fn Bun__Timer__All__insert(this: *mut TimerHeap, timer: *mut EventLoopTimer);
     fn Bun__Timer__All__remove(this: *mut TimerHeap, timer: *mut EventLoopTimer);
-
-    // RareData / SSL — TODO(port): export from Zig.
-    fn Bun__RareData__postgresGroup(vm: *mut c_void, ssl: bool) -> *mut bun_uws::SocketGroup;
-    fn Bun__RareData__mysqlGroup(vm: *mut c_void, ssl: bool) -> *mut bun_uws::SocketGroup;
     fn Bun__RareData__sslCtxCache(vm: *mut c_void) -> *mut SslCtxCache;
     fn Bun__SSLContextCache__getOrCreateOpts(
         this: *mut c_void,

@@ -380,7 +380,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe { &mut *env.cast::<_>() }),
+                        // SAFETY: same lifetime erasure as the `!use_system_shell`
+                        // branch above — `env` outlives the mini event loop.
+                        Some(unsafe {
+                            &mut *core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
+                                .cast::<DotEnv::Loader<'static>>()
+                        }),
                         None,
                     ),
                 ),

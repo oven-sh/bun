@@ -5850,8 +5850,9 @@ impl NodeFS {
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
                 if buf.last() == Some(&b'\\') {
-                    // SAFETY: req.path is mutable
-                    unsafe { *ptr.cast::<u8>().add(buf.len() - 1) = 0; }
+                    // SAFETY: req.path is libuv-allocated mutable storage; `ptr` is
+                    // surfaced as `*const c_char` only because `ptr_as` reads it.
+                    unsafe { *ptr.cast_mut().cast::<u8>().add(buf.len() - 1) = 0; }
                     buf = &buf[..buf.len() - 1];
                 }
             }

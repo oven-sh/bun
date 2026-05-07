@@ -417,7 +417,7 @@ pub fn get_or_put(
             core::slice::from_raw_parts_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
         });
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut().cast::<u8>(), rel.len())
+            core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut(), rel.len())
         });
     }
     let abs_hash = hash(abs.as_bytes());

@@ -939,7 +939,7 @@ mod windows_impl {
                 return Err(self.on_finish());
             }
 
-            self.uv_bufs[0].base = remain.as_ptr().cast_mut().cast::<u8>();
+            self.uv_bufs[0].base = remain.as_ptr().cast_mut();
             self.uv_bufs[0].len = remain.len() as u32;
 
             // SAFETY: self.io_request is a valid uv_fs_t embedded in this Box-allocated struct;

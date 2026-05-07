@@ -266,7 +266,7 @@ pub fn platform_iovec_create(input: &[u8]) -> PlatformIOVec {
     // TODO: remove this constCast by making the input mutable
     PlatformIOVec {
         len: input.len() as _,
-        base: input.as_ptr().cast_mut().cast::<u8>(),
+        base: input.as_ptr().cast_mut(),
     }
 }
 
@@ -274,7 +274,7 @@ pub fn platform_iovec_const_create(input: &[u8]) -> PlatformIOVecConst {
     // TODO: remove this constCast by adding uv_buf_t_const
     PlatformIOVecConst {
         len: input.len() as _,
-        base: input.as_ptr().cast_mut().cast::<u8>(),
+        base: input.as_ptr().cast_mut(),
     }
 }
 

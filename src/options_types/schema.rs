@@ -284,22 +284,13 @@ pub mod api {
         List(Box<[Box<[u8]>]>),
     }
 
-    /// CYCLEBREAK local mirror of `bun_install_types::NodeLinker::NodeLinker`
-    /// (3 variants, `#[repr(u8)]`). See note above.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum NodeLinker {
-        #[default]
-        Auto,
-        Hoisted,
-        Isolated,
-    }
-
-    /// CYCLEBREAK: re-export of the real `PnpmMatcher` body (matchers/behavior
-    /// + regex), which was hoisted into `bun_install_types::NodeLinker` so
-    /// `bunfig` / `.npmrc` parsing can construct it without depending on the
-    /// full `bun_install` package manager.
-    pub use bun_install_types::NodeLinker::PnpmMatcher;
+    /// `NodeLinker` / `PnpmMatcher` are canonical in `bun_install_types`
+    /// (lower crate); the previous local CYCLEBREAK mirror is no longer
+    /// required now that `bun_options_types → bun_install_types` is a
+    /// declared edge.  Re-export so `BunInstall.node_linker` /
+    /// `BunInstall.hoist_pattern` and `bun_ini`'s callers all name the
+    /// *same* type.
+    pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
     /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.
     /// `Default` ⇔ `std.mem.zeroes(Api.BunInstall)` (every field `None`/empty).

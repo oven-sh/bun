@@ -1961,10 +1961,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
     // `url_static` to the local `url_proxy_boxed` binding.
     let buf_ptr: *const [u8] = &*url_proxy_boxed;
-    let url_static: ZigURL<'static> =
-        ZigURL::parse(unsafe { &(*buf_ptr)[..url_len] });
+    // SAFETY: `buf_ptr` points into `url_proxy_boxed` which the FetchTasklet
+    // keeps alive for the lifetime of the parsed URLs (see comment above).
+    // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
+    // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
+    let buf: &'static [u8] = unsafe { &*buf_ptr };
+    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
     let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(unsafe { &(*buf_ptr)[url_len..] }))
+        Some(ZigURL::parse(&buf[url_len..]))
     } else {
         None
     };

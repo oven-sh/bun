@@ -626,14 +626,7 @@ impl Expect {
 
         let mut custom_label = bun_str::String::empty();
         if arguments.len() > 1 {
-            // PORT NOTE: inline of `JSValue.implementsToString` (JSValue.zig:1608) —
-            // upstream `bun_jsc::JSValue` has no Rust binding yet.
-            let implements_to_string = arguments[1].is_object()
-                && matches!(
-                    arguments[1].fast_get(global_this, bun_jsc::BuiltinName::toString)?,
-                    Some(f) if f.is_cell() && f.is_callable()
-                );
-            if arguments[1].is_string() || implements_to_string {
+            if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
                 let label = arguments[1].to_bun_string(global_this)?;
                 if global_this.has_exception() {
                     return Ok(JSValue::ZERO);
@@ -1402,9 +1395,9 @@ impl Expect {
                     )
                 };
 
-                put_may_be_index(expect_proto, global_this, &matcher_name, wrapper_fn)?;
-                put_may_be_index(expect_constructor, global_this, &matcher_name, wrapper_fn)?;
-                put_may_be_index(expect_static_proto, global_this, &matcher_name, wrapper_fn)?;
+                expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
             }
         }
 
@@ -3015,29 +3008,6 @@ pub mod mock {
             Ok(())
         }
     }
-}
-
-// Local shim for Zig `JSValue.putMayBeIndex` (JSValue.zig:389) — not yet on
-// `bun_jsc::JSValue`; thin-wrap the C++ export here.
-#[inline]
-fn put_may_be_index(
-    target: JSValue,
-    global: &JSGlobalObject,
-    key: &bun_str::String,
-    value: JSValue,
-) -> JsResult<()> {
-    unsafe extern "C" {
-        // bindings.cpp: JSC__JSValue__putMayBeIndex — [[ZIG_EXPORT(check_slow)]]
-        fn JSC__JSValue__putMayBeIndex(
-            target: JSValue,
-            global: *const JSGlobalObject,
-            key: *const bun_str::String,
-            value: JSValue,
-        );
-    }
-    // SAFETY: all pointers/handles are live for the call.
-    unsafe { JSC__JSValue__putMayBeIndex(target, global, key, value) };
-    if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
 }
 
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance

@@ -1006,6 +1006,235 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self::handle_request(server, should_deinit_ptr, prepared, req, response_value);
     }
 
+    /// `server.zig:onNodeHTTPRequest` — node:http compat path; thin wrapper
+    /// over [`Self::on_node_http_request_with_upgrade_ctx`] with no WS upgrade.
+    pub fn on_node_http_request(
+        this: *mut Self,
+        req: &mut uws_sys::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        jsc::mark_binding!();
+        Self::on_node_http_request_with_upgrade_ctx(this, req, resp, core::ptr::null_mut());
+    }
+
+    /// `server.zig:onNodeHTTPRequestWithUpgradeCtx` — invoke the JS-side
+    /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
+    /// then drive the returned promise / [`NodeHTTPResponse`] through the same
+    /// completion / abort / error paths the Zig spec encodes.
+    ///
+    /// PORT NOTE: receiver is `*mut Self` (not `&mut self`) — the body
+    /// re-enters JS (`drain_microtasks`, `then2`) which may call back into
+    /// other server methods, so a long-lived `&mut Self` would alias. Each use
+    /// site below derives a short-lived borrow that ends before the next
+    /// re-entry point.
+    pub fn on_node_http_request_with_upgrade_ctx(
+        this: *mut Self,
+        req: &mut uws_sys::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+        upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
+    ) {
+        use bun_http_jsc::method_jsc::MethodJsc as _;
+        use node_http_response::Flags as NhrFlags;
+
+        // SAFETY: `this` is the live server backref registered as the uws
+        // userdata; only one borrow derived from it is alive at a time.
+        unsafe { (*this).on_pending_request() };
+        let vm = unsafe { (*this).vm_mut() };
+        // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`.
+        let _dbg = unsafe {
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*(*vm).event_loop()).debug))
+        };
+        req.set_yield(false);
+        resp.timeout(unsafe { (*this).config.idle_timeout });
+
+        // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null after init().
+        let global = unsafe { &*(*this).global_this };
+        let this_object = unsafe { &*this }.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
+
+        // Compute the JS method-name string up front so the FFI closure
+        // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
+        let method_string = match bun_http::Method::find(req.method()) {
+            Some(m) => m.to_js(global),
+            None => JSValue::UNDEFINED,
+        };
+        // Zig: `this.config.onNodeHTTPRequest` (raw JSValue, may be `.zero`).
+        let callback = unsafe { &*this }
+            .config
+            .on_node_http_request
+            .as_ref()
+            .map(|s| s.get())
+            .unwrap_or(JSValue::ZERO);
+        // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
+        // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
+        // a raw `*mut Self` would zero those bits and trip the dispatch
+        // `unreachable!`, so re-pack into the `TaggedPointerUnion` wire format.
+        let any_server_packed = AnyServer::from(this as *const Self).to_packed() as usize;
+
+        let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
+        let mut is_async = false;
+
+        let on_request_ffi = if SSL {
+            ffi::NodeHTTPServer__onRequest_https
+        } else {
+            ffi::NodeHTTPServer__onRequest_http
+        };
+        let result: JSValue = bun_jsc::host_fn::from_js_host_call(global, || {
+            // SAFETY: FFI — all pointer args are live for this frame; C++
+            // writes `*node_response_ptr` exactly once (or leaves it null).
+            unsafe {
+                on_request_ffi(
+                    any_server_packed,
+                    global,
+                    this_object,
+                    callback,
+                    method_string,
+                    req,
+                    (resp as *mut uws_sys::NewAppResponse<SSL>).cast(),
+                    upgrade_ctx.cast(),
+                    &mut node_http_response,
+                )
+            }
+        })
+        .unwrap_or_else(|err| global.take_exception(err));
+
+        enum HttpResult {
+            Rejection(JSValue),
+            Exception(JSValue),
+            Success,
+            Pending,
+        }
+        let mut strong_promise = jsc::StrongOptional::empty();
+        let mut needs_to_drain = true;
+
+        let http_result = 'brk: {
+            if let Some(err) = result.to_error() {
+                break 'brk HttpResult::Exception(err);
+            }
+
+            if let Some(promise) = result.as_any_promise() {
+                if promise.status() == jsc::js_promise::Status::Pending {
+                    strong_promise.set(global, result);
+                    needs_to_drain = false;
+                    // SAFETY: `vm` is the process-static VirtualMachine.
+                    unsafe { (*vm).drain_microtasks() };
+                }
+
+                match promise.status() {
+                    jsc::js_promise::Status::Fulfilled => {
+                        global.handle_rejected_promises();
+                        break 'brk HttpResult::Success;
+                    }
+                    jsc::js_promise::Status::Rejected => {
+                        promise.set_handled(global.vm());
+                        break 'brk HttpResult::Rejection(promise.result(global.vm()));
+                    }
+                    jsc::js_promise::Status::Pending => {
+                        global.handle_rejected_promises();
+                        if !node_http_response.is_null() {
+                            // SAFETY: out-param written by `on_request_ffi`;
+                            // owned ref held until `deref()` below.
+                            let nhr = unsafe { &mut *node_http_response };
+                            if nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                                || nhr.flags.contains(NhrFlags::SOCKET_CLOSED)
+                                || nhr.flags.contains(NhrFlags::UPGRADED)
+                            {
+                                strong_promise.deinit();
+                                break 'brk HttpResult::Success;
+                            }
+
+                            let strong_self = nhr.get_this_value();
+                            if strong_self.is_empty_or_undefined_or_null() {
+                                strong_promise.deinit();
+                                break 'brk HttpResult::Success;
+                            }
+
+                            nhr.promise =
+                                core::mem::replace(&mut strong_promise, jsc::StrongOptional::empty());
+                            // PORT NOTE: `#[host_fn(export = …)]` emits its
+                            // C-ABI shim as `__jsc_host_<fn>`; the export name
+                            // is link-only.
+                            result.then2(
+                                global,
+                                strong_self,
+                                node_http_response::__jsc_host_node_http_request_on_resolve,
+                                node_http_response::__jsc_host_node_http_request_on_reject,
+                            );
+                            is_async = true;
+                        }
+
+                        break 'brk HttpResult::Pending;
+                    }
+                }
+            }
+
+            HttpResult::Success
+        };
+
+        match &http_result {
+            HttpResult::Exception(err) | HttpResult::Rejection(err) => {
+                // SAFETY: `vm` is the process-static VirtualMachine.
+                let _ = unsafe { &mut *vm }.uncaught_exception(
+                    global,
+                    *err,
+                    matches!(http_result, HttpResult::Rejection(_)),
+                );
+
+                if !node_http_response.is_null() {
+                    // SAFETY: see `nhr` above.
+                    let nhr = unsafe { &mut *node_http_response };
+                    if !nhr.flags.contains(NhrFlags::UPGRADED) {
+                        if let Some(raw) = nhr.raw_response {
+                            if !nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                                && raw.state().is_response_pending()
+                            {
+                                if !raw.state().is_http_status_called() {
+                                    raw.write_status(b"500 Internal Server Error");
+                                    raw.end_without_body(true);
+                                } else {
+                                    raw.end_stream(true);
+                                }
+                            }
+                        }
+                    }
+                    nhr.on_request_complete();
+                }
+            }
+            HttpResult::Success | HttpResult::Pending => {}
+        }
+
+        if !node_http_response.is_null() {
+            // SAFETY: see `nhr` above.
+            let nhr = unsafe { &mut *node_http_response };
+            if !nhr.flags.contains(NhrFlags::UPGRADED) {
+                if let Some(raw) = nhr.raw_response {
+                    if !nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                        && raw.state().is_response_pending()
+                    {
+                        nhr.set_on_aborted_handler();
+                    }
+                    // If we ended the response without attaching an ondata handler, we discard the body read stream
+                    else if !matches!(http_result, HttpResult::Pending) {
+                        let this_value = nhr.get_this_value();
+                        // SAFETY: `vm` is the process-static VirtualMachine.
+                        nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
+                    }
+                }
+            }
+        }
+
+        // PORT NOTE: Zig `defer` cleanup, hoisted out of scopeguards (no early
+        // returns above). Reverse-decl order: strong_promise, drain, deref.
+        strong_promise.deinit();
+        if needs_to_drain {
+            // SAFETY: `vm` is the process-static VirtualMachine.
+            unsafe { (*vm).drain_microtasks() };
+        }
+        if !is_async && !node_http_response.is_null() {
+            // SAFETY: out-param ref taken in C++; synchronous path drops it.
+            unsafe { &mut *node_http_response }.deref();
+        }
+    }
+
     /// `js.routeListGetCached` — read back the codegen'd `WriteBarrier` slot.
     fn js_route_list_get_cached(server_js: JSValue) -> Option<JSValue> {
         match (SSL, DEBUG) {
@@ -2077,12 +2306,11 @@ mod trampoline {
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
         // req/res are live uws handles for the duration of the callback.
         // `uws_res` is the type-erased `Response<SSL>` opaque.
-        unsafe {
-            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_node_http_request(
-                &mut *req,
-                &mut *res.cast::<uws_sys::NewAppResponse<SSL>>(),
-            )
-        };
+        NewServer::<SSL, DEBUG>::on_node_http_request(
+            user_data.cast(),
+            unsafe { &mut *req },
+            unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() },
+        );
     }
 }
 
@@ -2128,6 +2356,35 @@ mod ffi {
     unsafe extern "C" {
         pub fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
         pub fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+
+        /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
+        /// `IncomingMessage`/`ServerResponse` pair, allocates a
+        /// [`NodeHTTPResponse`] (returned via `node_response_ptr` with one ref
+        /// taken), and invokes `callback(req, res)`. The plain-HTTP and HTTPS
+        /// monomorphizations differ only in the `Response<SSL>` opaque type.
+        pub fn NodeHTTPServer__onRequest_http(
+            any_server: usize,
+            global: *const jsc::JSGlobalObject,
+            this_value: jsc::JSValue,
+            callback: jsc::JSValue,
+            method_string: jsc::JSValue,
+            request: *mut uws_sys::Request,
+            response: *mut c_void, // *uws.NewApp(false).Response
+            upgrade_ctx: *mut c_void,
+            node_response_ptr: *mut *mut NodeHTTPResponse,
+        ) -> jsc::JSValue;
+
+        pub fn NodeHTTPServer__onRequest_https(
+            any_server: usize,
+            global: *const jsc::JSGlobalObject,
+            this_value: jsc::JSValue,
+            callback: jsc::JSValue,
+            method_string: jsc::JSValue,
+            request: *mut uws_sys::Request,
+            response: *mut c_void, // *uws.NewApp(true).Response
+            upgrade_ctx: *mut c_void,
+            node_response_ptr: *mut *mut NodeHTTPResponse,
+        ) -> jsc::JSValue;
     }
 }
 

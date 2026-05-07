@@ -1629,11 +1629,18 @@ impl CommandLineReporter {
         }
 
         if REPORTERS_LCOV {
-            let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
-            if let Some((lcov_file, lcov_name, buffered)) = state.take() {
-                if let bun_sys::Result::Err(e) = lcov_file.write_all(&buffered) {
+            // `try lcov_writer.flush()` — keep the errdefer guard armed across the
+            // write so an error here still closes + unlinks the temp file.
+            if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
+                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
+                    // `lcov_guard` drops on this early return → close + unlink
+                    // (mirrors Zig's `errdefer`).
                     return Err(bun_core::Error::from(e));
                 }
+            }
+            // Flush succeeded — disarm the errdefer cleanup.
+            let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
+            if let Some((lcov_file, lcov_name, _)) = state.take() {
                 let _ = lcov_file.close();
                 let cwd = Fd::cwd();
                 if let Err(err) = bun_sys::move_file_z(

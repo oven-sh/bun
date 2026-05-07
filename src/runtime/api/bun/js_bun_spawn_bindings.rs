@@ -283,17 +283,17 @@ fn get_argv(
     argv: &mut Vec<Option<*const c_char>>,
 ) -> JsResult<()> {
     if args.is_empty_or_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments("cmd must be an array of strings"));
+        return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings")));
     }
 
     let mut cmds_array = args.array_iterator(global_this)?;
 
     if cmds_array.len == 0 {
-        return Err(global_this.throw_invalid_arguments("cmd must not be empty"));
+        return Err(global_this.throw_invalid_arguments(format_args!("cmd must not be empty")));
     }
 
     if cmds_array.len > u32::MAX - 2 {
-        return Err(global_this.throw_invalid_arguments("cmd array is too large"));
+        return Err(global_this.throw_invalid_arguments(format_args!("cmd array is too large")));
     }
 
     // + 1 for argv0
@@ -342,7 +342,7 @@ fn get_argv(
     }
 
     if argv.is_empty() {
-        return Err(global_this.throw_invalid_arguments("cmd must be an array of strings"));
+        return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings")));
     }
     Ok(())
 }
@@ -463,7 +463,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut cwd_owned: Option<ZBox> = None;
     {
         if args.is_empty_or_undefined_or_null() {
-            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
+            return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         }
 
         let args_type = args.js_type();
@@ -471,11 +471,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             cmd_value = args;
             args = secondary_args_value.unwrap_or(JSValue::ZERO);
         } else if !args.is_object() {
-            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
+            return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         } else if let Some(cmd_value_) = args.get_truthy(global_this, "cmd")? {
             cmd_value = cmd_value_;
         } else {
-            return Err(global_this.throw_invalid_arguments("cmd must be an array"));
+            return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
         }
 
         if args.is_object() {
@@ -509,9 +509,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Reject terminal option on spawnSync
             if IS_SYNC {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
-                    ));
+                    )));
                 }
             }
 
@@ -593,7 +593,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(env_arg) = args.get_truthy(global_this, "env")? {
                 env_arg.ensure_still_alive();
                 let Some(object) = env_arg.get_object() else {
-                    return Err(global_this.throw_invalid_arguments("env must be an object"));
+                    return Err(global_this.throw_invalid_arguments(format_args!("env must be an object")));
                 };
 
                 override_env = true;
@@ -643,7 +643,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             i += 1;
                         }
                     } else {
-                        return Err(global_this.throw_invalid_arguments("stdio must be an array"));
+                        return Err(global_this.throw_invalid_arguments(format_args!("stdio must be an array")));
                     }
                 }
             } else {
@@ -738,7 +738,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // `terminal_js_value`).
                         let term = unsafe { &*terminal };
                         if term.is_closed() {
-                            return Err(global_this.throw_invalid_arguments("terminal is closed"));
+                            return Err(global_this.throw_invalid_arguments(format_args!("terminal is closed")));
                         }
                         if term.is_inline_spawned() {
                             return Err(global_this.throw_invalid_arguments(
@@ -748,12 +748,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         #[cfg(unix)]
                         if term.get_slave_fd() == Fd::INVALID {
                             return Err(global_this
-                                .throw_invalid_arguments("terminal slave fd is no longer valid"));
+                                .throw_invalid_arguments(format_args!("terminal slave fd is no longer valid")));
                         }
                         #[cfg(not(unix))]
                         if term.get_pseudoconsole().is_none() {
                             return Err(global_this
-                                .throw_invalid_arguments("terminal pseudoconsole is no longer valid"));
+                                .throw_invalid_arguments(format_args!("terminal pseudoconsole is no longer valid")));
                         }
                         existing_terminal = Some(terminal);
                         terminal_js_value = terminal_val;

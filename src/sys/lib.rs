@@ -5154,6 +5154,17 @@ pub mod freebsd {
     ) -> c_int {
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
     }
+    /// `std.c.copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
+    /// need a direct `libc` dep. Offset pointers may be null — when null the
+    /// kernel uses (and advances) the fd's seek position.
+    /// SAFETY: raw `copy_file_range(2)`; caller owns fds and any non-null
+    /// offset pointers.
+    #[inline]
+    pub unsafe fn copy_file_range(
+        in_: c_int, off_in: *mut libc::off_t, out: c_int, off_out: *mut libc::off_t, len: usize, flags: u32,
+    ) -> libc::ssize_t {
+        unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
+    }
 }
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}

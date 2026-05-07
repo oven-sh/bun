@@ -440,19 +440,27 @@ impl ShellSubprocess {
     ) -> sh::Result<()> {
         const IS_SYNC: bool = false;
 
-        if !spawn_args.override_env && spawn_args.env_array.is_empty() {
-            // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
-            // PORT NOTE: Zig assigned the `[:null]?[*:0]const u8` slice straight
-            // into `env_array.items`. The Rust port stores `Vec<*const c_char>`,
-            // so unwrap each `Option` (None → null) into a fresh Vec. The
-            // trailing null sentinel is appended below regardless.
-            let env_map = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-            spawn_args.env_array = env_map
-                .into_vec()
-                .into_iter()
-                .map(|opt| opt.unwrap_or(core::ptr::null()))
-                .collect();
-        }
+        // Owns the `K=V\0` storage when inheriting the parent env. Zig used the
+        // spawn-local arena freed at function exit; here the struct keeps the
+        // buffers alive until after `spawn_process` returns (the raw pointers
+        // pushed into `env_array` borrow `inherited_env_storage.storage`).
+        let inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> =
+            if !spawn_args.override_env && spawn_args.env_array.is_empty() {
+                // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
+                let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
+                // PORT NOTE: `as_slice()` *includes* the trailing `None`; strip it —
+                // the common tail below re-appends one null terminator.
+                let entries = envmap.as_slice();
+                spawn_args.env_array.extend(
+                    entries[..entries.len().saturating_sub(1)]
+                        .iter()
+                        .map(|opt| opt.unwrap_or(core::ptr::null())),
+                );
+                Some(envmap)
+            } else {
+                None
+            };
+        let _ = &inherited_env_storage;
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
         // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they

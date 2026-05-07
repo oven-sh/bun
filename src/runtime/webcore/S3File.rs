@@ -271,7 +271,7 @@ pub fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
 
             S3BlobStatTask::size(global, &mut blob)
         }
-        PathOrBlob::Blob(blob) => Ok(Blob::get_size(blob, global)),
+        PathOrBlob::Blob(blob) => Ok(blob.get_size(global)),
     }
 }
 
@@ -300,7 +300,7 @@ pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 
             S3BlobStatTask::exists(global, &mut blob)
         }
-        PathOrBlob::Blob(blob) => Blob::get_exists(blob, global, callframe),
+        PathOrBlob::Blob(blob) => blob.get_exists(global, callframe),
     }
 }
 
@@ -815,9 +815,10 @@ pub fn construct_internal_js(
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
     // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
-    // Call the inherent `&mut self` method (not the by-value `JsClass::to_js`),
-    // which hands the existing heap pointer to the C++ wrapper.
-    Ok(unsafe { Blob::to_js(&mut *blob, global) })
+    // Call the `BlobExt::to_js` `&mut self` method (not the by-value
+    // `JsClass::to_js`), which hands the existing heap pointer to the C++
+    // wrapper.
+    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
@@ -895,7 +896,7 @@ pub mod exports {
     pub fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
         // SAFETY: C++ prototype getter passes the live `m_ctx` Blob and global.
         let (this, global) = unsafe { (&*this, &*global) };
-        bun_jsc::to_js_host_call(global, super::get_bucket(this, global))
+        bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
     /// `@export(&jsc.toJSHostFnWithContext(Blob, getPresignUrl), ...)`.
@@ -907,7 +908,8 @@ pub mod exports {
         callframe: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        bun_jsc::to_js_host_fn_with_context(super::get_presign_url)(this, global, callframe)
+        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
 
     /// `@export(&getStat, .{ .name = "JSS3File__stat" })` — direct
@@ -920,7 +922,8 @@ pub mod exports {
         callframe: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        bun_jsc::to_js_host_fn_with_context(super::get_stat)(this, global, callframe)
+        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        bun_jsc::to_js_host_call(global, || super::get_stat(this, global, callframe))
     }
 }
 

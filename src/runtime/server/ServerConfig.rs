@@ -1013,9 +1013,9 @@ impl ServerConfig {
                     args.bake = Some(user_options);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "FrameworkRouter is currently only supported when `development: true`",
-                        ));
+                        )));
                     }
                     // init_ctx.arena drops at scope end
                 }
@@ -1033,17 +1033,17 @@ impl ServerConfig {
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be an integer",
-                    ));
+                    )));
                 }
                 args.has_idle_timeout = true;
 
                 let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).unwrap();
                 if idle_timeout > 255 {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be 255 or less",
-                    ));
+                    )));
                 }
 
                 args.idle_timeout = idle_timeout as u8;
@@ -1059,7 +1059,7 @@ impl ServerConfig {
             if !websocket_object.is_object() {
                 // ssl_config drops with args
                 return Err(global
-                    .throw_invalid_arguments("Expected websocket to be an object"));
+                    .throw_invalid_arguments(format_args!("Expected websocket to be an object")));
             }
 
             // errdefer ssl_config.deinit() — drops with args on error
@@ -1121,8 +1121,9 @@ impl ServerConfig {
             let unix_str = unix.to_utf8();
             if !unix_str.slice().is_empty() {
                 if has_hostname {
-                    return Err(global
-                        .throw_invalid_arguments("Cannot specify both hostname and unix"));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Cannot specify both hostname and unix",
+                    )));
                 }
 
                 args.address = Address::Unix(
@@ -1158,14 +1159,15 @@ impl ServerConfig {
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
-                        return Err(global
-                            .throw_invalid_arguments("'app' + HTML loader not supported."));
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'app' + HTML loader not supported.",
+                        )));
                     }
 
                     if args.development == DevelopmentOption::Production {
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'",
-                        ));
+                        )));
                     }
 
                     args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
@@ -1213,7 +1215,8 @@ impl ServerConfig {
 
         if let Some(on_error) = arg.get_truthy(global, "error")? {
             if !on_error.is_callable() {
-                return Err(global.throw_invalid_arguments("Expected error to be a function"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected error to be a function")));
             }
             let on_error_snapshot = on_error.with_async_context_if_needed(global);
             args.on_error = Some(Strong::create(on_error_snapshot, global));
@@ -1224,9 +1227,9 @@ impl ServerConfig {
 
         if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
             if !on_request_.is_callable() {
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Expected onNodeHTTPRequest to be a function",
-                ));
+                )));
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_node_http_request = Some(Strong::create(on_request, global));
@@ -1234,7 +1237,8 @@ impl ServerConfig {
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
             if !on_request_.is_callable() {
-                return Err(global.throw_invalid_arguments("Expected fetch() to be a function"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_request = Some(Strong::create(on_request, global));
@@ -1247,20 +1251,20 @@ impl ServerConfig {
             if global.has_exception() {
                 return Err(JsError::Thrown);
             }
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
                  \x20 - A routes object:\n\
-                 \x20    routes: {\n\
-                 \x20      \"/path\": {\n\
+                 \x20    routes: {{\n\
+                 \x20      \"/path\": {{\n\
                  \x20        GET: (req) => new Response(\"Hello\")\n\
-                 \x20      }\n\
-                 \x20    }\n\n\
+                 \x20      }}\n\
+                 \x20    }}\n\n\
                  \x20 - Or a fetch handler:\n\
-                 \x20    fetch: (req) => {\n\
+                 \x20    fetch: (req) => {{\n\
                  \x20      return new Response(\"Hello\")\n\
-                 \x20    }\n\n\
+                 \x20    }}\n\n\
                  Learn more at https://bun.com/docs/api/http",
-            ));
+            )));
         } else {
             if global.has_exception() {
                 return Err(JsError::Thrown);
@@ -1299,9 +1303,9 @@ impl ServerConfig {
                                 .is_empty()
                             {
                                 drop(ssl_config);
-                                return Err(global.throw_invalid_arguments(
+                                return Err(global.throw_invalid_arguments(format_args!(
                                     "SNI tls object must have a serverName",
-                                ));
+                                )));
                             }
                             if args.sni.is_none() {
                                 args.sni = Some(bun_core::handle_oom(BabyList::init_capacity(

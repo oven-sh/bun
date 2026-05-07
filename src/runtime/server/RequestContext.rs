@@ -3703,6 +3703,36 @@ request_ctx_exports! {
         Bun__HTTPRequestContextDebugH3__onRejectStream;
 }
 
+// PORT NOTE (const-generic completeness): H3 over plain TCP is never
+// instantiated (`NewServer::HAS_H3 == SSL_ENABLED` per server.zig:1428), but
+// the generic `impl<const SSL, const DEBUG> NewServer` block must spell
+// `RequestContext<Self, SSL, DEBUG, true>: RequestContextHostFns` as a where
+// bound so the H3 dispatch arms type-check. Rust cannot see that
+// `(false,_,true)` is dead, so provide impls whose consts are never read —
+// matching the `if (!HAS_H3) unreachable;` guards already at every H3 entry.
+unsafe extern "C" fn h3_tcp_dead_host(
+    _: *mut bun_jsc::JSGlobalObject,
+    _: *mut bun_jsc::CallFrame,
+) -> bun_jsc::JSValue {
+    // Mirrors server.zig `if (comptime !@This().has_h3) unreachable;`.
+    if cfg!(debug_assertions) {
+        panic!("H3 over plain TCP is unreachable (NewServer::HAS_H3 == SSL_ENABLED)");
+    }
+    bun_jsc::JSValue::UNDEFINED
+}
+impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, false, false, true> {
+    const ON_RESOLVE: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_REJECT: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_REJECT_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
+}
+impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, false, true, true> {
+    const ON_RESOLVE: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_REJECT: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
+    const ON_REJECT_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
+}
+
 pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
     pub stream: WebCore::ReadableStream,

@@ -258,7 +258,6 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
 ";
 
     pub fn print_with_reason<const REASON: Reason>(show_all_flags: bool) {
-        // TODO(port): std.Random.DefaultPrng — use a small PRNG seeded from millis; bun_core may expose one
         let mut rand_state = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap(),
         );
@@ -293,7 +292,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                                 if strings::has_prefix(event, b"bd") {
                                     // claude gets very confused by the help menu
                                     // let's give claude some self confidence.
-                                    Output::prettyln(format_args!("BUN COMPILED SUCCESSFULLY! 🎉"));
+                                    Output::println(format_args!("BUN COMPILED SUCCESSFULLY! 🎉"));
                                     Global::exit(0);
                                 }
                             }
@@ -312,7 +311,9 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                 if show_all_flags {
                     Output::pretty(format_args!("\n<b>Flags:<r>"));
 
-                    // TODO(port): comptime concat of param arrays — Phase B may expose a const slice from Arguments
+                    // PERF(port): Zig built `runtime_params_ ++ auto_only_params
+                    // ++ base_params_` at comptime; Rust has no const slice
+                    // concat, so collect once at runtime. `--help` is cold.
                     let flags: Vec<arguments::ParamType> = arguments::RUNTIME_PARAMS_
                         .iter()
                         .chain(arguments::AUTO_ONLY_PARAMS.iter())
@@ -1678,7 +1679,9 @@ To create a project with the official Next.js scaffolding tool, run
             let mut bunx_args: Vec<&'static ZStr> = Vec::with_capacity(
                 2 + args.len() - template_name_start + (dash_dash_bun as usize),
             );
-            // TODO(port): Zig allocs `[:0]const u8` slice and indexes; use Vec push for clarity
+            // PORT NOTE: Zig allocs a `[:0]const u8` slice and writes by index;
+            // `Vec::push` is the idiomatic Rust equivalent and the capacity
+            // reservation above keeps it allocation-free.
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
@@ -1695,9 +1698,13 @@ To create a project with the official Next.js scaffolding tool, run
                 .get_or_init(|| bun_core::ZBox::from_vec_with_nul(prefixed))
                 .as_zstr();
             bunx_args.push(prefixed);
+            // Zig sized the slice exactly and indexed into it; we sized
+            // `with_capacity` above. `Vec::with_capacity(n)` only guarantees
+            // capacity >= n, so asserting on `capacity()` is unsound — assert
+            // on the tracked element count instead.
             debug_assert_eq!(
-                bunx_args.capacity() - bunx_args.len(),
-                args.len() - template_name_start
+                bunx_args.len(),
+                2 + (dash_dash_bun as usize),
             );
             for i in template_name_start..args.len() {
                 bunx_args.push(args.get(i).unwrap());

@@ -1449,7 +1449,7 @@ impl Template {
         };
         // SAFETY: FileSystem::instance() returns the process-global singleton.
         let top_level_dir = unsafe { (*Fs::FileSystem::instance()).top_level_dir };
-        bun_core::which(&mut pathbuffer, path, top_level_dir, b"claude").is_some()
+        bun_core::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
     pub fn create_agent_rule() {

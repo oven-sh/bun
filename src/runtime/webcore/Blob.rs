@@ -4596,7 +4596,15 @@ pub fn write_file_internal(
                             let proxy_owned = http_proxy_href(global_this);
                             let proxy_url = proxy_owned.as_deref();
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                &aws_options.credentials,
+                                // Zig: `if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()`.
+                                // Rust `upload_stream` borrows; pick the merged-with-options
+                                // struct only when extra options were supplied, otherwise
+                                // borrow the store's base credentials directly.
+                                if options.extra_options.is_some() {
+                                    &aws_options.credentials
+                                } else {
+                                    s3.get_credentials()
+                                },
                                 s3.path(),
                                 readable,
                                 global_this,
@@ -4621,7 +4629,15 @@ pub fn write_file_internal(
                     }
                     let task = Box::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                         global_this,
-                        file_blob: destination_blob.dupe(),
+                        // Zig moves `destination_blob` by value into the task
+                        // (single store ref transfers; outer local is dead after the
+                        // early return). `dupe()` here would leak one StoreRef since
+                        // Blob has no Drop. Take the value and leave an empty blob
+                        // behind so the residual local owns no store.
+                        file_blob: core::mem::replace(
+                            &mut destination_blob,
+                            Blob::init_empty(global_this),
+                        ),
                         promise: jsc::JSPromiseStrong::init(global_this),
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                     }));

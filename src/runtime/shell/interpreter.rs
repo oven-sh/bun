@@ -2222,8 +2222,8 @@ pub fn create_shell_interpreter(
     let interpreter = Box::into_raw(interpreter);
     // SAFETY: `interpreter` is a fresh heap allocation.
     unsafe {
-        (*interpreter).flags.quiet = quiet;
-        (*interpreter).global_this = global as *const _ as *mut _;
+        (*interpreter).flags.set_quiet(quiet);
+        (*interpreter).global_this = global as *const crate::jsc::JSGlobalObject as *mut _;
         (*interpreter).estimated_size_for_gc = (*interpreter).compute_estimated_size_for_gc();
     }
 
@@ -2234,7 +2234,9 @@ pub fn create_shell_interpreter(
     // SAFETY: same allocation, single thread.
     unsafe {
         (*interpreter).this_jsvalue = js_value;
-        (*interpreter).keep_alive.ref_(global.bun_vm().cast());
+        (*interpreter)
+            .keep_alive
+            .ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm()));
     }
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)

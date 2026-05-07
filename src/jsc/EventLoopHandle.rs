@@ -1,253 +1,99 @@
-use core::ffi::c_char;
+//! `jsc.EventLoopHandle` — non-owning reference to either the JS event loop or
+//! the mini event loop.
+//!
+//! LAYERING: the type itself was relocated DOWN to
+//! `bun_event_loop::any_event_loop` (see CYCLEBREAK.md §→event_loop) so that
+//! tier-≤4 crates (`bun_spawn`, `bun_io`, `bun_install`, `bun_shell`) can name
+//! it without a forward dep on `bun_jsc`. The `.js` arm there holds an erased
+//! `*mut jsc::EventLoop` and dispatches through `JsEventLoopVTable` (registered
+//! by `bun_runtime::init()`). Every method on the Zig spec —
+//! `globalObject`/`stdout`/`stderr`/`bunVM`/`enter`/`exit`/`filePolls`/
+//! `putFilePoll`/`enqueueTaskConcurrent`/`loop`/`pipeReadBuffer`/`ref`/`unref`/
+//! `createNullDelimitedEnvMap`/`topLevelDir`/`env` — is implemented there.
+//!
+//! This file adds only the `bun_jsc`-tier pieces the lower crate could not
+//! express without naming `VirtualMachine` / `jsc::EventLoop`:
+//!   - the `*VirtualMachine` and `*jsc::EventLoop` arms of Zig
+//!     `init(anytype)`, surfaced as `From` impls (orphan-rule-legal because
+//!     `&VirtualMachine` / `&EventLoop` are local fundamental-covered types);
+//!   - a typed `JsEventLoopHandleExt` extension trait that downcasts the
+//!     erased `*mut ()` returns to their concrete jsc types.
+//!
+//! `cast(comptime tag)` is intentionally not ported: callers pattern-match on
+//! the enum directly. `allocator()` is dropped per PORTING.md §Allocators
+//! (non-AST crate uses the global mimalloc).
 
-use bun_aio::FilePoll;
-use bun_uws::Loop;
-
-use crate::{
-    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentTask, EventLoop, EventLoopKind,
-    JSGlobalObject, MiniEventLoop, VirtualMachine,
+pub use bun_event_loop::any_event_loop::{
+    EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
 
-/// A non-owning reference to either the JS event loop or the mini event loop.
-#[derive(Clone, Copy)]
-pub enum EventLoopHandle<'a> {
-    Js(&'a EventLoop),
-    Mini(&'a MiniEventLoop),
+use crate::event_loop::EventLoop;
+use crate::virtual_machine::VirtualMachine;
+use crate::JSGlobalObject;
+
+// ── `init(anytype)` jsc-tier arms ─────────────────────────────────────────
+// Zig dispatched on `@TypeOf(context)`. The lower tier provides `init(*mut ())`
+// (erased `*jsc.EventLoop`), `init_mini`, `from_any`, and `js_current`. The two
+// arms below cover `*VirtualMachine` and `*jsc.EventLoop` for jsc-aware callers.
+
+impl From<&'_ VirtualMachine> for EventLoopHandle {
+    #[inline]
+    fn from(vm: &VirtualMachine) -> Self {
+        // `vm.event_loop()` returns the raw `*mut jsc::EventLoop` self-pointer
+        // (never null once the VM is initialized).
+        EventLoopHandle::init(vm.event_loop().cast::<()>())
+    }
 }
 
-impl<'a> EventLoopHandle<'a> {
-    pub fn global_object(self) -> Option<&'a JSGlobalObject> {
-        match self {
-            Self::Js(js) => Some(js.global),
-            Self::Mini(_) => None,
-        }
+impl From<&'_ EventLoop> for EventLoopHandle {
+    #[inline]
+    fn from(el: &EventLoop) -> Self {
+        EventLoopHandle::init((el as *const EventLoop as *mut EventLoop).cast::<()>())
     }
+}
 
-    pub fn stdout(self) -> &'a bun_runtime::webcore::blob::Store {
-        match self {
-            Self::Js(js) => js.virtual_machine.rare_data().stdout(),
-            Self::Mini(mini) => mini.stdout(),
-        }
-    }
+// ── typed downcasts for jsc-aware callers ─────────────────────────────────
+// The lower-tier `EventLoopHandle::{global_object, bun_vm}` return erased
+// `*mut ()` (they cannot name jsc types). jsc-tier callers use this trait to
+// recover the concrete types.
 
-    pub fn bun_vm(self) -> Option<&'a VirtualMachine> {
-        if let Self::Js(js) = self {
-            return Some(js.virtual_machine);
-        }
+pub trait JsEventLoopHandleExt {
+    /// Typed [`EventLoopHandle::global_object`] — `Some` only for the `Js` arm.
+    fn js_global_object(self) -> Option<*mut JSGlobalObject>;
+    /// Typed [`EventLoopHandle::bun_vm`] — `Some` only for the `Js` arm.
+    fn js_bun_vm(self) -> Option<*mut VirtualMachine>;
+    /// Downcast the `Js` arm's erased owner back to `*mut jsc::EventLoop`.
+    /// Panics on the `Mini` arm (matches Zig `cast(.js)`'s implicit assert).
+    fn cast_js(self) -> *mut EventLoop;
+}
 
-        None
-    }
-
-    pub fn stderr(self) -> &'a bun_runtime::webcore::blob::Store {
-        match self {
-            Self::Js(js) => js.virtual_machine.rare_data().stderr(),
-            Self::Mini(mini) => mini.stderr(),
-        }
-    }
-
-    // TODO(port): Zig `cast(comptime tag: EventLoopKind) tag.Type()` used @field/@tagName
-    // reflection to return a type dependent on a const param. Rust cannot express a
-    // return type varying by const generic without nightly. Callers should match on the
-    // enum directly.
-    pub fn cast_js(self) -> &'a EventLoop {
-        match self {
-            Self::Js(js) => js,
-            Self::Mini(_) => unreachable!(),
-        }
-    }
-    pub fn cast_mini(self) -> &'a MiniEventLoop {
-        match self {
-            Self::Mini(mini) => mini,
-            Self::Js(_) => unreachable!(),
-        }
-    }
-
-    pub fn enter(self) {
-        match self {
-            Self::Js(js) => js.enter(),
-            Self::Mini(_) => {}
-        }
-    }
-
-    pub fn exit(self) {
-        match self {
-            Self::Js(js) => js.exit(),
-            Self::Mini(_) => {}
-        }
-    }
-
-    pub fn init<T: Into<EventLoopHandle<'a>>>(context: T) -> EventLoopHandle<'a> {
-        // Zig switched on @TypeOf(context); Rust dispatches via From impls below.
-        context.into()
-    }
-
-    pub fn file_polls(self) -> &'a bun_aio::file_poll::Store {
-        match self {
-            Self::Js(js) => js.virtual_machine.rare_data().file_polls(js.virtual_machine),
-            Self::Mini(mini) => mini.file_polls(),
-        }
-    }
-
-    pub fn put_file_poll(&self, poll: &mut FilePoll) {
-        match *self {
-            Self::Js(js) => js
-                .virtual_machine
-                .rare_data()
-                .file_polls(js.virtual_machine)
-                .put(
-                    poll,
-                    js.virtual_machine,
-                    poll.flags.contains(bun_aio::file_poll::Flags::WasEverRegistered),
-                ),
-            Self::Mini(mini) => mini.file_polls().put(
-                poll,
-                mini,
-                poll.flags.contains(bun_aio::file_poll::Flags::WasEverRegistered),
-            ),
-        }
-    }
-
-    pub fn enqueue_task_concurrent(self, context: EventLoopTaskPtr<'_>) {
-        match self {
-            Self::Js(js) => {
-                // SAFETY: caller constructed `context` with the `.js` field when `self` is `Js`.
-                js.enqueue_task_concurrent(unsafe { context.js });
-            }
-            Self::Mini(mini) => {
-                // SAFETY: caller constructed `context` with the `.mini` field when `self` is `Mini`.
-                mini.enqueue_task_concurrent(unsafe { context.mini });
-            }
-        }
-    }
-
-    pub fn loop_(self) -> &'a Loop {
-        match self {
-            Self::Js(js) => js.usockets_loop(),
-            Self::Mini(mini) => mini.loop_,
-        }
-    }
-
-    pub fn pipe_read_buffer(self) -> &'a mut [u8] {
-        match self {
-            Self::Js(js) => js.pipe_read_buffer(),
-            Self::Mini(mini) => mini.pipe_read_buffer(),
-        }
+impl JsEventLoopHandleExt for EventLoopHandle {
+    #[inline]
+    fn js_global_object(self) -> Option<*mut JSGlobalObject> {
+        let p = self.global_object();
+        (!p.is_null()).then(|| p.cast::<JSGlobalObject>())
     }
 
     #[inline]
-    pub fn platform_event_loop(self) -> &'a Loop {
-        self.loop_()
-    }
-
-    pub fn ref_(self) {
-        self.loop_().ref_();
-    }
-
-    pub fn unref(self) {
-        self.loop_().unref();
+    fn js_bun_vm(self) -> Option<*mut VirtualMachine> {
+        let p = self.bun_vm();
+        (!p.is_null()).then(|| p.cast::<VirtualMachine>())
     }
 
     #[inline]
-    pub fn create_null_delimited_env_map(
-        self,
-    ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): return type `[:null]?[*:0]const u8` — verify exact Rust shape in bun_dotenv
+    fn cast_js(self) -> *mut EventLoop {
         match self {
-            Self::Js(js) => js
-                .virtual_machine
-                .transpiler
-                .env
-                .map
-                .create_null_delimited_env_map(),
-            Self::Mini(mini) => mini.env.as_ref().unwrap().map.create_null_delimited_env_map(),
+            EventLoopHandle::Js { owner, .. } => owner.cast::<EventLoop>(),
+            EventLoopHandle::Mini(_) => unreachable!("EventLoopHandle::cast_js on Mini"),
         }
     }
-
-    #[inline]
-    pub fn allocator(self) -> &'a dyn bun_alloc::Allocator {
-        // PERF(port): non-AST crate — callers likely don't need this once allocator
-        // params are deleted; kept for structural parity.
-        match self {
-            Self::Js(js) => js.virtual_machine.allocator,
-            Self::Mini(mini) => mini.allocator,
-        }
-    }
-
-    #[inline]
-    pub fn top_level_dir(self) -> &'a [u8] {
-        match self {
-            Self::Js(js) => js.virtual_machine.transpiler.fs.top_level_dir,
-            Self::Mini(mini) => mini.top_level_dir,
-        }
-    }
-
-    #[inline]
-    pub fn env(self) -> &'a bun_dotenv::Loader {
-        match self {
-            Self::Js(js) => js.virtual_machine.transpiler.env,
-            Self::Mini(mini) => mini.env.as_ref().unwrap(),
-        }
-    }
-}
-
-// `init(anytype)` dispatch — one From impl per Zig @TypeOf arm.
-impl<'a> From<&'a VirtualMachine> for EventLoopHandle<'a> {
-    fn from(context: &'a VirtualMachine) -> Self {
-        Self::Js(context.event_loop())
-    }
-}
-impl<'a> From<&'a EventLoop> for EventLoopHandle<'a> {
-    fn from(context: &'a EventLoop) -> Self {
-        Self::Js(context)
-    }
-}
-impl<'a> From<&'a MiniEventLoop> for EventLoopHandle<'a> {
-    fn from(context: &'a MiniEventLoop) -> Self {
-        Self::Mini(context)
-    }
-}
-impl<'a> From<&'a AnyEventLoop> for EventLoopHandle<'a> {
-    fn from(context: &'a AnyEventLoop) -> Self {
-        match context {
-            AnyEventLoop::Js(js) => Self::Js(js),
-            AnyEventLoop::Mini(mini) => Self::Mini(mini),
-        }
-    }
-}
-// EventLoopHandle => context (identity) is covered by the blanket `From<T> for T`.
-
-pub enum EventLoopTask {
-    Js(ConcurrentTask),
-    Mini(AnyTaskWithExtraContext),
-}
-
-impl EventLoopTask {
-    pub fn init(kind: EventLoopKind) -> EventLoopTask {
-        match kind {
-            EventLoopKind::Js => Self::Js(ConcurrentTask::default()),
-            EventLoopKind::Mini => Self::Mini(AnyTaskWithExtraContext::default()),
-        }
-    }
-
-    pub fn from_event_loop(loop_: EventLoopHandle<'_>) -> EventLoopTask {
-        match loop_ {
-            EventLoopHandle::Js(_) => Self::Js(ConcurrentTask::default()),
-            EventLoopHandle::Mini(_) => Self::Mini(AnyTaskWithExtraContext::default()),
-        }
-    }
-}
-
-/// Untagged union — the active field is determined by the receiving `EventLoopHandle`'s tag.
-pub union EventLoopTaskPtr<'a> {
-    pub js: &'a mut ConcurrentTask,
-    pub mini: &'a mut AnyTaskWithExtraContext,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/EventLoopHandle.zig (180 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      cast() split into cast_js/cast_mini; init() lowered to From impls; field-access chains (virtual_machine.rare_data() etc.) need verification against ported EventLoop/MiniEventLoop shapes.
+//   confidence: high
+//   notes:      type + all methods relocated to bun_event_loop::any_event_loop
+//               (vtable-dispatched Js arm). This file re-exports and adds the
+//               jsc-tier `init(anytype)` arms + typed downcasts only.
 // ──────────────────────────────────────────────────────────────────────────

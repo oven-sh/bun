@@ -690,6 +690,12 @@ use core::ffi::{c_char, c_int, c_void};
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind_from_mode};
+
+/// Zig: `bun.isRegularFile(mode)` (bun.zig) — `S.ISREG(@intCast(mode))`.
+#[inline]
+pub fn is_regular_file(mode: Mode) -> bool {
+    kind_from_mode(mode) == FileKind::File
+}
 /// `std.posix.socket_t` — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;

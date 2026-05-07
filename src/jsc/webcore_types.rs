@@ -151,7 +151,14 @@ impl Blob {
             size: store_ref.size(),
             store: Some(store),
             content_type: match &store_ref.data {
-                store::Data::File(f) => f.mime_type.value,
+                // File mime types are populated from the static extension table
+                // (`mime::by_extension_no_default` / const items), so `value`
+                // is always `Cow::Borrowed(&'static [u8])`. Owned variants
+                // (parsed from a request header) never reach `init_with_store`.
+                store::Data::File(f) => match &f.mime_type.value {
+                    std::borrow::Cow::Borrowed(s) => *s,
+                    std::borrow::Cow::Owned(_) => b"",
+                },
                 _ => b"",
             },
             global_this,
@@ -334,14 +341,9 @@ pub mod store {
         fn drop(&mut self) {
             // `bun.default_allocator.free(this.stored_name.slice())` — the
             // `PathString` borrows a heap dupe owned by this `Bytes`.
-            let name = core::mem::replace(&mut self.stored_name, PathString::empty());
-            if !name.slice().is_empty() {
-                // SAFETY: `stored_name` was set via `dupe_path` (mimalloc) or
-                // is `empty()` (skipped above).
-                unsafe {
-                    bun_alloc::default_free(name.slice().as_ptr() as *mut u8, name.slice().len());
-                }
-            }
+            // SAFETY: `stored_name` was set via `PathString::init_owned`
+            // (mimalloc dupe) or is `empty()` (no-op).
+            unsafe { self.stored_name.deinit_owned() };
             // `bytes: Vec` drops itself.
         }
     }
@@ -426,7 +428,9 @@ pub mod store {
         pub fn init(bytes: Vec<u8>) -> Box<Store> {
             Store::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
-                ..Default::default()
+                mime_type: mime::NONE,
+                ref_count: AtomicU32::new(1),
+                is_all_ascii: None,
             })
         }
 
@@ -449,7 +453,9 @@ pub mod store {
             });
             let store = Store::new(Store {
                 data: Data::File(File::init(pathlike, mime_type)),
-                ..Default::default()
+                mime_type: mime::NONE,
+                ref_count: AtomicU32::new(1),
+                is_all_ascii: None,
             });
             // SAFETY: `Box::into_raw` never returns null. Paired with
             // `Box::from_raw` in `Store::deref` on last-ref.
@@ -539,18 +545,10 @@ pub mod store {
                         if let PathLike::String(s) = path {
                             // Zig: `allocator.free(@constCast(path.slice()))` —
                             // the `PathString` payload was duped for this Store.
-                            let slice = s.slice();
-                            if !slice.is_empty() {
-                                // SAFETY: duped via mimalloc by the
-                                // constructing call site (e.g. `dupe_path`).
-                                unsafe {
-                                    bun_alloc::default_free(
-                                        slice.as_ptr() as *mut u8,
-                                        slice.len(),
-                                    );
-                                }
-                            }
-                            *s = PathString::empty();
+                            // SAFETY: duped via mimalloc by the constructing
+                            // call site (e.g. `dupe_path`); `deinit_owned`
+                            // no-ops on empty.
+                            unsafe { s.deinit_owned() };
                         }
                         // Other `PathLike` variants drop themselves.
                     }
@@ -565,7 +563,9 @@ pub mod store {
                     if let Some(creds) = s3.credentials.take() {
                         // SAFETY: `credentials` is a +1 ref this S3 owned.
                         unsafe {
-                            bun_s3_signing::credentials::S3Credentials::deref(creds.as_ptr());
+                            bun_ptr::RefCount::<
+                                bun_s3_signing::credentials::S3Credentials,
+                            >::deref(creds.as_ptr());
                         }
                     }
                 }

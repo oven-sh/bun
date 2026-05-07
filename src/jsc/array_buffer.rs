@@ -2,11 +2,10 @@ use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 use crate as jsc;
-use crate::{JSGlobalObject, JSType, JSValue, JsResult, JsError};
+use crate::{JSGlobalObject, JSType, JSValue, JsResult};
 use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
-use bun_sys::{self, Fd};
-use bun_string as strings;
-use bun_core::Output;
+use crate::SysErrorJsc;
+use bun_sys::{self, Fd, FdExt};
 use bun_alloc::mimalloc;
 
 bun_core::declare_scope!(ArrayBuffer, visible);
@@ -120,23 +119,9 @@ impl ArrayBuffer {
 
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
-// RESOLVED: `mark_binding!()`, `jsc_c::JSTypedArrayType`, `JSValue::as_object_ref`,
-// `host_fn::from_js_host_call`, `JSType::to_typed_array_type`.
-// Per-item `` gates remain on: `bun_sys::{pread,mmap,fstat}` paths,
-// `bun_runtime::webcore::blob::Store`, `bun_alloc::default_allocator_sentinel()`,
-// `BinaryType::from_js_value` (BunString::to_utf8 surface).
-// ──────────────────────────────────────────────────────────────────────────
-mod _body {
-use super::*;
-use crate::SysErrorJsc;
-use bun_sys::FdExt;
 impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    // TODO(port): gated — `bun_sys::pread` Result shape + `Error::to_js`.
-    
     pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
         // *const); fn accepts null ptr with explicit size.
@@ -195,8 +180,6 @@ impl ArrayBuffer {
         }
     }
 
-    // TODO(port): gated — `bun_sys::{fstat,mmap,PROT,MapFlags}` + `Fd::close` + `Error::to_js`.
-    
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
         let stat = match bun_sys::fstat(fd) {
             bun_sys::Result::Err(err) => {
@@ -831,30 +814,11 @@ impl TypedArrayType {
         }
     }
 
-    // TODO(port): `napi_typedarray_type` lives in `bun_runtime::api::napi`
-    // (tier-6). Gated until cycle-break — `bun_runtime` depends on `bun_jsc`,
-    // so referencing it here is a forward-dep cycle. The inverse mapping
-    // (`napi_typedarray_type::from_js_type`) already lives in
-    // `bun_runtime/napi/napi_body.rs`; this fn should move there.
-    pub fn to_napi(self) -> Option<bun_runtime::api::napi::napi_typedarray_type> {
-        use bun_runtime::api::napi::napi_typedarray_type::*;
-        match self {
-            TypedArrayType::TypeNone => None,
-            TypedArrayType::TypeInt8 => Some(int8_array),
-            TypedArrayType::TypeInt16 => Some(int16_array),
-            TypedArrayType::TypeInt32 => Some(int32_array),
-            TypedArrayType::TypeUint8 => Some(uint8_array),
-            TypedArrayType::TypeUint8Clamped => Some(uint8_clamped_array),
-            TypedArrayType::TypeUint16 => Some(uint16_array),
-            TypedArrayType::TypeUint32 => Some(uint32_array),
-            TypedArrayType::TypeFloat16 => None,
-            TypedArrayType::TypeFloat32 => Some(float32_array),
-            TypedArrayType::TypeFloat64 => Some(float64_array),
-            TypedArrayType::TypeBigInt64 => Some(bigint64_array),
-            TypedArrayType::TypeBigUint64 => Some(biguint64_array),
-            TypedArrayType::TypeDataView => None,
-        }
-    }
+    // LAYERING: Zig's `toNapi` (array_buffer.zig:524) maps to
+    // `napi_typedarray_type`, which is defined in `bun_runtime` (a higher-tier
+    // crate that depends on `bun_jsc`). The conversion lives next to its target
+    // type as `napi_typedarray_type::from_typed_array_type` in
+    // `bun_runtime::napi` to avoid the dep cycle.
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1049,13 +1013,6 @@ pub fn make_typed_array_with_bytes_no_copy(
         Bun__makeTypedArrayWithBytesNoCopy(global, array_type, ptr, len, deallocator, deallocator_context)
     })
 }
-} // mod _body
-
-pub use _body::{
-    ArrayBufferStream, ArrayBufferStrong, BinaryType, MarkedArrayBuffer, TypedArrayType,
-    BINARY_TYPE_MAP, MarkedArrayBuffer_deallocator,
-    make_array_buffer_with_bytes_no_copy, make_typed_array_with_bytes_no_copy,
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSCArrayBuffer (opaque, corresponds to JSC::ArrayBuffer)
@@ -1068,11 +1025,22 @@ pub struct JSCArrayBuffer {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// TODO(port): bun.ptr.ExternalShared(Self) — externally-refcounted handle wrapper.
-// `bun_ptr::ExternalShared<T>` requires `T: ExternalSharedDescriptor`; impl that
-// trait for `JSCArrayBuffer` once the FFI ref/deref shims are in jsc_sys.
-
+// Zig: `pub const Ref = bun.ptr.ExternalShared(Self)` with
+// `external_shared_descriptor = struct { ref, deref }` (array_buffer.zig:673).
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
+
+// SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal
+// `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.
+unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: FFI — `this` is a valid `JSC::ArrayBuffer*` per trait contract.
+        unsafe { JSC__ArrayBuffer__ref(this) }
+    }
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: FFI — `this` is a valid `JSC::ArrayBuffer*` per trait contract.
+        unsafe { JSC__ArrayBuffer__deref(this) }
+    }
+}
 
 impl JSCArrayBuffer {
     pub fn as_array_buffer(&mut self) -> ArrayBuffer {

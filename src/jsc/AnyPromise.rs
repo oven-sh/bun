@@ -1,65 +1,86 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, VM};
+use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::{JsTerminated, TopExceptionScope};
+use crate::top_exception_scope::{SourceLocation, TopExceptionScope};
+use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
 
-#[derive(Copy, Clone)]
-pub enum AnyPromise<'a> {
-    Normal(&'a JSPromise),
-    Internal(&'a JSInternalPromise),
+/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
+///
+/// Variants hold raw `*mut` (mirroring Zig's `*JSPromise`): the pointee is a
+/// GC-managed JSC heap cell whose lifetime is governed by the VM, not by a
+/// Rust borrow. Callers must keep the cell reachable (e.g. via `Strong` or an
+/// on-stack `JSValue`) for as long as the `AnyPromise` is used.
+#[derive(Debug, Clone, Copy)]
+pub enum AnyPromise {
+    Normal(*mut JSPromise),
+    Internal(*mut JSInternalPromise),
 }
 
-impl<'a> AnyPromise<'a> {
+impl AnyPromise {
+    #[inline]
     pub fn unwrap(self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.unwrap(vm, mode),
-            AnyPromise::Internal(promise) => promise.unwrap(vm, mode),
+            Self::Normal(p) => unsafe { (*p).unwrap(vm, mode) },
+            Self::Internal(p) => unsafe { (*p).unwrap(vm, mode) },
         }
     }
 
+    #[inline]
     pub fn status(self) -> Status {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.status(),
-            AnyPromise::Internal(promise) => promise.status(),
+            Self::Normal(p) => unsafe { (*p).status() },
+            Self::Internal(p) => unsafe { (*p).status() },
         }
     }
 
+    #[inline]
     pub fn result(self, vm: &VM) -> JSValue {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.result(vm),
-            AnyPromise::Internal(promise) => promise.result(vm),
+            Self::Normal(p) => unsafe { (*p).result(vm) },
+            Self::Internal(p) => unsafe { (*p).result(vm) },
         }
     }
 
+    #[inline]
     pub fn is_handled(self) -> bool {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.is_handled(),
-            AnyPromise::Internal(promise) => promise.is_handled(),
+            Self::Normal(p) => unsafe { (*p).is_handled() },
+            Self::Internal(p) => unsafe { (*p).is_handled() },
         }
     }
 
+    #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.set_handled(),
-            AnyPromise::Internal(promise) => promise.set_handled(),
+            Self::Normal(p) => unsafe { (*p).set_handled() },
+            Self::Internal(p) => unsafe { (*p).set_handled() },
         }
     }
 
+    #[inline]
     pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.resolve(global_this, value),
-            AnyPromise::Internal(promise) => promise.resolve(global_this, value),
+            Self::Normal(p) => unsafe { (*p).resolve(global_this, value) },
+            Self::Internal(p) => unsafe { (*p).resolve(global_this, value) },
         }
     }
 
+    #[inline]
     pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // Zig: `promise.reject(globalThis, value)` — `JSValue` coerces to `JSError!JSValue`
         // implicitly in Zig; map that with `Ok(value)` here.
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.reject(global_this, Ok(value)),
-            AnyPromise::Internal(promise) => promise.reject(global_this, Ok(value)),
+            Self::Normal(p) => unsafe { (*p).reject(global_this, Ok(value)) },
+            Self::Internal(p) => unsafe { (*p).reject(global_this, Ok(value)) },
         }
     }
 
@@ -67,82 +88,109 @@ impl<'a> AnyPromise<'a> {
     /// await chain to the error. Use when rejecting from native code at the
     /// top of the event loop. JSInternalPromise subclasses JSPromise in C++,
     /// so both variants are handled.
+    #[inline]
     pub fn reject_with_async_stack(
         self,
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
-        value.attach_async_stack_from_promise(global_this, self.as_js_promise());
+        // SAFETY: `as_js_promise` yields a non-null GC cell; reborrow is for the FFI call only.
+        value.attach_async_stack_from_promise(global_this, unsafe { &*self.as_js_promise() });
         self.reject(global_this, value)
     }
 
     /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
     /// any C++ function taking JSPromise*.
-    pub fn as_js_promise(self) -> &'a JSPromise {
+    #[inline]
+    pub fn as_js_promise(self) -> *mut JSPromise {
         match self {
-            AnyPromise::Normal(p) => p,
-            AnyPromise::Internal(p) => {
-                // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
-                // pointer reinterpretation is valid for any C++ API taking JSPromise*.
-                unsafe { &*(p as *const JSInternalPromise as *const JSPromise) }
-            }
+            Self::Normal(p) => p,
+            // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
+            // pointer reinterpretation is valid for any C++ API taking JSPromise*.
+            Self::Internal(p) => p as *mut JSPromise,
         }
     }
 
+    #[inline]
     pub fn reject_as_handled(
         self,
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         match self {
-            AnyPromise::Normal(promise) => promise.reject_as_handled(global_this, value),
-            AnyPromise::Internal(promise) => promise.reject_as_handled(global_this, value),
+            Self::Normal(p) => unsafe { (*p).reject_as_handled(global_this, value) },
+            Self::Internal(p) => unsafe { (*p).reject_as_handled(global_this, value) },
         }
     }
 
+    #[inline]
     pub fn as_value(self) -> JSValue {
         match self {
-            AnyPromise::Normal(promise) => promise.to_js(),
-            AnyPromise::Internal(promise) => promise.to_js(),
+            Self::Normal(p) => JSValue::from_cell(p),
+            Self::Internal(p) => JSValue::from_cell(p),
         }
     }
 
-    // TODO(port): the Zig `wrap` uses `std.meta.ArgsTuple(@TypeOf(Function))`
-    // to accept any host function + its argument tuple and forward through
-    // `jsc.toJSHostCall`. Rust has no equivalent compile-time fn-signature
-    // reflection. Phase B: replace with a `#[bun_jsc::wrap_promise]` proc-macro
-    // or accept a closure. The closure form below preserves the FFI shape.
-    pub fn wrap<F>(
-        self,
-        global_object: &JSGlobalObject,
-        f: F,
-    ) -> Result<(), JsTerminated>
+    /// `AnyPromise.wrap` (AnyPromise.zig:76) — run `f` through the host-call
+    /// wrapper so a thrown exception (or returned `ErrorInstance`) is converted
+    /// into a rejection of this existing promise; otherwise resolve with the
+    /// result. The C++ side (`JSC__AnyPromise__wrap`, bindings.cpp) owns the
+    /// resolve/reject decision.
+    ///
+    /// Zig used `std.meta.ArgsTuple(@TypeOf(Function))` to forward arbitrary
+    /// argument tuples through a `callconv(.c)` trampoline. Rust has no
+    /// compile-time fn-signature reflection, so this takes a closure that
+    /// captures those arguments instead.
+    pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
     where
-        F: FnMut(&JSGlobalObject) -> JSValue,
+        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
         struct Wrapper<F> {
-            f: F,
+            f: Option<F>,
         }
 
         extern "C" fn call<F>(wrap_: *mut c_void, global: *mut JSGlobalObject) -> JSValue
         where
-            F: FnMut(&JSGlobalObject) -> JSValue,
+            F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `wrap_` is `&mut Wrapper<F>` passed below; `global` is a
             // live JSGlobalObject* supplied by JSC for the duration of the call.
             let wrap_ = unsafe { &mut *(wrap_ as *mut Wrapper<F>) };
             let global = unsafe { &*global };
-            // TODO(port): Zig routed through `jsc.toJSHostCall(global, @src(), Fn, args)`
-            // which installs the host-call exception handling around the invocation.
-            (wrap_.f)(global)
+            let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
+            // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
+            // host-call exception/return-value validation around the invocation.
+            to_js_host_call(global, core::panic::Location::caller(), move || f(global))
         }
 
-        // TODO(port): @src() source-location plumbing for TopExceptionScope.
-        let scope = TopExceptionScope::init(global_object);
-        let mut ctx = Wrapper { f };
-        // SAFETY: `ctx` lives on the stack for the duration of the FFI call;
-        // `call::<F>` matches the expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` shape.
-        // `as_ptr()` routes through JSGlobalObject's UnsafeCell interior so the
+        // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
+        // The C++ object is placement-constructed into `bytes` and must not move
+        // after init, so stack-allocate via `MaybeUninit` and route every access
+        // through a single raw pointer (Stacked Borrows: keep one provenance root).
+        let mut scope = core::mem::MaybeUninit::<TopExceptionScope>::uninit();
+        let scope_ptr: *mut TopExceptionScope = scope.as_mut_ptr();
+        // SAFETY: `init_in_place` writes into uninit `bytes` via FFI without reading
+        // prior contents (matches the Zig `= undefined; .init()` pattern).
+        unsafe {
+            (*scope_ptr).init_in_place(
+                global_object,
+                SourceLocation {
+                    fn_name: c"AnyPromise::wrap".as_ptr(),
+                    file: c"src/jsc/AnyPromise.rs".as_ptr(),
+                    line: line!(),
+                },
+            );
+        }
+        let _scope_guard = scopeguard::guard(scope_ptr, |s| {
+            // SAFETY: `s` was initialized by `init_in_place` above and has not been destroyed.
+            unsafe { TopExceptionScope::destroy(s) }
+        });
+
+        let mut ctx = Wrapper { f: Some(f) };
+        // SAFETY: `ctx` lives on the stack for the duration of the synchronous FFI call;
+        // `call::<F>` matches the expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue`
+        // shape. `as_ptr()` routes through JSGlobalObject's UnsafeCell interior so the
         // `*mut` handed to C++ carries write provenance (no `&T -> *mut T` UB).
         unsafe {
             JSC__AnyPromise__wrap(
@@ -152,11 +200,15 @@ impl<'a> AnyPromise<'a> {
                 call::<F>,
             );
         }
-        scope.assert_no_exception_except_termination()
+        // C++ converts any thrown exception into a rejection, so a pending non-termination
+        // exception here indicates a bug; surface termination as JsTerminated.
+        // SAFETY: `scope_ptr` was initialized above; the short-lived `&mut` reborrow ends
+        // before `_scope_guard` runs `destroy`.
+        unsafe { (*scope_ptr).assert_no_exception_except_termination() }
+            .map_err(|_| JsTerminated::JSTerminated)
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSC__AnyPromise__wrap(
         global: *mut JSGlobalObject,
@@ -169,7 +221,7 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/AnyPromise.zig (109 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      `wrap` reshaped to closure (Zig used ArgsTuple reflection); JsTerminated error type assumed in crate
+//   confidence: high
+//   todos:      0
+//   notes:      `wrap` reshaped from comptime ArgsTuple to FnOnce closure (Rust lacks fn-signature reflection); variants hold *mut (Zig *T) — GC-managed cells, not Rust borrows
 // ──────────────────────────────────────────────────────────────────────────

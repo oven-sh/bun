@@ -835,6 +835,25 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
 
 /// Zig: `bun.freeSensitive` (`src/bun.zig`).
 ///
+/// Zig: `bun.default_allocator.free(slice)` for raw `[]u8` not owned by a
+/// `Vec`/`Box` (e.g. duped via `mi_malloc` on the C side, or via
+/// [`StdAllocator::free`] on the Zig side). With `#[global_allocator] =
+/// Mimalloc` this is `mi_free`; the `len` is accepted for size-asserting
+/// builds and to mirror the Zig signature.
+///
+/// # Safety
+/// `ptr` must be null or point to a live allocation of `len` bytes obtained
+/// from the default (mimalloc-backed) allocator. Freed exactly once.
+#[inline]
+pub unsafe fn default_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: caller contract — `ptr[..len]` is a live mimalloc allocation.
+    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
+}
+
 /// Memory is typically not decommitted immediately when freed. Sensitive
 /// information kept in memory can be read until the OS decommits it or the
 /// allocator reuses it. Zero it before dropping.

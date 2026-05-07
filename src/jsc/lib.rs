@@ -548,16 +548,56 @@ impl From<JsError> for bun_core::Error {
 }
 
 /// Adapter for Zig-style `(comptime fmt, args)` throw helpers ported to Rust.
-/// During the port, callers use a mix of `&str`, `format_args!(..)`, `()`, and
-/// `&[..]` for the trailing "args" tuple — this trait normalizes them so a
-/// single method signature works for all of them.
-pub trait ThrowFmtArgs {
-    fn ignore(self) where Self: Sized {}
+///
+/// Zig's `globalThis.throw("msg {s}", .{x})` formats `fmt` with `args` and
+/// throws the result. The mechanically-ported call sites pass either `()`
+/// (Zig `.{}`, no interpolation — message *is* the literal) or a pre-expanded
+/// `format_args!(..)` (interpolation already applied — message *is* the
+/// `Arguments` value). This trait dispatches both shapes onto the canonical
+/// [`JSGlobalObject::throw`] / [`JSGlobalObject::throw_invalid_arguments`]
+/// without requiring every caller to wrap a literal in `format_args!("")`.
+pub trait ThrowFmtArgs: Sized {
+    /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
+    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
+    /// `globalThis.throwInvalidArguments(fmt, args)` — throw `ERR_INVALID_ARG_TYPE`.
+    fn dispatch_throw_invalid_arguments(
+        self,
+        global: &JSGlobalObject,
+        fmt: &'static str,
+    ) -> JsError;
 }
-impl ThrowFmtArgs for () {}
-impl<T> ThrowFmtArgs for &[T] {}
-impl<T, const N: usize> ThrowFmtArgs for &[T; N] {}
-impl ThrowFmtArgs for core::fmt::Arguments<'_> {}
+impl ThrowFmtArgs for () {
+    #[inline]
+    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
+        // Zig `.{}` — no interpolation; the literal IS the message. Route
+        // through `throw` with the fallback `fmt` and an `Arguments` whose
+        // `as_str()` is `Some(fmt)` so `create_error_instance` hits its
+        // static-string fast path.
+        global.throw(fmt, format_args!("{fmt}"))
+    }
+    #[inline]
+    fn dispatch_throw_invalid_arguments(
+        self,
+        global: &JSGlobalObject,
+        fmt: &'static str,
+    ) -> JsError {
+        global.throw_invalid_arguments(format_args!("{fmt}"))
+    }
+}
+impl ThrowFmtArgs for core::fmt::Arguments<'_> {
+    #[inline]
+    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
+        global.throw(fmt, self)
+    }
+    #[inline]
+    fn dispatch_throw_invalid_arguments(
+        self,
+        global: &JSGlobalObject,
+        _fmt: &'static str,
+    ) -> JsError {
+        global.throw_invalid_arguments(self)
+    }
+}
 
 /// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`.
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_aio` /
@@ -618,10 +658,14 @@ pub mod __macro_support {
 
     /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
     /// JSC ABI expects (`.ZERO` when an exception is/was thrown). Mirrors
-    /// `host_fn.zig:toJSHostFnResult`.
+    /// `host_fn.zig:toJSHostCall` — installs an `ExceptionValidationScope`
+    /// pinned at the macro caller's `Location` and asserts the empty/thrown
+    /// invariant.
     #[inline]
+    #[track_caller]
     pub fn host_fn_result(global: &JSGlobalObject, r: impl IntoHostFnResult) -> JSValue {
-        super::host_fn::to_js_host_call(global, r.into_host_fn_result())
+        let src = ::core::panic::Location::caller();
+        super::host_fn::to_js_host_call(global, src, move || r.into_host_fn_result())
     }
 
     /// Setter result mapping: `JsResult<bool>` → `bool` (false on throw).
@@ -1118,113 +1162,7 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
-#[derive(Debug, Clone, Copy)]
-pub enum AnyPromise {
-    Normal(*mut JSPromise),
-    Internal(*mut JSInternalPromise),
-}
-impl AnyPromise {
-    #[inline] pub fn as_value(self) -> JSValue {
-        match self {
-            Self::Normal(p) => JSValue::from_cell(p),
-            Self::Internal(p) => JSValue::from_cell(p),
-        }
-    }
-    /// `AnyPromise.result` (AnyPromise.zig:31) — settled value (fulfilled or
-    /// rejected). Undefined while pending.
-    #[inline] pub fn result(self, vm: &VM) -> JSValue {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).result(vm) },
-            Self::Internal(p) => unsafe { (*p).result(vm) },
-        }
-    }
-    /// `AnyPromise.status` (AnyPromise.zig:24).
-    #[inline] pub fn status(self) -> self::js_promise::Status {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).status() },
-            Self::Internal(p) => unsafe { (*p).status() },
-        }
-    }
-    /// `AnyPromise.setHandled` (AnyPromise.zig:42).
-    #[inline] pub fn set_handled(self, vm: &VM) {
-        let _ = vm;
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).set_handled() },
-            Self::Internal(p) => unsafe { (*p).set_handled() },
-        }
-    }
-    /// `AnyPromise.resolve` (AnyPromise.zig:50).
-    #[inline] pub fn resolve(self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).resolve(global, value) },
-            Self::Internal(p) => unsafe { (*p).resolve(global, value) },
-        }
-    }
-    /// `AnyPromise.reject` (AnyPromise.zig:56). Zig: `JSValue` coerces to
-    /// `JSError!JSValue` implicitly; map that with `Ok(value)`.
-    #[inline] pub fn reject(self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).reject(global, Ok(value)) },
-            Self::Internal(p) => unsafe { (*p).reject(global, Ok(value)) },
-        }
-    }
-    /// `AnyPromise.rejectWithAsyncStack` (AnyPromise.zig:62) — like `reject`
-    /// but first attaches async stack frames from this promise's await chain
-    /// to the error. Use when rejecting from native code at the top of the
-    /// event loop.
-    #[inline] pub fn reject_with_async_stack(
-        self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
-        // SAFETY: variants hold a live JSC heap cell; `as_js_promise` is sound for both.
-        value.attach_async_stack_from_promise(global, unsafe { &*self.as_js_promise() });
-        self.reject(global, value)
-    }
-    /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
-    /// any C++ function taking JSPromise*.
-    #[inline] pub fn as_js_promise(self) -> *mut JSPromise {
-        match self {
-            Self::Normal(p) => p,
-            // SAFETY: JSInternalPromise subclasses JSPromise in C++; pointer
-            // reinterpretation is valid for any C++ API taking JSPromise*.
-            Self::Internal(p) => p as *mut JSPromise,
-        }
-    }
-    /// `AnyPromise.wrap` (AnyPromise.zig) — run `f` through the host-call
-    /// wrapper so a thrown exception is converted to an Err, then resolve/
-    /// reject this existing promise with the outcome.
-    ///
-    /// Zig used `std.meta.ArgsTuple(@TypeOf(Function))` to forward arbitrary
-    /// argument tuples; Rust takes a closure capturing those arguments.
-    pub fn wrap<F>(self, global: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
-    where
-        F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
-    {
-        match f(global) {
-            Ok(v) => self.resolve(global, v),
-            Err(_) => {
-                let err = global.try_take_exception().unwrap_or(JSValue::UNDEFINED);
-                self.reject(global, err)
-            }
-        }
-    }
-    /// `AnyPromise.unwrap` (AnyPromise.zig:14).
-    #[inline] pub fn unwrap(self, vm: &VM, mode: PromiseUnwrapMode) -> PromiseResult {
-        // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM.
-        // `JSPromise::unwrap` takes `&VM` (interior-mutable opaque handle) — no
-        // `&mut VM` is materialized, so no aliased exclusive borrow exists.
-        match self {
-            Self::Normal(p) => unsafe { (*p).unwrap(vm, mode) },
-            Self::Internal(p) => unsafe { (*p).unwrap(vm, mode) },
-        }
-    }
-}
+pub use self::any_promise::AnyPromise;
 
 /// `JSPromise.UnwrapMode` (JSPromise.zig:349).
 pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
@@ -1334,23 +1272,25 @@ impl JSGlobalObject {
         unsafe { JSC__JSGlobalObject__vm(self) }
     }
 
-    /// Two-arg shim for mechanically-ported `throw("fmt", .{})` call sites.
-    /// The `_args` tuple is ignored; callers should migrate to
-    /// `throw(format_args!(..))`.
+    /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
+    /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`
+    /// callers reach [`JSGlobalObject::throw`] with the right `Arguments`.
     #[doc(hidden)]
-    pub fn throw2(&self, msg: impl core::fmt::Display, _args: impl ThrowFmtArgs) -> JsError {
-        self.throw(msg)
+    #[inline]
+    pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
+        args.dispatch_throw(self, fmt)
     }
 
-    /// Two-arg shim for mechanically-ported `throwInvalidArguments(fmt, .{})`
-    /// call sites. The `_args` tuple is ignored.
+    /// Two-arg shim for mechanically-ported `throwInvalidArguments(fmt, .{…})`
+    /// call sites. Dispatches via [`ThrowFmtArgs`].
     #[doc(hidden)]
+    #[inline]
     pub fn throw_invalid_arguments2(
         &self,
-        msg: impl core::fmt::Display,
-        _args: impl ThrowFmtArgs,
+        fmt: &'static str,
+        args: impl ThrowFmtArgs,
     ) -> JsError {
-        self.throw_invalid_arguments(msg)
+        args.dispatch_throw_invalid_arguments(self, fmt)
     }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
@@ -1571,9 +1511,11 @@ impl URL {
         // SAFETY: `input` is a valid bun.String passed by mutable pointer (FFI consumes it).
         unsafe { URL__pathFromFileURL(&mut input) }
     }
+    #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         // SAFETY: `global` is live; FFI may set an exception.
-        host_fn::from_js_host_call_generic(global, || unsafe {
+        let src = core::panic::Location::caller();
+        host_fn::from_js_host_call_generic(global, src, || unsafe {
             URL__getHrefFromJS(value, global.as_ptr())
         })
     }

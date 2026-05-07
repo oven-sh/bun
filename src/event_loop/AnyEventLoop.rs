@@ -582,6 +582,13 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
+    /// Alias for [`r#loop`](Self::r#loop) so callers spell `handle.loop_()`
+    /// without the raw-identifier escape (Zig: `handle.loop()`).
+    #[inline]
+    pub fn loop_(self) -> *mut UwsLoop {
+        self.r#loop()
+    }
+
     /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
     /// Zig `[]u8`). Same `Copy`-handle aliasing concern as [`file_polls`].
     pub fn pipe_read_buffer(self) -> *mut [u8] {

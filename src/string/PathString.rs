@@ -146,6 +146,13 @@ impl PathString {
     }
 
     pub const EMPTY: Self = Self(0);
+
+    /// Zig: `pub const empty: PathString = PathString{};` — value form of
+    /// [`EMPTY`] for call sites that read better as a constructor.
+    #[inline(always)]
+    pub const fn empty() -> Self {
+        Self::EMPTY
+    }
 }
 
 impl fmt::Display for PathString {

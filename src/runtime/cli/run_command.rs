@@ -774,8 +774,11 @@ impl RunCommand {
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
+        // `MaybeUninit<Run>` is layout-transparent over `Run`, so `.cast()` +
+        // `ptr::write` is the bitwise initialization Zig expresses with
+        // `var run: Run = undefined;` followed by field stores.
         unsafe {
-            (&raw mut RUN).write(Run {
+            (&raw mut RUN).cast::<Run>().write(Run {
                 vm: vm_ptr,
                 entry_path,
                 eval_and_print: ctx.runtime_options.eval.eval_and_print,
@@ -899,10 +902,14 @@ impl RunCommand {
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
+        // PORT NOTE: `entry_path` borrows the standalone graph's
+        // `entryPoint().name`; dupe into an owned `Box<[u8]>` so `Run` carries
+        // its own storage (Zig's borrow was process-lifetime by construction —
+        // the graph never frees — so the copy is semantically a no-op).
         unsafe {
-            (&raw mut RUN).write(Run {
+            (&raw mut RUN).cast::<Run>().write(Run {
                 vm: vm_ptr,
-                entry_path,
+                entry_path: entry_path.to_vec().into_boxed_slice(),
                 eval_and_print: false,
             });
         }

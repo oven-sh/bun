@@ -1198,11 +1198,18 @@ impl CommandLineReporter {
                 }
             }
         }
-        // always print junit if needed
+        // always print junit if needed (creates `&mut CommandLineReporter` from
+        // the same `NonNull` — `reporter_ref` above must not be reused after
+        // this point under stacked borrows; re-derive below).
         Self::maybe_print_junit_line(result, buntest, sequence, test_entry, elapsed_ns);
 
         let formatted_line = &output_buf[initial_length..];
-        if let Some(idx) = reporter_ref.and_then(|r| r.worker_ipc_file_idx) {
+        // SAFETY: see `reporter_ref` SAFETY above — re-derived post-junit to
+        // avoid holding a shared ref across the `&mut` in `maybe_print_junit_line`.
+        let worker_idx = buntest
+            .reporter
+            .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
+        if let Some(idx) = worker_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line);
         } else {
             let _ = err_w().write_all(formatted_line);

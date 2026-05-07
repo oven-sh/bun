@@ -386,6 +386,14 @@ pub static TEST_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
     concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
 });
 
+/// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
+/// runtime_params_ ++ transpiler_params_`). Rust has no const slice `++`, so
+/// the concatenation is materialised once on first access — same approach as
+/// `AUTO_PARAMS`/`RUN_PARAMS` above.
+pub static BASE_RUNTIME_TRANSPILER_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_)
+});
+
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 #[unsafe(no_mangle)]
 pub static mut Bun__Node__ZeroFillBuffers: bool = false;

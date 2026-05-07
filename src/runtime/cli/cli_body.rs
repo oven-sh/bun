@@ -302,8 +302,8 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                         "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({version})<r>\n\n",
                         cli_helptext_fmt!(),
                     ),
-                    version = Global::package_json_version_with_revision,
                     args.0, args.1, args.2, args.3, args.4, args.5, args.6,
+                    version = Global::package_json_version_with_revision,
                 ));
                 if show_all_flags {
                     Output::pretty(format_args!("\n<b>Flags:<r>"));
@@ -323,14 +323,13 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                 Output::pretty(format_args!("{}", CLI_HELPTEXT_FOOTER));
             }
             Reason::InvalidCommand => {
-                // TODO(port): Output::pretty_error positional substitution (7 args)
-                let _ = &args;
-                Output::pretty_error(
-                    const_format::concatcp!(
+                Output::pretty_error(format_args!(
+                    concat!(
                         "<r><red>Uh-oh<r> not sure what to do with that command.\n\n",
-                        CLI_HELPTEXT_FMT,
+                        cli_helptext_fmt!(),
                     ),
-                );
+                    args.0, args.1, args.2, args.3, args.4, args.5, args.6,
+                ));
             }
         }
 

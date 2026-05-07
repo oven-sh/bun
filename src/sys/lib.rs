@@ -3750,16 +3750,24 @@ pub mod linux {
     }
     /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
     /// Returns the raw kernel rc (decode with `E::init`).
+    // PORT NOTE: Zig's `std.os.linux.futex_*` invoke the kernel directly and
+    // return `-errno` on failure. `libc::syscall()` is the *glibc* wrapper —
+    // it returns `-1` and sets thread-local errno instead. Translate back to
+    // the kernel convention so callers can decode with `E::init(rc)`; without
+    // this, every EAGAIN/EINTR from FUTEX_WAIT mis-decodes as EPERM and the
+    // ThreadPool worker panics inside its idle wait.
     #[inline]
     pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) as isize }
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
+        if rc == -1 { -(errno() as isize) } else { rc as isize }
     }
     /// `syscall(SYS_futex, uaddr, op, val, timeout)` — 4-arg form (WAIT).
     #[inline]
     pub unsafe fn futex_4arg(
         uaddr: *const u32, op: FutexOp, val: u32, timeout: *const timespec,
     ) -> isize {
-        unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) as isize }
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
+        if rc == -1 { -(errno() as isize) } else { rc as isize }
     }
 
     /// inotify mask flags (`std.os.linux.IN`).

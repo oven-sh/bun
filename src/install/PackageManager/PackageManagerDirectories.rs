@@ -317,32 +317,41 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 }
 
+/// # Safety
+/// See `get_cache_directory_raw` — only `options`, `env`, and
+/// `cache_directory_path` are touched; caller must hold no overlapping borrow.
 #[cold]
 #[inline(never)]
-fn ensure_cache_directory(this: &mut PackageManager) -> Dir {
+unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
     loop {
-        if this.options.enable.contains(Enable::CACHE) {
+        // SAFETY: disjoint-field projections through the caller-provided
+        // provenance root; see fn safety contract.
+        let options = unsafe { &mut (*this).options };
+        if options.enable.contains(Enable::CACHE) {
             // SAFETY: `env` is set by `init()` before any cache lookup; the
             // `NonNull<Loader>` borrows the process-global env map (singleton-leaked).
-            let env = unsafe { this.env.expect("env initialised").as_mut() };
-            let cache_dir = fetch_cache_directory_path(env, Some(&this.options));
-            this.cache_directory_path = ZBox::from_bytes(&cache_dir.path);
+            let env = unsafe { (*this).env.expect("env initialised").as_mut() };
+            let cache_dir = fetch_cache_directory_path(env, Some(options));
+            // SAFETY: see fn safety contract.
+            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
-                    this.options.enable.set(Enable::CACHE, false);
+                    options.enable.set(Enable::CACHE, false);
                     // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
-                    this.cache_directory_path = ZBox::from_bytes(b"");
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
                     continue;
                 }
             }
         }
 
-        this.cache_directory_path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+        // SAFETY: see fn safety contract.
+        unsafe { (*this).cache_directory_path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"node_modules", b".cache"],
-        ));
+        )) };
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
             Ok(d) => return d,

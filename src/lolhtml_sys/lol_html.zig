@@ -525,7 +525,7 @@ pub const Element = opaque {
     }
     pub fn getUserData(element: *const Element, comptime Type: type) ?*Type {
         auto_disable();
-        return @as(?*Element, @ptrCast(@alignCast(lol_html_element_user_data_get(element))));
+        return @as(?*Type, @ptrCast(@alignCast(lol_html_element_user_data_get(element))));
     }
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
         auto_disable();

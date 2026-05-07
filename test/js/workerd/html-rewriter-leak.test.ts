@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
@@ -79,3 +79,93 @@ test.skipIf(isDebug)(
   },
   15_000,
 );
+
+// element.onEndTag(fn) heap-allocates an EndTag.Handler and JSValueProtect()s
+// the callback, then hands both to lol-html as opaque user_data. lol-html's
+// end-tag handler is FnOnce — it fires at most once and is then dropped —
+// but nothing ever freed the Zig allocation or unprotected the callback.
+// Calling onEndTag() twice on the same element additionally leaked the first
+// allocation because LOLHTML.Element.onEndTag clears the Rust-side handler
+// list without telling us.
+//
+// Detection: protected JSValues are GC roots, so every leaked handler pins
+// one Function in heapStats().protectedObjectTypeCounts. After the fix the
+// protected-Function count returns to its pre-loop baseline; before the fix
+// it grows by exactly one per onEndTag() call.
+describe("element.onEndTag does not leak the handler allocation / protected callback", () => {
+  async function run(setup: string) {
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const protectedFns = () => heapStats().protectedObjectTypeCounts.Function ?? 0;
+
+      ${setup}
+
+      async function pass(n) {
+        for (let i = 0; i < n; i++) {
+          await rw.transform(new Response("<div></div>")).text();
+        }
+        Bun.gc(true);
+        return protectedFns();
+      }
+
+      // Warm up so baseline reflects any steady-state roots.
+      await pass(10);
+      const before = await pass(10);
+      const after = await pass(500);
+
+      process.stdout.write(JSON.stringify({ before, after, delta: after - before }) + "\\n");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim();
+    expect(filteredStderr).toBe("");
+    const { delta } = JSON.parse(stdout.trim());
+
+    // Unfixed: delta == 500 per onEndTag() call per iteration. Fixed: 0.
+    // Allow a little slack for unrelated protected functions.
+    expect(delta).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  }
+
+  test("single registration", async () => {
+    await run(`
+      const rw = new HTMLRewriter().on("div", {
+        element(el) { el.onEndTag(() => {}); },
+      });
+    `);
+  });
+
+  test("re-registration on the same element", async () => {
+    await run(`
+      const rw = new HTMLRewriter().on("div", {
+        element(el) {
+          el.onEndTag(() => {});
+          el.onEndTag(() => {});
+        },
+      });
+    `);
+  });
+
+  // Each matching selector gets its own Zig Element wrapper around the same
+  // underlying lol-html element; the second wrapper's onEndTag must still be
+  // able to find and free the first wrapper's handler.
+  test("re-registration across overlapping selectors", async () => {
+    await run(`
+      const rw = new HTMLRewriter()
+        .on("div", { element(el) { el.onEndTag(() => {}); } })
+        .on("*",   { element(el) { el.onEndTag(() => {}); } });
+    `);
+  });
+});

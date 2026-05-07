@@ -2580,6 +2580,94 @@ function RustDOMJITArgType(type) {
   }[type];
 }
 
+/** camelCase / PascalCase → snake_case, then escape Rust reserved words. */
+function rustSnakeIdent(name: string): string {
+  // getURLSchemeV2 → get_url_scheme_v2; HTTPServer → http_server; crc32 → crc32
+  const snake = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/[.\-]/g, "_")
+    .toLowerCase();
+  return rustIdent(snake);
+}
+
+// ── Rust module-path resolver ────────────────────────────────────────────────
+// Walks the `pub mod` tree rooted at `src/runtime/lib.rs` (the `bun_runtime`
+// crate), honouring `#[path = "…"]` attributes, to build a map of absolute
+// `.rs` file path → `crate::…` module path. Then scans every reachable file
+// for `pub struct <Name>` so each generated class can `pub use` its real
+// backing type instead of an opaque placeholder. A missing struct (or method)
+// is a compile error in `cargo check` — that's the point: surface unported
+// surface area at build time, not as a runtime `unimplemented!()` panic.
+const rustModuleResolver = (() => {
+  const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
+  const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
+  const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName
+  // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* (?:pub\s+)? mod NAME ;`
+  const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g;
+  const structRe = /\bpub\s+struct\s+([A-Z]\w*)\b/g;
+
+  function walk(file: string, modPath: string) {
+    const abs = path.resolve(file);
+    if (fileToMod.has(abs)) return;
+    let src: string;
+    try {
+      src = readFileSync(abs, "utf8");
+    } catch {
+      return;
+    }
+    fileToMod.set(abs, modPath);
+
+    for (const m of src.matchAll(structRe)) {
+      const name = m[1];
+      // First definition wins; prefer files under src/runtime/ over re-exports.
+      if (!structToPath.has(name)) structToPath.set(name, `${modPath}::${name}`);
+    }
+
+    const dir = path.dirname(abs);
+    for (const m of src.matchAll(modRe)) {
+      const [, pathAttr, modName] = m;
+      let child: string | null = null;
+      if (pathAttr) {
+        child = path.resolve(dir, pathAttr);
+      } else {
+        const f1 = path.resolve(dir, `${modName}.rs`);
+        const f2 = path.resolve(dir, modName, "mod.rs");
+        child = existsSync(f1) ? f1 : existsSync(f2) ? f2 : null;
+      }
+      if (child) walk(child, `${modPath}::${modName}`);
+    }
+  }
+
+  walk(path.join(runtimeRoot, "lib.rs"), "crate");
+
+  return {
+    /** Resolve a class name to its `crate::…::Name` path, or a derived guess. */
+    resolveStruct(name: string, classesFile?: string): string {
+      if (structToPath.has(name)) return structToPath.get(name)!;
+      // Fallback: derive from the .classes.ts location → sibling .rs module.
+      // src/runtime/webcore/response.classes.ts → crate::webcore::response::Name
+      if (classesFile) {
+        const rel = path
+          .relative(runtimeRoot, classesFile)
+          .replace(/\.classes\.ts$/, "")
+          .split(path.sep)
+          .map(seg => rustSnakeIdent(seg))
+          .join("::");
+        return `crate::${rel}::${name}`;
+      }
+      return `crate::${rustSnakeIdent(name)}::${name}`;
+    },
+    /** Resolve an absolute `.rs` (or `.zig`) file path to its `crate::…` module path. */
+    resolveFile(absRs: string): string | null {
+      return fileToMod.get(path.resolve(absRs)) ?? null;
+    },
+    has(name: string): boolean {
+      return structToPath.has(name);
+    },
+  };
+})();
+
 function rustIdent(name: string): string {
   // Rust reserved words that appear as JS property/method names in .classes.ts.
   const reserved = new Set([

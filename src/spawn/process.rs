@@ -48,7 +48,7 @@ use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 /// `W*` macros); `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(not(unix))]
+#[cfg(windows)]
 #[derive(Clone, Copy)]
 pub struct WaitPidResult {
     pub pid: PidT,
@@ -59,7 +59,7 @@ bun_core::declare_scope!(PROCESS, visible);
 
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub type PidT = uv::uv_pid_t;
 
 #[cfg(unix)]
@@ -278,17 +278,8 @@ impl Process {
     }
 
     /// Reset the exit handler to "no handler" (Zig: `exit_handler = .{}`).
-    /// Takes `&self` (interior write through raw ptr) so it can be called via
-    /// `Arc<Process>` from `closeProcess` — Process is intrusively ref-counted
-    /// and treated as raw-ptr-mutable in Zig.
-    pub fn set_exit_handler_default(&self) {
-        // SAFETY: Process is heap-allocated and never moved; exit_handler is a
-        // POD (`*mut ()` + `Option<&'static>`) so a raw write is sound and
-        // matches the Zig single-threaded mutation model.
-        unsafe {
-            let this = self as *const Self as *mut Self;
-            (*this).exit_handler = ProcessExitHandler::default();
-        }
+    pub fn set_exit_handler_default(&mut self) {
+        self.exit_handler = ProcessExitHandler::default();
     }
 
     pub fn has_exited(&self) -> bool {

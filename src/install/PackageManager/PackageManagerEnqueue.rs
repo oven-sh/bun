@@ -1648,24 +1648,26 @@ fn enqueue_git_clone(
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
         *task = Task::Task {
-            package_manager: this,
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitClone,
-            request: crate::package_manager_task::Request::GitClone {
-                name: StringOrTinyString::init_append_if_needed(
-                    name,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                url: StringOrTinyString::init_append_if_needed(
-                    this.lockfile.str(&repository.repo),
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                env: crate::repository::SharedEnv::get(unsafe { this.env.unwrap().as_mut() }),
-                dep_id,
-                res: *res,
+            request: crate::package_manager_task::Request {
+                git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
+                    name: StringOrTinyString::init_append_if_needed(
+                        name,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    url: StringOrTinyString::init_append_if_needed(
+                        this.lockfile.str(&repository.repo),
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
+                    env: crate::repository::SharedEnv::get(this.env.unwrap().as_mut()),
+                    dep_id,
+                    res: *res,
+                }),
             },
             id: task_id,
             apply_patch_task: if let Some(h) = patch_name_and_version_hash {
@@ -1686,8 +1688,10 @@ fn enqueue_git_clone(
                     .unwrap()
                     .patchfile_hash()
                     .unwrap();
-                let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                pt.callback.apply_mut().task_id = task_id;
+                let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+                // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
+                let mut pt = Box::from_raw(pt);
+                pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
                 None

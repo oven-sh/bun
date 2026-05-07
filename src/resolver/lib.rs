@@ -1116,6 +1116,30 @@ pub mod fs {
             Some(EntryLookup { entry: result_ptr, diff_case: None, _marker: core::marker::PhantomData })
         }
 
+        /// Erase to the `bun_sys::fs::DirEntry` opaque seam handle. Low-tier
+        /// crates (`bun_dotenv`, `bun_router`) accept the seam type because
+        /// they sit below `bun_resolver` in the crate graph; this is the
+        /// **single** place the resolver→sys reinterpret happens, so high-tier
+        /// callers (bun_install, bun_bundler, bun_runtime) never open-code
+        /// `as *mut ZST` casts.
+        #[inline]
+        pub fn as_sys_seam(&self) -> &bun_sys::fs::DirEntry {
+            // SAFETY: `bun_sys::fs::DirEntry` is a `#[repr(C)]` ZST opaque whose
+            // every method dispatches through `SYS_FS_VTABLE`, which casts the
+            // pointer back to `*const Self`. Pointer identity round-trips; no
+            // field of the ZST is ever accessed.
+            unsafe { &*(self as *const Self as *const bun_sys::fs::DirEntry) }
+        }
+
+        /// Mutable variant of [`Self::as_sys_seam`].
+        #[inline]
+        pub fn as_sys_seam_mut(&mut self) -> &mut bun_sys::fs::DirEntry {
+            // SAFETY: see `as_sys_seam`. `&mut self` guarantees exclusive access;
+            // the seam ZST has no fields, so the reborrow does not alias any data
+            // the caller can also reach through `self`.
+            unsafe { &mut *(self as *mut Self as *mut bun_sys::fs::DirEntry) }
+        }
+
         /// Port of `DirEntry.addEntry` in `fs.zig`.
         // PORT NOTE: Zig signature was `(prev_map, *entry, allocator, comptime Iterator, iterator)`.
         // The `allocator` param is dropped (everything routes through the global stores) but

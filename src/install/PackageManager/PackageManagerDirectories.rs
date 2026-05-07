@@ -740,12 +740,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
     let name = pkg_name;
-    // PORT NOTE: borrowck — pre-fetch the cache directory before borrowing
-    // `manager.lockfile` so the `&mut` for `ensure_cache_directory` doesn't
-    // overlap the `&` over `buffers.string_bytes` below. `get_cache_directory`
-    // is idempotent after first call.
-    let cache_directory = get_cache_directory(manager);
-    let buf = manager.lockfile.buffers.string_bytes.as_slice();
     let mut cache_dir = Dir::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
 
@@ -754,21 +748,22 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
             let version = unsafe { resolution.value.npm }.version;
             cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
-            cache_dir = cache_directory;
+            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
             // SAFETY: tag == Git guarantees `value.git` is the active union arm.
             let git = unsafe { &resolution.value.git };
             cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
-            cache_dir = cache_directory;
+            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
             // SAFETY: tag == Github guarantees `value.github` is the active union arm.
             let github = unsafe { &resolution.value.github };
             cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
-            cache_dir = cache_directory;
+            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Folder => {
+            let buf = manager.lockfile.buffers.string_bytes.as_slice();
             // SAFETY: tag == Folder guarantees `value.folder` is the active union arm.
             let folder = unsafe { &resolution.value.folder }.slice(buf);
             // Handle when a package depends on itself via file:
@@ -788,15 +783,16 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // SAFETY: tag == LocalTarball guarantees `value.local_tarball` is the active union arm.
             let tarball = unsafe { resolution.value.local_tarball };
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
-            cache_dir = cache_directory;
+            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {
             // SAFETY: tag == RemoteTarball guarantees `value.remote_tarball` is the active union arm.
             let tarball = unsafe { resolution.value.remote_tarball };
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
-            cache_dir = cache_directory;
+            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
+            let buf = manager.lockfile.buffers.string_bytes.as_slice();
             // SAFETY: tag == Workspace guarantees `value.workspace` is the active union arm.
             let folder = unsafe { &resolution.value.workspace }.slice(buf);
             // Handle when a package depends on itself
@@ -811,12 +807,15 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Dir::cwd();
         }
         ResolutionTag::Symlink => {
-            // PORT NOTE: borrowck — `global_link_dir{,_path}` reborrow `manager`
-            // mutably, so copy the symlink target out of the lockfile string
-            // buffer first.
-            // SAFETY: tag == Symlink guarantees `value.symlink` is the active union arm.
-            let folder = unsafe { resolution.value.symlink }.slice(buf).to_vec();
             let directory = global_link_dir(manager);
+
+            // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
+            // `manager` mutably, so copy the symlink target out of the lockfile
+            // string buffer first instead of holding a slice across that call.
+            // SAFETY: tag == Symlink guarantees `value.symlink` is the active union arm.
+            let folder = unsafe { resolution.value.symlink }
+                .slice(manager.lockfile.buffers.string_bytes.as_slice())
+                .to_vec();
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");

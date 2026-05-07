@@ -2701,7 +2701,7 @@ impl Package<u64> {
                                     // the diagnostic still names the right file. Real read
                                     // can be restored once a `to_source` shim lands.
                                     let note_src =
-                                        logger::Source::init_empty_file(&note_abs_path);
+                                        logger::Source::init_empty_file(&note_abs_path[..]);
 
                                     notes.push(logger::Data {
                                         text: b"Package name is also declared here"

@@ -1292,6 +1292,19 @@ impl CronJob {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+    /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
+    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
+    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
+    /// reference is live across the potential free in `deref()`.
+    ///
+    /// # Safety
+    /// `this` must be a live `Box::into_raw` pointer for the guard's lifetime.
+    #[inline]
+    unsafe fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_() };
+        CronJobDerefOnDrop(this)
+    }
     pub fn deref(this: *mut Self) {
         // SAFETY: intrusive RC; this is valid until count hits 0.
         let rc = unsafe { (*this).ref_count.get() - 1 };

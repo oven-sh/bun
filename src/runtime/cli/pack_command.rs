@@ -91,11 +91,12 @@ fn pm_workspace_cache<'a>(
 }
 #[inline]
 fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
-    m.env_ptr()
+    // Zig: non-optional `*DotEnv.Loader`, set during `PackageManager.init`.
+    m.env.map(|p| p.as_ptr()).expect("env set by PackageManager::init")
 }
 #[inline]
 fn pm_run_scripts(m: &PackageManager) -> bool {
-    m.options.do_.run_scripts
+    m.options.do_.run_scripts()
 }
 
 // type aliases matching Zig `string`/`stringZ`
@@ -195,10 +196,13 @@ impl PackCommand {
         }
 
         let mut lockfile = Lockfile::default();
-        // SAFETY: `log` is non-null after `PackageManager::init()`.
-        let log_ptr: *mut bun_logger::Log = unsafe { manager.log.unwrap().as_ptr() };
+        // `log` is non-null after `PackageManager::init()` (Zig: non-optional `*Log`).
+        let log_ptr: *mut bun_logger::Log = manager.log;
         let manager_ptr: *mut PackageManager = manager;
-        let load_from_disk_result = lockfile.load_from_cwd(manager_ptr, log_ptr, false);
+        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed disjointly
+        // (Zig passed both via the same `*PackageManager` alias).
+        let load_from_disk_result =
+            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -270,10 +274,11 @@ impl PackCommand {
             bun_install::Subcommand::Pack,
         )?;
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, &cli, bun_install::Subcommand::Pack) {
+        let silent = cli.silent;
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, bun_install::Subcommand::Pack) {
             Ok(v) => v,
             Err(err) => {
-                if !cli.silent {
+                if !silent {
                     if err == bun_core::err!("MissingPackageJSON") {
                         let mut cwd_buf = PathBuffer::uninit();
                         match bun_sys::getcwd_z(&mut cwd_buf) {

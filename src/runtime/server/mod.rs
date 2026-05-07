@@ -119,8 +119,8 @@ pub mod inspector_bun_frontend_dev_server_agent;
 #[path = "server_body.rs"]
 mod server_body;
 pub use server_body::{
-    AnyUserRouteList, BunInfo, GetOrStartLoadResult, PluginsResult, PreparedRequestFor,
-    ServePlugins, ServePluginsCallback, ServePluginsState, ServerInitContext,
+    AnyUserRouteList, BunInfo, GetOrStartLoadResult, PreparedRequestFor, ServePluginsCallback,
+    ServerInitContext,
 };
 
 // ─── write_status ────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ use bun_resolver::fs::{self as Fs, FileSystem, PathName};
 use bun_paths::{self, PathBuffer, SEP};
 use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
+use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, WatchItemColumns, WatchItemField, Watcher};
 
 use bun_event_loop::task_tag;

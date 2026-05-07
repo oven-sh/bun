@@ -804,9 +804,14 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` PORT NOTE above. Inlined
-        // `VirtualMachine::is_watcher_enabled` to avoid forming `&VirtualMachine`.
-        let is_watcher_enabled = !unsafe { (*vm).bun_watcher }.is_null();
+        // Zig spec: `vm.isWatcherEnabled()` ⇔ `vm.bun_watcher != .none`. The
+        // Rust field is a type-erased `*mut ImportWatcher`, so a non-null
+        // pointer may still hold `ImportWatcher::None`; both must be ruled out
+        // or we'd skip closing `input_file_fd` without a watcher to adopt it.
+        // SAFETY: discriminant read on the BACKREF pointer captured above; only
+        // the JS thread mutates the variant.
+        let is_watcher_enabled = !import_watcher.is_null()
+            && !matches!(unsafe { &*import_watcher }, ImportWatcher::None);
 
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)

@@ -280,10 +280,13 @@ type DynAlloc = ();
 /// is a behavior match in practice.
 #[inline]
 fn alloc_buf(_allocator: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
+    // Zero-fill is required for soundness: `set_len` over uninit bytes violates
+    // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
+    // of uninit). The memset cost is negligible next to the subsequent memcpy
+    // that fully overwrites the buffer.
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(n).map_err(|_| AllocError)?;
-    // SAFETY: `u8` is trivially valid at any bit pattern; reserved capacity ≥ n.
-    unsafe { v.set_len(n) };
+    v.resize(n, 0);
     Ok(v.into_boxed_slice())
 }
 
@@ -489,6 +492,7 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files = graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
+        let mut file_path_buf = bun_paths::path_buffer_pool::get();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();

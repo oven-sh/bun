@@ -2990,12 +2990,84 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     }
 }
 
+/// Duck-type surface that [`JestPrettyFormat::print_asymmetric_matcher`] needs
+/// from a formatter. Spec `pretty_format.zig:2005` takes the formatter via
+/// `anytype`, so it monomorphises over both `JestPrettyFormat.Formatter` and
+/// `ConsoleObject.Formatter`. This trait is the Rust spelling of that
+/// duck-typing — implemented for both [`Formatter`] (this module) and
+/// [`bun_jsc::console_object::Formatter`] so the same body serves the test
+/// runner *and* `console.log`'s `.Private` arm (via the
+/// `RuntimeHooks::console_print_runtime_object` hook).
+pub trait AsymmetricMatcherFormatter {
+    fn amf_add_for_new_line(&mut self, n: usize);
+    fn amf_global_this(&self) -> &JSGlobalObject;
+    fn amf_quote_strings(&mut self) -> &mut bool;
+    /// `printAs(tag, …)` routed through the formatter's own runtime
+    /// dispatcher. Only `Object` / `String` / `Array` are reached.
+    fn amf_print_as<const C: bool>(
+        &mut self,
+        tag: bun_jsc::FormatTag,
+        w: &mut dyn bun_io::Write,
+        v: JSValue,
+        cell: JSType,
+    ) -> JsResult<()>;
+}
+
+impl AsymmetricMatcherFormatter for Formatter<'_> {
+    #[inline]
+    fn amf_add_for_new_line(&mut self, n: usize) { self.add_for_new_line(n); }
+    #[inline]
+    fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
+    #[inline]
+    fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    fn amf_print_as<const C: bool>(
+        &mut self,
+        tag: bun_jsc::FormatTag,
+        w: &mut dyn bun_io::Write,
+        v: JSValue,
+        cell: JSType,
+    ) -> JsResult<()> {
+        // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
+        // mapping + `format` dispatch). `IoFmt` adapts `dyn bun_io::Write` →
+        // `core::fmt::Write` for the trait method's signature.
+        let mut bridge = IoFmt(w);
+        <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
+    }
+}
+
+impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
+    #[inline]
+    fn amf_add_for_new_line(&mut self, n: usize) { self.add_for_new_line(n); }
+    #[inline]
+    fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
+    #[inline]
+    fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    fn amf_print_as<const C: bool>(
+        &mut self,
+        tag: bun_jsc::FormatTag,
+        w: &mut dyn bun_io::Write,
+        v: JSValue,
+        cell: JSType,
+    ) -> JsResult<()> {
+        let global = self.global_this;
+        self.format::<C>(
+            bun_jsc::console_object::formatter::TagResult { tag: tag.into(), cell },
+            w,
+            v,
+            global,
+        )
+    }
+}
+
 impl JestPrettyFormat {
-    fn print_asymmetric_matcher_promise_prefix<W: bun_io::Write>(
+    fn print_asymmetric_matcher_promise_prefix<M, W>(
         flags: expect::Flags,
-        matcher: &mut Formatter<'_>,
+        matcher: &mut M,
         writer: &mut WrappedWriter<'_, W>,
-    ) {
+    ) where
+        M: AsymmetricMatcherFormatter,
+        W: bun_io::Write + ?Sized,
+    {
         match flags.promise() {
             expect::Promise::Resolves => {
                 matcher.add_for_new_line(b"promise resolved to ".len());

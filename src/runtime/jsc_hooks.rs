@@ -584,17 +584,14 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     // surfaces it as a process-level error. The hook signature is `()`, so
     // match by logging via `Output::err` (same shape as the `Transpiler::init`
     // error path above) and returning without blocking.
-    // SAFETY: per fn contract — short-lived `&mut *vm`; `global` is a live
-    // JSC heap cell (`JSGlobalObject`).
-    if let Err(e) =
-        bun_jsc::debugger::Debugger::create(unsafe { &mut *vm }, unsafe { &*global })
-    {
+    // SAFETY: `global` is a live JSC heap cell (`JSGlobalObject`); `vm` is the
+    // live per-thread VM (raw-ptr receiver — `create` re-enters JS).
+    if let Err(e) = bun_jsc::debugger::Debugger::create(vm, unsafe { &*global }) {
         bun_core::Output::err("Debugger", "{}", format_args!("create failed: {e:?}"));
         return;
     }
     if block_until_connected {
-        // SAFETY: per fn contract — short-lived `&mut *vm`.
-        bun_jsc::debugger::Debugger::wait_for_debugger_if_necessary(unsafe { &mut *vm });
+        bun_jsc::debugger::Debugger::wait_for_debugger_if_necessary(vm);
     }
 }
 

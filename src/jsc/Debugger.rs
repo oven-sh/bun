@@ -1002,9 +1002,9 @@ pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
 pub extern "C" fn Bun__LifecycleAgentDisable(_agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
         bun_core::scoped_log!(LifecycleAgent, "disable");
-        debugger.lifecycle_reporter_agent.handle = core::ptr::null_mut();
+        dbg.lifecycle_reporter_agent.handle = core::ptr::null_mut();
     }
 }
 

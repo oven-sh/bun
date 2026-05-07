@@ -1011,10 +1011,9 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let Some(cell) = self.tabular_data.to_cell() else {
-                    return Err(global_object.throw_type_error(
-                        "tabular_data must be an object or array",
-                        format_args!(""),
-                    ));
+                    return Err(global_object.throw_type_error(format_args!(
+                        "tabular_data must be an object or array"
+                    )));
                 };
                 // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
                 let row_obj = unsafe { &*cell }.to_object(global_object);

@@ -181,61 +181,24 @@ pub use max_heap_allocator::MaxHeapAllocator;
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use maybe_owned::MaybeOwned;
 
-// CYCLEBREAK: `MimallocArena` / `allocation_scope` / `LinuxMemFdAllocator`
-// import bun_core/sys/runtime/collections (back-edge from tier-0). MOVED to
-// `bun_runtime::allocators`; expose unit stubs here so downstream
-// `use bun_alloc::X` resolves until callers migrate to the runtime path.
-// Zig: `pub const AllocationScope = AllocationScopeIn(std.mem.Allocator);` etc.
-pub struct AllocationScope;
-pub struct AllocationScopeIn;
-pub struct LinuxMemFdAllocator;
-// `MimallocArena` already aliased above to `bumpalo::Bump`.
+// `MimallocArena` / `allocation_scope` / `LinuxMemFdAllocator` import
+// bun_core/sys/runtime/collections (back-edge from tier-0); they live in
+// `bun_runtime::allocators` (CYCLEBREAK MOVE_DOWN). Callers import from there
+// directly — no forwarding stubs here.
 pub mod mimalloc_arena { pub use crate::MimallocArena; }
-pub mod allocation_scope {
-    pub use super::{AllocationScope, AllocationScopeIn};
 
-    // Zig: `pub const Stats = struct { total_memory_allocated: usize, num_allocations: usize };`
-    #[derive(Clone, Copy, Default)]
-    pub struct Stats {
-        pub total_memory_allocated: usize,
-        pub num_allocations: usize,
-    }
-
-    // Zig: `pub const enabled = bun.Environment.enableAllocScopes;`
-    // The real tracker lives in `bun_runtime::allocators::allocation_scope` (CYCLEBREAK above);
-    // this tier-0 stub is the `enabled = false` configuration — a unit struct with no `State`.
-    pub const ENABLED: bool = false;
-
-    impl AllocationScope {
-        pub const ENABLED: bool = ENABLED;
-
-        // Zig: `pub fn stats(self: Self) Stats { if (comptime !enabled) @compileError(...); ... }`
-        // The stub carries no `State`; callers must gate on `ENABLED` (matching the Zig
-        // `comptime` guard). Reaching here means the gate was skipped.
-        pub fn stats(&self) -> Stats {
-            unreachable!("AllocationScope must be enabled");
-        }
-    }
-}
-pub mod linux_mem_fd_allocator { pub use super::LinuxMemFdAllocator; }
-
-// ── stubs ─────────────────────────────────────────────────────────────────
-// Forward refs introduced by B-0 move-out seds. Real impls in bun_core (T0
-// peer); duplicated here because Cargo dep order is alloc < core.
+// ── tier-0 local primitives ───────────────────────────────────────────────
+// Real, self-contained definitions this crate consumes. Everything else
+// (`ThreadLock`, `StoredTrace`, `dump_stack_trace`, scoped logging) lives in
+// `bun_core` per CYCLEBREAK §bun_alloc and is imported from there by higher
+// tiers; nothing in this crate needs them.
 pub mod stubs {
-    pub use crate::out_of_memory;
-    pub type ThreadLock = ();
+    /// Zig: `bun.PathBuffer` — fixed-size scratch path buffer.
     pub type PathBuffer = [u8; 4096];
-    // Zig: `std.fs.path.sep_str` — "\\" on Windows, "/" elsewhere.
+    /// Zig: `std.fs.path.sep_str` — "\\" on Windows, "/" elsewhere.
     pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
-    pub type ZStr = [u8];
-    pub type CoreError = core::num::NonZeroU16;
-    pub struct StoredTrace;
-    pub struct WriteStackTraceLimits;
-    pub struct BufWriter;
-    #[inline] pub fn dump_stack_trace(_: &StoredTrace, _: &WriteStackTraceLimits) {}
     pub mod strings {
-        #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { bstr::ByteSlice::find(h, n).is_some() }
+        /// Zig: `bun.strings.trimRight`.
         #[inline]
         pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
             let mut end = s.len();

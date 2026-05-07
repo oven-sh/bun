@@ -4,7 +4,34 @@
 // distinctive flag must still be recognized and wired to the same option.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+
+// The point of the refactor is that `Arguments.parse` / `Bunfig.Parser.parse`
+// are no longer monomorphized per `Command.Tag`. On a build with the old
+// `comptime cmd` parameter the symbol table carries one
+// `cli.Arguments.parse__anon_*` per reachable command (≈9); after the change
+// there is exactly one. This test reads `nm` output for the binary under
+// test and asserts that count. It necessarily skips on Windows (no `nm`) and
+// on stripped release binaries (no Zig symbols to read).
+describe("Arguments.parse is not monomorphized per Command.Tag", () => {
+  const nm = Bun.spawnSync({ cmd: ["nm", bunExe()], stdout: "pipe", stderr: "pipe" });
+  const symbols = nm.exitCode === 0 ? nm.stdout.toString() : "";
+  const argumentsParse = symbols.match(/ cli\.Arguments\.parse__/g) ?? [];
+  // Zero matches means either `nm` is unavailable or the binary is stripped
+  // (release). In that case there is nothing we can assert here.
+  const canInspect = !isWindows && argumentsParse.length > 0;
+
+  test.skipIf(!canInspect)("exactly one instantiation each", () => {
+    const counts = {
+      "cli.Arguments.parse": argumentsParse.length,
+      "cli.bunfig.Bunfig.Parser.parse": (symbols.match(/ cli\.bunfig\.Bunfig\.Parser\.parse__/g) ?? []).length,
+    };
+    expect(counts).toEqual({
+      "cli.Arguments.parse": 1,
+      "cli.bunfig.Bunfig.Parser.parse": 1,
+    });
+  });
+});
 
 describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
   test("--define reaches the transpiler for AutoCommand", async () => {

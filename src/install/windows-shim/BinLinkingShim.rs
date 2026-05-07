@@ -120,6 +120,15 @@ impl Flags {
 // artifact to embed and the data is never read.
 #[cfg(windows)]
 pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
+// Guard against the placeholder/empty artifact slipping through: a 0-byte embed
+// would silently make `bun install` write 0-byte `.exe` shims into
+// `node_modules/.bin/` and break every package binary. Fail the Windows build
+// loudly until the real PE is wired into the build.
+#[cfg(windows)]
+const _: () = assert!(
+    !EMBEDDED_EXECUTABLE_DATA.is_empty(),
+    "bun_shim_impl.exe is empty — the Windows shim PE must be built before this crate is compiled",
+);
 #[cfg(not(windows))]
 pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 

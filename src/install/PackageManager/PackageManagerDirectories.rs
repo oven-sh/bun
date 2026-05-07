@@ -773,11 +773,10 @@ pub fn path_for_cached_npm_path<'a>(
         let mut path_buf = PathBuffer::uninit();
         // SAFETY: cache_path_buf[cache_path_len] == 0 written by buf_print_z above
         let cache_path = unsafe { ZStr::from_raw(cache_path_buf.as_ptr(), cache_path_len) };
-        let joined = path::join_abs_string_buf_z(
+        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
             &this.cache_directory_path,
             &mut path_buf,
             &[cache_path.as_bytes()],
-            path::Platform::Windows,
         );
         return match sys::readlink(joined, &mut buf.0[..]) {
             Ok(n) => Ok(&mut buf.0[..n]),

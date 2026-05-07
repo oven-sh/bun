@@ -285,7 +285,7 @@ impl NodeModulesFolder {
             return Ok(bun_sys::open_dir_at_windows_a(
                 Fd::from_std_dir(root),
                 self.path.as_slice(),
-                bun_sys::windows::OpenDirOptions {
+                bun_sys::WindowsOpenDirOptions {
                     can_rename_or_delete: false,
                     read_only: false,
                     ..Default::default()
@@ -313,10 +313,11 @@ impl NodeModulesFolder {
                 break 'brk bun_sys::open_dir_at_windows_a(
                     Fd::from_std_dir(root),
                     self.path.as_slice(),
-                    bun_sys::windows::OpenDirOptions {
+                    bun_sys::WindowsOpenDirOptions {
                         can_rename_or_delete: false,
-                        op: bun_sys::windows::OpenDirOp::OpenOrCreate,
+                        op: bun_sys::WindowsOpenDirOp::OpenOrCreate,
                         read_only: false,
+                        ..Default::default()
                     },
                 )
                 .unwrap()?

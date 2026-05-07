@@ -229,19 +229,25 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         #[cfg(windows)]
         {
             // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
-            // `StdioResult` is the `WindowsStdioResult` union; only the
-            // `.Buffer` arm carries a pipe to attach. Ownership of the boxed
-            // `uv::Pipe` transfers into the writer's `Source::Pipe`, so we
-            // `Box::into_raw` it back out (set_pipe re-wraps via `Box::from_raw`).
-            if let crate::process::WindowsStdioResult::Buffer(pipe) =
-                core::mem::replace(
-                    &mut this_ref.stdio_result,
-                    crate::process::WindowsStdioResult::Unavailable,
-                )
-            {
-                // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
-                // takes ownership via `Box::from_raw`.
-                unsafe { this_ref.writer.set_pipe(Box::into_raw(pipe)) };
+            // `StdioResult` is the `WindowsStdioResult` union and Zig reads the
+            // `.buffer` field unchecked (caller invariant). Enforce that
+            // invariant here: any other arm is a logic bug, not a silent no-op.
+            // Ownership of the boxed `uv::Pipe` transfers into the writer's
+            // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
+            // and `Box::into_raw` it (set_pipe re-wraps via `Box::from_raw`).
+            use crate::process::WindowsStdioResult;
+            match core::mem::replace(
+                &mut this_ref.stdio_result,
+                WindowsStdioResult::Unavailable,
+            ) {
+                WindowsStdioResult::Buffer(pipe) => {
+                    // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
+                    // takes ownership via `Box::from_raw`.
+                    unsafe { this_ref.writer.set_pipe(Box::into_raw(pipe)) };
+                }
+                WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
+                    unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
+                }
             }
         }
         this_ref.writer.set_parent(this);

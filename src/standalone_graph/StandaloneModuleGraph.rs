@@ -1078,9 +1078,12 @@ pub fn inject(
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
                 let e = w::Win32Error::get();
+                // Zig prints `@errorName(err)` (e.g. `AccessDenied`); map the
+                // Win32 code through the errno table so users see a name, not
+                // a raw integer.
                 Output::pretty_errorln(format_args!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    e.int()
+                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
+                    e.to_system_errno().unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
                 ));
                 return Fd::invalid();
             }

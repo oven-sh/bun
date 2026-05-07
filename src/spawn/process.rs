@@ -583,34 +583,20 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            // Restructure to avoid overlapping `&mut self` (for `ref_()`) and
-            // `&mut self.poller` borrows under NLL.
-            let detach = if let Poller::Uv(process) = &mut self.poller {
-                if process.is_closed() {
-                    true
-                } else {
-                    let closing = process.is_closing();
-                    if !closing {
-                        // SAFETY: `self` is alive; raw-ptr write through the
-                        // `data` slot it set in `spawn_process_windows`.
-                        // Borrow split via raw-ptr round-trip — `ref_()` only
-                        // touches `ref_count`, never `poller`.
-                        let this: *mut Self = self;
-                        // Re-derive `process` from the raw root so the
-                        // intermediate `&mut self.poller` borrow ends here.
-                        // SAFETY: `this` is the same allocation; `Uv` arm
-                        // proven live just above.
-                        unsafe { (*this).ref_() };
-                        let Poller::Uv(process) = (unsafe { &mut (*this).poller }) else { unreachable!() };
-                        process.close(Self::on_close_uv);
-                    }
-                    false
-                }
-            } else {
-                false
+            // Hoist the libuv handle state into locals so the `&self.poller`
+            // borrow ends before we need `&mut self` for `ref_()` /
+            // `self.poller = …`. No raw-pointer round-trip needed.
+            let (closed, closing) = match &self.poller {
+                Poller::Uv(process) => (process.is_closed(), process.is_closing()),
+                _ => return,
             };
-            if detach {
+            if closed {
                 self.poller = Poller::Detached;
+            } else if !closing {
+                self.ref_();
+                if let Poller::Uv(process) = &mut self.poller {
+                    process.close(Self::on_close_uv);
+                }
             }
         }
 
@@ -1837,12 +1823,16 @@ pub fn spawn_process_windows(
         if treat_as_dup {
             if fd_i == 1 {
                 // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                if let Some(e) = unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.err_enum() {
+                // `from_uv_rc` sets `from_libuv` so display goes through the
+                // checked uv→errno translator (raw codes are sparse on Windows;
+                // an unchecked `E::from_raw` transmute would be UB for unmapped
+                // values).
+                if let Some(err) = bun_sys::Error::from_uv_rc(
+                    unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
+                    bun_sys::Tag::pipe,
+                ) {
                     cleanup_uv_files(&uv_files_to_close, loop_);
-                    return Ok(Err(bun_sys::Error::from_code(
-                        bun_sys::E::from_raw(e),
-                        bun_sys::Tag::pipe,
-                    )));
+                    return Ok(Err(err));
                 }
             }
             stdio.flags = uv::UV_INHERIT_FD;
@@ -2269,9 +2259,12 @@ pub mod sync {
             if nreads == 0 { return; } // EAGAIN / EWOULDBLOCK
             if nreads < 0 {
                 this.pipe.read_stop();
-                let e = uv::ReturnCodeI64::init(nreads)
-                    .err_enum()
-                    .map_or(bun_sys::E::CANCELED, bun_sys::E::from_raw);
+                // Route through the libuv→errno translator: on Windows, raw
+                // libuv codes are sparse negatives (e.g. UV_EOF = -4095) and
+                // do **not** map 1:1 onto `bun_sys::E` discriminants, so the
+                // unchecked `E::from_raw(err_enum())` transmute would be UB
+                // for any unmapped value.
+                let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
                 Self::on_error(this, e);
             } else {
                 // SAFETY: libuv guarantees `base[..nreads]` is the slice we
@@ -2327,6 +2320,11 @@ pub mod sync {
                     .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
                     .to_error(bun_sys::Tag::listen)
                 {
+                    // Reclaim the allocation on the error path so we don't leak
+                    // the reader (and its boxed `uv::Pipe`). `on_close` won't
+                    // fire because `read_start` failed before registering, so
+                    // this is the only owner.
+                    drop(Box::from_raw(this));
                     return Err(err);
                 }
             }

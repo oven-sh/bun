@@ -1567,8 +1567,10 @@ impl WindowsBufferedReader {
                                     Some(Self::on_file_read),
                                 )
                             }
-                            // PORT NOTE: matches Zig bug (PipeReader.zig:1113 tags this `.write`).
-                            .to_error(sys::Tag::write)
+                            // PORT NOTE: Zig PipeReader.zig:1113 tags this `.write` (a Zig
+                            // bug — the syscall is `uv_fs_read`). Use `.read` here so the
+                            // user-visible `syscall` field is correct; fix upstream separately.
+                            .to_error(sys::Tag::read)
                             {
                                 file.complete(false);
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1641,8 +1643,10 @@ impl WindowsBufferedReader {
                         Some(Self::on_file_read),
                     )
                 }
-                // PORT NOTE: matches Zig bug (PipeReader.zig:1163 tags this `.write`).
-                .to_error(sys::Tag::write)
+                // PORT NOTE: Zig PipeReader.zig:1163 tags this `.write` (a Zig bug —
+                // the syscall is `uv_fs_read`). Use `.read` here so the user-visible
+                // `syscall` field is correct; fix upstream separately.
+                .to_error(sys::Tag::read)
                 {
                     file.complete(false);
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);

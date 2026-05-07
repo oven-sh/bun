@@ -829,12 +829,11 @@ impl ExtractTarball {
                             }
 
                             let mut dest_buf = PathBuffer::uninit();
-                            let dest_path = path::join_abs_string_buf_z(
+                            let dest_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
                                 // only set once, should be fine to read not on main thread
                                 package_manager.cache_directory_path.as_bytes(),
                                 &mut dest_buf,
                                 &[name, dest_name],
-                                path::Style::Windows,
                             );
 
                             if sys::sys_uv::symlink_uv(

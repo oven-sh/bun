@@ -482,13 +482,12 @@ pub fn to_throw(
     );
 }
 
-// TODO(port): confirm `bun_jsc::BuiltinName::Message` is the correct variant
-// path for `fastGet(global, .message)` once `bun_jsc` exposes the builtin-name enum.
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toThrow.zig (319 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      throw_pretty/this.throw fmt-arg threading is approximated via format_args!; get_signature must be const fn for concatcp!; defer post_match needs RAII guard; BuiltinName::Message path unconfirmed
+//   confidence: high
+//   notes:      Zig `globalThis.throwPretty(signature ++ tail, args)` ported as
+//               inherent `JSGlobalObject::throw_pretty(format_args!("{signature}{tail}", ..))`;
+//               Zig `this.throw(..)` ported as `Expect::throw_fmt` (custom_label-aware).
+//               `defer postMatch` reshaped via scopeguard owning &mut Expect.
 // ──────────────────────────────────────────────────────────────────────────

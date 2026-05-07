@@ -1566,23 +1566,22 @@ impl VirtualMachine {
             }
         }
 
-        // TODO(b2-cycle): `transpiler.options.disable_transpilation` — gated
-        // bundler field. Assume `false` (always transpile) until un-gated.
-        if !self.preload.is_empty() {
-            if let Some(hooks) = hooks {
-                // SAFETY: hook contract.
-                let p = unsafe { (hooks.load_preloads)(self) };
-                if !p.is_null() {
-                    JSValue::from_cell(p).ensure_still_alive();
-                    JSValue::from_cell(p).protect();
-                    self.pending_internal_promise = Some(p);
-                    self.pending_internal_promise_is_protected = true;
-                    return Ok(p);
+        if !self.transpiler.options.disable_transpilation {
+            if !self.preload.is_empty() {
+                if let Some(hooks) = hooks {
+                    // SAFETY: hook contract.
+                    let p = unsafe { (hooks.load_preloads)(self) };
+                    if !p.is_null() {
+                        JSValue::from_cell(p).ensure_still_alive();
+                        JSValue::from_cell(p).protect();
+                        self.pending_internal_promise = Some(p);
+                        self.pending_internal_promise_is_protected = true;
+                        return Ok(p);
+                    }
                 }
-            }
 
-            // Check if Module.runMain was patched (spec VirtualMachine.zig:2322-2335).
-            if self.has_patched_run_main {
+                // Check if Module.runMain was patched (spec VirtualMachine.zig:2322-2335).
+                if self.has_patched_run_main {
                 #[cold]
                 #[inline(never)]
                 fn cold() {}

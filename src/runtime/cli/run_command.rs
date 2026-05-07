@@ -1163,11 +1163,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     if let Some(log) = vm.log {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
         let log = unsafe { &mut *log.as_ptr() };
-        // TODO(b2): route through `Output::error_writer_buffered()` once a
-        // `fmt::Write` adapter exists; buffer-then-dump for now.
-        let mut buf = String::new();
-        let _ = log.print(&mut buf);
-        bun_core::pretty_error!("{}", buf);
+        let _ = log.print(Output::error_writer_buffered() as *mut bun_core::io::Writer);
     }
     Output::flush();
 }
@@ -2632,10 +2628,8 @@ impl RunCommand {
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, normalized, None) {
-            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
-            // `Output::error_writer()` is `*mut io::Writer`. Route through a
-            // shim once io::Writer implements fmt::Write.
-            
+            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+            // CLI startup), process-lifetime.
             let _ = unsafe { ctx.log() }.print(Output::error_writer() as *mut bun_core::io::Writer);
 
             Output::err(

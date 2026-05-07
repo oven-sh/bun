@@ -4457,14 +4457,12 @@ impl DevServer<'_> {
         let _g = scopeguard::guard((), move |_| unsafe { (*__lock_ptr).unlock() });
 
         // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` — unrolled
-        // `Owner::encode()` returns the body-module `Packed`; the keystone
-        // `OwnerPacked` is layout-identical (`#[repr(transparent)] u32`).
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
             let idx = self.client_graph.insert_stale(abs_path, false)?;
-            serialized_failure::OwnerPacked::new(bake::Side::Client, incremental_graph::FileIndex::init(idx.get()))
+            serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
             let idx = self.server_graph.insert_stale(abs_path, graph == bake::Graph::Ssr)?;
-            serialized_failure::OwnerPacked::new(bake::Side::Server, incremental_graph::FileIndex::init(idx.get()))
+            serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
         let current_bundle = self.current_bundle.as_mut().unwrap();
         let gop = current_bundle.resolution_failure_entries.get_or_put(owner)?;

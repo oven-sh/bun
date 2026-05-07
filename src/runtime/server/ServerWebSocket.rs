@@ -445,11 +445,14 @@ impl ServerWebSocket {
 
         // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal cleanup runs at fn exit
         let this_value_ptr: *mut JsRef = &mut self.this_value;
-        let _cleanup = scopeguard::guard(signal.clone(), move |sig| {
+        let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
-                AbortSignalExt::pending_activity_unref(&*sig);
-                // Arc drop = unref()
-                drop(sig);
+                // SAFETY: `sig` was stored with a +1 ref by the upgrade caller;
+                // it stays live until this paired unref.
+                unsafe {
+                    sig.as_ref().pending_activity_unref();
+                    sig.as_ref().unref();
+                }
             }
             // SAFETY: self outlives this guard (stack-scoped within method body)
             let tv = unsafe { &mut *this_value_ptr };
@@ -471,9 +474,11 @@ impl ServerWebSocket {
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
-            if let Some(sig) = &signal {
-                if !AbortSignalExt::aborted(&**sig) {
-                    AbortSignalExt::signal(&**sig, handler.global_object(), jsc::CommonAbortReason::ConnectionClosed);
+            if let Some(sig) = signal {
+                // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
+                let sig = unsafe { sig.as_ref() };
+                if !sig.aborted() {
+                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
             }
 
@@ -509,15 +514,17 @@ impl ServerWebSocket {
                 handler.run_error_callback(vm, global_object, err);
                 return;
             }
-        } else if let Some(sig) = &signal {
+        } else if let Some(sig) = signal {
             let loop_ = vm.event_loop();
 
             // SAFETY: event_loop() returns a live raw ptr owned by the VM.
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
-            if !AbortSignalExt::aborted(&**sig) {
-                AbortSignalExt::signal(&**sig, handler.global_object(), jsc::CommonAbortReason::ConnectionClosed);
+            // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
+            let sig = unsafe { sig.as_ref() };
+            if !sig.aborted() {
+                sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
         }
     }

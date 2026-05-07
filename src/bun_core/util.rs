@@ -2025,6 +2025,155 @@ impl Iterator for ArgvIter {
 /// `bun.argv` accessor.
 #[inline] pub fn argv() -> Argv { Argv(argv_view()) }
 
+// ─── BUN_OPTIONS argv injection (bun.zig: bun_options_argc / appendOptionsEnv) ──
+/// Number of arguments injected into `argv` by the `BUN_OPTIONS` environment
+/// variable. Set once during single-threaded startup (`init_argv`).
+static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Zig: `bun.bun_options_argc` — read accessor.
+#[inline]
+pub fn bun_options_argc() -> usize {
+    BUN_OPTIONS_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// Zig: `bun.bun_options_argc = n` — write accessor (single-threaded startup).
+#[inline]
+pub fn set_bun_options_argc(n: usize) {
+    BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Trait for arg types accepted by [`append_options_env`] (replaces Zig
+/// `comptime ArgType` in `bun.appendOptionsEnv`). Impl'd for `bun_string::String`
+/// and `Box<ZStr>` in their owning crates.
+pub trait OptionsEnvArg {
+    fn from_slice(s: &[u8]) -> Self;
+    fn from_buf(buf: Vec<u8>) -> Self;
+}
+
+/// Zig: `bun.appendOptionsEnv` — parse a `BUN_OPTIONS`-style string
+/// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
+/// `args` starting at index 1 (Zig callers prepend a placeholder at [0]).
+pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
+    let mut i: usize = 0;
+    let mut offset_in_args: usize = 1;
+    while i < env.len() {
+        // skip whitespace
+        while i < env.len() && env[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= env.len() {
+            break;
+        }
+
+        // Handle all command-line arguments with quotes preserved
+        let start = i;
+        let mut j = i;
+
+        // Check if this is an option (starts with --)
+        let is_option = j + 2 <= env.len() && env[j] == b'-' && env[j + 1] == b'-';
+
+        if is_option {
+            // Find the end of the option flag (--flag)
+            while j < env.len() && !env[j].is_ascii_whitespace() && env[j] != b'=' {
+                j += 1;
+            }
+
+            let end_of_flag = j;
+            let mut found_equals = false;
+
+            // Check for equals sign
+            if j < env.len() && env[j] == b'=' {
+                found_equals = true;
+                j += 1; // Move past the equals sign
+            } else if j < env.len() && env[j].is_ascii_whitespace() {
+                j += 1; // Move past the space
+                while j < env.len() && env[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+            }
+
+            // Handle quoted values
+            if j < env.len() && (env[j] == b'\'' || env[j] == b'"') {
+                let quote_char = env[j];
+                j += 1; // Move past opening quote
+                while j < env.len() && env[j] != quote_char {
+                    j += 1;
+                }
+                if j < env.len() {
+                    j += 1; // Move past closing quote
+                }
+            } else if found_equals {
+                // If we had --flag=value (no quotes), find next whitespace
+                while j < env.len() && !env[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+            } else {
+                // No value found after flag (e.g., `--flag1 --flag2`).
+                j = end_of_flag;
+            }
+
+            // Copy the entire argument including quotes
+            args.insert(offset_in_args, A::from_slice(&env[start..j]));
+            offset_in_args += 1;
+
+            i = j;
+            continue;
+        }
+
+        // Non-option arguments or standalone values
+        let mut buf: Vec<u8> = Vec::new();
+
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escape = false;
+        while i < env.len() {
+            let ch = env[i];
+            if escape {
+                buf.push(ch);
+                escape = false;
+                i += 1;
+                continue;
+            }
+            if ch == b'\\' {
+                escape = true;
+                i += 1;
+                continue;
+            }
+            if in_single {
+                if ch == b'\'' {
+                    in_single = false;
+                } else {
+                    buf.push(ch);
+                }
+                i += 1;
+                continue;
+            }
+            if in_double {
+                if ch == b'"' {
+                    in_double = false;
+                } else {
+                    buf.push(ch);
+                }
+                i += 1;
+                continue;
+            }
+            if ch == b'\'' {
+                in_single = true;
+            } else if ch == b'"' {
+                in_double = true;
+            } else if ch.is_ascii_whitespace() {
+                break;
+            } else {
+                buf.push(ch);
+            }
+            i += 1;
+        }
+
+        args.insert(offset_in_args, A::from_buf(buf));
+        offset_in_args += 1;
+    }
+}
+
 /// `bun.argv = slice` — swap the global argv view. Zig assigns the slice
 /// directly (`bun.argv = full_argv[0..n]`); call sites are single-threaded
 /// startup (CLI parsing in the `--compile` path), so this writes the static

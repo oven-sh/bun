@@ -2195,23 +2195,36 @@ impl<S: GraphSide> IncrementalGraph<S> {
             },
         }
 
-        let dev = self.owner();
-
         let fail_owner: FailureOwner = match S::SIDE {
             Side::Server => FailureOwner::Server(ig::ServerFileIndex::init(file_index.get())),
             Side::Client => FailureOwner::Client(ig::ClientFileIndex::init(file_index.get())),
         };
+        let owner_key = OwnerPacked::new(S::SIDE, file_index.get());
         // TODO: DevServer should get a stdio manager which can process
         // the error list as it changes while also supporting a REPL
         let _ = log.print(Output::error_writer() as *mut _);
-        let _ = (dev, fail_owner, gop_index, &log.msgs);
-        // TODO(port): blocked_on: dev_server::DevServer::relative_path / SerializedFailure::init_from_log dispatch
-        //   `init_from_log` exists on `serialized_failure_body::SerializedFailure` but
-        //   takes `&mut dev_server_body::DevServer<'_>`, while `dev` here is the
-        //   keystone `dev_server::DevServer`. Also `bundling_failures.get_or_put`
-        //   requires `SerializedFailure: Default`.
-        todo!("blocked_on: dev_server::DevServer::relative_path");
-        #[allow(unreachable_code)]
+
+        let failure = {
+            let mut buf = path_buffer_pool::get();
+            // PORT NOTE: reshaped for borrowck — clone the key so the
+            // `relative_path` borrow of `dev.root` does not overlap the
+            // `bundled_files` slice borrow held through `self.owner()`.
+            let key_owned = self.bundled_files.keys()[gop_index].clone();
+            // this string is just going to be memcpy'd into the log buffer
+            let owner_display_name = self.owner().relative_path(&mut buf, &key_owned);
+            SerializedFailure::init_from_log(fail_owner, owner_display_name, &log.msgs)?
+        };
+
+        let dev = self.owner();
+        let fail_gop = dev.bundling_failures.get_or_put(owner_key)?;
+        dev.incremental_result.failures_added.push(failure.clone());
+        if fail_gop.found_existing {
+            dev.incremental_result
+                .failures_removed
+                .push(core::mem::replace(fail_gop.value_ptr, failure));
+        } else {
+            *fail_gop.value_ptr = failure;
+        }
         Ok(())
     }
 }

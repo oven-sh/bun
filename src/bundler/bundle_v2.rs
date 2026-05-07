@@ -797,8 +797,15 @@ pub mod api {
             /// not found. Handles direct key matches and relative specifiers
             /// joined against `dirname(source_file)` (with Windows
             /// drive-letter / separator normalization).
+            ///
+            /// `arena` is the build's bump allocator (`BundleV2::allocator()`);
+            /// the matched key is copied into it so the returned
+            /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
+            /// (lives for the entire build pass) instead of the map's key
+            /// storage.
             pub fn resolve(
                 &self,
+                arena: &'static bun_alloc::Arena,
                 source_file: &[u8],
                 specifier: &[u8],
             ) -> Option<bun_resolver::Result> {
@@ -808,7 +815,7 @@ pub mod api {
                 // key, not the parameter).
                 #[cfg(not(windows))]
                 if let Some((key, _)) = self.map.get_key_value(specifier) {
-                    return Some(Self::result_for_key(key.as_ref()));
+                    return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
                 }
                 #[cfg(windows)]
                 {
@@ -816,7 +823,7 @@ pub mod api {
                     let normalized =
                         bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                     if let Some((key, _)) = self.map.get_key_value(normalized) {
-                        return Some(Self::result_for_key(key.as_ref()));
+                        return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
                     }
                 }
 
@@ -882,7 +889,7 @@ pub mod api {
                     }
                     let joined = &buf[0..joined_len];
                     if let Some((key, _)) = self.map.get_key_value(joined) {
-                        return Some(Self::result_for_key(key.as_ref()));
+                        return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
                     }
                 }
 

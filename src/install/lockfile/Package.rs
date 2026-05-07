@@ -1776,6 +1776,13 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
+<<<<<<< Updated upstream
+||||||| Stash base
+                let npm = dependency_version.value.npm;
+=======
+                // SAFETY: tag == Npm selects the `npm` union member.
+                let npm = unsafe { &*dependency_version.value.npm };
+>>>>>>> Stashed changes
                 if workspace_version.is_some() {
                     // SAFETY: tag == Npm selects the `npm` union member.
                     let satisfies = unsafe {

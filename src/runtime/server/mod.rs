@@ -970,22 +970,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server_js = server_ref.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js)
             .expect("routeList cached value missing");
-        let response_value = bun_jsc::host_fn::from_js_host_call(global, || {
-            // SAFETY: FFI — `Bun__ServerRouteList__callRoute` is the
-            // generated C++ dispatcher; all pointer args are live for this
-            // frame, `js_request` is an out-param overwritten in place.
-            unsafe {
-                Bun__ServerRouteList__callRoute(
-                    global,
-                    index,
-                    prepared.request_object,
-                    server_js,
-                    server_request_list,
-                    &mut prepared.js_request,
-                    req,
-                )
-            }
-        })
+        let response_value = bun_jsc::host_fn::from_js_host_call(
+            global,
+            core::panic::Location::caller(),
+            || {
+                // SAFETY: FFI — `Bun__ServerRouteList__callRoute` is the
+                // generated C++ dispatcher; all pointer args are live for this
+                // frame, `js_request` is an out-param overwritten in place.
+                unsafe {
+                    Bun__ServerRouteList__callRoute(
+                        global,
+                        index,
+                        prepared.request_object,
+                        server_js,
+                        server_request_list,
+                        &mut prepared.js_request,
+                        req,
+                    )
+                }
+            },
+        )
         .unwrap_or_else(|err| global.take_exception(err));
 
         Self::handle_request(server, should_deinit_ptr, prepared, req, response_value);

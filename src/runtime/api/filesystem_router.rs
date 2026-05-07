@@ -20,11 +20,18 @@ pub mod kind_enum {
 }
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 use core::cell::{RefCell, UnsafeCell};
 ||||||| Stash base
 // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
 
 mod _jsc_gated {
+||||||| Stash base
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
+
+mod _jsc_gated {
+=======
+>>>>>>> Stashed changes
 use core::cell::RefCell;
 use core::ffi::c_void;
 =======

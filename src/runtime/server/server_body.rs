@@ -1181,6 +1181,30 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
+/// Per-process latch for the dev-mode idle-timeout warning. The Zig source
+/// declares a `var` per-monomorphization static inside `NewServer`, but the
+/// warning is gated on `DEBUG && !silent` and only fires once globally, so a
+/// single shared `AtomicBool` matches user-visible behavior.
+#[inline]
+fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
+    static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    &FLAG
+}
+
+/// Body of `onTimeoutForIdleWarn` (server.zig) — emits the once-only dev-mode
+/// warning. Factored out as a free fn so the `RespLike::on_timeout_warn`
+/// closures (which cannot name `NewServer<SSL,DEBUG>`) can call it.
+fn on_timeout_for_idle_warn() {
+    if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
+        && !crate::cli::Command::get().debug.silent
+    {
+        Output::pretty_errorln(
+            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
+        );
+        Output::flush();
+    }
+}
+
 // ─── PluginsResult ───────────────────────────────────────────────────────────
 pub enum PluginsResult<'a> {
     Pending,
@@ -2241,9 +2265,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(response_value);
         }
 
-        // TODO(port): blocked_on: webcore::response::Response: JsClass
-        // Response does not yet implement JsClass; skip URL propagation for now.
-        let _ = response_value;
+        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
+            // SAFETY: `from_js` returns a live `*mut Response` (owned by its
+            // JS wrapper, which `response_value` keeps alive).
+            unsafe { (*resp).set_url(request.url.clone()) };
+        }
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
 
@@ -2556,17 +2582,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
 
             // Duplicate the Strong handle so that we can hold two independent strong references to it.
-            // PORT NOTE: JSPromiseStrong's `strong` field is private; replace() the whole handle and
-            // re-init `self.all_closed_promise` to keep both alive.
+            // PORT NOTE: reshaped for borrowck — Zig writes a fresh Strong then re-seats `set()`;
+            // here we move the old handle out and create a second Strong from the same JSValue.
+            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
+            let global_this = unsafe { &*self.global_this };
             let promise_value = self.all_closed_promise.value();
             let dup = mem::replace(
                 &mut self.all_closed_promise,
-                jsc::JSPromiseStrong::init(unsafe { &*self.global_this }),
+                jsc::JSPromiseStrong::init(global_this),
             );
-            // Restore original promise value into the freshly-initted slot.
-            // TODO(port): JSPromiseStrong has no public set(); the new handle holds a fresh promise,
-            // not the original. Phase B: add JSPromiseStrong::from_value or expose set().
-            let _ = promise_value;
+            // Restore the original promise value into the freshly-initted slot.
+            self.all_closed_promise.set(global_this, promise_value);
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: unsafe { &*self.global_this },

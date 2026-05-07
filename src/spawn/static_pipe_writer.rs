@@ -310,14 +310,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop.loop_().uv_loop
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop.r#loop()
-        }
+        self.event_loop.platform_event_loop()
     }
 
     pub fn watch(&mut self) {

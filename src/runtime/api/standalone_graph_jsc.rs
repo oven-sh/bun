@@ -9,10 +9,16 @@ use bun_jsc::JSGlobalObject;
 use bun_str::{self as bstring, strings};
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 // PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
 // `File` is re-exported at the crate root.
 use bun_standalone_graph::{File, StandaloneModuleGraph};
+||||||| Stash base
+use crate::api::standalone_graph::{File, StandaloneModuleGraph};
+=======
+use bun_standalone_graph::{File, Graph as StandaloneModuleGraph};
+>>>>>>> Stashed changes
 ||||||| Stash base
 use crate::api::standalone_graph::{File, StandaloneModuleGraph};
 =======

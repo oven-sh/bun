@@ -262,17 +262,121 @@ impl UpdateInteractiveCommand {
         Self::update_interactive(ctx, &original_cwd, manager)
     }
 
-    #[allow(dead_code)]
     fn update_package_json_files_from_updates(
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
     ) -> Result<(), bun_core::Error> {
-        let _ = (manager, updates);
-        // Real body needs `manager.workspace_package_json_cache` / `manager.log`
-        // (absent on the stub `PackageManager`) and `E::Object::put(&Bump, …)`.
-        // Body preserved in update_interactive_command.zig; re-port once
-        // `package_manager_real` un-gates.
-        todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)")
+        // Group updates by workspace
+        let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::default();
+
+        // Group updates by workspace path (store indices to avoid cloning)
+        for (i, update) in updates.iter().enumerate() {
+            let result = workspace_groups
+                .get_or_put(&update.workspace_path)
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            if !result.found_existing {
+                *result.value_ptr = Vec::new();
+            }
+            result.value_ptr.push(i);
+        }
+
+        let bump = Bump::new();
+
+        // Process each workspace
+        let mut it = workspace_groups.iter();
+        while let Some((workspace_path, workspace_update_idxs)) = it.next() {
+            // Build the package.json path for this workspace
+            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
+            let root_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+            let mut path_buf = PathBuffer::uninit();
+            let package_json_path =
+                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
+
+            // Load and parse the package.json
+            // PORT NOTE: reshaped for borrowck — `manager.log` is `*mut Log`
+            // borrowed for the cache call while `manager` itself is reborrowed
+            // for the disjoint `workspace_package_json_cache` field.
+            // SAFETY: `manager.log` was set by `PackageManager::init` and
+            // outlives the singleton; no other `&mut Log` is live here.
+            let log = unsafe { &mut *manager.log };
+            let package_json: &mut WorkspacePackageJsonCacheEntry =
+                match manager.workspace_package_json_cache.get_with_path(
+                    log,
+                    package_json_path,
+                    GetJsonOptions { guess_indentation: true, ..Default::default() },
+                ) {
+                    GetJsonResult::ParseErr(err) => {
+                        Output::err_generic(
+                            "Failed to parse package.json at {s}: {s}",
+                            (BStr::new(package_json_path), err.name()),
+                        );
+                        continue;
+                    }
+                    GetJsonResult::ReadErr(err) => {
+                        Output::err_generic(
+                            "Failed to read package.json at {s}: {s}",
+                            (BStr::new(package_json_path), err.name()),
+                        );
+                        continue;
+                    }
+                    GetJsonResult::Entry(entry) => entry,
+                };
+
+            let mut modified = false;
+
+            // Update each package in this workspace's package.json
+            for &idx in workspace_update_idxs {
+                let update = &updates[idx];
+                // Find the package in the correct dependency section
+                if !package_json.root.is_object() {
+                    continue;
+                }
+                let Some(section_query) = package_json.root.as_property(&update.dep_type) else {
+                    continue;
+                };
+                let Some(mut dep_obj) = section_query.expr.data.e_object() else {
+                    continue;
+                };
+                let Some(version_query) = section_query.expr.as_property(&update.name) else {
+                    continue;
+                };
+                let Some(e_str) = version_query.expr.data.e_string() else {
+                    continue;
+                };
+                // Get the original version to preserve prefix
+                let original_version = e_str.data;
+
+                // Preserve the version prefix from the original
+                let version_with_prefix =
+                    preserve_version_prefix(original_version, &update.target_version)?;
+
+                // Update the version using hash map put
+                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)`
+                // duplicates the string into a non-Store allocation; the Rust
+                // `E::EString.data: &'static [u8]` requires a process-lifetime
+                // slice, so leak the freshly-duped buffer (matches
+                // PackageJSONEditor.rs `leak_str`).
+                let leaked: &'static [u8] = Box::leak(version_with_prefix);
+                let new_expr = Expr::init(E::EString::init(leaked), version_query.expr.loc);
+                dep_obj
+                    .put(&bump, &update.name, new_expr)
+                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                modified = true;
+            }
+
+            // Write the updated package.json if modified
+            if modified {
+                // PORT NOTE: reshaped for borrowck — drop the `&mut MapEntry`
+                // borrow of `manager.workspace_package_json_cache` before
+                // taking `&mut PackageManager`, then re-project.
+                let entry_ptr: *mut WorkspacePackageJsonCacheEntry = package_json;
+                // SAFETY: `entry_ptr` points into the process-lifetime cache
+                // map; `save_package_json` only reads `manager.allocator`-adjacent
+                // state and never resizes the cache map.
+                Self::save_package_json(manager, unsafe { &mut *entry_ptr }, package_json_path)?;
+            }
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]

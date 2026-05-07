@@ -1360,13 +1360,11 @@ impl JSGlobalObject {
         JscError::INVALID_ARG_TYPE.fmt(self, args)
     }
 
-    pub fn script_execution_context_identifier(&self) -> ScriptExecutionContext::Identifier {
-        // SAFETY: ScriptExecutionContext::Identifier is #[repr(u32)].
-        unsafe {
-            core::mem::transmute::<u32, ScriptExecutionContext::Identifier>(
-                ScriptExecutionContextIdentifier__forGlobalObject(self),
-            )
-        }
+    pub fn script_execution_context_identifier(&self) -> ScriptExecutionContextIdentifier {
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; returns the u32 context id.
+        ScriptExecutionContextIdentifier(unsafe {
+            ScriptExecutionContextIdentifier__forGlobalObject(self)
+        })
     }
 
     pub const EXTERN: [&'static str; 3] = ["create", "getModuleRegistryMap", "resetModuleRegistryMap"];

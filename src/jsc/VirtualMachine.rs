@@ -1717,11 +1717,9 @@ impl VirtualMachine {
                 let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                     .map_err(|_| bun_core::err!("JSError"))?;
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let ret = jsc::from_js_host_call_generic(
-                    global_ref,
-                    core::panic::Location::caller(),
-                    || unsafe { NodeModuleModule__callOverriddenRunMain(global, argv1) },
-                )
+                let ret = jsc::from_js_host_call_generic(global_ref, || unsafe {
+                    NodeModuleModule__callOverriddenRunMain(global, argv1)
+                })
                 .map_err(|_| bun_core::err!("JSError"))?;
                 // If the override stored a promise itself, use that; otherwise
                 // wrap its return value.

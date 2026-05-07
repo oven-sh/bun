@@ -744,9 +744,17 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
 }
 
 impl<C: SourceContext> NewSource<C> {
-    /// `bun.TrivialNew(@This())`
-    pub fn new(init: Self) -> Box<Self> {
-        Box::new(init)
+    /// `bun.TrivialNew(@This())` — heap-allocate and hand back the raw pointer.
+    ///
+    /// Ownership is **not** retained by Rust: the returned pointer is intended to
+    /// be installed as the JS wrapper's `m_ctx` via [`Self::to_readable_stream`]
+    /// (or [`NewSourceCodegen::to_js`]), after which the GC finalizer drives
+    /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
+    /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
+    /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
+    /// exactly and returns `*mut Self`.
+    pub fn new(init: Self) -> *mut Self {
+        Box::into_raw(Box::new(init))
     }
     // `bun.TrivialDeinit(@This())` → see `deinit()` below.
 
@@ -859,11 +867,10 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let out_value = 'brk: {
-            if !self.this_jsvalue.is_empty() {
-                break 'brk self.this_jsvalue;
-            }
-            break 'brk <Self as NewSourceCodegen>::to_js(self, global_this);
+        let out_value = if self.this_jsvalue != JSValue::ZERO {
+            self.this_jsvalue
+        } else {
+            <Self as NewSourceCodegen>::to_js(self, global_this)
         };
         out_value.ensure_still_alive();
         self.this_jsvalue = out_value;

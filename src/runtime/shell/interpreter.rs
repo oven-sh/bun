@@ -2081,8 +2081,9 @@ impl ShellTask {
         unsafe {
             let this = (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask;
             (*this).task.callback = shell_task_trampoline::<C>;
-            // TODO(b2-blocked): (*this).keep_alive.ref_((*this).event_loop) —
-            // needs the real `bun_jsc::EventLoopHandle`, not the `usize` shim.
+            (*this)
+                .keep_alive
+                .ref_((*this).event_loop.as_event_loop_ctx());
             WorkPool::schedule(&raw mut (*this).task);
         }
     }

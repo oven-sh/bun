@@ -63,7 +63,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !handle.is_null() {
-        return Err(global.throw("passing 'handle' not implemented yet"));
+        return Err(global.throw(format_args!("passing 'handle' not implemented yet")));
     }
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
@@ -115,7 +115,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         .serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
 
     if good == SerializeAndSendResult::Failure {
-        let ex = global.create_type_error_instance("sendInternal() failed");
+        let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
         ex.put(
             global,
             b"syscall",

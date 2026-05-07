@@ -491,6 +491,6 @@ pub fn to_throw(
 //   confidence: high
 //   notes:      Zig `globalThis.throwPretty(signature ++ tail, args)` ported as
 //               inherent `JSGlobalObject::throw_pretty(format_args!("{signature}{tail}", ..))`;
-//               Zig `this.throw(..)` ported as `Expect::throw_fmt` (custom_label-aware).
+//               Zig `this.throw(..)` ported as `Expect::throw` (custom_label-aware).
 //               `defer postMatch` reshaped via scopeguard owning &mut Expect.
 // ──────────────────────────────────────────────────────────────────────────

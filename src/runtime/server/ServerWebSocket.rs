@@ -927,8 +927,8 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
         let args = callframe.arguments_old::<1>();
 
         if args.len < 1 {
@@ -1402,9 +1402,9 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
         // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
-        let _this_value = callframe.this();
+        _this_value: JSValue,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         bun_output::scoped_log!(WebSocketServer, "close()");
 
@@ -1442,9 +1442,9 @@ impl ServerWebSocket {
     pub fn terminate(
         &mut self,
         _global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        _callframe: &CallFrame,
+        _this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let _this_value = callframe.this();
         bun_output::scoped_log!(WebSocketServer, "terminate()");
 
         if self.is_closed() {

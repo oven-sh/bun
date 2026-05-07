@@ -991,17 +991,6 @@ impl JSGlobalObject {
         self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
-    /// Shared-reference flavour of [`bun_vm`] for callers that only need to
-    /// read VM state (e.g. constructing an [`ArgumentsSlice`]). The VM
-    /// outlives every `JSGlobalObject` it owns, so a `&self`-tied borrow is
-    /// sound; callers that need mutation must go through the raw pointer.
-    #[inline]
-    pub fn bun_vm_ref(&self) -> &VirtualMachine {
-        // SAFETY: `bun_vm()` returns the live VM owning this global; the VM is
-        // heap-allocated and outlives `self` (JSC_BORROW: VM-lifetime).
-        unsafe { &*self.bun_vm() }
-    }
-
     pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {
         let vm_ptr = self.bun_vm_unsafe() as *mut VirtualMachine;
 

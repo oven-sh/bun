@@ -623,7 +623,15 @@ impl FileSystemRouter {
         )
         .expect("unreachable");
 
-        Ok(result.to_js(global_this))
+        // PORT NOTE: `result` is a self-referential `Box<MatchedRoute>` (`route` points
+        // at `route_holder` inside this very allocation). The trait `JsClass::to_js(self)`
+        // would deref-move the value OUT of the Box and re-box it at a new address,
+        // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
+        // existing allocation straight to the C++ wrapper instead — matches Zig's
+        // `result.toJS(globalThis)` which forwards the `*MatchedRoute` as-is.
+        // SAFETY: `Box::into_raw` yields a uniquely-owned heap payload; ownership
+        // transfers to the GC wrapper (freed via `MatchedRouteClass__finalize`).
+        Ok(unsafe { MatchedRoute::to_js_ptr(Box::into_raw(result), global_this) })
     }
 
     #[bun_jsc::host_fn(getter)]

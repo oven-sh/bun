@@ -86,14 +86,21 @@ impl Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
         super::assert_stdio_result(result);
 
+        // Ownership of any resource inside `stdio` (notably `.memfd`) is being
+        // *transferred* into the returned `Readable` — Zig's `Readable.init`
+        // never calls `stdio.deinit()`. `Stdio` has a Rust `Drop` impl that
+        // would close the memfd, so suppress it here to avoid a double-close
+        // (EBADF) when the Readable later closes the same fd.
+        let stdio = mem::ManuallyDrop::new(stdio);
+
         #[cfg(unix)]
         {
-            if matches!(stdio, Stdio::Pipe) {
+            if matches!(*stdio, Stdio::Pipe) {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
 
-        match stdio {
+        match &*stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
             Stdio::Fd(fd) => {
@@ -104,13 +111,13 @@ impl Readable {
                 }
                 #[cfg(not(unix))]
                 {
-                    Readable::Fd(fd)
+                    Readable::Fd(*fd)
                 }
             }
             Stdio::Memfd(memfd) => {
                 #[cfg(unix)]
                 {
-                    Readable::Memfd(memfd)
+                    Readable::Memfd(*memfd)
                 }
                 #[cfg(not(unix))]
                 {

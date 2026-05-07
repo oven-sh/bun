@@ -325,9 +325,17 @@ impl<'a> Writable<'a> {
                 result,
                 super::Source::ArrayBuffer(core::mem::take(array_buffer)),
             ))),
-            Stdio::Memfd(memfd) => {
-                debug_assert!(*memfd != Fd::INVALID);
-                Ok(Writable::Memfd(*memfd))
+            Stdio::Memfd(_) => {
+                // Transfer ownership: Zig's `Writable.init` never calls
+                // `stdio.deinit()`. `Stdio`'s Drop would close the memfd, so
+                // take it out via ManuallyDrop (same pattern as the Blob arm)
+                // to keep the caller's `stdio[0]` drop from double-closing the
+                // fd that Writable now owns.
+                let owned =
+                    core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+                let Stdio::Memfd(fd) = &*owned else { unreachable!() };
+                debug_assert!(*fd != Fd::INVALID);
+                Ok(Writable::Memfd(*fd))
             }
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),

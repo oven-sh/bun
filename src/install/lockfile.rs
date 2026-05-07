@@ -1516,11 +1516,22 @@ impl Lockfile {
 
             match pkg_res.tag {
                 ResolutionTag::Npm => {
-                    let Some(manifest) = manager.manifests.by_name_hash(
-                        manager,
-                        manager.scope_for_package_name(
-                            pkg_name.slice(self.buffers.string_bytes.as_slice()),
-                        ),
+                    // PORT NOTE: heavy borrowck overlap — Zig calls
+                    // `manager.manifests.byNameHash(manager, …)` (manifests is a
+                    // field of manager) and then opens a `string_builder` on
+                    // `manager.lockfile` while still holding `&manifest`. Route
+                    // through a raw root so disjoint fields (`manifests`,
+                    // `lockfile.{string_pool, buffers.*}`) can be split.
+                    // SAFETY: `manager_ptr` is the live exclusive borrow's address.
+                    // `manifests` and `lockfile` are non-overlapping fields; nothing
+                    // below resizes/relocates `manifests` while `manifest` is held.
+                    let manager_ptr: *mut PackageManager = manager;
+                    let scope = unsafe { &*manager_ptr }.scope_for_package_name(
+                        pkg_name.slice(self.buffers.string_bytes.as_slice()),
+                    );
+                    let Some(manifest) = (unsafe { &mut (*manager_ptr).manifests }).by_name_hash(
+                        unsafe { &mut *manager_ptr },
+                        scope,
                         pkg_name_hash,
                         Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
@@ -1528,11 +1539,14 @@ impl Lockfile {
                         continue;
                     };
 
-                    let Some(pkg) = manifest.find_by_version(pkg_res.value.npm.version) else {
+                    // SAFETY: tag checked == .npm above; `npm` is the active union field.
+                    let npm_ver = unsafe { pkg_res.value.npm.version };
+                    let Some(pkg) = manifest.find_by_version(npm_ver) else {
                         continue;
                     };
 
-                    let mut builder = manager.lockfile.string_builder();
+                    let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
+                    let mut builder = string_builder!(lockfile);
 
                     let mut bin_extern_strings_count: u32 = 0;
 
@@ -1546,7 +1560,7 @@ impl Lockfile {
                     // Spec: `defer builder.clamp()` — call explicitly at end of block (no `?`
                     // exits between here and the clamp below).
 
-                    let extern_strings_list = &mut manager.lockfile.buffers.extern_strings;
+                    let extern_strings_list = &mut lockfile.buffers.extern_strings;
                     extern_strings_list.reserve(bin_extern_strings_count as usize);
                     // PERF(port): was ensureUnusedCapacity
                     let new_len = extern_strings_list.len() + bin_extern_strings_count as usize;

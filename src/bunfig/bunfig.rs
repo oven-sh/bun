@@ -945,9 +945,8 @@ impl<'a> Parser<'a> {
             {
                 if let Some(dir) = expr_get(&_bun, b"outdir") {
                     self.expect_string(&dir)?;
-                    // TODO(b2-blocked): api::TransformOptions.output_dir (peechy codegen)
-                    
-                    { self.ctx.args.output_dir = Some(estring_to_owned(dir.data.e_string().unwrap().get(), self.bump)); }
+                    self.ctx.args.output_dir =
+                        Some(estring_to_owned(dir.data.e_string().unwrap().get(), self.bump));
                 }
             }
 
@@ -960,18 +959,12 @@ impl<'a> Parser<'a> {
                     self.expect(&entry_points, ExprTag::EArray)?;
                     let arr = entry_points.data.e_array().unwrap();
                     let items = arr.items.slice();
+                    let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
+                        names.push(estring_to_owned(item.data.e_string().unwrap().get(), self.bump));
                     }
-                    // TODO(b2-blocked): api::TransformOptions.entry_points (peechy codegen)
-                    
-                    {
-                        let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
-                        for item in items {
-                            names.push(estring_to_owned(item.data.e_string().unwrap().get(), self.bump));
-                        }
-                        self.ctx.args.entry_points = names.into();
-                    }
+                    self.ctx.args.entry_points = names;
                 }
 
                 if let Some(expr) = expr_get(&_bun, b"packages") {
@@ -1060,8 +1053,6 @@ impl<'a> Parser<'a> {
                 jsx_factory = Box::<[u8]>::from(value);
             }
         }
-        // TODO(b2-blocked): api::TransformOptions.jsx (peechy codegen)
-        
         {
             if self.ctx.args.jsx.is_none() {
                 self.ctx.args.jsx = Some(api::Jsx {

@@ -432,7 +432,12 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// alias of that same buffer) is live — callers reach resolutions via
     /// `self.resolutions` only.
     #[inline]
-    pub fn lockfile(&self) -> &Lockfile {
+    pub fn lockfile(&self) -> &'a Lockfile {
+        // SAFETY: see field doc — `self.lockfile` is set from a `&'a Lockfile`
+        // (or `&'a mut Lockfile`) at construction in `Lockfile::hoist`, so the
+        // pointee outlives `'a`. Returning `&'a` (not `&'_ self`) lets callers
+        // hold the read-only view while disjoint `&mut self.<field>` borrows
+        // are live (`log`, `sort_buf`, …).
         unsafe { &*self.lockfile }
     }
 
@@ -748,6 +753,11 @@ impl Tree {
             }
 
             let dependency = &dependencies[dep_id as usize];
+            // PORT NOTE: reshaped for borrowck — copy `behavior`/`name_hash` to
+            // locals so the `&mut builder` borrows in the match arms below do
+            // not conflict with the `&dependency` borrow.
+            let dep_behavior = dependency.behavior;
+            let dep_name_hash = dependency.name_hash;
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.

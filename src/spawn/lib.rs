@@ -65,6 +65,7 @@ pub mod process {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod hooks {
     use super::*;
+    use core::ffi::c_void;
 
     /// `fn(&SpawnOptions, argv, envp) -> !Maybe(SpawnResult)`. Registered by
     /// `bun_runtime::api::bun::process::install_hooks`.

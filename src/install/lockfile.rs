@@ -1460,7 +1460,12 @@ impl Lockfile {
         &mut self,
         manager: &mut PackageManager,
     ) -> Result<(), AllocError> {
-        if manager.populate_manifest_cache(populate_manifest_cache::Packages::All).is_err() {
+        if populate_manifest_cache::populate_manifest_cache(
+            manager,
+            populate_manifest_cache::Packages::All,
+        )
+        .is_err()
+        {
             return Ok(());
         }
 
@@ -1644,7 +1649,7 @@ impl<'a> Printer<'a> {
             // Zig `bun.sys.chdir("", dirname)` — first arg is error-context
             // path; the Rust `bun_sys::chdir` takes the destination only.
             let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
-            let dir_z = bun_paths::z(dir, &mut lockfile_path_buf2);
+            let dir_z = resolve_path::z(dir, &mut lockfile_path_buf2);
             let _ = sys::chdir(dir_z);
         }
 

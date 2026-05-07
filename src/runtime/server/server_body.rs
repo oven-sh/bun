@@ -5407,8 +5407,10 @@ fn http_server_agent_notify_routes_updated<const SSL: bool, const DEBUG: bool>(
 }
 
 // ─── Externs ─────────────────────────────────────────────────────────────────
-// TODO(port): move to <area>_sys
-// Pointee types (Request, NodeHTTPResponse) lack #[repr(C)] but are only passed by pointer.
+// C++-implemented (bindings/BunServer.cpp). Declared here (not `bun_jsc`)
+// because the signatures name `bun_runtime` types (`NodeHTTPResponse`,
+// `uws::Request`) — moving them down would create a forward dependency.
+// Pointee types lack #[repr(C)] but are only passed by pointer.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn NodeHTTPServer__onRequest_http(

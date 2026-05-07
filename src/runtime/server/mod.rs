@@ -2062,22 +2062,20 @@ impl AnyServer {
     /// (see `server.zig`): un-erase the SSL bool from the tag and downcast
     /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
     pub fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
-        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
-        // and is non-null while the server is alive; `assert_{no_,}ssl` upholds
-        // the tag↔SSL invariant.
+        // `assert_{no_,}ssl` upholds the tag↔SSL invariant.
         match self.tag {
-            AnyServerTag::HTTPServer => unsafe {
-                (*self.ptr.cast::<HTTPServer>()).on_request(req, &mut *resp.assert_no_ssl())
-            },
-            AnyServerTag::HTTPSServer => unsafe {
-                (*self.ptr.cast::<HTTPSServer>()).on_request(req, &mut *resp.assert_ssl())
-            },
-            AnyServerTag::DebugHTTPServer => unsafe {
-                (*self.ptr.cast::<DebugHTTPServer>()).on_request(req, &mut *resp.assert_no_ssl())
-            },
-            AnyServerTag::DebugHTTPSServer => unsafe {
-                (*self.ptr.cast::<DebugHTTPSServer>()).on_request(req, &mut *resp.assert_ssl())
-            },
+            AnyServerTag::HTTPServer => {
+                HTTPServer::on_request(self.ptr.cast(), req, resp.assert_no_ssl())
+            }
+            AnyServerTag::HTTPSServer => {
+                HTTPSServer::on_request(self.ptr.cast(), req, resp.assert_ssl())
+            }
+            AnyServerTag::DebugHTTPServer => {
+                DebugHTTPServer::on_request(self.ptr.cast(), req, resp.assert_no_ssl())
+            }
+            AnyServerTag::DebugHTTPSServer => {
+                DebugHTTPSServer::on_request(self.ptr.cast(), req, resp.assert_ssl())
+            }
         }
     }
 

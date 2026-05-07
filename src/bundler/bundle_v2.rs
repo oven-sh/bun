@@ -2715,22 +2715,22 @@ impl<'a> BundleV2<'a> {
         this.linker.options.ignore_dce_annotations = this.transpiler.options.ignore_dce_annotations;
         // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
         // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
-        // `LinkerOptions` stores `&'static [u8]` as a Phase-A lifetime erasure.
-        let leak = |s: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(s) } };
-        this.linker.options.banner = leak(&this.transpiler.options.banner);
-        this.linker.options.footer = leak(&this.transpiler.options.footer);
+        // `LinkerOptions` stores `&'static [u8]` as a Phase-A lifetime erasure
+        // (see `interned_slice` contract — these are bundle-pass-interned).
+        this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
+        this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
         this.linker.options.css_chunking = this.transpiler.options.css_chunking;
         this.linker.options.compile_to_standalone_html = this.transpiler.options.compile_to_standalone_html;
         this.linker.options.source_maps = this.transpiler.options.source_map;
         this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
-        this.linker.options.public_path = leak(&this.transpiler.options.public_path);
+        this.linker.options.public_path = unsafe { interned_slice(&this.transpiler.options.public_path) };
         this.linker.options.target = this.transpiler.options.target;
         this.linker.options.output_format = this.transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
         this.linker.options.compile = this.transpiler.options.compile;
         this.linker.options.metafile = this.transpiler.options.metafile;
-        this.linker.options.metafile_json_path = leak(&this.transpiler.options.metafile_json_path);
-        this.linker.options.metafile_markdown_path = leak(&this.transpiler.options.metafile_markdown_path);
+        this.linker.options.metafile_json_path = unsafe { interned_slice(&this.transpiler.options.metafile_json_path) };
+        this.linker.options.metafile_markdown_path = unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
         this.linker.dev_server = this.dev_server;
 
@@ -3069,11 +3069,9 @@ impl<'a> BundleV2<'a> {
                     bun_core::todo_panic!("separate_ssr_graph=false");
                 }
 
-                // SAFETY: arena slice — `alloc` (== `self.graph.heap`) outlives the
-                // produced AST. Phase-A erases the `'bump` lifetime to `'static`.
-                let astr = |s: &[u8]| -> &'static [u8] {
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
-                };
+                // SAFETY: arena slice — `alloc` (== `self.graph.heap`) outlives
+                // the produced AST. See `interned_slice` contract.
+                let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
 
                 let client_path = server.new_expr(E::EString {
                     data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, source_id).as_bytes())),

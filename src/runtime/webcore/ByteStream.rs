@@ -537,7 +537,7 @@ impl ByteStream {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/ByteStream.zig (460 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      streams::Result ownership semantics reshaped (allocator.free → Drop); pending_buffer kept as raw *mut [u8] rooted by Strong; Source/NewSource needs trait-based codegen in Phase B
+//   confidence: high
+//   todos:      4
+//   notes:      streams::Result ownership semantics reshaped (allocator.free → Drop); pending_buffer kept as raw *mut [u8] rooted by Strong; Source/NewSource wired via SourceContext trait
 // ──────────────────────────────────────────────────────────────────────────

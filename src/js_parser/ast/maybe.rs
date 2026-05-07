@@ -17,9 +17,7 @@ use crate::parser::{self as js_parser, IdentifierOpts, JsxT, RelocateVars, Reloc
 // public fields directly and are removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
-    // SAFETY: arena-owned or 'static slice; lifetime erased per Phase-A `Str` convention.
-    let data: &'static [u8] = unsafe { core::mem::transmute(data) };
-    E::EString { data, ..Default::default() }
+    E::EString { data: data.into(), ..Default::default() }
 }
 
 #[inline]
@@ -116,10 +114,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         identifier_opts: IdentifierOpts,
     ) -> Option<Expr> {
         let p = self;
-        // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
-        // SAFETY: `name` is arena-owned ('a) and outlives every Expr.
-        let name_static: &'static [u8] =
-            unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
+        let name_static = E::Str::new(name);
 
         // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
         let mut sw_data = target.data;
@@ -525,7 +520,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     return Some(p.new_expr(
                         E::Dot {
                             target,
-                            name: name_static,
+                            name: name_static.into(),
                             name_loc,
                             can_be_removed_if_unused: true,
                             ..Default::default()
@@ -685,7 +680,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 return Some(Expr::init(
                                     E::Dot {
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
-                                        name: name_static,
+                                        name: name_static.into(),
                                         name_loc,
                                         ..Default::default()
                                     },
@@ -763,18 +758,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // If this isn't a constant, return a clone of this property access
                     // but with the namespace member data associated with it so that
                     // more property accesses off of this property access are recognized.
-                    // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
-                    // SAFETY: name is arena-owned ('a) and outlives every Expr.
-                    let name_static: &'static [u8] =
-                        unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
+                    let name_static = E::Str::new(name);
                     let expr = if js_lexer::is_identifier(name) {
                         p.new_expr(
-                            E::Dot { target: *target, name: name_static, name_loc, ..Default::default() },
+                            E::Dot { target: *target, name: name_static.into(), name_loc, ..Default::default() },
                             loc,
                         )
                     } else {
                         p.new_expr(
-                            E::Dot { target: *target, name: name_static, name_loc, ..Default::default() },
+                            E::Dot { target: *target, name: name_static.into(), name_loc, ..Default::default() },
                             loc,
                         )
                     };

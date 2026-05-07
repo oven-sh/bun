@@ -567,7 +567,7 @@ impl LinkerContext<'_> {
                 Expr::allocate(
                     allocator,
                     E::Dot {
-                        name: b"exports",
+                        name: b"exports".into(),
                         name_loc: Loc::EMPTY,
                         target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
                         ..Default::default()

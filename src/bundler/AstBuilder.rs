@@ -385,7 +385,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // else
             //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),
-            hashbang: b"",
+            hashbang: b"".into(),
             css: None,
             url_for_css: b"",
             require_ref: Ref::NONE,
@@ -464,7 +464,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     /// Zig: `@"module.exports"` — Rust identifiers can't contain `.`
     pub fn module_exports(&self, loc: Loc) -> Expr {
         self.new_expr(E::Dot {
-            name: b"exports",
+            name: b"exports".into(),
             name_loc: loc,
             target: self.new_expr(E::Identifier {
                 ref_: self.module_ref,

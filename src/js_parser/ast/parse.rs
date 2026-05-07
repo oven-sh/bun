@@ -302,11 +302,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let tail: E::TemplateContents = if !include_raw {
                 E::TemplateContents::Cooked(p.lexer.to_e_string()?)
             } else {
-                // SAFETY: lexer slice is arena-owned for 'a; Str is &'static [u8].
-                let raw = p.lexer.raw_template_contents();
-                E::TemplateContents::Raw(unsafe {
-                    mem::transmute::<&[u8], &'static [u8]>(raw)
-                })
+                E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
 
             parts.push(E::TemplatePart { value, tail_loc, tail });
@@ -1153,10 +1149,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 key = p.parse_string_literal()?;
             }
             T::TBigIntegerLiteral => {
-                // SAFETY: lexer.identifier is arena-owned for 'a; E::BigInt.value is &'static [u8].
-                let v: &'static [u8] =
-                    unsafe { mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
-                key = p.new_expr(E::BigInt { value: v }, p.lexer.loc());
+                key = p.new_expr(E::BigInt { value: p.lexer.identifier.into() }, p.lexer.loc());
                 // p.markSyntaxFeature(compat.BigInt, p.lexer.Range())
                 p.lexer.next()?;
             }
@@ -1176,10 +1169,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 p.lexer.next()?;
 
-                // SAFETY: lexer.identifier is arena-owned for 'a; E::String.data is &'static [u8].
-                let data: &'static [u8] =
-                    unsafe { mem::transmute::<&[u8], &'static [u8]>(name) };
-                key = p.new_expr(E::String { data, ..Default::default() }, loc);
+                key = p.new_expr(E::String { data: name.into(), ..Default::default() }, loc);
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
                     let ref_ = p.store_name_in_ref(name).expect("unreachable");

@@ -1123,7 +1123,7 @@ impl fmt::Display for ToStringFormatter<'_> {
             }
             ExprData::ENumber(n) => write!(writer, "{}", n.value),
             ExprData::EString(s) => {
-                write!(writer, "{}", bstr::BStr::new(s.data))
+                write!(writer, "{}", bstr::BStr::new(&s.data))
             }
             ExprData::ENull(_) => write!(writer, "null"),
 

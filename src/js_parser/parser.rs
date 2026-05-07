@@ -1394,17 +1394,10 @@ impl<'a> JSXTag<'a> {
             new_name[name.len() + 1..].copy_from_slice(member);
             name = new_name;
             tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
-            // TODO(port): `E::Dot::name` is `&'static [u8]` (Phase-A arena-slice
-            // placeholder); lexer hands back `&'a [u8]`. Phase B threads `'a`
-            // through E.* — until then, erase the lifetime here.
-            // SAFETY: identifier slice borrows the source text, which outlives
-            // every AST node produced from it.
-            let member_static: &'static [u8] =
-                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(member) };
             tag = p.new_expr(
                 E::Dot {
                     target: tag,
-                    name: member_static,
+                    name: member.into(),
                     name_loc: member_range.loc,
                     ..Default::default()
                 },

@@ -286,6 +286,167 @@ pub(crate) const fn empty_arena_slice_mut<T>() -> *mut [T] {
     core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<T>::dangling().as_ptr(), 0)
 }
 
+// ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
+//
+// AST string fields (`E::Dot.name`, `E::String.data`, …) borrow from the parse
+// arena and are bulk-freed at `Store::reset()`. Phase A modeled them as
+// `&'static [u8]`, forcing `transmute::<&[u8], &'static [u8]>` at every
+// construction site. `StoreStr` mirrors `StoreRef<T>` (raw `NonNull<T>`) and
+// `StmtNodeList` (`*mut [Stmt]`): a thin lifetime-erased pointer with safe
+// construction and `Deref<Target=[u8]>` under the same callers-must-not-
+// outlive-the-arena contract that `StoreRef` already imposes. This collapses
+// the ~40 string-slice transmutes to zero without cascading `<'arena>` through
+// `Expr`/`Stmt`/`Data` (~100 types, 12 downstream crates) — that cascade is
+// the follow-up round once `StoreRef` itself carries `'arena`.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct StoreStr {
+    ptr: core::ptr::NonNull<u8>,
+    len: usize,
+}
+
+// SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
+// arena (Zig `[]const u8`). Asserted Send/Sync so payload types can sit in
+// `static` Prefill tables; callers must not actually share a Store across
+// threads (unchanged contract).
+unsafe impl Send for StoreStr {}
+unsafe impl Sync for StoreStr {}
+
+impl StoreStr {
+    pub const EMPTY: StoreStr =
+        StoreStr { ptr: core::ptr::NonNull::<u8>::dangling(), len: 0 };
+
+    /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
+    /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
+    /// (valid until the owning arena resets).
+    #[inline]
+    pub const fn new(s: &[u8]) -> Self {
+        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
+            Some(ptr) => StoreStr { ptr, len: s.len() },
+            // Only the (ptr=null, len=0) empty-slice edge needs this; Rust
+            // `&[u8]` never has a null ptr, but be defensive for const-eval.
+            None => StoreStr::EMPTY,
+        }
+    }
+
+    #[inline]
+    pub const fn as_ptr(self) -> *const u8 {
+        self.ptr.as_ptr()
+    }
+
+    #[inline]
+    pub const fn raw_len(self) -> usize {
+        self.len
+    }
+
+    /// Re-borrow as `&[u8]`. Same safety contract as `StoreRef::get`: the
+    /// pointee lives until arena reset, which the caller must not cross.
+    /// Takes `self` by value (it's `Copy`) so the returned borrow is not tied
+    /// to a stack temporary — mirrors `StoreRef::Deref`'s arena contract.
+    #[inline]
+    pub fn slice<'a>(self) -> &'a [u8] {
+        // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
+        // initialized bytes valid for the arena lifetime (or `'static`); caller
+        // must not outlive the owning arena (same as `StoreRef`).
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    #[inline]
+    pub fn as_raw(self) -> *const [u8] {
+        core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
+    }
+}
+
+impl Default for StoreStr {
+    #[inline]
+    fn default() -> Self {
+        StoreStr::EMPTY
+    }
+}
+
+impl core::ops::Deref for StoreStr {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.slice()
+    }
+}
+
+impl AsRef<[u8]> for StoreStr {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.slice()
+    }
+}
+impl core::borrow::Borrow<[u8]> for StoreStr {
+    #[inline]
+    fn borrow(&self) -> &[u8] {
+        self.slice()
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for StoreStr {
+    #[inline]
+    fn from(s: &[u8; N]) -> Self {
+        StoreStr::new(s)
+    }
+}
+impl From<&[u8]> for StoreStr {
+    #[inline]
+    fn from(s: &[u8]) -> Self {
+        StoreStr::new(s)
+    }
+}
+impl From<&str> for StoreStr {
+    #[inline]
+    fn from(s: &str) -> Self {
+        StoreStr::new(s.as_bytes())
+    }
+}
+
+impl PartialEq for StoreStr {
+    #[inline]
+    fn eq(&self, other: &StoreStr) -> bool {
+        self.slice() == other.slice()
+    }
+}
+impl Eq for StoreStr {}
+impl PartialEq<[u8]> for StoreStr {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
+        self.slice() == other
+    }
+}
+impl<const N: usize> PartialEq<&[u8; N]> for StoreStr {
+    #[inline]
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.slice() == *other
+    }
+}
+impl<const N: usize> PartialEq<[u8; N]> for StoreStr {
+    #[inline]
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.slice() == other
+    }
+}
+impl PartialEq<&[u8]> for StoreStr {
+    #[inline]
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.slice() == *other
+    }
+}
+impl core::hash::Hash for StoreStr {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        self.slice().hash(h)
+    }
+}
+impl core::fmt::Debug for StoreStr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        bstr::BStr::new(self.slice()).fmt(f)
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// This is the index to the automatically-generated part containing code that
@@ -1982,7 +2143,7 @@ pub mod defines_full_draft {
                 // SAFETY: `s` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*s.as_ptr() };
                 let item = bump.alloc(E::String {
-                    data: src.data,
+                    data: src.data.into(),
                     is_utf16: src.is_utf16,
                     ..Default::default()
                 });

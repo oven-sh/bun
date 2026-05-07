@@ -41,14 +41,7 @@ impl BlobRef {
     #[inline] fn content_type(&self) -> &[u8] { unsafe { (self.vtable.content_type)(self.owner) } }
 }
 
-/// Erase a borrowed slice to `'static` for storage in `E::String.data` (which is
-/// `&'static [u8]` pending Phase-B `'bump` threading; see E.rs `Str` alias).
-/// SAFETY: caller guarantees `s` lives in (or outlives) the AST arena that owns
-/// the resulting `Expr` node.
-#[inline(always)]
-unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
-}
+use crate::StoreStr as Str;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Expr
@@ -231,7 +224,7 @@ impl Expr {
             } else {
                 &owned[..]
             };
-            let data = unsafe { arena_str(bump.alloc_slice_copy(unquoted)) };
+            let data = Str::new(bump.alloc_slice_copy(unquoted));
             return Ok(Expr::init(
                 E::String { data, ..Default::default() },
                 loc,
@@ -252,7 +245,7 @@ impl Expr {
         buf[i..i + mid.len()].copy_from_slice(mid);
         i += mid.len();
         let n = bun_base64::encode(&mut buf[i..], bytes);
-        let data: &'static [u8] = unsafe { arena_str(&buf[..i + n]) };
+        let data = Str::new(&buf[..i + n]);
         Ok(Expr::init(
             E::String { data, ..Default::default() },
             loc,
@@ -328,7 +321,7 @@ impl Expr {
     pub fn as_utf8_string_literal(&self) -> Option<&[u8]> {
         if let Data::EString(s) = &self.data {
             debug_assert!(s.next.is_none());
-            return Some(s.data);
+            return Some(&s.data);
         }
         None
     }
@@ -402,7 +395,7 @@ impl Expr {
             }
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
-            if strings::strings::eql_any_comptime(key_str.data, names) {
+            if strings::strings::eql_any_comptime(&key_str.data, names) {
                 return true;
             }
         }
@@ -457,7 +450,7 @@ impl Expr {
                     if slice.len() > index as usize {
                         return Some(Expr::init(
                             E::String {
-                                data: unsafe { arena_str(&slice[index as usize..][..1]) },
+                                data: Str::new(&slice[index as usize..][..1]),
                                 ..Default::default()
                             },
                             self.loc,
@@ -560,7 +553,7 @@ impl Expr {
 
         obj.properties.append(G::Property {
             key: Some(Expr::init(
-                E::String { data: unsafe { arena_str(name) }, ..Default::default() },
+                E::String { data: Str::new(name), ..Default::default() },
                 Loc::EMPTY,
             )),
             value: Some(value),
@@ -587,7 +580,7 @@ impl Expr {
             let Data::EString(key_str) = &key.data else { continue };
             if key_str.eql_bytes(name) {
                 prop.value = Some(Expr::init(
-                    E::String { data: unsafe { arena_str(value) }, ..Default::default() },
+                    E::String { data: Str::new(value), ..Default::default() },
                     Loc::EMPTY,
                 ));
                 return Ok(());
@@ -596,11 +589,11 @@ impl Expr {
 
         obj.properties.append(G::Property {
             key: Some(Expr::init(
-                E::String { data: unsafe { arena_str(name) }, ..Default::default() },
+                E::String { data: Str::new(name), ..Default::default() },
                 Loc::EMPTY,
             )),
             value: Some(Expr::init(
-                E::String { data: unsafe { arena_str(value) }, ..Default::default() },
+                E::String { data: Str::new(value), ..Default::default() },
                 Loc::EMPTY,
             )),
             ..Default::default()
@@ -683,7 +676,7 @@ impl Expr {
     }
 
     pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
-        if let Some(existing) = self.get(rope.head.data.as_e_string().unwrap().data) {
+        if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
                 Data::EArray(array) => {
                     if !rope.next.is_null() {
@@ -799,7 +792,7 @@ impl Expr {
         match &self.data {
             Data::EString(str) => {
                 if str.is_utf8() {
-                    return Ok(Some(hash_fn(str.data)));
+                    return Ok(Some(hash_fn(&str.data)));
                 }
                 let utf8_str = str.string(bump)?;
                 // PERF(port): was arena alloc + free; bump-allocated, freed on reset
@@ -1216,7 +1209,7 @@ impl From<logger::js_ast::expr::Data> for Data {
             V::EString(s) => {
                 // T2 interchange strings are never ropes; copy data + encoding.
                 debug_assert!(s.next.is_none());
-                E::EString { data: s.data, is_utf16: s.is_utf16, ..Default::default() }
+                E::EString { data: s.data.into(), is_utf16: s.is_utf16, ..Default::default() }
                     .into_data_store()
             }
             // Recursive containers — deep rebuild.
@@ -1674,9 +1667,9 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value),
-            Data::ENumber(num) => num.to_string(bump),
-            Data::ERegExp(regexp) => Some(regexp.value),
+            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
+            Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
                 // This is dumb but some JavaScript obfuscators use this to generate string literals
                 if dot.name == b"constructor" {
@@ -1690,7 +1683,7 @@ impl Expr {
             }
             _ => None,
         };
-        slice.map(|s| Expr::init(E::String { data: s, ..Default::default() }, expr.loc))
+        slice.map(|s| Expr::init(E::String { data: s.into(), ..Default::default() }, expr.loc))
     }
 
     pub fn is_optional_chain(&self) -> bool {
@@ -2523,7 +2516,7 @@ impl Data {
                 raw(hasher, e.optional_chain);
                 raw(hasher, e.name.len());
                 e.target.data.write_to_hasher(hasher, symbol_table);
-                hasher.update(e.name);
+                hasher.update(&e.name);
             }
             Data::EIndex(e) => {
                 raw(hasher, e.optional_chain);
@@ -2573,10 +2566,10 @@ impl Data {
                 raw(hasher, e.value);
             }
             Data::EBigInt(e) => {
-                hasher.update(e.value);
+                hasher.update(&e.value);
             }
             Data::ERegExp(e) => {
-                hasher.update(e.value);
+                hasher.update(&e.value);
             }
             Data::EString(e) => {
                 // PORT NOTE: Zig declared `var next: ?*E.String = e;` and tested `if (next)`
@@ -2584,7 +2577,7 @@ impl Data {
                 // store is dead). Preserved here.
                 let current: &E::String = e;
                 if current.is_utf8() {
-                    hasher.update(current.data);
+                    hasher.update(&current.data);
                 } else {
                     let s16 = current.slice16();
                     // SAFETY: reinterpret &[u16] as &[u8] — element size doubles, alignment relaxes.
@@ -3067,7 +3060,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if strings::strings::eql_long(l.value, r.value, true) {
+                    if strings::strings::eql_long(&l.value, &r.value, true) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true

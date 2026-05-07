@@ -48,9 +48,9 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: import_record::List,
 
-    // PORT NOTE: Ast.hashbang is &'static [u8]; mirror it here so init/to_ast can
-    // round-trip without an 'arena⊂'static bound.
-    pub hashbang: &'static [u8],
+    // PORT NOTE: Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
+    // round-trip.
+    pub hashbang: crate::StoreStr,
     pub parts: part::List,
     // Zig: `?*bun.css.BundlerStyleSheet` (nullable mutable raw ptr). Downstream
     // bundler binds the SoA column as `&[Option<*mut css::BundlerStyleSheet>]`,
@@ -185,7 +185,7 @@ impl<'arena> BundledAst<'arena> {
                 .flags
                 .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             directive: if self.flags.contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-                Some(b"use strict")
+                Some(crate::StoreStr::new(b"use strict"))
             } else {
                 None
             },
@@ -211,7 +211,7 @@ impl<'arena> BundledAst<'arena> {
         );
         flags.set(
             Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directive.unwrap_or(b"") == b"use strict",
+            ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
 

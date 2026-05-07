@@ -124,7 +124,7 @@ pub(crate) mod bun_json {
         #[inline]
         fn json_utf8_string(&self) -> Option<&'static [u8]> {
             match &self.data {
-                bun_js_parser::ExprData::EString(s) => Some(s.data),
+                bun_js_parser::ExprData::EString(s) => Some(s.data.slice()),
                 _ => None,
             }
         }

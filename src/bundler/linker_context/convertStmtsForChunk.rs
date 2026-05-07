@@ -80,7 +80,7 @@ pub fn convert_stmts_for_chunk(
                     },
                     Loc::EMPTY,
                 ),
-                name: b"exports",
+                name: b"exports".into(),
                 name_loc: Loc::EMPTY,
                 ..Default::default()
             },

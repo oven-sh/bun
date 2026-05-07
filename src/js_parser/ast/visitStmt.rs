@@ -31,12 +31,6 @@ unsafe fn arena_str<'a>(p: *const [u8]) -> &'a [u8] {
     unsafe { &*p }
 }
 #[inline(always)]
-fn as_static(s: &[u8]) -> &'static [u8] {
-    // TODO(port): E::Dot::name is `&'static [u8]` placeholder for arena str; matches the
-    // transmute pattern at P.rs:1445 etc. Phase B threads `'bump` and removes this.
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
-}
-#[inline(always)]
 unsafe fn items_mut<'a, T>(p: *mut [T]) -> &'a mut [T] {
     // SAFETY: arena-owned slice valid for the parse lifetime.
     unsafe { &mut *p }
@@ -892,7 +886,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
-                        name: as_static(original_name),
+                        name: original_name.into(),
                         name_loc: func_name.loc,
                         ..Default::default()
                     },
@@ -918,7 +912,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let func_expr =
                     p.new_expr(E::Function { func: core::mem::take(&mut data.func) }, stmt.loc);
                 let wrapped =
-                    p.wrap_value_for_server_component_reference(func_expr, as_static(original_name));
+                    p.wrap_value_for_server_component_reference(func_expr, original_name);
                 let binding = p.b(B::Identifier { r#ref: name_ref }, name.loc);
                 stmts.push(p.s(
                     S::Local {
@@ -966,7 +960,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if core::ptr::eq(p.current_scope, p.module_scope) {
                 p.handle_react_refresh_register(
                     stmts,
-                    as_static(original_name),
+                    original_name,
                     name_ref,
                     ReactRefreshExportKind::Named,
                 )?;
@@ -1035,7 +1029,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(p.enclosing_namespace_arg_ref.unwrap(), stmt.loc),
-                        name: as_static(original_name),
+                        name: original_name.into(),
                         name_loc: class_name.loc,
                         ..Default::default()
                     },
@@ -1164,7 +1158,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
                     p.handle_react_refresh_register(
                         stmts,
-                        as_static(original_name),
+                        original_name,
                         id,
                         ReactRefreshExportKind::Named,
                     )?;
@@ -1184,7 +1178,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let original_name =
                         unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
                     decl.value =
-                        Some(p.wrap_value_for_server_component_reference(val, as_static(original_name)));
+                        Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
             }
         }
@@ -1323,9 +1317,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
                             {
                                 // last entry's value
-                                let key: &'a [u8] = as_static(
-                                    &p.commonjs_named_exports.keys()[to_convert as usize],
-                                );
+                                let key: &'a [u8] = unsafe {
+                                    arena_str(&p.commonjs_named_exports.keys()[to_convert as usize][..])
+                                };
                                 let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;
@@ -1762,7 +1756,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
                     let id_original_name =
                         unsafe { arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name) };
-                    let temp_ref = p.generate_temp_ref(Some(as_static(id_original_name)));
+                    let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
                     first_decls
@@ -2031,7 +2025,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(data.arg, value.loc),
-                            name: as_static(name),
+                            name: name.into(),
                             name_loc: value.loc,
                             ..Default::default()
                         },

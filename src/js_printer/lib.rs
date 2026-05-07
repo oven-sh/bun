@@ -2116,13 +2116,13 @@ where
                     // PERF(port): was appendAssumeCapacity — profile in Phase B
                     temp_bindings.push(B::Property {
                         flags: Default::default(),
-                        key: Expr::init(E::String::init(target_e_dot.name), target_e_dot.name_loc),
+                        key: Expr::init(E::String::init(&target_e_dot.name), target_e_dot.name_loc),
                         value: decls[0].binding,
                         default_value: None,
                     });
                     temp_bindings.push(B::Property {
                         flags: Default::default(),
-                        key: Expr::init(E::String::init(second_e_dot.name), second_e_dot.name_loc),
+                        key: Expr::init(E::String::init(&second_e_dot.name), second_e_dot.name_loc),
                         value: decls[1].binding,
                         default_value: None,
                     });
@@ -2150,7 +2150,7 @@ where
 
                         temp_bindings.push(B::Property {
                             flags: Default::default(),
-                            key: Expr::init(E::String::init(e_dot.name), e_dot.name_loc),
+                            key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
                             value: decl.binding,
                             default_value: None,
                         });
@@ -3645,7 +3645,7 @@ where
                                 E::TemplateContents::Cooked(c) => {
                                     E::TemplateContents::Cooked(c.shallow_clone())
                                 }
-                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(r),
+                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                             },
                         }
                     }
@@ -3690,7 +3690,7 @@ where
                                 E::TemplateContents::Cooked(c) => {
                                     E::TemplateContents::Cooked(c.shallow_clone())
                                 }
-                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(r),
+                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                             },
                         };
                         let e2 = copy.fold(self.bump, expr.loc);
@@ -4186,7 +4186,7 @@ where
             // Handle key syntax compression for cross-module constant inlining of enums
             if self.options.minify_syntax && item.flags.contains(js_ast::flags::Property::IsComputed) {
                 if let ExprData::EDot(dot) = &item.key.as_ref().unwrap().data {
-                    if let Some(value) = self.try_to_get_imported_enum_value(dot.target, slice_of_const(dot.name)) {
+                    if let Some(value) = self.try_to_get_imported_enum_value(dot.target, dot.name.slice()) {
                         match value {
                             js_ast::InlinedEnumValueDecoded::String(str) => {
                                 // SAFETY: arena-owned `*const EString`; cast through *mut for the

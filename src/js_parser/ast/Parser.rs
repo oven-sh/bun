@@ -1112,7 +1112,7 @@ impl<'a> Parser<'a> {
                     decls[0] = G::Decl {
                         binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
                         value: Some(p.new_expr(
-                            E::String { data: p.source.path.name.dir, ..Default::default() },
+                            E::String { data: p.source.path.name.dir.into(), ..Default::default() },
                             logger::Loc::EMPTY,
                         )),
                     };
@@ -1123,7 +1123,7 @@ impl<'a> Parser<'a> {
                     decls[uses_dirname as usize] = G::Decl {
                         binding: p.b(B::Identifier { r#ref: p.filename_ref }, logger::Loc::EMPTY),
                         value: Some(p.new_expr(
-                            E::String { data: p.source.path.text, ..Default::default() },
+                            E::String { data: p.source.path.text.into(), ..Default::default() },
                             logger::Loc::EMPTY,
                         )),
                     };
@@ -1753,7 +1753,7 @@ impl<'a> Parser<'a> {
                     binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
-                            name: b"dir",
+                            name: b"dir".into(),
                             name_loc: logger::Loc::EMPTY,
                             target: import_meta,
                             ..Default::default()
@@ -1770,7 +1770,7 @@ impl<'a> Parser<'a> {
                     binding: p.b(B::Identifier { r#ref: p.filename_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
-                            name: b"path",
+                            name: b"path".into(),
                             name_loc: logger::Loc::EMPTY,
                             target: import_meta,
                             ..Default::default()
@@ -1873,7 +1873,7 @@ impl<'a> Parser<'a> {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         let key = p.new_expr(
-                            E::String { data: symbol_name.as_bytes(), ..Default::default() },
+                            E::String { data: symbol_name.as_bytes().into(), ..Default::default() },
                             logger::Loc::EMPTY,
                         );
                         let value = p.b(B::Identifier { r#ref: r }, logger::Loc::EMPTY);

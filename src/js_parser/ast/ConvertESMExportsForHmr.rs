@@ -711,7 +711,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         Expr::init(
                             E::Dot {
                                 target: Expr::init_identifier(p.hmr_api_ref, logger::Loc::EMPTY),
-                                name: b"exports",
+                                name: b"exports".into(),
                                 name_loc: logger::Loc::EMPTY,
                                 ..Default::default()
                             },
@@ -744,7 +744,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                         p.hmr_api_ref,
                                         logger::Loc::EMPTY,
                                     ),
-                                    name: b"reactRefreshAccept",
+                                    name: b"reactRefreshAccept".into(),
                                     name_loc: logger::Loc::EMPTY,
                                     ..Default::default()
                                 },

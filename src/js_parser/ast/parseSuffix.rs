@@ -101,12 +101,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // TODO(port): `E::Dot::name` is `&'static [u8]` (arena-owned slice
-            // placeholder); lexer hands back `&'a [u8]`. Phase B threads `'a`
-            // through E.* — until then, erase the lifetime here.
-            // SAFETY: identifier slice borrows the source text, which outlives
-            // every AST node produced from it.
-            let name: &'static [u8] =
-                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
+            // placeholder); lexer hands back `&'a [u8]`.
+            let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
 
@@ -242,10 +238,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !p.lexer.is_identifier_or_keyword() {
                         p.lexer.expect(T::TIdentifier)?;
                     }
-                    // SAFETY/TODO(port): see lifetime-erase note above on `E::Dot::name`.
-                    let name: &'static [u8] = unsafe {
-                        core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier)
-                    };
+                    let name = E::Str::new(p.lexer.identifier);
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
 
@@ -254,7 +247,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     *left = p.new_expr(
                         E::Dot {
                             target,
-                            name,
+                            name: name.into(),
                             name_loc,
                             optional_chain: optional_start,
                             ..Default::default()
@@ -290,11 +283,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        // SAFETY/TODO(port): `TemplateContents::Raw` stores `&'static [u8]`;
-        // erase the `'a` source-text lifetime until Phase B threads it.
-        let head: &'static [u8] = unsafe {
-            core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw_template_contents())
-        };
+        let head = E::Str::new(p.lexer.raw_template_contents());
         p.lexer.next()?;
 
         let loc = left.loc;
@@ -327,17 +316,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-        // SAFETY/TODO(port): see lifetime-erase note above on TemplateContents::Raw.
-        let head: &'static [u8] = unsafe {
-            core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw_template_contents())
-        };
+        let head = E::Str::new(p.lexer.raw_template_contents());
         let (parts, _tail_loc) = p.parse_template_parts(true)?;
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head: E::TemplateContents::Raw(head),
+                head: E::TemplateContents::Raw(head.into()),
                 parts,
             },
             loc,

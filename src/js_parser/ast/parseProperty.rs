@@ -238,9 +238,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     key = p.parse_string_literal()?;
                 }
                 T::TBigIntegerLiteral => {
-                    // PORT NOTE: E::BigInt.value is `&'static [u8]` (arena-erased); transmute via init helper pattern.
-                    let value: &'static [u8] = unsafe { core::mem::transmute(p.lexer.identifier) };
-                    key = p.new_expr(E::BigInt { value }, p.lexer.loc());
+                    key = p.new_expr(E::BigInt { value: p.lexer.identifier.into() }, p.lexer.loc());
                     // markSyntaxFeature
                     p.lexer.next()?;
                 }

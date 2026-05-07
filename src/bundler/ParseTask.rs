@@ -873,7 +873,7 @@ fn get_ast(
             return result;
         }
         Loader::Text => {
-            let root = Expr::init(E::String { data: leak_static(&source.contents), ..Default::default() }, Loc { start: 0 });
+            let root = Expr::init(E::String { data: leak_static(&source.contents).into(), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
@@ -890,7 +890,7 @@ fn get_ast(
                 }
             };
             let html: &'static [u8] = leak_static(bump.alloc_slice_copy(&html));
-            let root = Expr::init(E::String { data: html, ..Default::default() }, Loc { start: 0 });
+            let root = Expr::init(E::String { data: html.into(), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
@@ -936,7 +936,7 @@ fn get_ast(
             // import.meta.require(unique_key).db
             //
             let import_path = Expr::init(
-                E::String { data: path_to_use, ..Default::default() },
+                E::String { data: path_to_use.into(), ..Default::default() },
                 Loc { start: 0 },
             );
 
@@ -945,7 +945,7 @@ fn get_ast(
                 E::Dot {
                     target: import_meta,
                     name_loc: Loc::EMPTY,
-                    name: b"require",
+                    name: b"require".into(),
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -954,8 +954,8 @@ fn get_ast(
             require_args[0] = import_path;
             let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
             object_properties[0] = G::Property {
-                key: Some(Expr::init(E::String { data: b"type", ..Default::default() }, Loc { start: 0 })),
-                value: Some(Expr::init(E::String { data: b"sqlite", ..Default::default() }, Loc { start: 0 })),
+                key: Some(Expr::init(E::String { data: b"type".into(), ..Default::default() }, Loc { start: 0 })),
+                value: Some(Expr::init(E::String { data: b"sqlite".into(), ..Default::default() }, Loc { start: 0 })),
                 ..Default::default()
             };
             require_args[1] = Expr::init(
@@ -981,7 +981,7 @@ fn get_ast(
                 E::Dot {
                     target: require_call,
                     name_loc: Loc::EMPTY,
-                    name: b"db",
+                    name: b"db".into(),
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1017,7 +1017,7 @@ fn get_ast(
             // require(unique_key)
             //
             let import_path = Expr::init(
-                E::String { data: unique_key, ..Default::default() },
+                E::String { data: unique_key.into(), ..Default::default() },
                 Loc { start: 0 },
             );
 
@@ -1258,7 +1258,7 @@ fn get_ast(
                 .expect("unreachable");
                 leak_static(buf.into_bump_str().as_bytes())
             };
-            let root = Expr::init(E::String { data: unique_key, ..Default::default() }, Loc { start: 0 });
+            let root = Expr::init(E::String { data: unique_key.into(), ..Default::default() }, Loc { start: 0 });
             *unique_key_for_additional_file = FileLoaderHash {
                 key: unique_key,
                 content_hash,

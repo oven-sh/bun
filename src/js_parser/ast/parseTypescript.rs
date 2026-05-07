@@ -136,10 +136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return Err(err!("SyntaxError"));
             }
 
-            // SAFETY: lexer.identifier is arena-owned for 'a; E::Dot.name is the
-            // Phase-A `Str = &'static [u8]` placeholder (E.rs:28).
-            let name: &'static [u8] =
-                unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(p.lexer.identifier) };
+            let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
 
@@ -483,10 +480,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
-                // SAFETY: lexer.identifier is arena-owned for 'a; E::Dot.name is the
-                // Phase-A `Str = &'static [u8]` placeholder (E.rs:28).
-                let dot_name: &'static [u8] =
-                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(p.lexer.identifier) };
+                let dot_name = E::Str::new(p.lexer.identifier);
                 let dot_name_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Dot {
@@ -589,7 +583,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
-                value.name = estr.data as *const [u8];
+                value.name = estr.data.as_raw();
                 // SAFETY: `value.name` is an arena-owned slice valid for 'a.
                 needs_symbol = js_lexer::is_identifier(unsafe { &*value.name });
             } else if p.lexer.is_identifier_or_keyword() {

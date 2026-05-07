@@ -1379,6 +1379,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
 pub type AsyncImageTask<'a> = ConcurrentPromiseTask<'a, PipelineTask<'a>>;
 
 impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncImageTask;
     #[inline]
     fn run(&mut self) {
         PipelineTask::run(self)

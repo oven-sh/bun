@@ -2048,10 +2048,21 @@ dependencies = [
 name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
+ "bstr",
+ "bun_aio",
+ "bun_analytics",
  "bun_core",
+ "bun_crash_handler",
  "bun_event_loop",
+ "bun_io",
+ "bun_output",
+ "bun_ptr",
+ "bun_string",
  "bun_sys",
+ "bun_threading",
  "libc",
+ "parking_lot",
+ "scopeguard",
 ]
 
 [[package]]

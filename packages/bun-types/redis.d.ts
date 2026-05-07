@@ -3944,9 +3944,9 @@ declare module "bun" {
     xgroup(subcommand: string, ...args: (string | number)[]): Promise<any>;
 
     /**
-     * Set the last-delivered-ID for a stream
+     * Set the last entry ID of a stream
      * @param key The stream key
-     * @param lastId The new last-delivered-ID
+     * @param lastId The new last entry ID
      * @param options Optional ENTRIESADDED and MAXDELETEDID modifiers
      * @returns Promise that resolves with "OK"
      */

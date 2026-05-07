@@ -1,3 +1,10 @@
+//! `Blob.Store` — backing storage variants for `webcore::Blob`.
+//!
+//! LAYERING: the data types (`Store`/`StoreRef`/`Data`/`Bytes`/`File`/`S3`)
+//! are the **single nominal definitions** in `bun_jsc::webcore_types::store`;
+//! this module re-exports them and layers the `bun_runtime`-tier behaviour
+//! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
+
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -10,101 +17,92 @@ use bun_str::{strings, PathString, ZigString};
 use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::node::fs as node_fs;
-// PORT NOTE: migrated off `webcore::s3_stub` — `bun_s3_signing` now provides
-// the real `S3Credentials`/`ACL`/`StorageClass` and `s3::client` re-exports
-// the result enums. The stub module is kept only for types not yet ported.
 use crate::webcore::s3::client::{
     MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
 use crate::webcore::s3::client as s3_client;
-// `error_jsc` is a sub-module of the client umbrella (`client.rs` declares
-// `pub mod error_jsc`); the inline `mod s3 { }` in webcore.rs does not re-export
-// it directly, so reach it through `client::`.
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use bun_url::URL;
 
 use super::{Blob, SizeType};
 
-pub struct Store {
-    pub data: Data,
+// ──────────────────────────────────────────────────────────────────────────
+// Re-export the canonical data types from `bun_jsc`.
+// ──────────────────────────────────────────────────────────────────────────
 
-    pub mime_type: MimeType,
-    pub ref_count: AtomicU32,
-    pub is_all_ascii: Option<bool>,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc is used
-    // everywhere in non-AST crates (see PORTING.md §Allocators).
+pub use bun_jsc::webcore_types::store::{
+    Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
+};
+
+// TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap needs an
+// identity-hasher variant; load factor 80 is the std default in Zig.
+pub type Map = HashMap<u64, *mut Store>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
+// data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
+// `init`/…) live on the `bun_jsc` types directly.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub trait StoreExt {
+    fn to_any_blob(&mut self) -> Option<super::Any>;
+    fn init_s3_with_referenced_credentials(
+        pathlike: PathLike,
+        mime_type: Option<MimeType>,
+        credentials: Arc<S3Credentials>,
+    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    fn init_s3(
+        pathlike: PathLike,
+        mime_type: Option<MimeType>,
+        credentials: S3Credentials,
+    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    fn init_file(
+        pathlike: PathOrFileDescriptor,
+        mime_type: Option<MimeType>,
+    ) -> Result<Box<Store>, bun_core::Error> where Self: Sized;
+    #[cfg(unix)]
+    fn init_mmap(slice: &'static mut [u8]) -> StoreRef where Self: Sized;
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error>;
+    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> where Self: Sized;
 }
 
-impl Default for Store {
-    fn default() -> Self {
-        Self {
-            data: Data::Bytes(Bytes::default()),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
-            is_all_ascii: None,
-        }
-    }
+pub trait S3Ext {
+    fn get_credentials_with_options(
+        &self,
+        options: Option<JSValue>,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<S3CredentialsWithOptions>;
+    fn unlink(
+        &mut self,
+        store: &Store,
+        global_this: &JSGlobalObject,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue>;
+    fn list_objects(
+        &mut self,
+        store: &Store,
+        global_this: &JSGlobalObject,
+        list_options: JSValue,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue>;
 }
 
-impl Store {
-    #[inline]
-    pub fn new(init: Store) -> Box<Store> {
-        // bun.TrivialNew(@This())
-        Box::new(init)
-    }
+pub trait FileExt {
+    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
+}
 
-    pub fn memory_cost(&self) -> usize {
-        if self.has_one_ref() {
-            core::mem::size_of::<Self>()
-                + match &self.data {
-                    Data::Bytes(bytes) => bytes.len() as usize,
-                    Data::File(_) => 0,
-                    Data::S3(s3) => s3.estimated_size(),
-                }
-        } else {
-            0
-        }
-    }
+pub trait BytesExt {
+    #[cfg(unix)]
+    fn init_mmap(slice: &'static mut [u8]) -> Bytes where Self: Sized;
+    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> where Self: Sized;
+    fn to_internal_blob(&mut self) -> super::Internal;
+}
 
-    pub fn get_path(&self) -> Option<&[u8]> {
-        match &self.data {
-            Data::Bytes(bytes) => {
-                if !bytes.stored_name.slice().is_empty() {
-                    Some(bytes.stored_name.slice())
-                } else {
-                    None
-                }
-            }
-            Data::File(file) => {
-                if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                    Some(path.slice())
-                } else {
-                    None
-                }
-            }
-            Data::S3(s3) => Some(s3.pathlike.slice()),
-        }
-    }
-
-    pub fn size(&self) -> SizeType {
-        match &self.data {
-            Data::Bytes(bytes) => bytes.len(),
-            Data::S3(_) | Data::File(_) => super::MAX_SIZE,
-        }
-    }
-
-    pub fn ref_(&self) {
-        let old = self.ref_count.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(old > 0);
-    }
-
-    pub fn has_one_ref(&self) -> bool {
-        self.ref_count.load(Ordering::Relaxed) == 1
-    }
+impl StoreExt for Store {
 
     /// Caller is responsible for derefing the Store.
-    pub fn to_any_blob(&mut self) -> Option<super::Any> {
+    fn to_any_blob(&mut self) -> Option<super::Any> {
         if self.has_one_ref() {
             if let Data::Bytes(bytes) = &mut self.data {
                 return Some(super::Any::InternalBlob(bytes.to_internal_blob()));
@@ -114,23 +112,11 @@ impl Store {
         None
     }
 
-    /// `extern fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void`
-    // PORT NOTE: Zig has only `callconv(.c)` (callback fn pointer), no `@export` — so no
-    // `#[unsafe(no_mangle)]` here.
-    pub extern "C" fn external(ptr: *mut c_void, _: *mut c_void, _: usize) {
-        let Some(this) = NonNull::new(ptr as *mut Store) else { return };
-        // SAFETY: caller passes a `*Store` (originally leaked via `Box::into_raw`)
-        // as the opaque pointer; mirrors Zig `bun.cast(*Store, ptr)`. Stay on raw
-        // pointers — never materialize `&mut Store` here, other `StoreRef`s may
-        // hold `&Store` to the same allocation.
-        unsafe { Store::deref(this) };
-    }
-
     // TODO(b2-blocked): S3/file constructors call PathLike::to_thread_safe/clone,
     // bun_paths::extension, bun_http_types::MimeType::by_extension_no_default — un-gate once
     // node_types::PathLike is the real `crate::node::PathLike`.
     
-    pub fn init_s3_with_referenced_credentials(
+    fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: Arc<S3Credentials>,
@@ -163,7 +149,7 @@ impl Store {
     }
 
     
-    pub fn init_s3(
+    fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
@@ -195,7 +181,7 @@ impl Store {
         Ok(store)
     }
 
-    pub fn init_file(
+    fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, bun_core::Error> {
@@ -224,22 +210,12 @@ impl Store {
         Ok(store)
     }
 
-    /// Takes ownership of `bytes`.
-    pub fn init(bytes: Vec<u8>) -> StoreRef {
-        StoreRef::from(Store::new(Store {
-            data: Data::Bytes(Bytes::init(bytes)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
-            is_all_ascii: None,
-        }))
-    }
-
 
     /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
     /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
     /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
-    pub fn init_mmap(slice: &'static mut [u8]) -> StoreRef {
+    fn init_mmap(slice: &'static mut [u8]) -> StoreRef {
         StoreRef::from(Store::new(Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
@@ -248,43 +224,11 @@ impl Store {
         }))
     }
 
-    pub fn shared_view(&self) -> &[u8] {
-        if let Data::Bytes(bytes) = &self.data {
-            return bytes.slice();
-        }
-
-        &[]
-    }
-
-    /// Decrement the intrusive refcount; frees the allocation when it hits zero.
-    ///
-    /// Takes a raw pointer (mirrors Zig `pub fn deref(this: *Blob.Store)`) rather
-    /// than `&self`: deriving the freeing `*mut` from a `&self` borrow is UB —
-    /// the shared-ref provenance forbids mutation/deallocation through it.
-    ///
-    /// # Safety
-    /// `this` must point to a live `Store` originally allocated via `Store::new`
-    /// / `Box::new` (i.e. carrying mutable provenance from `Box::into_raw`), and
-    /// the caller must own one outstanding reference being released.
-    pub unsafe fn deref(this: NonNull<Store>) {
-        // SAFETY: place-project to the atomic field without materializing a
-        // `&Store`; `AtomicU32` is interior-mutable so `&AtomicU32` here is sound
-        // even with concurrent refs.
-        let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Relaxed) };
-        debug_assert!(old >= 1);
-        if old == 1 {
-            // SAFETY: refcount hit zero; we are the sole remaining owner. `this`
-            // carries mutable provenance from `Box::into_raw`, so reconstructing
-            // the `Box` is sound. Mirrors Zig `this.deinit()` → `bun.destroy(this)`.
-            drop(unsafe { Box::from_raw(this.as_ptr()) });
-        }
-    }
-
     // PORT NOTE: Zig `deinit` body became `impl Drop for Store` below. The manual
     // `allocator.free(file.pathlike.path.slice())` / `s3.deinit(allocator)` paths are
     // now handled by the owned types' own `Drop` impls.
 
-    pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match &self.data {
             Data::File(file) => {
@@ -338,243 +282,15 @@ impl Store {
         Ok(())
     }
 
-    pub fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> {
+    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> {
         Ok(Store::init(list))
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// StoreRef — intrusive-refcounted handle
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Owning handle to a heap `Store`, refcounted via the *intrusive*
-/// `Store::ref_count` field. Mirrors Zig's `*Store` with `.ref()`/`.deref()`.
-///
-/// This replaces the Phase-A `Arc<Store>` placeholder. `Arc` was a UAF hazard:
-/// `Store::deref()` (reachable from `Store::external` and other FFI callbacks)
-/// frees via `Box::from_raw` when the intrusive count hits zero, but `Arc`
-/// owns the allocation itself — so either the Arc would free an already-freed
-/// box, or the intrusive count and Arc strong count would silently diverge
-/// (`has_one_ref()` lying). One refcount, one deallocation path.
-#[repr(transparent)]
-pub struct StoreRef {
-    ptr: NonNull<Store>,
-}
-
-impl StoreRef {
-    /// Adopt an existing +1 (e.g. a raw `*Store` whose refcount was already
-    /// bumped for us). Does **not** increment.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`, and
-    /// the caller transfers one outstanding reference into the returned handle.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
-        Self { ptr }
-    }
-
-    /// Wrap a raw `*Store`, incrementing its intrusive refcount.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`.
-    #[inline]
-    pub unsafe fn retained(ptr: NonNull<Store>) -> Self {
-        // SAFETY: caller contract.
-        unsafe { ptr.as_ref() }.ref_();
-        Self { ptr }
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut Store {
-        self.ptr.as_ptr()
-    }
-
-    /// Leak the held +1 and return the raw pointer. Pair with a later
-    /// `Store::deref()` (typically via `Store::external` / an FFI deallocator).
-    #[inline]
-    pub fn into_raw(self) -> *mut Store {
-        let p = self.ptr.as_ptr();
-        core::mem::forget(self);
-        p
-    }
-}
-
-impl From<Box<Store>> for StoreRef {
-    #[inline]
-    fn from(b: Box<Store>) -> Self {
-        // `Store::new` initializes `ref_count` to 1 — adopt that +1.
-        // SAFETY: Box::into_raw never returns null.
-        Self { ptr: unsafe { NonNull::new_unchecked(Box::into_raw(b)) } }
-    }
-}
-
-impl Clone for StoreRef {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
-        unsafe { self.ptr.as_ref() }.ref_();
-        Self { ptr: self.ptr }
-    }
-}
-
-impl Drop for StoreRef {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: invariant — `ptr` is live and originated from `Box::into_raw`
-        // (mutable provenance); `deref()` frees on last ref.
-        unsafe { Store::deref(self.ptr) };
-    }
-}
-
-impl core::ops::Deref for StoreRef {
-    type Target = Store;
-    #[inline]
-    fn deref(&self) -> &Store {
-        // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
-        unsafe { self.ptr.as_ref() }
-    }
-}
-
-impl PartialEq for StoreRef {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.ptr == other.ptr
-    }
-}
-impl Eq for StoreRef {}
-
-// Store's refcount is atomic and its payload is either immutable-after-init or
-// guarded by callers; matches Zig's cross-thread `*Store` usage.
-unsafe impl Send for StoreRef {}
-unsafe impl Sync for StoreRef {}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        // Zig `deinit`:
-        // - .bytes => bytes.deinit()         → handled by Bytes::drop (Vec<u8>, PathString)
-        // - .file  => free pathlike.path     → handled by PathOrFileDescriptor::drop
-        // - .s3    => s3.deinit(allocator)   → handled by S3::drop
-        // TODO(port): verify PathOrFileDescriptor/PathLike own their string storage so the
-        // manual `allocator.free(@constCast(file.pathlike.path.slice()))` path is covered.
-    }
-}
-
-// TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap needs an identity hasher
-// variant; load factor 80 is the std default in Zig.
-pub type Map = HashMap<u64, *mut Store>;
-
-pub enum Data {
-    Bytes(Bytes),
-    File(File),
-    S3(S3),
-}
-
-/// Discriminant-only tag for `Data` (Zig: `std.meta.Tag(Store.Data)`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DataTag {
-    Bytes,
-    File,
-    S3,
-}
-
-impl Data {
-    #[inline]
-    pub fn tag(&self) -> DataTag {
-        match self {
-            Self::Bytes(_) => DataTag::Bytes,
-            Self::File(_) => DataTag::File,
-            Self::S3(_) => DataTag::S3,
-        }
-    }
-    /// Panics if not a `File` (Zig: `data.file` union access).
-    pub fn as_file(&self) -> &File {
-        match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
-    }
-    pub fn as_file_mut(&mut self) -> &mut File {
-        match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
-    }
-    /// Panics if not `S3` (Zig: `data.s3` union access).
-    pub fn as_s3(&self) -> &S3 {
-        match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
-    }
-    pub fn as_s3_mut(&mut self) -> &mut S3 {
-        match self { Self::S3(s) => s, _ => unreachable!("Store.data is not .s3") }
-    }
-    /// Panics if not `Bytes` (Zig: `data.bytes` union access).
-    pub fn as_bytes(&self) -> &Bytes {
-        match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
-    }
-    pub fn as_bytes_mut(&mut self) -> &mut Bytes {
-        match self { Self::Bytes(b) => b, _ => unreachable!("Store.data is not .bytes") }
-    }
-}
-
-impl StoreRef {
-    /// Mutable access to `data` through the shared handle.
-    ///
-    /// Zig mutates `store.data` freely through any holder; the caller must
-    /// ensure no other `&mut` to the same `Store` is live (single-threaded
-    /// JS event-loop discipline).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn data_mut(&self) -> &mut Data {
-        // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
-        unsafe { &mut (*self.as_ptr()).data }
-    }
-}
-
-#[repr(u8)]
-pub enum SerializeTag {
-    File = 0,
-    Bytes = 1,
-    Empty = 2,
-}
-
-impl SerializeTag {
-    #[inline]
-    pub fn from_raw(raw: u8) -> Option<Self> {
-        match raw {
-            0 => Some(Self::File),
-            1 => Some(Self::Bytes),
-            2 => Some(Self::Empty),
-            _ => None,
-        }
-    }
-}
-
-/// A blob store that references a file on disk.
-#[derive(Clone)]
-pub struct File {
-    pub pathlike: PathOrFileDescriptor,
-    pub mime_type: MimeType,
-    pub is_atty: Option<bool>,
-    pub mode: bun_sys::Mode,
-    pub seekable: Option<bool>,
-    pub max_size: SizeType,
-    /// milliseconds since ECMAScript epoch
-    // TODO(b2-blocked): bun_jsc::JSTimeType (= f64).
-    pub last_modified: f64,
-}
-
-impl Default for File {
-    fn default() -> Self {
-        Self {
-            pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
-            mime_type: bun_http_types::MimeType::OTHER,
-            is_atty: None,
-            mode: 0,
-            seekable: None,
-            max_size: super::MAX_SIZE,
-            // TODO(b2-blocked): bun_jsc::INIT_TIMESTAMP.
-            last_modified: 0.0,
-        }
-    }
-}
-
-impl File {
+impl FileExt for File {
     // TODO(b2-blocked): bun_jsc::* + crate::node::fs (gated).
     
-    pub fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
                 // PORT NOTE: Zig `slice.toOwned()` / `toSliceClone()` are
@@ -613,79 +329,11 @@ impl File {
             )),
         }
     }
-
-    pub fn is_seekable(&self) -> Option<bool> {
-        if let Some(seekable) = self.seekable {
-            return Some(seekable);
-        }
-
-        if self.mode != 0 {
-            // bun.isRegularFile(mode) → S_ISREG check.
-            return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
-        }
-
-        None
-    }
-
-    pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
-        File {
-            pathlike,
-            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-            ..Default::default()
-        }
-    }
 }
 
-/// An S3 Blob Store
-pub struct S3 {
-    pub pathlike: PathLike,
-    pub mime_type: MimeType,
-    pub credentials: Option<Arc<S3Credentials>>,
-    pub options: MultiPartUploadOptions,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
-}
+impl S3Ext for S3 {
 
-impl S3 {
-    pub fn is_seekable(&self) -> Option<bool> {
-        Some(true)
-    }
-
-    pub fn get_credentials(&self) -> &Arc<S3Credentials> {
-        debug_assert!(self.credentials.is_some());
-        self.credentials.as_ref().unwrap()
-    }
-
-    pub fn estimated_size(&self) -> usize {
-        self.pathlike.estimated_size()
-            + self.credentials.as_ref().map(|c| c.estimated_size()).unwrap_or(0)
-    }
-
-    pub fn path(&self) -> &[u8] {
-        let mut path_name = URL::parse(self.pathlike.slice()).s3_path();
-        // normalize start and ending
-        if strings::ends_with(path_name, b"/") {
-            path_name = &path_name[0..path_name.len()];
-        } else if strings::ends_with(path_name, b"\\") {
-            path_name = &path_name[0..path_name.len() - 1];
-        }
-        if strings::starts_with(path_name, b"/") {
-            path_name = &path_name[1..];
-        } else if strings::starts_with(path_name, b"\\") {
-            path_name = &path_name[1..];
-        }
-        path_name
-    }
-}
-
-// TODO(b2-blocked): bun_jsc::* + bun_s3 — S3 JSC integration (presign/stat/unlink/
-// list_objects/get_credentials_with_options/upload). All depend on JSPromise
-// resolved_promise_value, JSValue methods, and the real `bun_s3` crate.
-
-impl S3 {
-
-    pub fn get_credentials_with_options(
+    fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
@@ -708,7 +356,7 @@ impl S3 {
         )
     }
 
-    pub fn unlink(
+    fn unlink(
         &mut self,
         store: &Store,
         global_this: &JSGlobalObject,
@@ -794,7 +442,7 @@ impl S3 {
         Ok(value)
     }
 
-    pub fn list_objects(
+    fn list_objects(
         &mut self,
         store: &Store,
         global_this: &JSGlobalObject,
@@ -901,127 +549,15 @@ impl S3 {
 
         Ok(value)
     }
-
-    pub fn init_with_referenced_credentials(
-        pathlike: PathLike,
-        mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
-    ) -> S3 {
-        // Zig: credentials.ref() — Arc::clone bumps the strong count.
-        S3 {
-            credentials: Some(Arc::clone(&credentials)),
-            pathlike,
-            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-            options: MultiPartUploadOptions::default(),
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-        }
-    }
-
-    pub fn init(pathlike: PathLike, mime_type: Option<MimeType>, credentials: S3Credentials) -> S3 {
-        S3 {
-            // Zig: credentials.dupe() — heap-allocate a fresh refcounted copy.
-            credentials: Some(Arc::new(credentials)),
-            pathlike,
-            mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-            options: MultiPartUploadOptions::default(),
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-        }
-    }
-
 }
 
-// PORT NOTE: S3.deinit deleted — body only freed owned fields (pathlike, credentials.deref()),
-// all handled by PathLike::drop / Option<Arc<_>>::drop. Per PORTING.md §Idiom map, no explicit
-// `impl Drop` needed.
-// TODO(port): verify PathLike owns its `.string` storage so the manual
-// `allocator.free(@constCast(this.pathlike.slice()))` path from Zig deinit is covered.
-
-/// Port of `Blob.Store.Bytes` (Zig: `ptr/len/cap/allocator/stored_name`).
-///
-/// PORT NOTE: an earlier pass collapsed this to `Vec<u8>`, but that cannot
-/// represent the memfd-backed path (`LinuxMemFdAllocator::create` hands back an
-/// `mmap`'d region whose `free` is `munmap`, not heap `free`). Restored to the
-/// Zig shape so the allocator vtable travels with the buffer; the common case
-/// (`init(Vec<u8>)`) stores the global mimalloc allocator and round-trips back
-/// to `Vec<u8>` in [`Bytes::to_internal_blob`].
-pub struct Bytes {
-    ptr: Option<NonNull<u8>>,
-    len: SizeType,
-    cap: SizeType,
-    allocator: bun_alloc::StdAllocator,
-
-    /// Used by standalone module graph and the File constructor
-    pub stored_name: PathString,
-}
-
-// SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw `NonNull<u8>`
-// is uniquely owned (Zig: `ptr` is the sole alias) and `StdAllocator` is
-// `Send + Sync` (its vtable dispatch is the implementor's thread-safety
-// concern, same as Zig). Restores the auto-traits the previous `Vec<u8>` field
-// provided.
-unsafe impl Send for Bytes {}
-unsafe impl Sync for Bytes {}
-
-impl Default for Bytes {
-    fn default() -> Self {
-        Self {
-            ptr: None,
-            len: 0,
-            cap: 0,
-            allocator: bun_alloc::basic::C_ALLOCATOR,
-            stored_name: PathString::default(),
-        }
-    }
-}
-
-impl Bytes {
-    /// Takes ownership of `bytes` (allocated by the global mimalloc allocator).
-    pub fn init(bytes: Vec<u8>) -> Bytes {
-        let mut v = core::mem::ManuallyDrop::new(bytes);
-        let len = v.len();
-        let cap = v.capacity();
-        Bytes {
-            ptr: NonNull::new(v.as_mut_ptr()),
-            // Zig: `@truncate(bytes.len)` for both — we additionally keep the
-            // real `cap` so `to_internal_blob` can soundly `Vec::from_raw_parts`.
-            len: len as SizeType,
-            cap: cap as SizeType,
-            allocator: bun_alloc::basic::C_ALLOCATOR,
-            stored_name: PathString::default(),
-        }
-    }
-
-    /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
-    ///
-    /// # Safety
-    /// `ptr[..cap]` must be a live allocation owned by `allocator`'s vtable
-    /// (i.e. `(allocator.vtable.free)(allocator.ptr, ptr[..cap], …)` is the
-    /// correct release), and `len <= cap`. Ownership transfers to the returned
-    /// `Bytes`; the caller must not free `ptr` afterwards.
-    pub unsafe fn from_raw_parts(
-        ptr: *mut u8,
-        len: SizeType,
-        cap: SizeType,
-        allocator: bun_alloc::StdAllocator,
-    ) -> Bytes {
-        Bytes {
-            ptr: NonNull::new(ptr),
-            len,
-            cap,
-            allocator,
-            stored_name: PathString::default(),
-        }
-    }
+impl BytesExt for Bytes {
 
 
     /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
     /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
-    pub fn init_mmap(slice: &'static mut [u8]) -> Bytes {
+    fn init_mmap(slice: &'static mut [u8]) -> Bytes {
         // Stateless allocator vtable whose `free` munmap's. Same pattern as
         // `LinuxMemFdAllocator` but without the stateful fd. `alloc` returns
         // `None`: blob stores never grow.
@@ -1052,29 +588,13 @@ impl Bytes {
         }
     }
 
-    pub fn init_empty_with_name(name: PathString) -> Bytes {
-        Bytes {
-            ptr: None,
-            len: 0,
-            cap: 0,
-            allocator: bun_alloc::basic::C_ALLOCATOR,
-            stored_name: name,
-        }
-    }
-
-    pub fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
+    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
         // TODO(port): Zig signature returns `!*Bytes` but body returns `Bytes` by value —
         // mirroring the by-value return here.
         Ok(Bytes::init(list))
     }
 
-    /// The allocator that owns `ptr[..cap]` (Zig: `this.allocator`).
-    #[inline]
-    pub fn allocator(&self) -> bun_alloc::StdAllocator {
-        self.allocator
-    }
-
-    pub fn to_internal_blob(&mut self) -> super::Internal {
+    fn to_internal_blob(&mut self) -> super::Internal {
         // Zig built an `array_list.Managed(u8)` over the same allocator and
         // zeroed self. `Internal.bytes` is `Vec<u8>` (global allocator), so
         // round-trip only when the storage *is* the global allocator; otherwise
@@ -1109,79 +629,11 @@ impl Bytes {
         self.allocator = bun_alloc::basic::C_ALLOCATOR;
         super::Internal { bytes, was_string: false }
     }
-
-    #[inline]
-    pub fn len(&self) -> SizeType {
-        self.len
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        match self.ptr {
-            // SAFETY: `ptr[..len]` is a live initialized region (init/from_raw_parts contract).
-            Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
-            None => &[],
-        }
-    }
-
-    pub fn allocated_slice(&self) -> &[u8] {
-        match self.ptr {
-            // SAFETY: `ptr[..cap]` is the full allocation; bytes in `[len..cap]`
-            // may be uninitialized. Mirrors Zig `ptr[0..this.cap]` (same caveat).
-            Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
-            None => &[],
-        }
-    }
-
-    pub fn as_array_list(&mut self) -> &mut [u8] {
-        self.as_array_list_leak()
-    }
-
-    pub fn as_array_list_leak(&mut self) -> &mut [u8] {
-        // Zig returned an `ArrayListUnmanaged{ items=ptr[0..len], capacity=cap }`
-        // view without transferring ownership. The sole caller only needs
-        // `as_mut_ptr()`/`len()`, both of which `&mut [u8]` provides.
-        match self.ptr {
-            // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
-            Some(p) => unsafe { core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize) },
-            None => &mut [],
-        }
-    }
 }
-
-impl Drop for Bytes {
-    fn drop(&mut self) {
-        // Zig `deinit`: `default_allocator.free(stored_name.slice())` then
-        // `this.allocator.free(ptr[0..cap])`.
-        // SAFETY: every writer of `stored_name` adopts a heap allocation via
-        // `PathString::init_owned` (Blob.rs), or leaves it `EMPTY`; the one
-        // borrow case (standalone_graph_jsc.rs) hands a default-allocator
-        // slice that Zig also frees here.
-        unsafe { self.stored_name.deinit_owned() };
-        if let Some(ptr) = self.ptr.take() {
-            // SAFETY: `ptr[..cap]` is the allocation owned by `self.allocator`;
-            // sole owner at drop time. Reconstructing the slice only for the
-            // vtable signature (callee treats it as opaque ptr+len).
-            let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap as usize) };
-            self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/blob/Store.zig (577 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      Store is intrusively refcounted + crosses FFI; `StoreRef` (NonNull<Store> + ref_/deref) is the canonical handle. Bytes collapsed to Vec<u8> per TSV.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// `array_buffer.zig:BlobArrayBuffer_deallocator` — JSC `ArrayBuffer` external
 /// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
 /// `*mut Store` as the deallocator context; this releases that ref.
-///
-/// LAYERING: lives here (next to `Store`) rather than in `bun_jsc::array_buffer`
-/// because `Store` is a `bun_runtime` type and `bun_jsc` cannot depend on it.
-/// The symbol name is the only contract C++ observes.
 #[unsafe(no_mangle)]
 pub extern "C" fn BlobArrayBuffer_deallocator(
     _bytes: *mut core::ffi::c_void,
@@ -1192,3 +644,4 @@ pub extern "C" fn BlobArrayBuffer_deallocator(
     // owns one outstanding reference being released here.
     unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
 }
+

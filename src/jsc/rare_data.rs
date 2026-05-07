@@ -556,76 +556,56 @@ impl RefCountedEnvValue {
 // AWSSignatureCache
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct AWSSignatureCache {
-    pub cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
-    pub date: u64,
-    pub lock: Mutex,
-}
+/// Per-VM memoised SigV4 signing key, keyed by `(numeric_day, region+service+secret)`.
+/// PORTING.md §Concurrency: lock owns the data — Zig had a sidecar `bun.Mutex`
+/// next to `cache`/`date`; here the mutex wraps both.
+#[derive(Default)]
+pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
-impl Default for AWSSignatureCache {
-    fn default() -> Self {
-        Self { cache: StringArrayHashMap::new(), date: 0, lock: Mutex::default() }
-    }
+#[derive(Default)]
+struct AWSSignatureCacheInner {
+    cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
+    date: u64,
 }
 
 impl AWSSignatureCache {
-    pub fn clean(&mut self) {
-        // PORT NOTE: Zig freed each key explicitly; StringArrayHashMap with
-        // owned Box<[u8]> keys drops them on clear.
-        self.cache.clear();
-    }
-
-    pub fn get(&mut self, numeric_day: u64, key: &[u8]) -> Option<&[u8]> {
-        let _g = self.lock.lock();
-        if self.date == 0 {
+    /// Returns the cached 32-byte derived signing key for `key` if it was set
+    /// for `numeric_day`.
+    ///
+    /// PORT NOTE: Zig returned `cache.getKey(key)` (a borrow into map storage)
+    /// past `lock.unlock()` — racy against a concurrent `set` rehashing the
+    /// map. Return the 32-byte *value* by copy instead; the only consumer
+    /// (`bun_s3_signing::credentials`, via `AwsCacheGetFn`) wants the digest,
+    /// and a fixed-size copy avoids handing out a guard.
+    pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+        let inner = self.0.lock();
+        if inner.date == 0 || inner.date != numeric_day {
             return None;
         }
-        if self.date == numeric_day {
-            // PORT NOTE: Zig `cache.getKey(key)` returns the *stored key* (the
-            // duped allocation), not the value — caller wants a stable slice
-            // outliving the input.
-            if let Some(i) = self.cache.get_index(key) {
-                return Some(&self.cache.keys()[i]);
-            }
-        }
-        None
+        inner.cache.get(key).copied()
     }
 
-    pub fn set(&mut self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
-        let _g = self.lock.lock();
-        if self.date == 0 {
-            self.cache = StringArrayHashMap::new();
-        } else if self.date != numeric_day {
+    pub fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
+        let mut inner = self.0.lock();
+        if inner.date == 0 {
+            inner.cache = StringArrayHashMap::new();
+        } else if inner.date != numeric_day {
             // day changed so we clean the old cache
-            // PORT NOTE: reshaped for borrowck — `self.clean()` would require
-            // `&mut self` while `_g` still borrows `self.lock`; inline the body
-            // (it's just `cache.clear()`) so the borrow stays on a disjoint field.
-            self.cache.clear();
+            // PORT NOTE: Zig freed each key explicitly; StringArrayHashMap with
+            // owned Box<[u8]> keys drops them on clear.
+            inner.cache.clear();
         }
-        self.date = numeric_day;
-        bun_core::handle_oom(self.cache.put(key, value));
+        inner.date = numeric_day;
+        bun_core::handle_oom(inner.cache.put(key, value));
     }
 }
 
-impl Drop for AWSSignatureCache {
-    fn drop(&mut self) {
-        self.date = 0;
-        // cache: StringArrayHashMap drops owned Box<[u8]> keys automatically.
-    }
-}
+// Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically;
+// Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
 
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
-
-unsafe extern "C" {
-    // Defined in src/jsc/bindings/BunProcess.cpp — sets SO_LINGER {1,0} so
-    // closing a listen socket sends RST instead of entering TIME_WAIT.
-    #[cfg(not(windows))]
-    fn Bun__disableSOLinger(fd: core::ffi::c_int);
-    #[cfg(windows)]
-    fn Bun__disableSOLinger(fd: *mut core::ffi::c_void);
-}
 
 /// Expand `$body` once per embedded `SocketGroup` field — the Rust analogue of
 /// Zig's `inline for (socket_group_fields) |f| @field(this, f)`.
@@ -651,8 +631,8 @@ macro_rules! for_each_socket_group {
 impl RareData {
     // ── trivial field accessors ────────────────────────────────────────────
     #[inline]
-    pub fn aws_cache(&mut self) -> &mut AWSSignatureCache {
-        &mut self.aws_signature_cache
+    pub fn aws_cache(&self) -> &AWSSignatureCache {
+        &self.aws_signature_cache
     }
 
     /// Raw slot for the per-VM global DNS data. The lazy init + `&mut Resolver`
@@ -771,24 +751,21 @@ impl RareData {
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
-    pub fn add_listening_socket_for_watch_mode(&mut self, socket: Fd) {
-        let _g = self.listening_sockets_for_watch_mode_lock.lock();
-        self.listening_sockets_for_watch_mode.push(socket);
+    pub fn add_listening_socket_for_watch_mode(&self, socket: Fd) {
+        self.listening_sockets_for_watch_mode.lock().push(socket);
     }
 
-    pub fn remove_listening_socket_for_watch_mode(&mut self, socket: Fd) {
-        let _g = self.listening_sockets_for_watch_mode_lock.lock();
-        if let Some(i) = self.listening_sockets_for_watch_mode.iter().position(|s| *s == socket) {
-            self.listening_sockets_for_watch_mode.swap_remove(i);
+    pub fn remove_listening_socket_for_watch_mode(&self, socket: Fd) {
+        let mut sockets = self.listening_sockets_for_watch_mode.lock();
+        if let Some(i) = sockets.iter().position(|s| *s == socket) {
+            sockets.swap_remove(i);
         }
     }
 
-    pub fn close_all_listen_sockets_for_watch_mode(&mut self) {
-        let _g = self.listening_sockets_for_watch_mode_lock.lock();
-        for socket in core::mem::take(&mut self.listening_sockets_for_watch_mode) {
-            // Prevent TIME_WAIT state.
-            // SAFETY: FFI; `socket` is a live fd we registered.
-            unsafe { Bun__disableSOLinger(socket.native()) };
+    pub fn close_all_listen_sockets_for_watch_mode(&self) {
+        for socket in core::mem::take(&mut *self.listening_sockets_for_watch_mode.lock()) {
+            // Prevent TIME_WAIT state so the relaunched process can rebind.
+            syscall::disable_linger(socket);
             socket.close();
         }
     }
@@ -1103,9 +1080,17 @@ impl Drop for RareData {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {
-            // SAFETY: embedded by-value group; loop has already unlinked it
-            // (close_all_socket_groups ran), so destroy is a no-op assert.
-            unsafe { SocketGroup::destroy(g as *mut SocketGroup) };
+            // Groups whose lazy accessor was never called are still
+            // zero-initialised (`loop_ == null`, never `init`'d). The C
+            // `us_socket_group_deinit` happens to no-op on those, but
+            // `SocketGroup::destroy`'s safety contract requires a prior
+            // `init`, so honour it explicitly.
+            if !g.loop_.is_null() {
+                // SAFETY: embedded by-value group, previously `init`'d; the
+                // loop has already unlinked it (close_all_socket_groups ran),
+                // so destroy reduces to the empty-list debug asserts.
+                unsafe { SocketGroup::destroy(g as *mut SocketGroup) };
+            }
         });
     }
 }

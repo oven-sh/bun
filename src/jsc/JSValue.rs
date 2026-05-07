@@ -1504,17 +1504,19 @@ pub struct SerializedScriptValue {
 }
 impl SerializedScriptValue {
     /// Borrow the serialized bytes. Valid only while `self` is alive (the
-    /// backing buffer is freed by `deinit`); the lifetime is tied to `&self`.
+    /// backing buffer is freed on drop); the lifetime is tied to `&self`.
     #[inline]
     pub fn data(&self) -> &[u8] {
         // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
         // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
-        // borrow is tied to `&self` so it cannot outlive `deinit`.
+        // borrow is tied to `&self` so it cannot outlive `Drop`.
         unsafe { core::slice::from_raw_parts(self.bytes, self.size) }
     }
+}
+impl Drop for SerializedScriptValue {
     #[inline]
-    pub fn deinit(self) {
-        // SAFETY: `handle` was returned by `Bun__serializeJSValue`.
+    fn drop(&mut self) {
+        // SAFETY: `handle` is the non-null opaque returned by `Bun__serializeJSValue`.
         unsafe { Bun__SerializedScriptSlice__free(self.handle) }
     }
 }

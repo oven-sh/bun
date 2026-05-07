@@ -1183,9 +1183,20 @@ impl VirtualMachine {
             // `RuntimeHooks` once a slot is added.
 
             // Embedded per-VM socket groups must drain while JSC is still
-            // alive (closeAll() fires on_close → JS).
-            // TODO(b2-cycle): `RareData::close_all_socket_groups(self)` is
-            // gated in `rare_data.rs::_accessor_body`.
+            // alive (closeAll() fires on_close → JS). After JSC teardown,
+            // RareData's Drop only deinit()s the groups (asserts empty).
+            if self.rare_data.is_some() {
+                // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
+                // walks the loop's group list via `vm.uws_loop()` and never
+                // touches `vm.rare_data`, so the disjoint reborrow is sound.
+                // SAFETY: `self` is the live per-thread VM; the shared borrow
+                // only reads `event_loop_handle` (no overlap with `rare_data`).
+                let vm_ref = unsafe { &*core::ptr::from_ref(self) };
+                self.rare_data
+                    .as_deref_mut()
+                    .unwrap()
+                    .close_all_socket_groups(vm_ref);
+            }
 
             // SAFETY: extern "C" FFI; `self.global` is the live VM global.
             unsafe { Zig__GlobalObject__destructOnExit(self.global) };
@@ -1198,11 +1209,10 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            // TODO(b2-cycle): `self.transpiler.deinit()` /
-            // `self.gc_controller.deinit()` / `self.deinit()` — `gc_controller`
-            // is a `()` placeholder and `destroy()` is gated. The whole
-            // `BUN_DESTRUCT_VM_ON_EXIT` branch is opt-in debug behaviour;
-            // un-gate piecewise as the field types widen.
+            // TODO(port): `self.transpiler.deinit()` — `Transpiler<'_>` has no
+            // `deinit()` yet (resolver BSSMap teardown not ported).
+            self.gc_controller.deinit();
+            self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
@@ -3751,7 +3761,7 @@ impl VirtualMachine {
         // PORT NOTE: Zig frees the thread-local `source_code_printer` static
         // in `deinit`; here it's `SOURCE_CODE_PRINTER` (boxed via
         // `ensure_source_code_printer`).
-        if let Some(printer) = SOURCE_CODE_PRINTER.with(|p| p.take()) {
+        if let Some(printer) = SOURCE_CODE_PRINTER.take() {
             // SAFETY: `printer` was produced by `Box::into_raw` in
             // `ensure_source_code_printer` and is exclusively owned by this
             // thread's VM.

@@ -2173,6 +2173,10 @@ impl Log {
         self.clone_to(other)?;
         self.msgs.clear();
         self.msgs.shrink_to_fit();
+        // Transferred messages may reference `Location.{file,line_text}` slices
+        // backed by `self.owned_strings` (see `Log::dupe`); move the backing
+        // boxes so they outlive the messages now in `other`.
+        other.owned_strings.append(&mut self.owned_strings);
         Ok(())
     }
 

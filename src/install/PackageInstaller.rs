@@ -998,7 +998,7 @@ impl<'a> PackageInstaller<'a> {
         alias: &[u8],
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        folder_path: &mut AbsPath, // TODO(port): bun.AbsPath(.{ .sep = .auto }) const-generic sep variant
+        folder_path: &mut bun_paths::AutoAbsPath,
         log_level: Options::LogLevel,
     ) -> usize {
         if cfg!(debug_assertions) {
@@ -2119,7 +2119,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         folder_name: &[u8],
         log_level: Options::LogLevel,
-        package_path: &mut AbsPath, // TODO(port): bun.AbsPath(.{ .sep = .auto })
+        package_path: &mut bun_paths::AutoAbsPath,
         package_id: PackageID,
         optional: bool,
         resolution: &Resolution,

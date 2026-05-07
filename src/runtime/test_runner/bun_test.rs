@@ -621,7 +621,7 @@ pub enum Phase {
     Done,
 }
 
-pub struct BunTest<'a> {
+pub struct BunTest {
     pub bun_test_root: *mut BunTestRoot,
     pub in_run_loop: bool,
     pub allocation_scope: AllocationScope,
@@ -629,9 +629,13 @@ pub struct BunTest<'a> {
     // PERF(port): was arena bulk-free for per-file scratch
     pub file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
-    pub reporter: Option<&'a CommandLineReporter>,
-    // PORT NOTE: Zig stores `?*CommandLineReporter`; the only field mutated through this
-    // shared borrow is `last_printed_dot`, now `Cell<bool>` for sound interior mutability.
+    ///
+    /// PORT NOTE: Zig stores `?*CommandLineReporter` (raw, mutable). Stored as
+    /// `NonNull` (not `&`) so callbacks (`handle_test_completed`, junit writer,
+    /// uncaught-exception handler) can write through it without deriving `&mut`
+    /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
+    /// frame, which never returns; `exit_file()` nulls this before drop.
+    pub reporter: Option<NonNull<CommandLineReporter>>,
     pub timer: EventLoopTimer,
     pub result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution

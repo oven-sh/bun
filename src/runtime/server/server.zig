@@ -1943,15 +1943,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 }).toErrorInstance(globalThis);
                             },
                             else => {
-                                // `bun.sys.Error.path` is the unix-socket / filesystem
-                                // field; for TCP, Node sets `.address` and `.port`
-                                // directly on the JS error instead. Match that.
                                 const sys_err = bun.sys.Error.fromCode(e, .listen);
                                 error_instance = sys_err.toJS(globalThis) catch return;
-                                error_instance.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.initUTF8(hostname).toJS(globalThis));
-                                error_instance.put(globalThis, jsc.ZigString.static("port"), .jsNumber(tcp.port));
                             },
                         }
+                        // `bun.sys.Error.path` is the unix-socket / filesystem field;
+                        // for TCP, Node sets `.address` and `.port` on the JS error
+                        // regardless of errno (EADDRINUSE, EACCES, EADDRNOTAVAIL, …),
+                        // matching `Bun.listen` in Listener.zig:273-274.
+                        error_instance.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.initUTF8(hostname).toJS(globalThis));
+                        error_instance.put(globalThis, jsc.ZigString.static("port"), .jsNumber(tcp.port));
                     },
                     .unix => |unix| {
                         switch (e) {

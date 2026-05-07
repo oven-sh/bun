@@ -1251,7 +1251,13 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         bsd_close_socket(listenFd);
         #if defined(_WIN32)
             if (shouldSimulateENOENT) {
+                // Windows' AF_UNIX impl returns the misleading WSAENETDOWN when
+                // the socket path's parent directory doesn't exist. Translate
+                // to ERROR_PATH_NOT_FOUND so SystemErrno.init maps to ENOENT.
+                // Write *error as well — the caller now reads the plumbed value
+                // instead of thread-local last-error.
                 SetLastError(ERROR_PATH_NOT_FOUND);
+                *error = ERROR_PATH_NOT_FOUND;
             }
         #endif
         return LIBUS_SOCKET_ERROR;

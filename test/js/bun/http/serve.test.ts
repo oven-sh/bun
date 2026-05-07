@@ -1601,6 +1601,13 @@ const privilegedBindEACCES: { port: number } | null = (() => {
   // @ts-ignore geteuid exists on posix at runtime
   const isRoot = typeof process.geteuid === "function" && process.geteuid() === 0;
   if (isRoot) return null;
+  // A non-root process with effective CAP_NET_BIND_SERVICE can still bind
+  // privileged ports — skip the test in that environment too. CAP_NET_BIND_SERVICE
+  // is capability bit 10 (see include/uapi/linux/capability.h).
+  try {
+    const capEff = readFileSync("/proc/self/status", "utf8").match(/^CapEff:\s*([0-9a-fA-F]+)$/m)?.[1];
+    if (capEff && (BigInt(`0x${capEff}`) & (1n << 10n)) !== 0n) return null;
+  } catch {}
   let unprivilegedStart = 1024;
   try {
     const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
@@ -1624,6 +1631,8 @@ it.if(privilegedBindEACCES !== null)("reports EACCES (not EADDRINUSE) for privil
     expect(e.code).toBe("EACCES");
     expect(e.syscall).toBe("listen");
     expect(e.errno).toBe(-13); // matches Node
+    expect(e.address).toBe("127.0.0.1");
+    expect(e.port).toBe(privilegedBindEACCES!.port);
   }
 });
 
@@ -1671,7 +1680,7 @@ it.if(canReproduceEADDRNOTAVAIL)(
 // case) the returned error must still carry a non-zero errno — previously
 // `errno` was always 0 on this path because the SystemError literal omitted
 // the field. Node sets it to -48 on macOS, -98 on Linux, -4091 via libuv.
-it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno (#25765)", async () => {
+it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno + address/port (#25765)", async () => {
   await using server = Bun.serve({
     port: 0,
     fetch() {
@@ -1691,6 +1700,8 @@ it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno (#2
     expect(e.syscall).toBe("listen");
     expect(typeof e.errno).toBe("number");
     expect(e.errno).not.toBe(0);
+    expect(e.port).toBe(server.port);
+    expect(typeof e.address).toBe("string");
   }
 });
 

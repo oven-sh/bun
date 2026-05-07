@@ -594,6 +594,8 @@ pub fn execute_simple_s3_request(
     };
     // SAFETY: `task.vm` is the live per-thread VM pointer from `VirtualMachine::get()`.
     let vm = unsafe { &mut *task.vm };
+    let verbose = vm.get_verbose_fetch();
+    let reject_unauthorized = vm.get_tls_reject_unauthorized();
     task.http.write(AsyncHTTP::init(
         options.method,
         url,
@@ -605,14 +607,11 @@ pub fn execute_simple_s3_request(
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,
-            // TODO(b2-blocked): VirtualMachine::{get_verbose_fetch,get_tls_reject_unauthorized}
-            // are gated in bun_jsc; pass `None` to fall back to AsyncHTTP defaults until un-gated.
-            verbose: None,
-            reject_unauthorized: None,
+            verbose: Some(verbose),
+            reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
     ));
-    let _ = vm;
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();

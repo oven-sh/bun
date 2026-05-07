@@ -415,11 +415,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
     // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
     // `false` branch. Rust type-checks all monomorphisations, so pin the return
-    // type to the only valid shape.
+    // type to the only valid shape. `'static` matches `pack::pack`'s return —
+    // the embedded `&mut PackageManager` / `Command::Context` are process-
+    // lifetime singletons reborrowed through raw pointers there.
     pub fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-    ) -> Result<Context<'a, true>, FromWorkspaceError> {
+    ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         // SAFETY: `manager.log` is set once at `PackageManager::init`.

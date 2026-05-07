@@ -467,39 +467,361 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn update_interactive(
         ctx: Command::Context,
         original_cwd: &[u8],
-        manager: &mut PackageManager,
+        manager: &'static mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        let _ = (ctx, original_cwd, manager);
-        // Real body needs `manager.lockfile`, `manager.log`,
-        // `manager.root_package_id`, `manager.options.filter_patterns`,
-        // `manager.options.do_`, `manager.to_update`, `manager.root_dir`,
-        // `Lockfile::load_from_cwd`, `PackageManager::install_with_manager` —
-        // reconciler-6). Body preserved verbatim in
-        // update_interactive_command.zig.
-        todo!("blocked_on: bun_install::PackageManager::lockfile / install_with_manager (package_manager_real un-gate)")
+        // PORT NOTE: reshaped for borrowck — capture `log_level` / `ctx.log`
+        // before borrowing `&mut manager.lockfile`.
+        let not_silent = manager.options.log_level != LogLevel::Silent;
+        let ctx_log_ptr: *mut logger::Log = ctx.log;
+
+        match manager.load_lockfile_from_cwd::<true>() {
+            LoadResult::NotFound => {
+                if not_silent {
+                    Output::err_generic("missing lockfile, nothing outdated", ());
+                }
+                Global::crash();
+            }
+            LoadResult::Err(cause) => {
+                if not_silent {
+                    match cause.step {
+                        LoadStep::OpenFile => Output::err_generic(
+                            "failed to open lockfile: {s}",
+                            (cause.value.name(),),
+                        ),
+                        LoadStep::ParseFile => Output::err_generic(
+                            "failed to parse lockfile: {s}",
+                            (cause.value.name(),),
+                        ),
+                        LoadStep::ReadFile => Output::err_generic(
+                            "failed to read lockfile: {s}",
+                            (cause.value.name(),),
+                        ),
+                        LoadStep::Migrating => Output::err_generic(
+                            "failed to migrate lockfile: {s}",
+                            (cause.value.name(),),
+                        ),
+                    }
+                    // SAFETY: `ctx.log` is set by `Command::create_context_data`
+                    // for every subcommand and is non-null for the command's
+                    // lifetime.
+                    if unsafe { (*ctx_log_ptr).has_errors() } {
+                        // SAFETY: `manager.log` aliases `ctx.log`; no other
+                        // `&mut Log` is live here.
+                        let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
+                    }
+                }
+                Global::crash();
+            }
+            LoadResult::Ok(_) => {
+                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
+                // (pointer field). `load_lockfile_from_cwd` populates
+                // `manager.lockfile` (Box) in place, so no reassignment.
+            }
+        }
+
+        let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
+            let filters = manager.options.filter_patterns;
+            Self::find_matching_workspaces(original_cwd, manager, filters)
+        } else if manager.options.do_.recursive() {
+            Self::get_all_workspaces(manager)
+        } else {
+            let root_pkg_id = manager
+                .root_package_id
+                .get(&manager.lockfile, manager.workspace_name_hash);
+            if root_pkg_id == INVALID_PACKAGE_ID {
+                return Ok(());
+            }
+            vec![root_pkg_id]
+        };
+
+        populate_manifest_cache::populate_manifest_cache(
+            manager,
+            populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
+        )?;
+
+        // Get outdated packages
+        let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
+        // PORT NOTE: `defer { allocator.free(...) }` is implicit via Drop on
+        // `Vec<OutdatedPackage>` (Box<[u8]> fields).
+
+        if outdated_packages.is_empty() {
+            // No packages need updating - just exit silently
+            Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
+            return Ok(());
+        }
+
+        // Prompt user to select packages
+        let selected = Self::prompt_for_updates(&mut outdated_packages)?;
+
+        // Track catalog updates separately (catalog_key -> {version, workspace_path})
+        let mut catalog_updates: StringHashMap<CatalogUpdate> = StringHashMap::default();
+
+        // Collect all package updates with full information
+        let mut package_updates: Vec<PackageUpdate> = Vec::new();
+
+        // Process selected packages
+        debug_assert_eq!(outdated_packages.len(), selected.len());
+        for (pkg, &is_selected) in outdated_packages.iter().zip(selected.iter()) {
+            if !is_selected {
+                continue;
+            }
+
+            // Use latest version if requested
+            let target_version: &[u8] = if pkg.use_latest {
+                &pkg.latest_version
+            } else {
+                &pkg.update_version
+            };
+
+            if strings::eql(&pkg.current_version, target_version) {
+                continue;
+            }
+
+            // For catalog dependencies, we need to collect them separately
+            // to update the catalog definitions in the root or workspace package.json
+            if pkg.is_catalog {
+                // Store catalog updates for later processing
+                let catalog_key: Box<[u8]> = if let Some(catalog_name) = &pkg.catalog_name {
+                    let mut v = Vec::new();
+                    write!(&mut v, "{}:{}", BStr::new(&pkg.name), BStr::new(catalog_name))
+                        .expect("OOM");
+                    v.into_boxed_slice()
+                } else {
+                    pkg.name.clone()
+                };
+
+                // For catalog dependencies, we always update the root package.json
+                // (or the workspace root where the catalog is defined)
+                let catalog_workspace_path: Box<[u8]> = Box::default(); // Always root for now
+
+                catalog_updates
+                    .insert(
+                        catalog_key,
+                        CatalogUpdate {
+                            version: Box::from(target_version),
+                            workspace_path: catalog_workspace_path,
+                        },
+                    );
+                continue;
+            }
+
+            // Get the workspace path for this package
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let workspace_resolution =
+                manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id as usize];
+            let workspace_path: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
+                // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
+                unsafe { workspace_resolution.value.workspace }.slice(string_buf)
+            } else {
+                b"" // Root workspace
+            };
+
+            // Add package update with full information
+            package_updates.push(PackageUpdate {
+                name: pkg.name.clone(),
+                target_version: Box::from(target_version),
+                dep_type: Box::from(pkg.dependency_type),
+                workspace_path: Box::from(workspace_path),
+                original_version: pkg.current_version.clone(),
+                package_id: pkg.package_id,
+            });
+        }
+
+        // Check if we have any updates
+        let has_package_updates = !package_updates.is_empty();
+        let has_catalog_updates = !catalog_updates.is_empty();
+
+        if !has_package_updates && !has_catalog_updates {
+            Output::prettyln(format_args!("<r><yellow>!</r> No packages selected for update"));
+            return Ok(());
+        }
+
+        // Actually update the selected packages
+        if has_package_updates || has_catalog_updates {
+            if manager.options.dry_run {
+                Output::prettyln(format_args!(
+                    "\n<r><yellow>Dry run mode: showing what would be updated<r>"
+                ));
+
+                // In dry-run mode, just show what would be updated without modifying files
+                for update in &package_updates {
+                    let workspace_display: &[u8] = if !update.workspace_path.is_empty() {
+                        &update.workspace_path
+                    } else {
+                        b"root"
+                    };
+                    Output::prettyln(format_args!(
+                        "→ Would update {} to {} in {} ({})",
+                        BStr::new(&update.name),
+                        BStr::new(&update.target_version),
+                        BStr::new(workspace_display),
+                        BStr::new(&update.dep_type)
+                    ));
+                }
+
+                if has_catalog_updates {
+                    let mut it = catalog_updates.iter();
+                    while let Some((catalog_key, catalog_update)) = it.next() {
+                        Output::prettyln(format_args!(
+                            "→ Would update catalog {} to {}",
+                            BStr::new(catalog_key),
+                            BStr::new(&catalog_update.version)
+                        ));
+                    }
+                }
+
+                Output::prettyln(format_args!(
+                    "\n<r><yellow>Dry run complete - no changes made<r>"
+                ));
+            } else {
+                Output::prettyln(format_args!("\n<r><cyan>Installing updates...<r>"));
+                Output::flush();
+
+                // Update catalog definitions first if needed
+                if has_catalog_updates {
+                    Self::update_catalog_definitions(manager, &catalog_updates)?;
+                }
+
+                // Update all package.json files directly (fast!)
+                if has_package_updates {
+                    Self::update_package_json_files_from_updates(manager, &package_updates)?;
+                }
+
+                manager.to_update = true;
+
+                // Reset the timer to show actual install time instead of total command time
+                ctx.start_time = bun_core::time::nano_timestamp();
+
+                // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
+                // `PackageManager::init` (single-threaded CLI startup).
+                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH };
+                // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
+                // the Rust port of `install_with_manager` takes the original cwd
+                // path slice instead.
+                install_with_manager::install_with_manager(
+                    manager,
+                    &mut *ctx,
+                    root_pkg_json,
+                    manager.root_dir.dir,
+                )?;
+            }
+        }
+        Ok(())
     }
 
+    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
+        let lockfile = &manager.lockfile;
+        let packages = lockfile.packages.slice();
+        let pkg_resolutions = packages.items_resolution();
 
-    #[allow(dead_code)]
-    fn get_all_workspaces(manager: &PackageManager) -> Box<[PackageID]> {
-        let _ = manager;
-        // Needs `manager.lockfile.packages.items_resolution()` — gated behind
-        todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
+        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
+        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
+            if resolution.tag != resolution::Tag::Workspace
+                && resolution.tag != resolution::Tag::Root
+            {
+                continue;
+            }
+            workspace_pkg_ids.push(pkg_id as PackageID);
+        }
+        workspace_pkg_ids
     }
 
-    #[allow(dead_code)]
     fn find_matching_workspaces(
         original_cwd: &[u8],
         manager: &PackageManager,
-        filters: &[Box<[u8]>],
-    ) -> Box<[PackageID]> {
-        let _ = (original_cwd, manager, filters);
-        // Needs `manager.lockfile` + `Lockfile.packages.items_resolution()` —
-        todo!("blocked_on: bun_install::PackageManager::lockfile (package_manager_real un-gate)")
+        filters: &[&[u8]],
+    ) -> Vec<PackageID> {
+        let lockfile = &manager.lockfile;
+        let packages = lockfile.packages.slice();
+        let pkg_names = packages.items_name();
+        let pkg_resolutions = packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
+        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
+            if resolution.tag != resolution::Tag::Workspace
+                && resolution.tag != resolution::Tag::Root
+            {
+                continue;
+            }
+            workspace_pkg_ids.push(pkg_id as PackageID);
+        }
+
+        let mut path_buf = PathBuffer::uninit();
+
+        let converted_filters: Vec<WorkspaceFilter> = filters
+            .iter()
+            .map(|filter| {
+                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0)
+                    .expect("OOM")
+            })
+            .collect();
+        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
+
+        // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
+        let top_level_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+
+        // move all matched workspaces to front of array
+        let mut i: usize = 0;
+        while i < workspace_pkg_ids.len() {
+            let workspace_pkg_id = workspace_pkg_ids[i];
+
+            let matched = 'matched: {
+                for filter in &converted_filters {
+                    match filter {
+                        WorkspaceFilter::Path(pattern) => {
+                            if pattern.is_empty() {
+                                continue;
+                            }
+                            let res = &pkg_resolutions[workspace_pkg_id as usize];
+                            let res_path: &[u8] = match res.tag {
+                                resolution::Tag::Workspace => {
+                                    // SAFETY: tag == Workspace ⇒ `value.workspace` active.
+                                    unsafe { res.value.workspace }.slice(string_buf)
+                                }
+                                resolution::Tag::Root => top_level_dir,
+                                _ => unreachable!(),
+                            };
+
+                            let abs_res_path =
+                                path::resolve_path::join_abs_string_buf::<path::platform::Posix>(
+                                    top_level_dir,
+                                    &mut path_buf.0,
+                                    &[res_path],
+                                );
+
+                            if !glob::r#match(
+                                pattern,
+                                strings::without_trailing_slash(abs_res_path),
+                            )
+                            .matches()
+                            {
+                                break 'matched false;
+                            }
+                        }
+                        WorkspaceFilter::Name(pattern) => {
+                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
+                            if !glob::r#match(pattern, name).matches() {
+                                break 'matched false;
+                            }
+                        }
+                        WorkspaceFilter::All => {}
+                    }
+                }
+                true
+            };
+
+            if matched {
+                i += 1;
+            } else {
+                workspace_pkg_ids.swap_remove(i);
+            }
+        }
+
+        workspace_pkg_ids
     }
 
     fn group_catalog_dependencies<'a>(

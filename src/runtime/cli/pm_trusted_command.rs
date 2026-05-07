@@ -276,7 +276,7 @@ impl TrustCommand {
         {
             // SAFETY: `pm_raw` derived from `pm` above; `load_lockfile` is not
             // dereferenced concurrently. See `update_lockfile_if_needed`.
-            let slice = unsafe { (*pm_raw).lockfile.packages.slice() };
+            let mut slice = unsafe { (*pm_raw).lockfile.packages.slice() };
             for meta in slice.items_meta_mut() {
                 meta.set_has_install_script(false);
             }

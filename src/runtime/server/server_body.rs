@@ -788,25 +788,30 @@ impl AnyRoute {
                     ));
                 }
 
+                // trim the /*
+                // SAFETY: `path` is a route key owned by `init_ctx`
+                // (`ServerInitContext.user_routes` / `js_string_allocations`)
+                // and outlives the `framework_router_list` it is pushed into —
+                // identical to the borrow `StringRefList::track` returns for
+                // `relative_root`. The `&'static` on `FileSystemRouterType`
+                // fields is the Phase-A erasure of that owner lifetime.
+                let prefix: &'static [u8] = if path.len() == 2 {
+                    b"/"
+                } else {
+                    unsafe { &*(&path[..path.len() - 2] as *const [u8]) }
+                };
+                static IGNORE_DIRS: &[&[u8]] = &[b"node_modules", b".git"];
+                static EXTENSIONS: &[&[u8]] = &[b".tsx", b".jsx"];
                 init_ctx.framework_router_list.push(bake::FileSystemRouterType {
-                    root: std::borrow::Cow::Owned(relative_root.to_vec()),
+                    root: relative_root,
                     style,
-                    // trim the /*
-                    prefix: std::borrow::Cow::Owned(
-                        if path.len() == 2 { b"/" as &[u8] } else { &path[..path.len() - 2] }.to_vec(),
-                    ),
+                    prefix,
                     // TODO: customizable framework option.
-                    entry_client: Some(std::borrow::Cow::Borrowed(b"bun-framework-react/client.tsx")),
-                    entry_server: std::borrow::Cow::Borrowed(b"bun-framework-react/server.tsx"),
+                    entry_client: Some(b"bun-framework-react/client.tsx"),
+                    entry_server: b"bun-framework-react/server.tsx",
                     ignore_underscores: true,
-                    ignore_dirs: vec![
-                        std::borrow::Cow::Borrowed(b"node_modules" as &[u8]),
-                        std::borrow::Cow::Borrowed(b".git" as &[u8]),
-                    ],
-                    extensions: vec![
-                        std::borrow::Cow::Borrowed(b".tsx" as &[u8]),
-                        std::borrow::Cow::Borrowed(b".jsx" as &[u8]),
-                    ],
+                    ignore_dirs: IGNORE_DIRS,
+                    extensions: EXTENSIONS,
                     allow_layouts: true,
                 });
 
@@ -1215,7 +1220,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_listener: Option<*mut uws::H3::ListenSocket>,
     /// Cached `h3=":<port>"; ma=86400` value for Alt-Svc on H1 responses;
     /// formatted once in onH3Listen so renderMetadata doesn't reformat.
-    pub h3_alt_svc: Box<ZStr>, // empty when !SSL
+    /// Stored as a plain owned byte string — the only consumer
+    /// (`renderMetadata` via [`h3_alt_svc`]) takes a `&[u8]` length-delimited
+    /// header value, so the Zig `[:0]const u8` sentinel is not load-bearing.
+    pub h3_alt_svc: Box<[u8]>, // empty when !SSL
     pub js_value: JsRef,
     /// Potentially null before listen() is called, and once .destroy() is called.
     pub vm: &'static VirtualMachine::VirtualMachine,
@@ -2816,7 +2824,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             listener: None,
             h3_app: None,
             h3_listener: None,
-            h3_alt_svc: zstr_empty_boxed(),
+            h3_alt_svc: Box::default(),
             js_value: JsRef::empty(),
             pending_requests: 0,
             // TODO(port): RequestContext.pool is a per-monomorphization threadlocal in Zig;
@@ -3020,11 +3028,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
         if !Self::HAS_H3 { return None; }
-        if !self.h3_alt_svc.as_bytes().is_empty() {
-            Some(self.h3_alt_svc.as_bytes())
-        } else {
-            None
-        }
+        if self.h3_alt_svc.is_empty() { None } else { Some(&self.h3_alt_svc) }
     }
 
     pub fn on_h3_listen(&mut self, socket: Option<*mut uws::H3::ListenSocket>) {
@@ -3032,13 +3036,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.h3_listener = socket;
         if let Some(s) = socket {
             let mut buf = Vec::new();
+            // SAFETY: `s` is the live H3 listen-socket FFI handle just stored in
+            // `h3_listener`; uws owns it until `stop_listening()`.
             match write!(&mut buf, "h3=\":{}\"; ma=86400", unsafe { &mut *s }.get_local_port()) {
-                Ok(_) => {
-                    buf.push(0);
-                    // SAFETY: NUL terminator just written
-                    self.h3_alt_svc = zstr_from_boxed_with_nul(buf.into_boxed_slice());
-                }
-                Err(_) => self.h3_alt_svc = zstr_empty_boxed(),
+                Ok(_) => self.h3_alt_svc = buf.into_boxed_slice(),
+                Err(_) => self.h3_alt_svc = Box::default(),
             }
         }
     }

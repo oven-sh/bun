@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
 use crate::allocators::allocation_scope::BumpAllocatorExt as _;
-use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArray, StringHashMap};
+use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StringJsc as _,

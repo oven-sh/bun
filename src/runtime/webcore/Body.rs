@@ -479,6 +479,25 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED { 0 } else { 256 
 pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
 pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
 
+/// Typed front-end for `VirtualMachine::init_request_body_value` (the hook is
+/// type-erased to break the `bun_jsc` → `bun_runtime` dep edge). Spec
+/// `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
+/// pooled `HiveRef` slot (ref_count = 1) and returns it.
+pub fn hive_alloc(
+    vm: &mut bun_jsc::VirtualMachine,
+    value: Value,
+) -> core::ptr::NonNull<HiveRef> {
+    // The hook impl (`runtime/jsc_hooks.rs`) `ptr::read`s its `*mut Value`
+    // argument; suppress the local drop so the move is one-way.
+    let mut value = core::mem::ManuallyDrop::new(value);
+    let ptr = vm
+        .init_request_body_value(&mut *value as *mut Value as *mut core::ffi::c_void)
+        .cast::<HiveRef>();
+    // `HiveRef::init` only fails on allocator OOM, which `handle_oom` upstream
+    // would have already aborted on; treat null as unreachable.
+    core::ptr::NonNull::new(ptr).expect("body HiveAllocator returned null")
+}
+
 pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]

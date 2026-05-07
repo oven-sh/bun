@@ -3105,10 +3105,12 @@ where
         let ctx = unsafe { &mut *ctx_slot };
 
         let mut body_init = BodyValue::Null;
-        let body_ptr = self
+        let body_hive: *mut crate::webcore::body::HiveRef = self
             .vm_mut()
             .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
-            as *mut BodyValue;
+            .cast();
+        // SAFETY: hook returns a freshly-initialized hive slot; never null.
+        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
         let signal = AbortSignal::new(unsafe { &*self.global_this });
@@ -3118,13 +3120,16 @@ where
         ctx.signal = NonNull::new(signal);
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
-        // SAFETY: signal is live; ref_() bumps for Request's copy.
-        let _ = unsafe { (*signal).ref_() };
+        // Zig: `.signal = signal.ref()` — bump once for the Request's copy and
+        // adopt into RAII so it pairs with `Request::Drop`'s unref.
+        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
+        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        let _ = body_hive; // see PORT NOTE in `prepare_js_request_context_for`
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(ctx as *const _),
             SSL,
-            None,
+            Some(signal_for_req),
             Box::new(BodyValue::Null),
         ));
         ctx.upgrade_context = Some(upgrade_ctx);

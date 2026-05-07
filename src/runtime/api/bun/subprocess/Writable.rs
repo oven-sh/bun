@@ -345,7 +345,7 @@ impl<'a> Writable<'a> {
                 // SAFETY: caller passes a live `*mut Subprocess`; the `&mut *stdin`
                 // borrow above has ended, so this whole-struct reborrow is unique.
                 let subprocess = unsafe { &mut *subprocess };
-                if subprocess.process.has_exited()
+                if subprocess.has_exited()
                     && !subprocess.flags.contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
@@ -356,7 +356,7 @@ impl<'a> Writable<'a> {
                     // writes were clobbered by the struct-literal reassignment
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
-                    pipe.on_attached_process_exit(&subprocess.process.status);
+                    pipe.on_attached_process_exit(&subprocess.process().status);
                     pipe.to_js(global_this)
                 } else {
                     subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);

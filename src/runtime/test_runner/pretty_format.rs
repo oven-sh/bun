@@ -1411,18 +1411,24 @@ impl<'a> Formatter<'a> {
 
                         writer.write_all(b"\"");
                         let mut remaining = str;
+                        // `ZigString::char_at` widens to u16; Zig's `'\\'`/`'\r'` are
+                        // comptime_int so they coerce. Mirror that with explicit u16
+                        // consts so the match arms type-check (.zig:955-969).
+                        const BACKSLASH: u16 = b'\\' as u16;
+                        const CR: u16 = b'\r' as u16;
+                        const LF: u16 = b'\n' as u16;
                         while let Some(i) = remaining.index_of_any(b"\\\r") {
                             match remaining.char_at(i) {
-                                b'\\' => {
+                                BACKSLASH => {
                                     writer.print(format_args!(
                                         "{}\\",
                                         remaining.substring_with_len(0, i)
                                     ));
                                     remaining = remaining.substring(i + 1);
                                 }
-                                b'\r' => {
+                                CR => {
                                     if i + 1 < remaining.len
-                                        && remaining.char_at(i + 1) == b'\n'
+                                        && remaining.char_at(i + 1) == LF
                                     {
                                         writer.print(format_args!(
                                             "{}",

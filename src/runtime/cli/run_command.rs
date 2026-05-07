@@ -814,8 +814,7 @@ impl RunCommand {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         bun_jsc::initialize(false);
-        bun_analytics::Features::standalone_executable
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_js_parser::Expr::data_store_create();
         bun_js_parser::Stmt::data_store_create();
 
@@ -833,9 +832,9 @@ impl RunCommand {
         }
 
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: core::ptr::NonNull::new(ctx.log),
+            log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
-            graph: Some(core::ptr::NonNull::from(&mut *graph).cast()),
+            graph: Some(std::ptr::NonNull::from(&mut *graph).cast()),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // TODO(port): `dns_result_order` is `u8` here pending the

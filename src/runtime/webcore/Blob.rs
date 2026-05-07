@@ -6309,9 +6309,9 @@ pub trait FileOpener: Sized {
         Retry::No
     }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t;
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t;
     /// Stash/retrieve the open completion callback across the libuv async hop.
     /// Zig captured this at comptime (`comptime Callback`) so the generated
     /// `WrappedCallback` was monomorphic; Rust can't const-generic over fn
@@ -6333,13 +6333,13 @@ pub trait FileOpener: Sized {
         {
             // Monomorphic libuv completion thunk — recovers `*mut Self` from
             // `req.data`, mirrors Zig's `WrappedCallback.callback`.
-            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_uv_sys::uv_fs_t) {
+            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
                 let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
                 {
                     // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_uv_sys::uv_fs_req_cleanup(req); } }
+                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
                     if let Some(err_enum) = result.err_enum() {
@@ -6369,7 +6369,7 @@ pub trait FileOpener: Sized {
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.
             let rc = unsafe {
-                bun_uv_sys::uv_fs_open(
+                bun_libuv_sys::uv_fs_open(
                     loop_,
                     req,
                     path.as_ptr(),
@@ -6462,7 +6462,7 @@ pub trait FileCloser: Sized {
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     fn update(&mut self);
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
     /// `@fieldParentPtr("io_request", request)` — Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own

@@ -410,13 +410,14 @@ pub fn run_task(
         }
         task_tag::FSWatchTask => {
             // Zig: `defer t.deinit(); t.run();` — the task is heap-allocated
-            // (cloned from `FSWatcher.current_task` at enqueue), so `deinit`
-            // == drop the Box.
+            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
+            // explicit (not `Drop`) so the embedded `current_task` field never
+            // runs it.
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
             unsafe { (*t).run() };
             // SAFETY: paired with Box::into_raw in `FSWatchTask::enqueue`.
-            drop(unsafe { Box::from_raw(t) });
+            unsafe { FSWatchTask::deinit(t) };
         }
 
         // ── DNS ──────────────────────────────────────────────────────────

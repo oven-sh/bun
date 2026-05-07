@@ -25,6 +25,7 @@ pub type uv_file = c_int;
 pub type uv_req_type = c_uint;
 pub type uv_fs_type = c_int;
 pub type uv_loop_t = Loop;
+pub type uv_fs_t = fs_t;
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 // libuv on Windows defines these as `unsigned char` (chown is a no-op there).
 pub type uv_uid_t = u8;

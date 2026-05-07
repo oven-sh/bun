@@ -443,7 +443,7 @@ impl WriteFile {
             // microbenchmarks.
             if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
                 let _ = sys::preallocate_file(
-                    fd.cast(),
+                    fd.native(),
                     0,
                     i64::try_from(self.bytes_blob.shared_view().len()).unwrap(),
                 ); // we don't care if it fails.

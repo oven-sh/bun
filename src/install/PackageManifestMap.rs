@@ -54,21 +54,26 @@ pub enum CacheBehavior {
 }
 
 impl PackageManifestMap {
-    pub fn by_name(
+    /// # Safety
+    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
+    pub unsafe fn by_name(
         &mut self,
-        pm: &mut PackageManager,
+        pm: *mut PackageManager,
         scope: &npm::registry::Scope,
         name: &[u8],
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash(
-            pm,
-            scope,
-            StringBuilder::string_hash(name),
-            cache_behavior,
-            needs_extended_manifest,
-        )
+        // SAFETY: forwarded to caller.
+        unsafe {
+            self.by_name_hash(
+                pm,
+                scope,
+                StringBuilder::string_hash(name),
+                cache_behavior,
+                needs_extended_manifest,
+            )
+        }
     }
 
     pub fn insert(

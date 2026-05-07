@@ -78,7 +78,15 @@ const REVIEW_S = {
 };
 
 const RUN_IN_CG = `systemd-run --scope --quiet -p MemoryMax=64G -p MemorySwapMax=0 -p TasksMax=4096 --unit=${CG}-$RANDOM --`;
-const HARD = `**HARD RULES:** Work ONLY in ${WT} on branch claude/phase-g-tswarm-s${SHARD}. REAL fixes from .zig spec, NOT stubs/suppressions. Never git reset/checkout/stash/rebase/pull. **Commit explicit paths only:** \`git -c core.hooksPath=/dev/null add 'src/' Cargo.toml Cargo.lock && git commit -q -m "..."\` — never \`git add -A\`. NO push (orchestrator merges).`;
+const HARD = `**HARD RULES:** Work ONLY in ${WT} on branch claude/phase-g-tswarm-s${SHARD}. REAL fixes from .zig spec, NOT stubs/suppressions.
+
+**NO NEW \`unsafe {}\` outside FFI.** If you reach for \`unsafe { &mut *ptr }\` / \`unsafe { &*ptr }\` / \`unsafe { ptr.cast().as_ref() }\`:
+- Change the fn signature to take \`&mut T\`/\`&T\` and let the (one) caller do the deref — or better, find why the caller has a raw ptr at all.
+- Raw-ptr field on a struct → add a safe accessor on the struct, not per-call-site unsafe.
+- Genuine FFI (\`extern "C"\` call into C++/libuv/uws) → OK, with SAFETY comment.
+- After your fix: \`git diff HEAD~1 -- 'src/' | grep -c '^+.*unsafe {'\` must be ≤ FFI-call count. Reviewers REJECT otherwise.
+
+Never git reset/checkout/stash/rebase/pull. **Commit explicit paths only:** \`git -c core.hooksPath=/dev/null add 'src/' Cargo.toml Cargo.lock && git commit -q -m "..."\` — never \`git add -A\`. NO push (orchestrator merges).`;
 
 let history = [];
 
@@ -87,7 +95,7 @@ phase("Isolate");
 const iso = await agent(
   `Set up isolated shard ${SHARD}.
 
-1. **Worktree:** \`test -d ${WT} || git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} claude/phase-a-port\`. Symlink build: \`ln -sfn /root/bun-5/build ${WT}/build\`. Own target: \`mkdir -p ${WT}/target\` (NOT symlinked — own cargo cache).
+1. **Worktree:** \`test -d ${WT} || git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} claude/phase-a-port\`. **Own build/ + target/** (NO symlinks — full isolation): \`mkdir -p ${WT}/build/debug ${WT}/target\`. Seed shared C++ obj + codegen (read-only copies, ~1GB): \`rsync -a --exclude='bun-debug*' --exclude='*.tmp*' /root/bun-5/build/debug/ ${WT}/build/debug/\`.
 2. **Build once:** \`cd ${WT} && ${RUN_IN_CG} bun bd --version 2>&1 | tail -3\` → must show version.
 3. **cgroup test:** \`${RUN_IN_CG} true && echo cgroup_ok\`
 
@@ -156,9 +164,15 @@ Return {signature:"${u.sig}", root_cause, files_touched, commit, notes}.`,
             [0, 1].map(
               i => () =>
                 agent(
-                  `Review fix for "${u.sig}" in ${WT}. Diff: \`git -C ${WT} diff ${fix.commit}~1..${fix.commit}\`. Check: matches .zig spec? real fix or suppression? UB? \`cd ${WT} && bun bd test ${u.sample}\` completes?
+                  `Review fix for "${u.sig}" in ${WT}. Diff: \`git -C ${WT} diff ${fix.commit}~1..${fix.commit}\`.
 
-accept:true ONLY if real fix + no UB + test completes. DO NOT edit.
+**Check:**
+1. **NEW unsafe?** \`git -C ${WT} diff ${fix.commit}~1..${fix.commit} | grep '^+.*unsafe {'\` — for each: is it an FFI call (extern "C", uws::, libc::, JSC__)? If NOT → REJECT with fix="change signature to take &mut T / &T, push deref to caller".
+2. Matches .zig spec? Real fix or suppression?
+3. UB introduced?
+4. \`cd ${WT} && bun bd test ${u.sample}\` completes?
+
+accept:true ONLY if no non-FFI unsafe added + real fix + no UB + test completes. DO NOT edit.
 
 Return {accept, bugs:[{file,what,fix,severity}]}.`,
                   { label: `rev${i}:${u.sig.slice(0, 30)}`, phase: "Review", schema: REVIEW_S },

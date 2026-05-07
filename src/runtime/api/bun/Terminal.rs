@@ -195,8 +195,11 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for upstream `JSValue` methods not yet exposed in
-// `bun_jsc` — see Terminal.zig `getOptional` / `withAsyncContextIfNeeded`.
+// Local extension shims for `JSValue.getOptional` (Terminal.zig). Typed
+// `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
+// these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
+// inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
+// resolve to that directly, no shim here.
 trait JSValueTerminalExt {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
     fn get_optional_slice(
@@ -205,7 +208,6 @@ trait JSValueTerminalExt {
         name: &[u8],
     ) -> JsResult<Option<ZigStringSlice>>;
     fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
 }
 impl JSValueTerminalExt for JSValue {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
@@ -229,11 +231,6 @@ impl JSValueTerminalExt for JSValue {
             Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
             _ => Ok(None),
         }
-    }
-    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
-        // TODO(port): wire to JSC__JSValue__withAsyncContextIfNeeded once
-        // exported (see js_bun_spawn_bindings.rs shim).
-        self
     }
 }
 

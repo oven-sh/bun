@@ -1509,13 +1509,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
+            websocket.global_object = self.global_this;
             websocket.handler.app = Some(app as *mut _ as *mut c_void);
             websocket
                 .handler
                 .flags
                 .set(web_socket_server_context::HandlerFlags::SSL, SSL);
-            // TODO(b2-blocked): websocket.global_object = self.global_this once
-            // WebSocketServerContext exposes the field mutably.
         }
 
         // --- 3. Compiled user routes + "/*" coverage tracking ---

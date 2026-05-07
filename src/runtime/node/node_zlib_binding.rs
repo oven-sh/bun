@@ -239,7 +239,7 @@ pub trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
-pub trait CompressionStreamImpl: Sized + 'static {
+pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
     // Field accessors (split-borrow is the impl's responsibility).
@@ -417,7 +417,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let global_this: &JSGlobalObject = unsafe { &*this.global_this() };
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
         // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        let vm = global_this.bun_vm_concurrently();
+        // SAFETY: `bun_vm_concurrently()` never returns null for a Bun-owned global.
+        let vm = unsafe { &*global_this.bun_vm_concurrently() };
 
         this.stream_mut().do_work();
 

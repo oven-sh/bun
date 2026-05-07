@@ -1525,10 +1525,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
+    // PORT NOTE: reshaped for borrowck — copy `subprocess_ptr` so the
+    // non-`move` `defer!` closure captures a disjoint place from the
+    // `(*subprocess_ptr).abort_signal = …` writes that follow.
+    let subprocess_ptr_exit = subprocess_ptr;
     scopeguard::defer! {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { process_mut((*subprocess_ptr).process) };
+            let proc = unsafe { process_mut((*subprocess_ptr_exit).process) };
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).

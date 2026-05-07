@@ -32,16 +32,20 @@ impl Stream {
     }
 }
 
-// Zig `deinit` calls `stream.detach()` to deref the intrusive count. The field
-// is `NonNull<T>`, not `Arc<T>`, so this MUST be explicit — no auto-Drop covers it.
-impl Drop for Stream {
-    fn drop(&mut self) {
-        self.detach();
-    }
-}
+// No `Drop` for `Stream`: the body is bitwise-copied across threads
+// (`core::ptr::read` in `start_queued_task`), so auto-dropping the
+// JS-thread original would over-deref the shared buffer. Mirrors Zig,
+// where `HTTPRequestBody.deinit()` is explicit.
 
 impl<'a> HTTPRequestBody<'a> {
     pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");
+
+    /// `HTTPRequestBody.deinit()` — only the `Stream` arm owns a ref.
+    pub fn deinit(&mut self) {
+        if let HTTPRequestBody::Stream(stream) = self {
+            stream.detach();
+        }
+    }
 
     pub fn is_stream(&self) -> bool {
         matches!(self, HTTPRequestBody::Stream(_))

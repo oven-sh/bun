@@ -152,7 +152,7 @@ impl<'a> InternalState<'a> {
         // (Option<CertificateInfo> drops on assignment; allocator param removed)
         self.certificate_info = None;
 
-        // original_request_body.deinit() → drops on assignment below
+        self.original_request_body.deinit();
         *self = InternalState {
             body_out_str: body_msg,
             compressed_body: MutableString::init_empty(),

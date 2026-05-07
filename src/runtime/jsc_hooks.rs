@@ -3025,47 +3025,60 @@ unsafe fn transpile_file(
     }
 
     // ── Synchronous-loader fallback ────────────────────────────────────────
-    // Spec :1031-1078.
-    let synchronous_loader: Loader = lr.loader.unwrap_or_else(|| {
+    // Spec :1031-1078. PORT NOTE: hoisted out of `unwrap_or_else` into a
+    // labelled block so the `CustomLoader::Custom` arm can write `*ret` and
+    // `return null` from `Bun__transpileFile` itself (spec :1051-1061) — a
+    // closure cannot perform a non-local return.
+    let synchronous_loader: Loader = 'loader: {
+        if let Some(l) = lr.loader {
+            break 'loader l;
+        }
         // SAFETY: per fn contract.
         let (has_loaded, is_in_preload) =
             unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
             if lr.path.name.ext.is_empty() {
-                return Loader::Tsx;
+                break 'loader Loader::Tsx;
             }
             // Unknown extensions are to be treated as file loader.
             if is_commonjs_require {
-                
-                // TODO(b2-cycle): same `commonjs_custom_extensions` typing
-                // gate as above (spec :1043-1064). `node_module_module` is
+                use bun_jsc::node_module_module::{
+                    find_longest_registered_extension, CustomLoader,
+                };
+                // Spec :1043-1064.
+                if unsafe { (*jsc_vm).commonjs_custom_extensions.len() } > 0
+                    && unsafe { (*jsc_vm).has_mutated_built_in_extensions } == 0
                 {
-                    use bun_jsc::node_module_module::{
-                        find_longest_registered_extension, CustomLoader,
-                    };
-                    if unsafe { (*jsc_vm).commonjs_custom_extensions.len() } > 0
-                        && unsafe { (*jsc_vm).has_mutated_built_in_extensions } == 0
-                    {
-                        if let Some(entry) = find_longest_registered_extension(
-                            unsafe { &*jsc_vm },
-                            lr.path.text,
-                        ) {
-                            match entry {
-                                CustomLoader::Loader(loader) => return loader,
-                                CustomLoader::Custom(_) => {
-                                    // Can't write `*ret` from inside this
-                                    // closure; the un-gate pass should hoist
-                                    // this branch out (Zig used a labelled
-                                    // `break :loader` + early `return null`).
+                    if let Some(entry) = find_longest_registered_extension(
+                        // SAFETY: per fn contract.
+                        unsafe { &*jsc_vm },
+                        lr.path.text,
+                    ) {
+                        match entry {
+                            CustomLoader::Loader(loader) => break 'loader loader,
+                            CustomLoader::Custom(strong) => {
+                                // SAFETY: `ret` is a valid out-param per fn
+                                // contract.
+                                unsafe {
+                                    *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                                        allocator: ptr::null_mut(),
+                                        source_code: bun_string::String::empty(),
+                                        specifier: bun_string::String::empty(),
+                                        source_url: bun_string::String::empty(),
+                                        cjs_custom_extension_index: strong.get(),
+                                        tag: ResolvedSourceTag::CommonJsCustomExtension,
+                                        ..Default::default()
+                                    });
                                 }
+                                return ptr::null_mut();
                             }
                         }
                     }
                 }
                 // For Node.js compatibility, requiring a file with an unknown
                 // extension is treated as a JS file.
-                return Loader::Ts;
+                break 'loader Loader::Ts;
             }
             // For ESM, Bun treats unknown extensions as the file loader.
             Loader::File
@@ -3074,7 +3087,7 @@ unsafe fn transpile_file(
             // `bun run ./foo-i-have-no-extension` works.
             Loader::Tsx
         }
-    });
+    };
 
     // Spec :1083 — `defer jsc_vm.module_loader.resetArena(jsc_vm)`.
     let _reset_arena = scopeguard::guard((), |_| {

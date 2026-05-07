@@ -2209,6 +2209,17 @@ pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
     unsafe { ARGV = v };
 }
 
+/// Park an owned argv `Vec` in process-static storage and return the
+/// now-`'static` slice. Used by the `--compile` exec-argv splice path
+/// (`cli_body.rs`) which needs to extend argv beyond the original
+/// OS-provided storage and then hand sub-slices to [`set_argv`]. Single-shot:
+/// the slot is a `OnceLock`, so a second call drops `v` and returns the
+/// first-stored slice.
+pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
+    static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(move || v.into_boxed_slice())
+}
+
 // ── getcwd ────────────────────────────────────────────────────────────────
 /// Port of `bun.getcwd(buf)` → `Maybe([:0]u8)`. Writes into the caller's
 /// `PathBuffer` and returns the NUL-terminated slice on success.

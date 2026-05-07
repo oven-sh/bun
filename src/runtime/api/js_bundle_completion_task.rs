@@ -407,6 +407,8 @@ impl JSBundleCompletionTask {
                     return Ok(promise.resolve(global_this, build_output)?);
                 }
             }
+            // SAFETY: Pending/Err already returned above.
+            _ => unsafe { core::hint::unreachable_unchecked() },
         }
         Ok(())
     }

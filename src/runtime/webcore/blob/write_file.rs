@@ -1174,6 +1174,9 @@ impl WriteFileWaitFromLockedValueTask {
                 }
             }
             body::Value::Locked(locked) => {
+                // Re-registering for a future callback — `this` stays alive.
+                // Restore the moved-out blob so the next `then()` has its store.
+                this_ref.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
                 locked.task = Some(this.cast::<c_void>());
             }

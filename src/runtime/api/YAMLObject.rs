@@ -1204,7 +1204,7 @@ impl<'a> ParserCtx<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/YAMLObject.zig (1094 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      wtf::StringBuilder append_* method names guessed; JSPropertyIterator const-generic shape and get_or_put API need Phase B verification; arena/ASTMemoryAllocator interaction needs review; u16 char literal patterns use hex with comments. Several upstream methods shimmed locally pending un-gate (throw_stack_overflow, unwrap_boxed_primitive, put_may_be_index, String::char_at/substring_with_len).
+//   confidence: high
+//   todos:      0
+//   notes:      arena/ASTMemoryAllocator interaction needs review; u16 char literal patterns use hex with comments.
 // ──────────────────────────────────────────────────────────────────────────

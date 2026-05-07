@@ -575,8 +575,10 @@ impl FileSystemRouter {
             || strings::has_prefix(path.slice(), b"file://")
         {
             let prev_path = path;
-            path = ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname)
-                .expect("oom");
+            path = match ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname) {
+                Ok(p) => p,
+                Err(_) => return Err(global_this.throw_out_of_memory()),
+            };
         }
 
         // SAFETY (self-ref construction prelude): `route` below borrows these bytes via
@@ -592,8 +594,8 @@ impl FileSystemRouter {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
-                    "{:?} parsing path: {}",
-                    err,
+                    "{} parsing path: {}",
+                    err.name(),
                     bstr::BStr::new(path.slice())
                 )));
             }

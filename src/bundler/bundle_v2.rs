@@ -1614,8 +1614,9 @@ pub use super::{BundleV2, PendingImport, BakeOptions};
 
 impl<'a> BundleV2<'a> {
     /// Zig: `jsLoopForPlugins().enqueueTaskConcurrent(task)`. The Rust port
-    /// folds the lookup + enqueue so the bundler never dereferences the
-    /// `JSBundleCompletionTask` opaque (its layout lives in `bun_runtime`).
+    /// folds the lookup + enqueue so the bundler never dereferences
+    /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
+    /// `completion` handle carries the `&'static` vtable.
     /// PERF(port): was inline `switch (this.loop().*)` + direct field access.
     pub fn enqueue_on_js_loop_for_plugins(
         &mut self,

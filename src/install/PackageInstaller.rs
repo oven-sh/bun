@@ -1250,9 +1250,8 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Folder => {
-                let folder = resolution
-                    .value
-                    .folder
+                // SAFETY: tag == Folder checked by match arm.
+                let folder = unsafe { resolution.value.folder }
                     .slice(self.lockfile.buffers.string_bytes.as_slice());
 
                 if self.lockfile.is_workspace_tree_id(self.current_tree_id) {
@@ -1301,9 +1300,8 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Workspace => {
-                let folder = resolution
-                    .value
-                    .workspace
+                // SAFETY: tag == Workspace checked by match arm.
+                let folder = unsafe { resolution.value.workspace }
                     .slice(self.lockfile.buffers.string_bytes.as_slice());
                 // Handle when a package depends on itself
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
@@ -1324,9 +1322,8 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Symlink => {
                 let directory = package_manager::global_link_dir(self.manager);
 
-                let folder = resolution
-                    .value
-                    .symlink
+                // SAFETY: tag == Symlink checked by match arm.
+                let folder = unsafe { resolution.value.symlink }
                     .slice(self.lockfile.buffers.string_bytes.as_slice());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
@@ -1398,7 +1395,8 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     resolution::Tag::Github => {
-                        let url = self.manager.alloc_github_url(&resolution.value.github);
+                        // SAFETY: tag == Github checked by match arm.
+                        let url = self.manager.alloc_github_url(unsafe { &resolution.value.github });
                         // PORT NOTE: `defer this.manager.allocator.free(url)` — url: Vec<u8> drops.
                         match package_manager::enqueue_tarball_for_download(
                             self.manager,

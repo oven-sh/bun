@@ -265,7 +265,8 @@ pub mod uv_e {
     pub const BADF: i32 = SystemErrno::EBADF as i32;
     pub const BUSY: i32 = SystemErrno::EBUSY as i32;
     pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
-    pub const CHARSET: i32 = -100; // TODO(port): -windows_sys::libuv::UV_ECHARSET — libuv constant, not platform-specific
+    // Linux lacks ECHARSET; libuv uses synthetic UV_ECHARSET = -4080.
+    pub const CHARSET: i32 = 4080;
     pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
     pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
     pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
@@ -317,7 +318,8 @@ pub mod uv_e {
     pub const HOSTDOWN: i32 = SystemErrno::EHOSTDOWN as i32;
     pub const REMOTEIO: i32 = SystemErrno::EREMOTEIO as i32;
     pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
-    pub const FTYPE: i32 = -111; // TODO(port): -windows_sys::libuv::UV_EFTYPE
+    // Linux lacks EFTYPE; libuv uses synthetic UV_EFTYPE = -4028.
+    pub const FTYPE: i32 = 4028;
     pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
     pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
     pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;

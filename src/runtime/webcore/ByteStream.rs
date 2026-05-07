@@ -189,28 +189,33 @@ impl ByteStream {
                     let mut blob = self.to_any_blob().unwrap();
                     return action.fulfill(self.parent().global_this, &mut blob);
                 }
-                if self.buffer.capacity() == 0 && matches!(stream, streams::Result::OwnedAndDone(_)) {
-                    bun_output::scoped_log!(ByteStream, "ByteStream.onData owned_and_done and action.fulfill()");
+                if self.buffer.capacity() == 0 {
+                    if let streams::Result::OwnedAndDone(mut owned) = stream {
+                        bun_output::scoped_log!(ByteStream, "ByteStream.onData owned_and_done and action.fulfill()");
 
-                    // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
-                    // TODO(port): take ownership of the `OwnedAndDone` payload directly instead
-                    // of copying — `chunk` aliases `stream`'s buffer.
-                    self.buffer = chunk.to_vec();
-                    let mut blob = self.to_any_blob().unwrap();
-                    return action.fulfill(self.parent().global_this, &mut blob);
+                        // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
+                        // PORT NOTE: reshaped for borrowck — move the owned ByteList into `buffer`
+                        // directly instead of round-tripping through `chunk` (which would borrow
+                        // `stream`).
+                        self.buffer = owned.move_to_list_managed();
+                        let mut blob = self.to_any_blob().unwrap();
+                        return action.fulfill(self.parent().global_this, &mut blob);
+                    }
                 }
 
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData appendSlice and action.fulfill()");
 
-                self.buffer.extend_from_slice(chunk);
-                // Zig `defer { if owned* allocator.free(stream.slice()) }` — implicit via drop.
-                drop(stream);
+                self.buffer.extend_from_slice(stream.slice());
+                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned ByteList freed
+                // by `release` (StreamResult has no Drop).
+                stream.release();
                 let mut blob = self.to_any_blob().unwrap();
                 return action.fulfill(self.parent().global_this, &mut blob);
             } else {
-                self.buffer.extend_from_slice(chunk);
-                // Zig: `if owned* allocator.free(stream.slice())` — implicit via drop.
-                drop(stream);
+                self.buffer.extend_from_slice(stream.slice());
+                // Zig: `if owned* allocator.free(stream.slice())` — owned ByteList freed by
+                // `release` (StreamResult has no Drop).
+                stream.release();
             }
 
             return Ok(());
@@ -504,7 +509,7 @@ impl ByteStream {
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.is_some() {
-            return Err(global_this.throw("Cannot buffer value twice"));
+            return Err(global_this.throw(format_args!("Cannot buffer value twice")));
         }
 
         if let streams::Result::Err(err) = &self.pending.result {

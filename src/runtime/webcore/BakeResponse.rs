@@ -12,7 +12,6 @@ pub fn fix_dead_code_elimination() {
 
 // TODO(port): callconv(jsc.conv) — Rust cannot express the JSC ABI in `extern` position;
 // Phase B should route this through a bun_jsc shim or verify "C" matches on all targets.
-// TODO(port): move to runtime_sys
 // `Response` embeds `Body` (no #[repr(C)]) but is only ever passed by opaque pointer across FFI.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
@@ -21,18 +20,6 @@ unsafe extern "C" {
         this: *mut Response,
         kind: u8,
     ) -> JSValue;
-    // TODO(port): upstream lacks `JSValue::is_jsx_element`; shim the C++ export locally.
-    fn JSC__JSValue__isJSXElement(value: JSValue, global: *const JSGlobalObject) -> bool;
-}
-
-#[inline]
-fn is_jsx_element(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-    // SAFETY: `global` is a live JSGlobalObject borrow; `value` is a valid encoded JSValue.
-    let r = unsafe { JSC__JSValue__isJSXElement(value, global) };
-    if global.has_exception() {
-        return Err(JsError::Thrown);
-    }
-    Ok(r)
 }
 
 /// Corresponds to `JSBakeResponseKind` in
@@ -45,18 +32,21 @@ pub enum SSRKind {
     Render = 2,
 }
 
-pub fn to_js_for_ssr(this: &mut Response, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
-    this.calculate_estimated_byte_size();
-    // SAFETY: `this` is a valid &mut Response; `global_object` is a live borrow; FFI does not retain either.
-    // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a `*mut` with write provenance
-    // from `&self` — sound for callees that mutate (see `JSGlobalObject::as_mut_ptr`).
-    unsafe {
-        BakeResponse__createForSSR(
-            global_object.as_mut_ptr(),
-            this as *mut Response,
-            kind as u8,
-        )
-    }
+/// Create the JS `BakeResponse` wrapper for `this`. The C++ wrapper **adopts**
+/// the `*mut Response` allocation (freed in `BakeResponseClass__finalize`), so
+/// callers must hand over a heap pointer they no longer own — typically via
+/// `Box::into_raw`.
+///
+/// # Safety
+/// `this` must be a valid heap-allocated `Response` whose ownership is being
+/// transferred to the JS GC. After this call the caller must not free or
+/// dereference `this`.
+pub unsafe fn to_js_for_ssr(this: *mut Response, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
+    // SAFETY: caller contract — `this` is a valid exclusive heap allocation.
+    unsafe { &mut *this }.calculate_estimated_byte_size();
+    // SAFETY: `global_object` wraps `UnsafeCell`, so `as_mut_ptr()` yields a
+    // `*mut` with write provenance from `&self`; FFI adopts `this`.
+    unsafe { BakeResponse__createForSSR(global_object.as_mut_ptr(), this, kind as u8) }
 }
 
 // TODO(port): callconv(jsc.conv) — exported with JSC ABI in Zig; verify extern "C" is correct on Windows-x64.
@@ -92,7 +82,7 @@ pub fn constructor(
     // inside of a react component
     if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
         *bake_ssr_has_jsx = 0;
-        if is_jsx_element(arguments[0], global_this)? {
+        if arguments[0].is_jsx_element(global_this)? {
             let vm = global_this.bun_vm();
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
             if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
@@ -124,20 +114,25 @@ pub fn construct_redirect(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let response = Response::construct_redirect_impl(global_this, callframe)?;
-    let mut ptr = Box::new(response);
+    let response = Box::new(response);
 
     let vm = global_this.bun_vm();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
-        let js = to_js_for_ssr(&mut ptr, global_this, SSRKind::Redirect);
-        // TODO(port): ownership — verify JS wrapper adopts `*mut Response`; Box must not Drop here.
-        core::mem::forget(ptr);
-        return Ok(js);
+        // Ownership of the allocation transfers to the JS wrapper.
+        let ptr = Box::into_raw(response);
+        // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
+        return Ok(unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
     }
 
-    Ok(ptr.to_js(global_this))
+    // Ownership of the allocation transfers to the JS wrapper (freed in
+    // `ResponseClass__finalize`).
+    let ptr = Box::into_raw(response);
+    // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
+    // the C++ wrapper which owns it thereafter.
+    Ok(unsafe { &mut *ptr }.to_js(global_this))
 }
 
 // TODO(port): callconv(jsc.conv) — see note on BakeResponseClass__constructRedirect.
@@ -169,8 +164,9 @@ pub fn construct_render(
     assert_streaming_disabled(global_this, async_local_storage, b"Response.render")?;
 
     // Validate arguments
-    // TODO(port): `arguments` is a fixed [JSValue; 2] so `.len() < 1` is comptime-false in Zig too;
-    // kept for structural fidelity.
+    // PORT NOTE: `arguments` is a fixed [JSValue; 2] so `.len() < 1` is
+    // comptime-false in Zig too; kept for structural fidelity.
+    #[allow(clippy::len_zero)]
     if arguments.len() < 1 {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Response.render() requires at least a path argument"
@@ -189,18 +185,17 @@ pub fn construct_render(
     // `defer path_str.deref()` → handled by Drop on bun_str::String
 
     let path_utf8 = path_str.to_utf8();
-    // `defer path_utf8.deinit()` → handled by Drop on Utf8Slice
+    // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard
 
     // Create a Response with Render body
-    let mut response = Box::new(Response::init(
+    let response = Box::new(Response::init(
         Init {
             status_code: 200,
-            headers: 'headers: {
+            headers: {
                 let mut headers = HeadersRef::create_empty();
                 headers.put(HTTPHeaderName::Location, path_utf8.slice(), global_this)?;
-                break 'headers Some(headers);
+                Some(headers)
             },
-            // TODO(port): remaining Init fields use Zig struct defaults
             ..Default::default()
         },
         crate::webcore::Body { value: crate::webcore::BodyValue::Empty },
@@ -208,9 +203,10 @@ pub fn construct_render(
         false,
     ));
 
-    let response_js = to_js_for_ssr(&mut response, global_this, SSRKind::Render);
-    // TODO(port): ownership — `response` Box is adopted by the JS wrapper; must not Drop here.
-    core::mem::forget(response);
+    // Ownership of the allocation transfers to the JS wrapper.
+    let ptr = Box::into_raw(response);
+    // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
+    let response_js = unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
     response_js.ensure_still_alive();
 
     Ok(response_js)
@@ -259,7 +255,8 @@ fn assert_streaming_disabled(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/BakeResponse.zig (146 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      jsc.conv ABI on exports/imports needs Phase-B shim; Box<Response> handed to JS wrapper via into_raw/forget in all SSR paths — verify against Response::to_js contract.
+//   confidence: high
+//   notes:      jsc.conv ABI on exports/imports needs Phase-B verification on
+//               Windows-x64; `*mut Response` ownership transfers to the C++
+//               wrapper via Box::into_raw in all SSR paths.
 // ──────────────────────────────────────────────────────────────────────────

@@ -85,12 +85,12 @@ impl Assets {
     /// When an asset is overwritten, it receives a new URL to get around
     /// browser caching. The old URL is immediately revoked.
     ///
-    /// `abs_path` is not allocated. Ownership of `*contents` is transferred to
+    /// `abs_path` is not allocated. Ownership of `contents` is transferred to
     /// this function (Zig: `Ownership is transferred`).
     pub fn replace_path(
         &mut self,
         abs_path: &[u8],
-        contents: &AnyBlob,
+        mut contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
@@ -176,13 +176,8 @@ impl Assets {
         } else {
             self.refs[file_index] += 1;
             // Zig: `var contents_mut = contents.*; contents_mut.detach();`
-            // Ownership of `*contents` was transferred to this function (see param doc),
-            // so the bitwise copy + detach is the release path. `AnyBlob` is not `Copy` in
-            // Rust, hence the explicit `ptr::read`. SAFETY: caller promised ownership;
-            // `*contents` is treated as logically moved-from after this and never read
-            // again by the caller.
-            let mut contents_mut = unsafe { core::ptr::read(contents) };
-            contents_mut.detach();
+            // Release the owned blob on the duplicate-content path.
+            contents.detach();
         }
         let entry = EntryIndex::init(u32::try_from(file_index).unwrap());
         self.path_map.values_mut()[path_index] = entry;

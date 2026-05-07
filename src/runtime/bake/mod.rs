@@ -267,12 +267,14 @@ impl Framework {
 
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
-        out.options.minify_syntax =
-            bundler_options.minify_syntax.unwrap_or(mode != Mode::Development);
-        out.options.minify_identifiers =
-            bundler_options.minify_identifiers.unwrap_or(mode != Mode::Development);
-        out.options.minify_whitespace =
-            bundler_options.minify_whitespace.unwrap_or(mode != Mode::Development);
+        // Spec `initTranspiler` (bake.zig:681-692) forwards `null,null,null` for
+        // the three minify overrides into `initTranspilerWithOptions`, so the
+        // wrapper always defaults them to `mode != .development` regardless of
+        // `BuildConfigSubset`. User-supplied minify flags are only honored by
+        // `init_transpiler_with_options` (bake_body).
+        out.options.minify_syntax = mode != Mode::Development;
+        out.options.minify_identifiers = mode != Mode::Development;
+        out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
         // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
         // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
@@ -557,10 +559,9 @@ impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
 impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     fn from(src: bake_body::SplitBundlerOptions) -> Self {
         Self {
-            // `bake_body::Plugin` (= `crate::api::js_bundler::Plugin`) →
-            // keystone `jsc::Plugin` (= `c_void`): same FFI handle, erase the
-            // nominal type.
-            plugin: src.plugin.map(|p| p.cast()),
+            // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
+            // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
+            plugin: src.plugin,
             client: src.client.into(),
             server: src.server.into(),
             ssr: src.ssr.into(),

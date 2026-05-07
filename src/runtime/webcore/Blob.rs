@@ -4107,10 +4107,14 @@ pub fn write_file_with_source_destination(
         // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
         // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
         // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
-        // via `dupe()` and `WriteFile::create` does NOT re-bump (see PORT NOTE
-        // in `write_file.rs::create_with_ctx`); the matching deref runs when
-        // `Box::from_raw` drops the embedded `StoreRef` in `then`. Net store
-        // ref balance is identical — no leak.
+        // via `borrowed_view()` (clones only the `StoreRef`; `name` /
+        // `content_type` are aliased — unused by `WriteFile*`, no `Drop`) and
+        // `WriteFile::create` does NOT re-bump (see PORT NOTE in
+        // `write_file.rs::create_with_ctx`); the matching deref runs when
+        // `Box::from_raw` drops the embedded `StoreRef` in `then`/`deinit`.
+        // Net store ref balance is identical. `dupe()` is wrong here: it
+        // `dupe_ref()`s `name` and boxes a fresh `content_type`, neither of
+        // which is released by `Blob`'s (nonexistent) drop glue.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);
@@ -4120,12 +4124,6 @@ pub fn write_file_with_source_destination(
             unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
-                // PORT NOTE: Zig passes bitwise `*` copies (no ref bumps).
-                // `borrowed_view()` clones only the `StoreRef` (+1, balanced by
-                // `StoreRef::drop` in `WriteFileWindows::deinit`); `name` /
-                // `content_type` are aliased (unused by `WriteFile*`, no Drop).
-                // `dupe()` would leak the `name` WTF ref and a boxed
-                // `content_type` since `Blob` has no `Drop` impl.
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 write_file_promise,
@@ -4142,12 +4140,6 @@ pub fn write_file_with_source_destination(
         #[cfg(not(windows))]
         {
             let file_copier = write_file_mod::WriteFile::create(
-                // PORT NOTE: Zig passes bitwise `*` copies (no ref bumps).
-                // `borrowed_view()` clones only the `StoreRef` (+1, balanced by
-                // `StoreRef::drop` in `WriteFile::then`); `name`/`content_type`
-                // are aliased (unused by `WriteFile`, no Drop). `dupe()` would
-                // leak the `name` WTF ref and a boxed `content_type` since
-                // `Blob` has no `Drop` impl.
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 write_file_promise,

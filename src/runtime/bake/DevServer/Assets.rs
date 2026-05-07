@@ -101,7 +101,7 @@ impl Assets {
         // not allocated
         abs_path: &[u8],
         // Ownership is transferred to this function
-        contents: &AnyBlob,
+        mut contents: AnyBlob,
         mime_type: &MimeType,
         // content hash of the asset
         content_hash: u64,
@@ -199,13 +199,8 @@ impl Assets {
         } else {
             self.refs[file_index] += 1;
             // Zig: `var contents_mut = contents.*; contents_mut.detach();`
-            // Ownership of `*contents` was transferred to this function (see param doc),
-            // so the bitwise copy + detach is the release path. `Any` is not `Copy` in
-            // Rust, hence the explicit `ptr::read`. SAFETY: caller promised ownership;
-            // `*contents` is treated as logically moved-from after this and never read
-            // again by the caller.
-            let mut contents_mut = unsafe { core::ptr::read(contents) };
-            contents_mut.detach();
+            // Release the owned blob on the duplicate-content path.
+            contents.detach();
         }
         let entry = EntryIndex::init(u32::try_from(file_index).unwrap());
         self.path_map.values_mut()[path_index] = entry;

@@ -1,14 +1,8 @@
-use core::cell::Cell;
-
 use bun_jsc::{CallFrame, EnsureStillAlive, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::Debugger;
+use bun_ptr::{RefCount, RefCounted};
 
 use super::{EventLoopTimer, EventLoopTimerTag, Kind, TimerObjectInternals, ID};
-
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<TimeoutObject>`; when the count hits
-// zero it invokes `deinit` (below), which drops `internals` and frees the box.
-pub type RefCount = bun_ptr::IntrusiveRc<TimeoutObject>;
 
 // `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
 // Hand-expansion of what `src/codegen/generate-classes.ts` emits into
@@ -92,15 +86,35 @@ pub mod js {
 
 #[bun_jsc::JsClass(name = "Timeout")]
 pub struct TimeoutObject {
-    pub ref_count: Cell<u32>,
+    pub ref_count: RefCount<Self>,
     pub event_loop_timer: EventLoopTimer,
     pub internals: TimerObjectInternals,
+}
+
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread
+// refcount mixin. The Zig comptime params (`field_name`, `destructor`, `options`)
+// map to `RefCounted::{get_ref_count, destructor, DestructorCtx}`.
+impl RefCounted for TimeoutObject {
+    type DestructorCtx = ();
+
+    #[inline]
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live `Self`.
+        unsafe { &raw mut (*this).ref_count }
+    }
+
+    #[inline]
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit` consumes the
+        // `Box::into_raw`'d allocation from `init()`.
+        unsafe { Self::deinit(this) }
+    }
 }
 
 impl Default for TimeoutObject {
     fn default() -> Self {
         Self {
-            ref_count: Cell::new(1),
+            ref_count: RefCount::init(),
             // Zig: `.{ .next = .epoch, .tag = .TimeoutObject }` — `init_paused`
             // is exactly that (next=EPOCH, state=PENDING, heap zeroed).
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TimeoutObject),
@@ -112,6 +126,31 @@ impl Default for TimeoutObject {
 }
 
 impl TimeoutObject {
+    // Zig: `pub const ref = RefCount.ref; pub const deref = RefCount.deref;`
+    // — re-export the mixin's ops as inherent fns so `TimerObjectInternals`'s
+    // `@fieldParentPtr` dispatch (`TimeoutObject::ref_`/`::deref`) resolves.
+
+    /// Increment the intrusive refcount.
+    ///
+    /// # Safety
+    /// `this` must point to a live, `Box::into_raw`-allocated `TimeoutObject`.
+    #[inline]
+    pub unsafe fn ref_(this: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe { RefCount::<Self>::ref_(this) }
+    }
+
+    /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
+    /// (drops `internals`, frees the `Box`). After this returns `this` may dangle.
+    ///
+    /// # Safety
+    /// `this` must point to a live, `Box::into_raw`-allocated `TimeoutObject`.
+    #[inline]
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe { RefCount::<Self>::deref(this) }
+    }
+
     pub fn init(
         global: &JSGlobalObject,
         id: i32,

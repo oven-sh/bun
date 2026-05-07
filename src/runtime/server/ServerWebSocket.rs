@@ -433,7 +433,12 @@ impl ServerWebSocket {
         }
         let signal = self.signal.take();
 
-        // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal cleanup runs at fn exit
+        // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal
+        // cleanup runs at fn exit. `this_value` is not mutated between here and
+        // the deferred `downgrade()`, so hoisting these reads before taking the
+        // raw pointer is sound and avoids Stacked-Borrows aliasing through `self`.
+        let was_not_empty = self.this_value.is_not_empty();
+        let cached_this = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         let this_value_ptr: *mut JsRef = &mut self.this_value;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
@@ -444,10 +449,11 @@ impl ServerWebSocket {
                     sig.as_ref().unref();
                 }
             }
-            // SAFETY: self outlives this guard (stack-scoped within method body)
-            let tv = unsafe { &mut *this_value_ptr };
-            if tv.is_not_empty() {
-                tv.downgrade();
+            if was_not_empty {
+                // SAFETY: `self` outlives this guard (stack-scoped within method
+                // body); no other access to `self.this_value` occurs between
+                // `this_value_ptr`'s creation and this deref.
+                unsafe { (*this_value_ptr).downgrade() };
             }
         });
 
@@ -477,28 +483,20 @@ impl ServerWebSocket {
                     bun_output::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",
-                        self.this_value.is_not_empty()
+                        was_not_empty
                     );
                     handler.run_error_callback(vm, global_object, err);
                     return;
                 }
             };
 
-            let call_args = [
-                self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
-                JSValue::js_number(code as f64),
-                message_js,
-            ];
+            let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = handler
                 .on_close
                 .call(global_object, JSValue::UNDEFINED, &call_args)
             {
                 let err = global_object.take_exception(e);
-                bun_output::scoped_log!(
-                    WebSocketServer,
-                    "onClose error {}",
-                    self.this_value.is_not_empty()
-                );
+                bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 handler.run_error_callback(vm, global_object, err);
                 return;
             }
@@ -1472,21 +1470,16 @@ impl ServerWebSocket {
     ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setBinaryType()");
 
-        use bun_jsc::array_buffer::BinaryType as FullBinaryType;
-        let btype = FullBinaryType::from_js_value(global_this, value)?;
-        let val = match btype {
-            Some(FullBinaryType::ArrayBuffer) => BinaryType::ArrayBuffer,
-            Some(FullBinaryType::Buffer) => BinaryType::Buffer,
-            Some(FullBinaryType::Uint8Array) => BinaryType::Uint8Array,
-            // some other value which we don't support
-            _ => {
-                return Err(global_this.throw(format_args!(
-                    "binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"",
-                )));
+        match BinaryType::from_js_value(global_this, value)? {
+            Some(val @ (BinaryType::ArrayBuffer | BinaryType::Buffer | BinaryType::Uint8Array)) => {
+                self.flags.set_binary_type(val);
+                Ok(true)
             }
-        };
-        self.flags.set_binary_type(val);
-        Ok(true)
+            // some other value which we don't support
+            _ => Err(global_this.throw(format_args!(
+                "binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"",
+            ))),
+        }
     }
 
     #[bun_jsc::host_fn(method)]

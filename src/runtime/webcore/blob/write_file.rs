@@ -245,8 +245,9 @@ impl WriteFile {
         // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
         // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
         // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
-        // `dupe()`/`StoreRef::clone`) and `Box::from_raw(this)` in `then` runs
-        // `StoreRef::drop`, so the explicit ref/deref pair is folded into RAII.
+        // `borrowed_view()`'s `StoreRef::clone`) and `Box::from_raw(this)` in
+        // `then` runs `StoreRef::drop`, so the explicit ref/deref pair is
+        // folded into RAII.
         Ok(write_file)
     }
 
@@ -602,8 +603,9 @@ mod windows_impl {
             });
             // SAFETY: just allocated, sole owner until returned.
             // PORT NOTE: Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
-            // are omitted — the Rust caller passes `+1` Blobs via `dupe()` and
-            // `deinit` releases them via `Box::from_raw → StoreRef::drop`.
+            // are omitted — the Rust caller passes `+1` Blobs via
+            // `borrowed_view()` and `deinit` releases them via
+            // `Box::from_raw → StoreRef::drop`.
             unsafe {
                 let wf = &mut *write_file;
                 wf.io_request.loop_ = (*event_loop).virtual_machine.event_loop_handle.unwrap();

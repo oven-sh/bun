@@ -223,31 +223,34 @@ impl CronRegisterJob {
         }
     }
 
-    fn maybe_finished(&mut self) {
-        if !self.has_called_process_exit || self.remaining_fds != 0 {
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: local reborrow (no FnEntry protector); not used after any
+        // call below that may free `this`.
+        let s = unsafe { &mut *this };
+        if !s.has_called_process_exit || s.remaining_fds != 0 {
             return;
         }
-        if let Some(proc) = self.process.take() {
+        if let Some(proc) = s.process.take() {
             // SAFETY: `proc` is the intrusive-RC pointer returned by `to_process`.
             unsafe {
                 (*proc).detach();
                 (*proc).deref();
             }
         }
-        if self.err_msg.is_some() {
-            Self::finish(self);
-            return;
+        if s.err_msg.is_some() {
+            return unsafe { Self::finish(this) };
         }
-        let Some(status) = self.exit_status.take() else { return };
+        let Some(status) = s.exit_status.take() else { return };
         match status {
             Status::Exited(exited) => {
                 if exited.code != 0
-                    && !(self.state == RegisterState::ReadingCrontab && exited.code == 1)
-                    && self.state != RegisterState::BootingOut
+                    && !(s.state == RegisterState::ReadingCrontab && exited.code == 1)
+                    && s.state != RegisterState::BootingOut
                 {
                     #[cfg(windows)]
                     let stderr_output: &[u8] = strings::trim(
-                        self.stderr_reader.final_buffer().as_slice(),
+                        s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );
                     #[cfg(not(windows))]
@@ -256,73 +259,72 @@ impl CronRegisterJob {
                     // a clear message instead of the raw schtasks output.
                     #[cfg(windows)]
                     {
-                        if self.state == RegisterState::InstallingCrontab
+                        if s.state == RegisterState::InstallingCrontab
                             && bun_str::strings::index_of(
                                 stderr_output,
                                 b"No mapping between account names",
                             )
                             .is_some()
                         {
-                            self.set_err(format_args!(
+                            s.set_err(format_args!(
                                 "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. \
                                  This typically happens on headless servers or CI where the process runs under a service account. \
                                  To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
                                  schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
                             ));
-                            Self::finish(self);
-                            return;
+                            return unsafe { Self::finish(this) };
                         }
                     }
                     if !stderr_output.is_empty() {
-                        self.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
+                        s.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
                     } else {
-                        self.set_err(format_args!("Process exited with code {}", exited.code));
+                        s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
-                    Self::finish(self);
-                    return;
+                    return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
-                if self.state != RegisterState::BootingOut {
-                    self.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    Self::finish(self);
-                    return;
+                if s.state != RegisterState::BootingOut {
+                    s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    return unsafe { Self::finish(this) };
                 }
             }
             Status::Err(err) => {
-                self.set_err(format_args!(
+                s.set_err(format_args!(
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
-                Self::finish(self);
-                return;
+                return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
-        self.advance_state();
+        unsafe { Self::advance_state(this) };
     }
 
-    fn advance_state(&mut self) {
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn advance_state(this: *mut Self) {
+        // SAFETY: local reborrow; last use precedes any self-freeing call.
+        let s = unsafe { &mut *this };
         #[cfg(target_os = "macos")]
         {
-            match self.state {
-                RegisterState::WritingPlist => self.spawn_bootout(),
-                RegisterState::BootingOut => self.spawn_bootstrap(),
-                RegisterState::Bootstrapping => Self::finish(self),
+            match s.state {
+                RegisterState::WritingPlist => unsafe { Self::spawn_bootout(this) },
+                RegisterState::BootingOut => unsafe { Self::spawn_bootstrap(this) },
+                RegisterState::Bootstrapping => unsafe { Self::finish(this) },
                 _ => {
-                    self.set_err(format_args!("Unexpected state"));
-                    Self::finish(self);
+                    s.set_err(format_args!("Unexpected state"));
+                    unsafe { Self::finish(this) };
                 }
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            match self.state {
-                RegisterState::ReadingCrontab => self.process_crontab_and_install(),
-                RegisterState::InstallingCrontab => Self::finish(self),
+            match s.state {
+                RegisterState::ReadingCrontab => unsafe { Self::process_crontab_and_install(this) },
+                RegisterState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
-                    self.set_err(format_args!("Unexpected state"));
-                    Self::finish(self);
+                    s.set_err(format_args!("Unexpected state"));
+                    unsafe { Self::finish(this) };
                 }
             }
         }

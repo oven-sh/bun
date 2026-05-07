@@ -2524,15 +2524,30 @@ impl ExpectCustomAsymmetricMatcher {
         // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_str::MutableString::init_2048()?;
 
-        // TODO(port): customPrint signature mismatch — Zig passes `dontThrow` but the call here omits it (Zig bug? defaults?)
+        // PORT NOTE: Zig call site (expect.zig:1772) omits the `comptime dontThrow`
+        // arg — dead/ill-typed in the spec. With `false`, JS exceptions surface
+        // through `maybe_clear` as `Error::UNEXPECTED` while remaining set on
+        // the VM; only allocation failures map to OOM. Propagate accordingly
+        // instead of clobbering with a fresh OutOfMemory throw.
         let printed = this
             .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
-            .map_err(|_| global_this.throw_out_of_memory())?;
+            .map_err(|e| {
+                if e == bun_core::Error::OUT_OF_MEMORY {
+                    global_this.throw_out_of_memory()
+                } else {
+                    // exception already on the VM (see `maybe_clear` with dont_throw=false)
+                    JsError::Thrown
+                }
+            })?;
         if printed {
             let slice: &[u8] = mutable_string.slice();
             return bun_str::String::init(slice).to_js(global_this);
         }
-        ExpectMatcherUtils::print_value(global_this, /* TODO(port): Zig passes `this` here but printValue expects JSValue */ JSValue::UNDEFINED, None)
+        // PORT NOTE: Zig (expect.zig:1776) passes `this: *ExpectCustomAsymmetricMatcher`
+        // where `printValue` expects a `JSValue` — dead/ill-typed in the spec.
+        // The intent is to pretty-print the matcher instance itself, available
+        // here as `callframe.this()`.
+        ExpectMatcherUtils::print_value(global_this, callframe.this(), None)
     }
 }
 

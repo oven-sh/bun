@@ -95,41 +95,6 @@ pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 pub use crate::bake::dev_server::memory_cost_body::MemoryCost;
 
-/// Project the fields the bundler reads into the lower-tier
-/// `bun_bundler::bake_types::Framework`. LAYERING: `bun_bundler` (T5) cannot
-/// name `bun_runtime::bake::Framework` (T6), so it carries a TYPE_ONLY subset;
-/// populate it here at the seam (mirrors `bake_body::Framework::as_bundler_view`
-/// for the keystone `bake::Framework` shape).
-fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framework {
-    use bundler::bake_types as bt;
-    let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-    for (k, v) in f.built_in_modules.iter() {
-        // `bake::BuiltInModule` IS `bun_bundler::bake_types::BuiltInModule`
-        // (re-export at `bake/mod.rs:60`); clone the boxed slice.
-        let bv = match v {
-            bt::BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.clone()),
-            bt::BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.clone()),
-        };
-        bun_core::handle_oom(built_in_modules.put(k, bv));
-    }
-    let server_components = f.server_components.as_ref().map(|sc| bt::ServerComponents {
-        separate_ssr_graph: sc.separate_ssr_graph,
-        server_runtime_import: sc.server_runtime_import.as_ref().into(),
-        server_register_client_reference: sc.server_register_client_reference.as_ref().into(),
-        server_register_server_reference: sc.server_register_server_reference.as_ref().into(),
-        client_register_server_reference: sc.client_register_server_reference.as_ref().into(),
-    });
-    let react_fast_refresh = f.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
-        import_source: rfr.import_source.as_ref().into(),
-    });
-    bt::Framework::new(
-        built_in_modules,
-        server_components,
-        react_fast_refresh,
-        f.is_built_in_react,
-    )
-}
-
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
     /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost_body`
@@ -3017,7 +2982,7 @@ impl DevServer {
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
             Some(bundler::bundle_v2::BakeOptions {
-                framework: framework_as_bundler_view(&self.framework),
+                framework: self.framework.as_bundler_view(),
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.
                 client_transpiler: unsafe {

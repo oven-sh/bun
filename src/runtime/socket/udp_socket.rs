@@ -33,16 +33,16 @@ fn vm_ctx() -> bun_aio::EventLoopCtx {
 
 /// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor. Reads the thread-local errno when `rc` indicates
-/// failure (non-zero); falls back to `rc` itself if errno is 0.
+/// `errno_sys` constructor. POSIX `getErrno(c_int)` semantics: only `rc == -1`
+/// is failure (any other value — including positive packet counts from
+/// `us_udp_socket_send` and negative EAI codes from `connect` — is "not a
+/// libc errno", so callers handle it themselves).
 #[inline]
 fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
-    if rc == 0 {
+    if rc != -1 {
         return None;
     }
-    let errno = bun_sys::last_errno();
-    let code = if errno != 0 { errno } else { rc };
-    Some(bun_sys::Error::from_code_int(code, tag))
+    Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
 }
 
 /// Local extension: `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267).
@@ -68,7 +68,6 @@ const INET6_ADDRSTRLEN: usize = 65;
 #[cfg(not(windows))]
 const INET6_ADDRSTRLEN: usize = 46;
 
-// TODO(port): move to runtime_sys / bun_sys
 #[allow(dead_code)]
 unsafe extern "C" {
     fn ntohs(nshort: u16) -> u16;
@@ -1118,8 +1117,8 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // TODO(port): `val.asString().toSlice(globalThis, alloc)` returned a ZigString.Slice owned
-        // by the arena in Zig. Here we collect them into a Vec so they live until socket.send().
+        // Zig kept `ZigString.Slice` lifetimes in the arena; here we collect
+        // them into a Vec so the borrowed bytes live until `socket.send()`.
         let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
@@ -1290,9 +1289,16 @@ impl UDPSocket {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]
                         {
-                            // TODO(port): bun_str::String::substring(..).to_int32() — windows-only
-                            // numeric-scope path. Fall through to the default-0 below until wired.
-                            let _ = percent;
+                            // Windows: zone identifier is a numeric scope id, not an
+                            // interface name (`fe80::1%5`). Mirrors Zig
+                            // `str.substring(percent+1).toInt32()` + `std.math.cast(u32, ..)`.
+                            if let Ok(s) = core::str::from_utf8(&address_slice[percent + 1..bytes_len]) {
+                                if let Ok(signed) = s.parse::<i32>() {
+                                    if let Ok(id) = u32::try_from(signed) {
+                                        break 'blk id;
+                                    }
+                                }
+                            }
                         }
                         #[cfg(not(windows))]
                         {
@@ -1478,9 +1484,9 @@ impl UDPSocket {
         drop(unsafe { Box::from_raw(this) });
     }
 
-    // TODO(port): #[bun_jsc::host_fn] Free-kind shim emits a bare `js_connect(..)`
-    // call which fails to resolve inside an `impl` block. Re-attach once the
-    // proc-macro grows a `static`/associated variant or codegen wires this.
+    // PORT NOTE: no `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a
+    // bare `js_connect(..)` call which doesn't resolve inside an `impl` block.
+    // The codegen `JsClass` derive owns the link name, so the shim isn't needed.
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
 
@@ -1533,7 +1539,7 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): see `js_connect` — #[bun_jsc::host_fn] removed pending macro support.
+    // PORT NOTE: see `js_connect` — codegen `JsClass` derive owns the link name.
     pub fn js_disconnect(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));

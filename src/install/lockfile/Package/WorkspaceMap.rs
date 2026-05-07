@@ -46,6 +46,11 @@ impl WorkspaceMap {
         self.map.count()
     }
 
+    #[inline]
+    pub fn get(&self, key: &[u8]) -> Option<&Entry> {
+        self.map.get(key)
+    }
+
     pub fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         #[cfg(debug_assertions)]
         {

@@ -5312,13 +5312,7 @@ impl DevServer {
     {
         debug_assert!(id == 0);
 
-        let dw: Box<HmrSocket> = Box::new(HmrSocket {
-            dev: self as *const DevServer,
-            underlying: None,
-            current_route: route_bundle::IndexOptional::NONE,
-            subscriptions: 0,
-            referenced_source_maps: ArrayHashMap::new(),
-        });
+        let dw: Box<HmrSocket> = HmrSocket::new(self, res);
         let dw_ptr: *mut HmrSocket = Box::into_raw(dw);
         self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
         res.upgrade::<*mut HmrSocket>(

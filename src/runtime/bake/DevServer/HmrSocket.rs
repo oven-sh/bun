@@ -18,20 +18,10 @@ use crate::bake::dev_server_body::HmrTopicBits;
 // TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
 pub use super::ResponseLike;
 
-pub struct HmrSocket {
-    // TODO(port): lifetime — backref to owning DevServer (destroyed via
-    // `active_websocket_connections.remove` + Box::from_raw in on_close)
-    pub dev: NonNull<DevServer>,
-    pub underlying: Option<AnyWebSocket>,
-    pub subscriptions: HmrTopicBits,
-    /// Allows actions which inspect or mutate sensitive DevServer state.
-    pub is_from_localhost: bool,
-    /// By telling DevServer the active route, this enables receiving detailed
-    /// `hot_update` events for when the route is updated.
-    pub active_route: super::route_bundle::IndexOptional,
-    pub referenced_source_maps: HashMap<source_map_store::Key, ()>,
-    pub inspector_connection_id: i32,
-}
+// Struct definition lives in `dev_server/mod.rs` so the public
+// `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
+// single type (no cross-type pointer casts).
+pub use super::HmrSocket;
 
 impl HmrSocket {
     // `res: anytype` — only `.getRemoteSocketInfo()` is called on it.
@@ -386,12 +376,7 @@ impl HmrSocket {
             dev.source_maps.unref(*key);
         }
         // referenced_source_maps.deinit(allocator) → Drop on HashMap (below)
-        // PORT NOTE: `active_websocket_connections` is keyed on the mod.rs
-        // `dev_server::HmrSocket` stub type; cast through `*mut ()` until the
-        // two HmrSocket definitions are unified.
-        let removed = dev
-            .active_websocket_connections
-            .remove(&(s as *mut () as *mut super::HmrSocket));
+        let removed = dev.active_websocket_connections.remove(&s);
         debug_assert!(removed.is_some());
         // SAFETY: `s` was Box::into_raw'd in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.allocator().destroy(s)`.

@@ -13,6 +13,7 @@ use crate::invalid_package_id;
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
+use crate::lockfile_real::package::PackageSliceExt as _;
 
 use super::PackageManager;
 use super::package_manager_options as Options;
@@ -73,14 +74,18 @@ fn start_manifest_task(
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
     // `enqueue_network_task` tail.
     let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we hand it to `enqueue_network_task`.
-    let task = unsafe { &mut *net_ptr };
     // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
     //                   .task_id = task_id, .allocator = manager.allocator };`
-    *task = NetworkTask::default();
-    task.task_id = task_id;
-    task.package_manager = manager_backref.cast();
+    // — full struct overwrite that resets every other field to its struct
+    // default. The slot may be uninitialized (heap fallback) or stale (reused
+    // hive slot).
+    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
+    // other alias exists until we hand it to `enqueue_network_task`.
+    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
+    // SAFETY: `write_init` populated every read field; remaining
+    // Zig-`undefined` fields (`callback`, http buffers) are written by
+    // `for_manifest` / `schedule()` before being observed.
+    let task = unsafe { &mut *net_ptr };
     // SAFETY: `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
     task.for_manifest(
@@ -167,13 +172,15 @@ pub fn populate_manifest_cache(
                     unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
 
                 // SAFETY: `scope_for_package_name` borrows `&self.options`;
-                // `manifests` is a disjoint field. `by_name` takes `pm` as a
-                // raw pointer precisely so this overlap is expressed without
-                // a second `&mut PackageManager`.
+                // `manifests` is a disjoint field. `by_name`'s `pm` parameter
+                // is only used for `pm.options` / `pm.get_cache_directory()` /
+                // `pm.timestamp_for_manifest_cache_control` — never `pm.manifests`
+                // — so the two `&mut` projections from the same provenance root
+                // touch disjoint memory.
                 let scope: *const crate::npm::registry::Scope =
                     unsafe { &*manager_ptr }.scope_for_package_name(pkg_name_slice);
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
-                    manager_ptr,
+                    unsafe { &mut *manager_ptr },
                     unsafe { &*scope },
                     pkg_name_slice,
                     ManifestLoad::LoadFromMemoryFallbackToDisk,
@@ -215,10 +222,11 @@ pub fn populate_manifest_cache(
                     let needs_extended_manifest =
                         unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
+                    // SAFETY: see disjoint-field note on the `.All` arm above.
                     let scope: *const crate::npm::registry::Scope =
                         unsafe { &*manager_ptr }.scope_for_package_name(package_name);
                     let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
-                        manager_ptr,
+                        unsafe { &mut *manager_ptr },
                         unsafe { &*scope },
                         package_name,
                         ManifestLoad::LoadFromMemoryFallbackToDisk,

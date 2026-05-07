@@ -18,7 +18,7 @@ use crate::versioned_url::VersionedURLType;
 use crate::repository::Repository;
 use crate::lockfile::{self, Lockfile, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Format as LockfileFormat, Migrated, PackageListEntry};
 use crate::lockfile_real::package::{PackageField, PackageListExt as _};
-use crate::lockfile_real::package::workspace_map::{WorkspaceMap, Entry as WorkspaceEntry};
+use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::external_slice::ExternalSlice;
 use crate::yarn;
 use crate::pnpm;
@@ -537,7 +537,7 @@ pub fn migrate_npm_lockfile<'a>(
                                 continue;
                             }
                             let resolved_str = resolved.as_string(&arena).unwrap();
-                            if let Some(wksp_entry) = workspace_map_get(wksp, resolved_str) {
+                            if let Some(wksp_entry) = wksp.get(resolved_str) {
                                 let pkg_name = package_name_from_path(pkg_path);
                                 if !strings::eql_long(&wksp_entry.name, pkg_name, true) {
                                     let pkg_name_hash = string_hash(pkg_name);
@@ -1026,19 +1026,16 @@ pub fn migrate_npm_lockfile<'a>(
                                 DepKey::PeerDependencies => Behavior::PEER,
                             };
 
+                            // PORT NOTE: capture tag before moving `version` into the buffer
+                            // (Zig copies the struct by value; Rust moves it).
+                            let version_tag = version.tag;
+
                             // SAFETY: cursor < num_deps; capacity reserved
                             unsafe {
                                 core::ptr::write(dependencies_base.add(deps_cursor), Dependency {
                                     name: dep_name,
                                     name_hash,
-                                    version: dependency::parse(
-                                        dep_name,
-                                        Some(name_hash),
-                                        sliced.slice,
-                                        &sliced,
-                                        None,
-                                        None,
-                                    ).unwrap_or_default(),
+                                    version,
                                     behavior,
                                 });
                                 core::ptr::write(resolutions_base.add(res_cursor), id);
@@ -1052,7 +1049,7 @@ pub fn migrate_npm_lockfile<'a>(
                             if unsafe { (*resolutions_col.add(id as usize)).tag } == resolution::Tag::Uninitialized {
                                 debug!("resolving '{}'", bstr::BStr::new(name_bytes));
 
-                                let mut res_version_tag = version.tag;
+                                let mut res_version_tag = version_tag;
                                 let mut res_version_git_owner = SemverString::default();
 
                                 let res = 'resolved: {
@@ -1092,7 +1089,7 @@ pub fn migrate_npm_lockfile<'a>(
                                             }
                                         }
 
-                                        if version.tag == DepTag::Npm {
+                                        if version_tag == DepTag::Npm {
                                             if let Some(resolved_url) = resolved_urls.get(&name_checking_buf[..buf_len as usize]) {
                                                 break 'dep_resolved &resolved_url[..];
                                             }
@@ -1373,23 +1370,12 @@ fn string_hash(s: &[u8]) -> u64 {
     Semver::semver_string::Builder::string_hash(s)
 }
 
-/// Helper: look up a workspace entry by path bytes (the underlying map key is
-/// `Box<[u8]>`; this avoids `&Box<[u8]>` borrow gymnastics at call sites).
-fn workspace_map_get<'a>(map: &'a WorkspaceMap, key: &[u8]) -> Option<&'a WorkspaceEntry> {
-    map.keys()
-        .iter()
-        .position(|k| k.as_ref() == key)
-        .map(|i| &map.values()[i])
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/migration.zig (1137 lines)
 //   confidence: medium
-//   todos:      6
+//   todos:      3
 //   notes:      defer-at-loop-exit reshaped to finalize_pkg! macro + index cursors;
 //               MultiArrayList multi-column &mut and string_buf/this aliasing handled
-//               via raw ptrs (Phase-B borrowck audit pending); yarn migrator call
-//               blocked_on stub/real Lockfile unification (reconciler-6); PackageManager
-//               workspace_package_json_cache field stubbed locally.
+//               via raw ptrs (Phase-B borrowck audit pending).
 // ──────────────────────────────────────────────────────────────────────────

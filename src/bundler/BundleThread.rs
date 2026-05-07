@@ -144,7 +144,10 @@ pub trait CompletionStruct: Node + Send + 'static {
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
-        thread_pool: &'static bun_threading::ThreadPool,
+        // Raw `*mut` (not `&'static`) because `BundleV2::init` ultimately
+        // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
+        // hands out `&'static`; materializing `&mut` from that would be UB.
+        thread_pool: *mut bun_threading::ThreadPool,
     ) -> Result<(), bun_core::Error>;
 }
 

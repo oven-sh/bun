@@ -1513,12 +1513,18 @@ impl<'a> PackageInstaller<'a> {
             // into cache, then install into node_modules
             if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
                 if installer.patched_package_missing_from_cache(self.manager, package_id) {
-                    let task = PatchTask::new_apply_patch_hash(
+                    // PORT NOTE: reshaped for borrowck — `new_apply_patch_hash` ties the
+                    // returned task's lifetime to `&mut PackageManager`, which would keep
+                    // `self.manager` borrowed across `enqueue_patch_task`. Erase to a raw
+                    // ptr (`PatchTask` stores a BACKREF to the singleton `PackageManager`
+                    // that outlives the queue anyway).
+                    let task: *mut PatchTask<'static> = PatchTask::new_apply_patch_hash(
                         self.manager,
                         package_id,
                         patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
-                    );
+                    )
+                    .cast();
                     // SAFETY: `task` was just `Box::into_raw`'d in `new_apply_patch_hash`;
                     // we hold the only pointer until `enqueue_patch_task` takes ownership.
                     if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback } {

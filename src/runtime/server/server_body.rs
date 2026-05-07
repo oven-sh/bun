@@ -3624,18 +3624,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     assert!(!v.is_empty(), "Request was unexpectedly freed");
                     v
                 },
-                request_object: todo!("blocked_on: SavedRequest::request mutability"),
-                ctx: todo!("blocked_on: AnyRequestContext::as_<ServerRequestContext>"),
+                // SAFETY: SavedRequest.request was Box-allocated by
+                // `prepare_js_request_context_for` and lives until ctx deinit.
+                request_object: unsafe { &mut *data.request },
+                // SAFETY: SavedRequest.ctx was tagged as this server's
+                // `ServerRequestContext<SSL,DEBUG>` by `PreparedRequestFor::save`.
+                ctx: unsafe {
+                    &mut *data
+                        .ctx
+                        .get::<ServerRequestContext<SSL, DEBUG>>()
+                        .expect("SavedRequest ctx tag mismatch")
+                },
             },
         };
-        let ctx = prepared.ctx;
+        let ctx_ptr: *mut ServerRequestContext<SSL, DEBUG> = prepared.ctx;
+        let request_object_ptr: *mut Request = prepared.request_object;
+        let js_request = prepared.js_request;
 
         debug_assert!(!callback.is_empty());
         // PORT NOTE: Zig used `[1 + extra_args.len]jsc.JSValue` (comptime). Stable
         // Rust forbids `ARG_COUNT + 1` in const generics; use a small Vec — the
         // conservative GC scan covers the heap allocation as well as the stack.
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
-        args.push(prepared.js_request);
+        args.push(js_request);
         args.extend_from_slice(&extra_args);
         // SAFETY: `prepared` borrows into `*self` (request/ctx allocations) but the
         // fields touched below (`global_this`, `js_value`) are disjoint. Reborrow
@@ -3651,13 +3662,41 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let _detach_guard = scopeguard::guard((), |_| {
             if is_stack {
                 // uWS request will not live longer than this function
-                prepared.request_object.request_context.detach_request();
+                // SAFETY: see request_object_ptr above.
+                unsafe { (*request_object_ptr).request_context.detach_request() };
             }
         });
-        let _ = (ctx, response_value, is_stack, req);
+
+        // SAFETY: ctx_ptr/self_ptr are live for the request's duration; the
+        // borrows held by `prepared` were dropped above.
+        let ctx = unsafe { &mut *ctx_ptr };
+        let original_state = mem::take(RequestCtxOps::defer_deinit_ptr(ctx));
+        let mut should_deinit_context = false;
+        *RequestCtxOps::defer_deinit_ptr(ctx) = Some(&mut should_deinit_context);
+        RequestCtxOps::on_response(ctx, unsafe { &*self_ptr }, js_request, response_value);
+        *RequestCtxOps::defer_deinit_ptr(ctx) = original_state;
+
         // Reference in the stack here in case it is not for whatever reason
-        prepared.js_request.ensure_still_alive();
-        todo!("blocked_on: server::ServerLike impl for NewServer<SSL,DEBUG> (RequestContext::on_response/deinit)")
+        js_request.ensure_still_alive();
+
+        if should_deinit_context {
+            RequestCtxOps::deinit(ctx);
+            return;
+        }
+
+        if RequestCtxOps::should_render_missing(ctx) {
+            RequestCtxOps::render_missing(ctx);
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be copied
+        // since the provided uws.Request will be re-used for future requests (stack allocated).
+        match req {
+            SavedRequestUnion::Stack(r) => {
+                RequestCtxOps::to_async(ctx, r, unsafe { &mut *request_object_ptr });
+            }
+            SavedRequestUnion::Saved(_) => {} // info already copied
+        }
     }
 
     pub fn prepare_js_request_context(

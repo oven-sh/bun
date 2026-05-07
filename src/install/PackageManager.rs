@@ -761,6 +761,30 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
+    /// Zig: `pm.lockfile.loadFromCwd(pm, allocator, log, attempt_loading_from_other_lockfile)`.
+    ///
+    /// PORT NOTE: reshaped for borrowck — the Zig call passes `pm` as a separate
+    /// argument while the receiver borrows `pm.lockfile`, which is a
+    /// self-referential split borrow in Rust. Encapsulated here so callers stay
+    /// in safe code: the returned `LoadResult` mutably borrows `self` for its
+    /// lifetime, after which `self.lockfile` holds the loaded data.
+    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
+        &mut self,
+    ) -> lockfile::LoadResult<'_> {
+        let pm: *mut PackageManager = self;
+        // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
+        // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
+        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
+        // `manager.options`/`manager.log` only and never re-projects
+        // `manager.lockfile`. Both raw pointers below are derived from `self`,
+        // so the caller's borrow stays on the Stacked-Borrows stack.
+        unsafe {
+            let lf: *mut Lockfile = &mut *(*pm).lockfile;
+            let log: *mut logger::Log = (*pm).log;
+            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+        }
+    }
+
     pub fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `logger::Log` allocation (borrowed from

@@ -6714,17 +6714,13 @@ pub fn allocator_has_pointer(allocator: &bun_alloc::StdAllocator) -> bool {
     core::ptr::eq(allocator.vtable, &EXTERNAL_FREE_VTABLE)
 }
 
-pub struct BuildResult {
-    pub output_files: Vec<options::OutputFile>,
-    pub metafile: Option<Box<[u8]>>,
-    pub metafile_markdown: Option<Box<[u8]>>,
-}
-
-pub enum BundleV2Result {
-    Pending,
-    Err(Error),
-    Value(BuildResult),
-}
+// LAYERING: `BuildResult` / `BundleV2Result` are defined once in
+// `BundleThread.rs` (the trait that consumes them lives there). The previous
+// duplicate here meant `CompletionStruct::set_result` and `BundleV2::
+// run_from_js_in_new_thread` named two distinct types with identical fields.
+// Re-export the canonical defs so `bundle_v2::` and `BundleThread::` paths
+// resolve to the same nominal type.
+pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
 // re-exports
 pub use crate::HTMLScanner::HTMLScanner;

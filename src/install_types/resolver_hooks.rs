@@ -1237,10 +1237,11 @@ pub struct TaskCallbackContext {
 /// loop when a network task completes. The resolver only stores and forwards
 /// it; the fields are `Option` so `Default` is all-None (Zig: `.{ }`).
 ///
-/// Both callback signatures are erased to `*mut c_void` for the
-/// `*PackageManager` / `Dependency` parameters because those concrete types
-/// live in `bun_install` (a higher tier). `bun_install::PackageManager` casts
-/// at the call site (see `PackageManager::wake` / `report_dependency_error`).
+/// `handler`'s second parameter (`*PackageManager`) is erased to
+/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
+/// tier); `bun_install::PackageManager::wake` casts at the call site.
+/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
+/// lives in this crate — so callers pass the borrow directly.
 #[derive(Default, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
@@ -1257,8 +1258,11 @@ impl WakeHandler {
         self.handler.unwrap()
     }
 
+    /// Zig: `getonDependencyError` (sic — the missing underscore is a Zig
+    /// typo; the port uses idiomatic snake_case so the cross-crate caller
+    /// `bun_install::PackageManager::fail_root_resolution` links).
     #[inline]
-    pub fn geton_dependency_error(
+    pub fn get_on_dependency_error(
         &self,
     ) -> fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
         // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is

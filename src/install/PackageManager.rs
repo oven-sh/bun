@@ -874,12 +874,9 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
-            // `WakeHandler.on_dependency_error`'s second arg is erased to
-            // `*const c_void` (`bun_install_types` cannot name `Dependency`);
-            // pass the borrow as an opaque pointer.
             (self.on_wake.get_on_dependency_error())(
                 ctx.as_ptr(),
-                dependency as *const Dependency as *const c_void,
+                dependency,
                 dependency_id,
                 err,
             );

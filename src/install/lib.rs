@@ -296,7 +296,9 @@ pub mod package_manager {
     #[allow(non_snake_case)]
     pub mod Options {
         pub use crate::package_manager_real::package_manager_options::*;
-        pub use crate::package_manager_real::package_manager_directories::open_global_dir;
+        // `open_global_dir` lives in PackageManagerOptions.rs (`options::`
+        // namespace in Zig); re-export so `Options::open_global_dir` resolves.
+        pub use crate::package_manager_real::package_manager_options::open_global_dir;
     }
 
     /// Re-export the file-backed workspace package.json cache.
@@ -356,7 +358,7 @@ pub(crate) mod install {
 // file-backed module to crate level with an absolute-ish path and re-export
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
 #[path = "windows-shim/BinLinkingShim.rs"]
-mod _bin_linking_shim;
+pub mod _bin_linking_shim;
 #[cfg(windows)]
 #[path = "windows-shim/bun_shim_impl.rs"]
 mod _bun_shim_impl;
@@ -422,7 +424,10 @@ pub use tarball_stream::TarballStream;
 pub use _folder_resolver::FolderResolution;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use package_install::PackageInstall;
-pub use package_install::FileCopier;
+// `FileCopier` was hoisted out of `PackageInstall.rs` into
+// `isolated_install/FileCopier.rs` (shared by both linkers); re-export from
+// the new home so `bun_install::FileCopier` keeps resolving.
+pub use isolated_install::FileCopier;
 pub use isolated_install::Store;
 pub use patch_install::PatchTask;
 pub use package_manager_real::security_scanner::SecurityScanSubprocess;
@@ -718,10 +723,7 @@ impl RunCommand {
                 // Zig: `std.fs.deleteTreeAbsolute(BUN_NODE_DIR) catch {}` —
                 // debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
-                let _ = bun_sys::rmdir_recursive(
-                    bun_sys::Fd::cwd(),
-                    Self::BUN_NODE_DIR.as_bytes(),
-                );
+                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
             }
 
             const NODE_LINK: &ZStr = {

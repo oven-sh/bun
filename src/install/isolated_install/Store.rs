@@ -393,12 +393,9 @@ pub mod entry {
             let pkg_name = pkg_names[pkg_id as usize];
             let pkg_res = &pkg_resolutions[pkg_id as usize];
 
-            // TODO(port): Resolution is a `struct { tag, value }` in Zig (not union(enum));
-            // assumed `tag: ResolutionTag` + `value` union with `.folder` arm.
             match pkg_res.tag {
                 crate::resolution::Tag::Root => {
                     if pkg_name.is_empty() {
-                        // TODO(port): bun.fs.FileSystem.instance.top_level_dir global accessor
                         write!(
                             f,
                             "{}",
@@ -411,11 +408,14 @@ pub mod entry {
                     }
                 }
                 crate::resolution::Tag::Folder => {
+                    // SAFETY: tag was matched as Folder; reads the union field
+                    // corresponding to that tag.
+                    let folder = unsafe { pkg_res.value.folder };
                     write!(
                         f,
                         "{}@file+{}",
                         pkg_name.fmt_store_path(string_buf),
-                        pkg_res.value.folder.fmt_store_path(string_buf),
+                        folder.fmt_store_path(string_buf),
                     )?;
                 }
                 _ => {

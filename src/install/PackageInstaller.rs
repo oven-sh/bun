@@ -1339,8 +1339,8 @@ impl<'a> PackageInstaller<'a> {
                 let directory = package_manager::global_link_dir(self.manager);
 
                 // SAFETY: tag == Symlink checked by match arm.
-                let folder = unsafe { resolution.value.symlink }
-                    .slice(string_buf!());
+                let folder_str = unsafe { resolution.value.symlink };
+                let folder = folder_str.slice(string_buf!());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");

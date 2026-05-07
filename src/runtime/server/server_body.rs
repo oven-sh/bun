@@ -3783,31 +3783,66 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // TODO(port): pool selection — Ctx::IS_H3 ? h3_request_pool_allocator : request_pool_allocator
         // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
         // const-bool H3 parameter only affects associated consts/types, not layout, so
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
-        let ctx: &mut Ctx = unsafe {
-            let raw: *mut Ctx = if Ctx::IS_H3 {
+        let ctx_slot: *mut Ctx = unsafe {
+            if Ctx::IS_H3 {
                 bun_core::handle_oom((*self.h3_request_pool_allocator).try_get()).cast()
             } else {
                 bun_core::handle_oom((*self.request_pool_allocator).try_get()).cast()
-            };
-            &mut *raw
+            }
         }; // bun.handleOom — aborts on OOM
-        // TODO(port): ctx.create(self, req, resp, should_deinit_context, method) needs
-        // `ThisServer: ServerLike` bound — see handle_request_for.
-        let _ = ctx;
+        let self_ptr: *const Self = self;
+        Ctx::create_in(
+            ctx_slot,
+            self_ptr,
+            req,
+            resp,
+            should_deinit_context.map(|r| r as *mut bool),
+            method,
+        );
+        // SAFETY: ctx_slot was just initialized by create_in.
+        let ctx = unsafe { &mut *ctx_slot };
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
         unsafe { vm_report_extra_memory(self.vm.jsc_vm, mem::size_of::<Ctx>()) };
-        let _ = (should_deinit_context, method);
-        todo!("blocked_on: VirtualMachine::init_request_body_value + RequestContext field access via RequestCtx trait");
-        #[allow(unreachable_code)]
-        let body: *mut c_void = core::ptr::null_mut();
-        #[allow(unreachable_code)]
-        let signal: *mut AbortSignal = core::ptr::null_mut();
-        #[allow(unreachable_code)]
-        let request_object: &mut Request = todo!();
+
+        // `vm.initRequestBodyValue(.{ .Null = {} })` — type-erased through the
+        // RuntimeHooks vtable. The returned ptr is the `.value` field of a
+        // `Body::Value::HiveRef` slot.
+        let mut body_init = BodyValue::Null;
+        let body_ptr = self
+            .vm_mut()
+            .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
+            as *mut BodyValue;
+        ctx.set_request_body(NonNull::new(body_ptr));
+
+        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        ctx.set_signal(signal);
+        // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
+        unsafe { (*signal).pending_activity_ref() };
+
+        // SAFETY: signal is a live AbortSignal; ref_() bumps for Request's copy.
+        let _signal_for_req = unsafe { (*signal).ref_() };
+        // TODO(port): Request.body field is `Box<BodyValue>` but the body is
+        // hive-pooled (intrusive ref shared with ctx.request_body). Until that
+        // field migrates to `*mut BodyValue`, allocate a fresh Null body for
+        // the Request — the streaming body lives on `ctx.request_body`.
+        let request_object_box = Request::new(Request::init(
+            ctx.ctx_method(),
+            AnyRequestContext::init(ctx as *const Ctx),
+            SSL,
+            // TODO(port): Request::init takes `Option<Arc<AbortSignal>>` but
+            // signal is a raw +1 C++ ref. Pass None until the field type
+            // unifies on `*mut AbortSignal` (matches Zig `signal.ref()`).
+            None,
+            Box::new(BodyValue::Null),
+        ));
+        let request_object: &mut Request =
+            // SAFETY: leak so the ctx (which outlives this stack frame) can
+            // hold the borrow; Request is freed via ctx.deinit's request_weakref.
+            unsafe { &mut *Box::into_raw(request_object_box) };
+        ctx.set_request_weakref(request_object);
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
@@ -3833,27 +3868,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 request_object.url = BunString::clone_utf8(path);
             }
-            // TODO(port): ctx.req = None; — RequestCtx trait lacks field accessor
+            ctx.clear_req();
         }
 
         if DEBUG {
-            // TODO(port): RequestCtx trait exposes only IS_H3; field/method
-            // access on the generic `ctx`/`req` requires the trait to surface
-            // `flags`/`header()` etc. Same gap exists in the H1 path above —
-            // both halves un-gate together once RequestCtx grows accessors.
-            let _ = (&mut *ctx, &mut *req);
-            todo!("blocked_on: server::RequestCtx field accessors (flags/header)");
+            ctx.set_is_web_browser_navigation('brk: {
+                if let Some(fetch_dest) = ReqLike::header(req, b"sec-fetch-dest") {
+                    if fetch_dest == b"document" {
+                        break 'brk true;
+                    }
+                }
+                false
+            });
         }
 
         if let Some(req_len) = request_body_length {
+            ctx.set_request_body_content_len(req_len);
+            let is_te = ReqLike::header(req, b"transfer-encoding").is_some();
+            ctx.set_is_transfer_encoding(is_te);
             // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
             // Transfer-Encoding is forbidden; the body is terminated by
             // the QUIC stream FIN, so always arm onData for body methods.
-            let _ = req_len;
-            // we defer pre-allocating the body until we receive the first chunk
-            // that way if the client is lying about how big the body is or the client aborts
-            // we don't waste memory
-            todo!("blocked_on: server::RequestCtx field accessors (request_body/flags/on_data)");
+            if req_len > 0 || is_te || Ctx::IS_H3 {
+                // we defer pre-allocating the body until we receive the first chunk
+                // that way if the client is lying about how big the body is or the client aborts
+                // we don't waste memory
+                if let Some(body) = ctx.request_body_mut() {
+                    *body = BodyValue::Locked(crate::webcore::body::PendingValue {
+                        task: ctx_slot as *mut c_void,
+                        global: self.global_this,
+                        on_start_buffering: Some(Ctx::on_start_buffering_callback),
+                        on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
+                        on_readable_stream_available: Some(Ctx::on_request_body_readable_stream_available),
+                        ..Default::default()
+                    });
+                }
+                ctx.set_is_waiting_for_request_body(true);
+                ctx.arm_on_data(resp);
+            }
         }
 
         Some(PreparedRequestFor {

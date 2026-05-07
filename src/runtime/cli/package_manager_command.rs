@@ -55,9 +55,9 @@ impl<'a> ByName<'a> {
         )
     }
 
-    // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust slice::sort_by requires a
-    // total order (since 1.81 driftsort panics on inconsistent comparators). Use this 3-way
-    // cmp at sort callsites instead of mapping is_less_than → {Less, Greater}.
+    // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust
+    // `sort_unstable_by` requires a total `Ordering`. Use this 3-way cmp at
+    // sort callsites instead of mapping `is_less_than` → {Less, Greater}.
     pub fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
@@ -906,8 +906,12 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] 
 //   source:     src/cli/package_manager_command.zig (618 lines)
 //   confidence: medium
 //   notes:      `pm.lockfile.loadFromCwd(pm, ..)` is a self-referential split
-//               borrow in Rust; routed through raw `*mut PackageManager` with
-//               disjoint-heap-allocation SAFETY justification.
+//               borrow in Rust; hoisted into `bun_install` as
+//               `PackageManager::load_lockfile_from_cwd` so callers stay in
+//               safe code. After `handle_load_lockfile_errors` the result is
+//               dropped and `pm.lockfile` is used directly (the Zig
+//               `load_lockfile.ok.lockfile` and `pm.lockfile` are the same
+//               pointer).
 //               `Command::Context` (= `&mut ContextData`) is reborrowed at
 //               each sub-command call site so `ctx` remains usable across
 //               branches; sub-commands taking `&Command::Context` receive

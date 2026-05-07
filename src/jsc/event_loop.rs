@@ -236,14 +236,13 @@ impl From<JsTerminated> for bun_core::Error {
 // `(tag, ptr)` and the hook. The Phase-A draft of the match lives in
 // `src/jsc/Task.rs` (still gated — every arm names a `bun_runtime` type).
 // ──────────────────────────────────────────────────────────────────────────
-// PORT NOTE: `EventLoop` is a value field of `VirtualMachine`, so handing the
-// dispatcher both `&mut EventLoop` and `&mut VirtualMachine` would alias
-// (PORTING.md §Forbidden). The hook receives a single `*mut VirtualMachine`
-// and reborrows `event_loop` from it on the high-tier side.
+// The hook receives the specific `EventLoop` to drain (which may be the
+// isolated `SpawnSyncEventLoop`, not `vm.event_loop()`) plus the VM.
 unsafe extern "Rust" {
     /// `bun_runtime::dispatch::tick_queue_with_count` — the real per-task
     /// match loop (Zig `tickQueueWithCount`). Link-time resolved.
     fn __bun_tick_queue_with_count(
+        el: *mut EventLoop,
         vm: *mut VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), JsTerminated>;
@@ -257,10 +256,10 @@ unsafe extern "Rust" {
 }
 
 #[inline]
-fn tick_queue_with_count(_el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
-    // SAFETY: `vm` is the live per-thread VM (caller contract); the high-tier
-    // body reborrows `event_loop` from it.
-    unsafe { __bun_tick_queue_with_count(vm, counter) }
+fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
+    // SAFETY: `el` is the queue to drain (may be the isolated spawnSync loop);
+    // `vm` is the live per-thread VM (caller contract).
+    unsafe { __bun_tick_queue_with_count(el, vm, counter) }
 }
 
 /// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit`].

@@ -1110,19 +1110,19 @@ pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTi
     }
 }
 
-/// `__bun_tick_queue_with_count` body — adapt the upstream `fn(*mut VM,
-/// &mut u32)` shape to [`tick_queue_with_count`]. Declared `extern "Rust"` in
-/// `bun_jsc::event_loop`; recovers the per-thread `EventLoop` from `vm` (Zig:
-/// `vm.eventLoop()`).
+/// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. `el` is the queue to drain (Zig
+/// `tickQueueWithCount(this, ...)`); for `SpawnSyncEventLoop.tickTasksOnly`
+/// this is the isolated loop, **not** `vm.event_loop()`.
 #[unsafe(no_mangle)]
 pub fn __bun_tick_queue_with_count(
+    el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
-    // SAFETY: `vm` is the live per-thread VM; `event_loop()` returns the owned
-    // `EventLoop` field. No other `&mut` to either is held across this call
-    // (the only caller is `EventLoop::tick`).
-    let (el, vm_ref) = unsafe { (&mut *(*vm).event_loop(), &mut *vm) };
+    // SAFETY: `el`/`vm` are live per caller contract; no other `&mut` to either
+    // is held across this call.
+    let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)
 }
 

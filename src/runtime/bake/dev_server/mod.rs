@@ -1098,7 +1098,11 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             // SAFETY: `bv2` borrows the three `Transpiler`s stored inline in
             // `DevServer` (stable heap address); the `'static` is a stand-in for
             // the DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
-            dev.finalize_bundle(unsafe { &mut *bv2.cast() }, result as *const ())
+            super::dev_server_body::finalize_bundle(
+                dev,
+                unsafe { &mut *bv2.cast() },
+                unsafe { &mut *(result as *mut bun_bundler::bundle_v2::DevServerOutput) },
+            )
         },
         handle_parse_task_failure: |p, err, graph, abs_path, log, bv2| {
             // SAFETY: p is a live *mut DevServer; log/bv2 are valid for the call.
@@ -1133,7 +1137,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             let dev = unsafe { &mut *p.cast::<DevServer>() };
             dev.current_bundle
                 .as_mut()
-                .map(|c| c.start_data)
+                .map(|c| &mut c.start_data as *mut _ as *mut ())
                 .unwrap_or(core::ptr::null_mut())
         },
         register_barrel_with_deferrals: |p, path| {

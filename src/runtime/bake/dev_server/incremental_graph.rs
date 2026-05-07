@@ -552,6 +552,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
+        // Dump to filesystem if enabled (Zig: `bun.FeatureFlags.bake_debugging_features`).
+        #[cfg(feature = "bake_debugging_features")]
+        if let ReceiveChunkContent::Js { code, .. } = &content {
+            // SAFETY: sibling-field access via `owner()`; `dump_dir` and
+            // `root` are disjoint from `self`.
+            if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_mut() } {
+                crate::bake::dev_server_body::dump_bundle_for_chunk(
+                    unsafe { &*dev }, dump_dir, SIDE, key, code, true, is_ssr_graph,
+                );
+            }
+        }
+
         let gop = self.bundled_files.get_or_put(key)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
         let found_existing = gop.found_existing;

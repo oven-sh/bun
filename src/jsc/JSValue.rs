@@ -133,6 +133,31 @@ impl JSValue {
         }
     }
 
+    /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
+    /// as a JS number). Port of `JSValue.then2` (JSValue.zig:1487). The Zig
+    /// version wraps in a `TopExceptionScope` and surfaces only termination;
+    /// every current call site does `catch {}`, so this returns `()`.
+    pub fn then2(
+        self,
+        global: &JSGlobalObject,
+        ctx: JSValue,
+        resolve: host_fn::JSHostFn,
+        reject: host_fn::JSHostFn,
+    ) {
+        unsafe extern "C" {
+            fn JSC__JSValue___then(
+                this: JSValue,
+                global: *mut JSGlobalObject,
+                ctx: JSValue,
+                resolve: host_fn::JSHostFn,
+                reject: host_fn::JSHostFn,
+            );
+        }
+        // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
+        // is live, and `resolve`/`reject` are valid C-ABI host fns.
+        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) }
+    }
+
     /// `@enumFromInt(@bitCast(@intFromPtr(ptr)))`.
     #[inline]
     pub fn cast<T>(ptr: *const T) -> JSValue { JSValue(ptr as usize, PhantomData) }

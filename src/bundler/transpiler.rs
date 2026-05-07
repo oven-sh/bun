@@ -2771,30 +2771,126 @@ impl<'a> Transpiler<'a> {
                 bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
             }
             options::Loader::Css => {
-                // TODO(port): CSS --no-bundle path — `bun_css` is feature-gated
-                // (`css = ["dep:bun_css"]`) and not enabled in the default
-                // build; the CSS minify+print pipeline is ported in
-                // `LinkerContext` for the bundling path. For the legacy
-                // single-file `--no-bundle` mode, fall through to the file
-                // copy behaviour until the css feature is wired here.
-                let hashed_name = self
-                    .linker
-                    .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
-                let mut pathname =
-                    Vec::with_capacity(hashed_name.len() + file_path_ext.len());
-                pathname.extend_from_slice(&hashed_name);
-                pathname.extend_from_slice(file_path_ext);
+                #[cfg(not(feature = "css"))]
+                {
+                    let _ = (&file_path, file_path_ext);
+                    bun_core::Output::panic(format_args!(
+                        "CSS loader requires the `css` feature"
+                    ));
+                }
+                #[cfg(feature = "css")]
+                {
+                    use crate::ungate_support::bun_css;
 
-                output_file.value =
-                    crate::output_file::Value::Copy(crate::output_file::FileOperation {
-                        pathname: pathname.into_boxed_slice(),
-                        dir: self
-                            .options
-                            .output_dir_handle
-                            .unwrap_or(bun_sys::Fd::INVALID),
-                        is_outdir: true,
-                        ..Default::default()
-                    });
+                    // SAFETY: `self.fs` is the process-lifetime singleton.
+                    let fs = unsafe { &mut *self.fs };
+                    let entry = match self.resolver.caches.fs.read_file_with_allocator(
+                        fs,
+                        file_path_text,
+                        resolve_result.dirname_fd,
+                        false,
+                        None,
+                    ) {
+                        Ok(e) => e,
+                        Err(err) => {
+                            // SAFETY: `self.log` is non-null after `init`.
+                            let _ = unsafe { &mut *self.log }.add_error_fmt(
+                                None,
+                                logger::Loc::EMPTY,
+                                format_args!(
+                                    "{} reading \"{}\"",
+                                    err.name(),
+                                    bstr::BStr::new(file_path.pretty),
+                                ),
+                            );
+                            return Ok(None);
+                        }
+                    };
+
+                    // SAFETY: `self.log` is non-null after `init`; the
+                    // `ParserOptions.logger` `NonNull<Log>` borrow is dropped
+                    // when `sheet`/`opts` go out of scope at the end of this
+                    // arm, before any other `&mut *self.log` deref above.
+                    let mut opts = bun_css::ParserOptions::default(None);
+                    opts.logger = Some(core::ptr::NonNull::new(self.log).unwrap());
+                    const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
+                    let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
+                        && strings::eql_comptime(
+                            &file_path_text[file_path_text.len() - CSS_MODULE_SUFFIX.len()..],
+                            CSS_MODULE_SUFFIX,
+                        );
+                    if enable_css_modules {
+                        opts.filename = bun_paths::basename(file_path_text);
+                        opts.css_modules = Some(bun_css::CssModuleConfig::default());
+                    }
+
+                    // SAFETY: `self.allocator` is the per-transpile arena;
+                    // the CSS AST it backs is dropped before this fn returns
+                    // (only `result.code: Vec<u8>` escapes, which is
+                    // global-heap). `'static` matches the crate-wide erasure
+                    // on `StyleSheet`/`ParserOptions` (see css_parser.rs
+                    // TODO(port): 'bump threading).
+                    let alloc: &'static Arena =
+                        unsafe { &*(self.allocator as *const Arena) };
+
+                    let (mut sheet, extra) = match bun_css::StyleSheet::parse(
+                        alloc,
+                        entry.contents(),
+                        opts,
+                        None,
+                        bun_css::SrcIndex::INVALID,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // SAFETY: `self.log` is non-null after `init`.
+                            let _ = unsafe { &mut *self.log }.add_error_fmt(
+                                None,
+                                logger::Loc::EMPTY,
+                                format_args!("{} parsing", e),
+                            );
+                            return Ok(None);
+                        }
+                    };
+                    if let Err(e) =
+                        sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
+                    {
+                        // SAFETY: `self.log` is non-null after `init`.
+                        bun_core::handle_oom(unsafe { &mut *self.log }.add_error_fmt(
+                            None,
+                            logger::Loc::EMPTY,
+                            format_args!("{} while minifying", e.kind),
+                        ));
+                        return Ok(None);
+                    }
+                    let symbols = bun_logger::symbol::Map::init_list(Default::default());
+                    let result = match sheet.to_css(
+                        alloc,
+                        bun_css::PrinterOptions {
+                            targets: bun_css::Targets::for_bundler_target(
+                                self.options.target,
+                            ),
+                            minify: self.options.minify_whitespace,
+                            ..bun_css::PrinterOptions::default()
+                        },
+                        None,
+                        None,
+                        &symbols,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // SAFETY: `self.log` is non-null after `init`.
+                            bun_core::handle_oom(unsafe { &mut *self.log }.add_error_fmt(
+                                None,
+                                logger::Loc::EMPTY,
+                                format_args!("{} while printing", e),
+                            ));
+                            return Ok(None);
+                        }
+                    };
+                    output_file.value = crate::output_file::Value::Buffer {
+                        bytes: result.code.into_boxed_slice(),
+                    };
+                }
             }
             options::Loader::Html
             | options::Loader::Bunsh

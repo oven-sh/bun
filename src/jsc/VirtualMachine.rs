@@ -2565,10 +2565,9 @@ impl VirtualMachine {
                 {
                     Some(limit) => {
                         // SAFETY: process-global written once at startup.
-                        unsafe {
-                            SYNTHETIC_ALLOCATION_LIMIT = limit;
-                            STRING_ALLOCATION_LIMIT = limit;
-                        }
+                        unsafe { SYNTHETIC_ALLOCATION_LIMIT = limit };
+                        STRING_ALLOCATION_LIMIT
+                            .store(limit, core::sync::atomic::Ordering::Relaxed);
                     }
                     None => bun_core::Output::panic(format_args!(
                         "BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer"

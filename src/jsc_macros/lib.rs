@@ -158,15 +158,11 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             // `this_value: JSValue` parameter (Zig: `this_value: jsc.JSValue`).
             // The real exported wrapper lives in `generated_classes.rs`; this
             // placeholder shim only needs to type-check, so detect the 4-arg
-            // shape (receiver + global + frame + this_value) and forward
-            // `callframe.this()` accordingly.
-            let typed_args = func
-                .sig
-                .inputs
-                .iter()
-                .filter(|a| matches!(a, FnArg::Typed(_)))
-                .count();
-            let call = if typed_args >= 3 {
+            // shape (self/this + global + frame + this_value) and forward
+            // `callframe.this()` accordingly. Count total inputs — the first
+            // may be either a `&mut self` receiver or an explicit
+            // `this: &mut Self` typed pattern.
+            let call = if func.sig.inputs.len() >= 4 {
                 quote! { Self::#fn_name(__t, __g, __f, __f.this()) }
             } else {
                 quote! { Self::#fn_name(__t, __g, __f) }

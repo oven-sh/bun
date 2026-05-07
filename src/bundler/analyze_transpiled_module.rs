@@ -166,6 +166,49 @@ pub enum Owner {
 }
 
 impl ModuleInfoDeserialized {
+    // ── safe accessors ───────────────────────────────────────────────────
+    // All `*const [T]` fields are non-null self-referential views into
+    // `self.owner` (see struct docs). They are initialized in every
+    // constructor (`create` / `into_deserialized`), the backing allocation is
+    // immutable and outlives `&self`, and no `&mut` alias to that storage is
+    // ever handed out — so materialising `&[T]` for `'_ self` is sound.
+    //
+    // Alignment caveat: when `owner == AllocatedSlice`, the non-`u8` element
+    // types were `align(1)` in the Zig serialization. Supported targets
+    // (x86_64 / aarch64) tolerate the unaligned loads slice indexing emits;
+    // see the TODO(port) on the struct for the strict-alignment follow-up.
+
+    #[inline]
+    pub fn strings_buf(&self) -> &[u8] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.strings_buf }
+    }
+    #[inline]
+    pub fn strings_lens(&self) -> &[u32] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.strings_lens }
+    }
+    #[inline]
+    pub fn requested_modules_keys(&self) -> &[StringID] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.requested_modules_keys }
+    }
+    #[inline]
+    pub fn requested_modules_values(&self) -> &[FetchParameters] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.requested_modules_values }
+    }
+    #[inline]
+    pub fn buffer(&self) -> &[StringID] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.buffer }
+    }
+    #[inline]
+    pub fn record_kinds(&self) -> &[RecordKind] {
+        // SAFETY: see block comment above.
+        unsafe { &*self.record_kinds }
+    }
+
     /// Consumes the heap allocation containing `self` (and, for
     /// `Owner::ModuleInfo`, the enclosing `ModuleInfo`). Not `Drop` because it
     /// deallocates the object itself and is invoked across FFI on a raw `*mut`.
@@ -287,32 +330,28 @@ impl ModuleInfoDeserialized {
 
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: all raw slice fields are valid for the lifetime of `self`
-        // (they borrow from `self.owner` or the parent `ModuleInfo`).
-        unsafe {
-            let record_kinds = &*self.record_kinds;
-            writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
-            writer.write_all(slice_as_bytes(record_kinds))?;
-            let pad = (4 - (record_kinds.len() % 4)) % 4;
-            writer.write_all(&[0u8; 4][..pad])?; // alignment padding
+        let record_kinds = self.record_kinds();
+        writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
+        writer.write_all(slice_as_bytes(record_kinds))?;
+        let pad = (4 - (record_kinds.len() % 4)) % 4;
+        writer.write_all(&[0u8; 4][..pad])?; // alignment padding
 
-            let buffer = &*self.buffer;
-            writer.write_all(&(buffer.len() as u32).to_le_bytes())?;
-            writer.write_all(slice_as_bytes(buffer))?;
+        let buffer = self.buffer();
+        writer.write_all(&(buffer.len() as u32).to_le_bytes())?;
+        writer.write_all(slice_as_bytes(buffer))?;
 
-            let rm_keys = &*self.requested_modules_keys;
-            writer.write_all(&(rm_keys.len() as u32).to_le_bytes())?;
-            writer.write_all(slice_as_bytes(rm_keys))?;
-            writer.write_all(slice_as_bytes(&*self.requested_modules_values))?;
+        let rm_keys = self.requested_modules_keys();
+        writer.write_all(&(rm_keys.len() as u32).to_le_bytes())?;
+        writer.write_all(slice_as_bytes(rm_keys))?;
+        writer.write_all(slice_as_bytes(self.requested_modules_values()))?;
 
-            writer.write_all(&[self.flags.bits()])?;
-            writer.write_all(&[0u8; 3])?; // alignment padding
+        writer.write_all(&[self.flags.bits()])?;
+        writer.write_all(&[0u8; 3])?; // alignment padding
 
-            let strings_lens = &*self.strings_lens;
-            writer.write_all(&(strings_lens.len() as u32).to_le_bytes())?;
-            writer.write_all(slice_as_bytes(strings_lens))?;
-            writer.write_all(&*self.strings_buf)?;
-        }
+        let strings_lens = self.strings_lens();
+        writer.write_all(&(strings_lens.len() as u32).to_le_bytes())?;
+        writer.write_all(slice_as_bytes(strings_lens))?;
+        writer.write_all(self.strings_buf())?;
         Ok(())
     }
 }

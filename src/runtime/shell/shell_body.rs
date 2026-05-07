@@ -362,8 +362,12 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
-        unsafe { self.mini.env.unwrap().as_ref() }
+        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the
+        // loop (see `MiniEventLoop::env_ptr` invariant). Caller must not hold the
+        // returned `&Loader` across a path that takes `&mut Loader` from the same
+        // allocation (e.g. `create_null_delimited_env_map`); current callers scope
+        // it to read-only env-var lookups.
+        unsafe { self.mini.env_ptr().unwrap().as_ref() }
     }
 
     #[inline]
@@ -443,11 +447,11 @@ impl<'a> GlobalMini<'a> {
         // Spec shell.zig GlobalMini.platformEventLoop → MiniVM.platformEventLoop:
         //   posix: `mini.loop`; windows: `mini.loop.uv_loop`.
         #[cfg(windows)]
-        // SAFETY: `loop_` is the live C-owned uws loop; uv_loop is its embedded libuv loop.
-        unsafe { return &*(*self.mini.loop_).uv_loop(); }
+        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; uv_loop is its embedded libuv loop.
+        unsafe { return &*(*self.mini.loop_ptr()).uv_loop(); }
         #[cfg(not(windows))]
-        // SAFETY: `loop_` is set in MiniEventLoop::init() and outlives 'a.
-        unsafe { &*self.mini.loop_ }
+        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
+        unsafe { &*self.mini.loop_ptr() }
     }
 }
 

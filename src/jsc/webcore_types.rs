@@ -164,6 +164,32 @@ impl Blob {
         unsafe { &*self.content_type }
     }
 
+    /// Safe accessor for `global_this`. `None` only for default-constructed
+    /// blobs (e.g. structured-clone payloads before the receiving thread
+    /// patches it in); every JS-reachable `Blob` has it set at construction.
+    #[inline]
+    pub fn global_this(&self) -> Option<&JSGlobalObject> {
+        // SAFETY: when non-null, `global_this` was stored from a live
+        // `&JSGlobalObject` whose VM outlives this `Blob` (the JS heap that
+        // owns the `Blob` is itself owned by that global).
+        unsafe { self.global_this.as_ref() }
+    }
+
+    /// Free a heap-owned `content_type` (if any) and reset to the empty
+    /// static slice. Centralizes the `Box::from_raw` so callers replacing
+    /// `content_type` don't each carry their own `unsafe` block.
+    #[inline]
+    pub fn free_content_type(&mut self) {
+        if self.content_type_allocated {
+            // SAFETY: `content_type_allocated` implies `content_type` was set
+            // via `Box::into_raw(_.into_boxed_slice())` and is solely owned
+            // by this `Blob`.
+            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
+            self.content_type = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
+            self.content_type_allocated = false;
+        }
+    }
+
     /// `Blob.initWithStore(store, globalThis)` (Blob.zig:3649). Accepts both
     /// `Box<Store>` (from `Store::new` / `Store::init*`) and `StoreRef`.
     pub fn init_with_store<S: Into<StoreRef>>(store: S, global_this: &JSGlobalObject) -> Blob {
@@ -379,13 +405,7 @@ impl Blob {
         self.name.deref();
         self.name = bun_string::String::dead();
 
-        if self.content_type_allocated {
-            // SAFETY: `content_type_allocated` implies `content_type` is a
-            // leaked `Box<[u8]>` (mimalloc).
-            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
-            self.content_type = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
-            self.content_type_allocated = false;
-        }
+        self.free_content_type();
 
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by

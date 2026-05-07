@@ -392,7 +392,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //   })(foo || (foo = {}));
             //
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if unsafe { &*p.current_scope }.members.contains_key(name_text) {
+            if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
@@ -404,7 +404,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg_ref)?;
+                VecExt::append(&mut p.current_scope_mut().generated, arg_ref)?;
             } else {
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, name_text)
@@ -661,7 +661,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //     foo[foo["bar"] = foo] = "bar";
             //   })(foo || (foo = {}));
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if unsafe { &*p.current_scope }.members.contains_key(name_text) {
+            if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
@@ -673,7 +673,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg_ref)?;
+                VecExt::append(&mut p.current_scope_mut().generated, arg_ref)?;
             } else {
                 arg_ref = p
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)

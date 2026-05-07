@@ -1222,6 +1222,19 @@ impl<T> IteratorResult<T> {
 }
 
 impl ArchiveIterator {
+    /// Shared reference to the underlying libarchive handle.
+    ///
+    /// SAFETY (invariant): `self.archive` is set to a non-null handle returned
+    /// by `archive_read_new()` in [`ArchiveIterator::init`] and is never
+    /// reassigned. It remains valid until [`ArchiveIterator::close`] consumes
+    /// `self` and calls `read_free()`. `Archive` contains an `UnsafeCell` so it
+    /// is `!Freeze`; libarchive mutating C-side state through `&Archive` is
+    /// sound. No FFI call here re-enters Rust to alias `self.archive`.
+    #[inline]
+    pub fn archive(&self) -> &Archive {
+        unsafe { &*self.archive }
+    }
+
     pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
         let archive = Archive::read_new();
         // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
@@ -1276,8 +1289,7 @@ impl ArchiveIterator {
     }
 
     pub fn next(&mut self) -> IteratorResult<Option<NextEntry>> {
-        // SAFETY: self.archive is valid for the lifetime of the iterator.
-        let a = unsafe { &*self.archive };
+        let a = self.archive();
         let mut entry: *mut ArchiveEntry = core::ptr::null_mut();
         loop {
             return match a.read_next_header(&mut entry) {
@@ -1301,8 +1313,7 @@ impl ArchiveIterator {
     // TODO(port): Zig `deinit` returns `Iterator.Result(void)`; cannot be `Drop`.
     // Per PORTING.md, explicit early release is exposed as `close(self)` taking ownership.
     pub fn close(self) -> IteratorResult<()> {
-        // SAFETY: self.archive is valid until read_free.
-        let a = unsafe { &*self.archive };
+        let a = self.archive();
         match a.read_close() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return IteratorResult::init_err(self.archive, b"failed to close archive read");

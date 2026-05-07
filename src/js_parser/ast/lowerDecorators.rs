@@ -161,9 +161,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     /// newSymbol + scope.generated.append in one call.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = self.new_symbol(kind, name).expect("unreachable");
-        // SAFETY: arena-owned Scope pointer valid for parser 'a; no aliasing &mut.
-        let scope = unsafe { &mut *self.current_scope };
-        VecExt::append(&mut scope.generated, ref_).expect("unreachable");
+        VecExt::append(&mut self.current_scope_mut().generated, ref_).expect("unreachable");
         ref_
     }
 

@@ -1479,26 +1479,38 @@ pub struct Writer {
     pub connection: *mut MySQLConnection,
 }
 
+impl Writer {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn write_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: `self.connection` is never null — `Writer` is only ever
+        // constructed by `MySQLConnection::writer(&mut self)` from a live
+        // `&mut MySQLConnection`, and the `NewWriter<Writer>` is consumed
+        // before that connection is dropped (it is never stored).
+        //
+        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
+        // an intermediate `&mut MySQLConnection`, which could alias the
+        // caller's own `&mut self` (see the PORT NOTE on `Reader` below).
+        // Callers never touch `write_buffer` through `&mut self` while a
+        // `Writer` is live, so no two `&mut OffsetByteList` coexist.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
+    }
+}
+
 impl WriterContext for Writer {
     fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        // SAFETY: self.connection points at a live MySQLConnection for the
-        // duration of the write call (NewWriter is constructed by
-        // `MySQLConnection::writer(&mut self)` and not stored).
-        let buffer = unsafe { &mut (*self.connection).write_buffer };
-        buffer.write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
+        self.write_buffer().write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
         Ok(())
     }
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyMySQLError> {
-        // SAFETY: see `write`.
-        let byte_list = unsafe { &mut (*self.connection).write_buffer.byte_list };
+        let byte_list = &mut self.write_buffer().byte_list;
         byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     fn offset(self) -> usize {
-        // SAFETY: see `write`.
-        unsafe { (*self.connection).write_buffer.len() as usize }
+        self.write_buffer().len() as usize
     }
 }
 
@@ -1511,33 +1523,50 @@ pub struct Reader {
 // and then threaded through `process_packets(&mut self, reader)` — i.e. the
 // raw `*mut` and a live `&mut self` coexist. Materializing a whole-struct
 // `&mut MySQLConnection` here would alias that `&mut self` (Stacked Borrows
-// UB). Instead each method below dereferences only the specific field(s) it
-// touches via `(*self.connection).field`, matching `Writer` above and Zig's
+// UB). Instead the accessors below project only the specific field(s) the
+// reader touches via `addr_of_mut!`, matching `Writer` above and Zig's
 // freely-aliasing `*MySQLConnection` semantics.
+impl Reader {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn read_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: `self.connection` points at a live `MySQLConnection` for the
+        // duration of the read call (NewReader is constructed by
+        // `MySQLConnection::buffered_reader(&mut self)` and never stored).
+        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing an
+        // intermediate `&mut MySQLConnection`, which would alias the caller's
+        // live `&mut self` in `process_packets`. `process_packets` never touches
+        // `read_buffer` through its own `&mut self` while a `Reader` is live, so
+        // no two `&mut OffsetByteList` coexist.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
+    }
+
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn last_message_start(&self) -> &mut u32 {
+        // SAFETY: same justification as `read_buffer()` — disjoint field
+        // projection from a non-null connection pointer that outlives the
+        // `Reader`; `process_packets` does not access `last_message_start`
+        // through `&mut self` while the reader is live.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
+    }
+}
+
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
-        // SAFETY: self.connection points at a live MySQLConnection for the
-        // duration of the read call (NewReader is constructed by
-        // `MySQLConnection::buffered_reader(&mut self)` and not stored).
-        unsafe { (*self.connection).last_message_start = (*self.connection).read_buffer.head };
+        *self.last_message_start() = self.read_buffer().head;
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        // SAFETY: see `mark_message_start`.
-        unsafe {
-            (*self.connection).read_buffer.head =
-                (*self.connection).last_message_start + (offset as u32);
-        }
+        self.read_buffer().head = *self.last_message_start() + (offset as u32);
     }
 
     fn peek(&self) -> &[u8] {
-        // SAFETY: see `mark_message_start`.
-        unsafe { (*self.connection).read_buffer.remaining() }
+        self.read_buffer().remaining()
     }
 
     fn skip(self, count: isize) {
-        // SAFETY: see `mark_message_start`. Borrow only `read_buffer`.
-        let rb = unsafe { &mut (*self.connection).read_buffer };
+        let rb = self.read_buffer();
         if count < 0 {
             let abs_count = count.unsigned_abs();
             if abs_count > rb.head as usize {
@@ -1558,13 +1587,11 @@ impl ReaderContext for Reader {
     }
 
     fn ensure_capacity(self, count: usize) -> bool {
-        // SAFETY: see `mark_message_start`.
-        unsafe { (*self.connection).read_buffer.remaining().len() >= count }
+        self.read_buffer().remaining().len() >= count
     }
 
     fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
-        // SAFETY: see `mark_message_start`.
-        let remaining = unsafe { (*self.connection).read_buffer.remaining() };
+        let remaining = self.read_buffer().remaining();
         if remaining.len() < count {
             return Err(AnyMySQLError::ShortRead);
         }
@@ -1576,8 +1603,7 @@ impl ReaderContext for Reader {
     }
 
     fn read_z(self) -> Result<Data, AnyMySQLError> {
-        // SAFETY: see `mark_message_start`.
-        let remaining = unsafe { (*self.connection).read_buffer.remaining() };
+        let remaining = self.read_buffer().remaining();
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
             let slice = &raw const remaining[0..zero as usize];
             self.skip(isize::try_from(zero + 1).expect("int cast"));

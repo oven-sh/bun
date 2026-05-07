@@ -502,6 +502,41 @@ where
         }
     }
 
+    /// Per-field raw read of the reloader's `pending_count`.
+    ///
+    /// `reloader` is a BACKREF: the `NewHotReloader` heap-allocates every
+    /// `Task` (via [`Self::enqueue`]) and is itself leaked for the process
+    /// lifetime in `enable_hot_module_reloading`, so it strictly outlives
+    /// every `Task` it spawns. The pointer is never null (set in
+    /// [`Self::init_empty`] / copied in [`Self::enqueue`]).
+    ///
+    /// We deliberately do **not** expose a whole-struct `&NewHotReloader`
+    /// accessor: [`Self::run`] executes on the JS event-loop thread while the
+    /// watcher thread may be inside `on_file_update(&mut self)` writing
+    /// non-`UnsafeCell` fields (`main.is_waiting_for_dir_change`, `tombstones`).
+    /// Materializing `&NewHotReloader` on the JS thread would assert those
+    /// bytes are frozen, which is a data race / Stacked-Borrows violation even
+    /// though this side never reads them. Instead, project to the single
+    /// `AtomicU32` field via `addr_of!` so no `&NewHotReloader` is formed.
+    #[inline]
+    fn pending_count(&self) -> &AtomicU32 {
+        // SAFETY: BACKREF — see doc comment above. `addr_of!` forms a place
+        // projection without an intermediate `&NewHotReloader`; `pending_count`
+        // is `AtomicU32` (interior-mutable) so a cross-thread `&` to it is sound.
+        unsafe { &*core::ptr::addr_of!((*self.reloader).pending_count) }
+    }
+
+    /// Per-field raw read of the reloader's `ctx` pointer. See
+    /// [`Self::pending_count`] for why no whole-struct `&NewHotReloader`
+    /// accessor is exposed.
+    #[inline]
+    fn ctx_ptr(&self) -> *mut Ctx {
+        // SAFETY: BACKREF — reloader outlives every Task; `addr_of!` avoids
+        // forming `&NewHotReloader`. `ctx` is set once at init and never
+        // mutated, so a racy raw read of the pointer value is fine.
+        unsafe { *core::ptr::addr_of!((*self.reloader).ctx) }
+    }
+
     pub fn append(&mut self, id: u32) {
         if self.count == 8 {
             self.enqueue();
@@ -534,11 +569,10 @@ where
         // Note that we set the count _before_ we reload, so that if we
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
-        // SAFETY: reloader outlives every Task it creates (BACKREF).
-        let reloader = unsafe { &mut *self.reloader };
-        while reloader.pending_count.swap(0, Ordering::Relaxed) > 0 {
+        while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
+            let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*reloader.ctx).reload(self) };
+            unsafe { (*ctx).reload(self) };
         }
     }
 
@@ -566,9 +600,7 @@ where
             unreachable!();
         }
 
-        // SAFETY: reloader outlives every Task it creates (BACKREF).
-        let reloader = unsafe { &mut *self.reloader };
-        reloader.pending_count.fetch_add(1, Ordering::Relaxed);
+        self.pending_count().fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: extern "C" fn with no preconditions.
         unsafe { BunDebugger__willHotReload() };
@@ -591,8 +623,17 @@ where
             });
             // TODO(port): `&that.concurrent_task` is an interior pointer into a
             // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
-            (*self.reloader)
-                .enqueue_task_concurrent(std::ptr::from_mut((*that).concurrent_task.assume_init_mut()));
+            //
+            // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
+            // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
+            // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
+            let ctx = self.ctx_ptr();
+            // SAFETY: ctx outlives reloader (BACKREF).
+            let event_loop = (*ctx).event_loop();
+            EventLoopType::enqueue_task_concurrent(
+                event_loop,
+                std::ptr::from_mut((*that).concurrent_task.assume_init_mut()),
+            );
         }
         self.count = 0;
     }

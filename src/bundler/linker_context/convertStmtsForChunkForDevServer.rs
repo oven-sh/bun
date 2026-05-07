@@ -59,8 +59,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         bun_alloc::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
-    // SAFETY: `parse_graph` backref valid for the link pass.
-    let input_files = unsafe { &(*c.parse_graph).input_files };
+    let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
     for record in ast.import_records.slice_mut() {

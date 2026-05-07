@@ -175,8 +175,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => unsafe { p.as_ref() }.memory_cost(),
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.memory_cost(),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.memory_cost(),
+            AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
@@ -188,8 +187,8 @@ impl AnyRoute {
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.ref_(),
             AnyRoute::Html(r) => {
-                // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.data.as_ptr()) };
+                // SAFETY: RefPtr keeps the pointee live while held in the route table.
+                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
             }
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -211,8 +210,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => unsafe { p.as_ref() }.server.set(server),
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { p.as_ref() }.set_server(server),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.server.set(server),
+            AnyRoute::Html(r) => r.data().server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server (server.zig:51-58)
         }
     }
@@ -412,6 +410,62 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub const DEBUG_MODE: bool = DEBUG;
     pub const HAS_H3: bool = SSL;
 
+    // ── raw-field accessors ──────────────────────────────────────────────────
+
+    /// SAFETY: `global_this` is a STATIC backref (LIFETIMES.tsv) set in
+    /// `init()`; non-null and outlives the server. The pointee is the
+    /// process-global `JSGlobalObject` and is never moved or freed while any
+    /// `NewServer` exists.
+    #[inline]
+    pub fn global_this(&self) -> &jsc::JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
+    /// SAFETY: `vm` is a STATIC backref (LIFETIMES.tsv) set in `init()` from
+    /// `VirtualMachine::get()`; non-null for the server's lifetime.
+    #[inline]
+    pub fn vm(&self) -> &jsc::VirtualMachine {
+        unsafe { &*self.vm }
+    }
+
+    /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
+    /// `&mut`) because the VM is mutated across re-entrant JS callbacks
+    /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
+    /// borrows may be live; handing out `&mut` here would alias.
+    ///
+    /// Routes through [`jsc::VirtualMachine::get_mut_ptr`] (the thread-local
+    /// raw `*mut`) rather than casting `self.vm` — the field is `*const`
+    /// derived from a `&'static VirtualMachine`, so casting it to `*mut` would
+    /// carry read-only Stacked-Borrows provenance and make any write through
+    /// the result UB.
+    #[inline]
+    pub fn vm_mut(&self) -> *mut jsc::VirtualMachine {
+        debug_assert!(core::ptr::eq(self.vm, jsc::VirtualMachine::get_mut_ptr()));
+        jsc::VirtualMachine::get_mut_ptr()
+    }
+
+    /// Raw pointer to the process-static H1 request pool. Returned as `*mut`
+    /// (not `&mut`) because the pool is mutated through both `&self`
+    /// (`release_request_context`) and request-dispatch paths; a `&mut`
+    /// accessor would alias across re-entrant request handling.
+    #[inline]
+    pub fn request_pool_allocator_ptr(
+        &self,
+    ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false> {
+        self.request_pool_allocator
+    }
+
+    /// Raw pointer to the process-static H3 request pool. See
+    /// `request_pool_allocator_ptr` for why this is `*mut`, not `&mut`.
+    #[inline]
+    pub fn h3_request_pool_allocator_ptr(
+        &self,
+    ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true> {
+        self.h3_request_pool_allocator
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
             + self.base_url_string_for_joining.len()
@@ -566,7 +620,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
         // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
         // (no-op enter/exit in release builds).
-        let vm_ptr = server.vm.cast_mut();
+        let vm_ptr = server.vm_mut();
         // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
         // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
         // this frame.
@@ -625,8 +679,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx_mut.request_body = core::ptr::NonNull::new(body_value);
 
-        // SAFETY: `global_this` set in `init()`; outlives the server.
-        let global = unsafe { &*server.global_this };
+        let global = server.global_this();
         let signal = jsc::AbortSignal::new(global);
         // SAFETY: `AbortSignal::new` returns a +1-ref'd non-null pointer.
         ctx_mut.signal = core::ptr::NonNull::new(signal);
@@ -781,7 +834,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
-        let global = unsafe { &*server.global_this };
+        let global = server.global_this();
         let response_value = match callback.call(global, server.js_value_assert_alive(), &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -934,7 +987,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .unwrap_or(JSValue::ZERO);
         debug_assert!(!on_request.is_empty());
 
-        let global = unsafe { &*server.global_this };
+        let global = server.global_this();
         let js_value = server.js_value_assert_alive();
         let response_value = match on_request.call(
             global,
@@ -979,7 +1032,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };
-        let global = unsafe { &*server_ref.global_this };
+        let global = server_ref.global_this();
         let server_js = server_ref.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js)
             .expect("routeList cached value missing");
@@ -1048,8 +1101,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req.set_yield(false);
         resp.timeout(unsafe { (*this).config.idle_timeout });
 
-        // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null after init().
-        let global = unsafe { &*(*this).global_this };
+        let global = unsafe { (*this).global_this() };
         let this_object = unsafe { &*this }.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
@@ -1449,10 +1501,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // again before the task has run.
             self.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
 
-            // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init()
-            // ran. `vm` is the process-static `*mut VirtualMachine` (non-null for
-            // the server's lifetime); single-threaded JS context, no aliasing `&mut`.
-            let (global, vm_ref) = unsafe { (&*self.global_this, &mut *vm) };
+            let global = self.global_this();
+            // SAFETY: `vm` is the process-static `*mut VirtualMachine` (non-null
+            // for the server's lifetime); single-threaded JS context, no aliasing
+            // `&mut`.
+            let vm_ref = unsafe { &mut *vm };
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
@@ -1561,8 +1614,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[cold]
     pub fn on_listen_failed(&mut self) {
         self.listener = None;
-        // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init() ran.
-        let global = unsafe { &*self.global_this };
+        let global = self.global_this();
         // TODO(b2-blocked): full error_instance (EADDRINUSE/EACCES/OpenSSL string)
         // per server.zig:1847-1952 — see server_body.rs::on_listen_failed.
         let _ = global.throw(format_args!("Failed to start server. Is port in use?"));
@@ -1938,7 +1990,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 AnyRoute::Html(r) => {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
-                        any_server, app, r.data.as_ptr(), &entry.path, entry.method,
+                        any_server, app, r.as_ptr(), &entry.path, entry.method,
                     );
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
@@ -1946,7 +1998,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // SAFETY: h3_app is a live FFI handle while self is.
                                 unsafe { &mut *h3_app },
-                                r.data.as_ptr(),
+                                r.as_ptr(),
                                 &entry.path,
                                 entry.method,
                             );
@@ -1956,7 +2008,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // SAFETY: `dev` is the live `*mut DevServer` snapshotted
                         // from `self.dev_server` above; no other `&mut` to it
                         // is live in this loop.
-                        bun_core::handle_oom(unsafe { &mut *dev }.html_router.put(&entry.path, r.data.as_ptr()));
+                        bun_core::handle_oom(unsafe { &mut *dev }.html_router.put(&entry.path, r.as_ptr()));
                     }
                     needs_plugins = true;
                 }
@@ -2108,10 +2160,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // produced by `init()` and is live for this call; only one reference
         // derived from it is alive at a time.
 
-        // `global_this` is a `*const` raw-pointer field — read it once via a
-        // short-lived `&*this`; the resulting `&JSGlobalObject` borrows a
-        // separate STATIC allocation, not `*this`.
-        let global = unsafe { &*(*this).global_this };
+        // `global_this()` returns a borrow of the separate STATIC allocation,
+        // not `*this`.
+        let global = unsafe { (*this).global_this() };
 
         let app: *mut uws_sys::NewApp<SSL>;
         let mut route_list_value = JSValue::ZERO;
@@ -2419,8 +2470,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { &mut *this }.ref_();
 
         // Starting up an HTTP server is a good time to GC.
-        // SAFETY: vm is STATIC per LIFETIMES.tsv; the `&*this` borrow ends at `;`.
-        let vm = unsafe { &*(*this).vm };
+        // SAFETY: `this` was produced by `init()` and is live; see fn-level note.
+        let vm = unsafe { (*this).vm() };
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
@@ -2715,11 +2766,9 @@ pub trait ServerLike {
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     const SSL_ENABLED: bool = SSL;
     const DEBUG_MODE: bool = DEBUG;
-    // SAFETY: vm/global_this are STATIC refs (LIFETIMES.tsv); non-null for the
-    // server's entire lifetime once `init()` runs.
-    fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
-    fn vm(&self) -> &jsc::VirtualMachine { unsafe { &*self.vm } }
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine { self.vm.cast_mut() }
+    fn global_this(&self) -> &jsc::JSGlobalObject { Self::global_this(self) }
+    fn vm(&self) -> &jsc::VirtualMachine { Self::vm(self) }
+    fn vm_mut(&self) -> *mut jsc::VirtualMachine { Self::vm_mut(self) }
     fn config(&self) -> &ServerConfig { &self.config }
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> { self.dev_server.as_deref() }
@@ -2769,6 +2818,51 @@ pub struct AnyServer {
     pub ptr: *mut (),
 }
 
+impl AnyServer {
+    // ─── tag-checked downcasts ───────────────────────────────────────────────
+    // Centralize the `unsafe { &*self.ptr.cast() }` pattern that the dispatch
+    // macro and `h3_alt_svc` open-coded. Each accessor debug-asserts the tag
+    // so a mismatched call trips in debug builds rather than silently aliasing
+    // the wrong monomorphization.
+    //
+    // No `&mut`-returning variants: dispatch-mut bodies re-enter JS
+    // (`on_request`, `get_or_load_plugins`, `stop`, …) which can observe the
+    // same server through another `AnyServer` handle, so a safe
+    // `fn(&self) -> &mut NewServer` accessor would invite overlapping `&mut`
+    // under Stacked Borrows. `any_server_dispatch_mut!` keeps its inline
+    // `unsafe` with the existing caller-upheld exclusivity contract.
+
+    #[inline]
+    fn as_http(&self) -> &HTTPServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::HTTPServer));
+        // SAFETY: `ptr` was produced by `AnyServer::from::<false, false>` and
+        // is non-null while the server is alive (heap-allocated `NewServer`,
+        // freed only after all `AnyServer` handles are dropped).
+        unsafe { &*self.ptr.cast::<HTTPServer>() }
+    }
+
+    #[inline]
+    fn as_https(&self) -> &HTTPSServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::HTTPSServer));
+        // SAFETY: tag-matched non-null `NewServer<true, false>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<HTTPSServer>() }
+    }
+
+    #[inline]
+    fn as_debug_http(&self) -> &DebugHTTPServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPServer));
+        // SAFETY: tag-matched non-null `NewServer<false, true>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<DebugHTTPServer>() }
+    }
+
+    #[inline]
+    fn as_debug_https(&self) -> &DebugHTTPSServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPSServer));
+        // SAFETY: tag-matched non-null `NewServer<true, true>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<DebugHTTPSServer>() }
+    }
+}
+
 /// Dispatch over the four `NewServer` monomorphizations (shared `&` borrow).
 /// Mirrors Zig's `inline switch (ptr.tag()) { inline else => |s| s.method() }`.
 /// Read-only accessors MUST use this form so holding the returned reference
@@ -2777,13 +2871,11 @@ pub struct AnyServer {
 macro_rules! any_server_dispatch {
     ($self:expr, |$s:ident| $body:expr) => {{
         let this = $self;
-        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
-        // and is non-null while the server is alive.
         match this.tag {
-            AnyServerTag::HTTPServer => { let $s = unsafe { &*this.ptr.cast::<HTTPServer>() }; $body }
-            AnyServerTag::HTTPSServer => { let $s = unsafe { &*this.ptr.cast::<HTTPSServer>() }; $body }
-            AnyServerTag::DebugHTTPServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPServer>() }; $body }
-            AnyServerTag::DebugHTTPSServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPSServer>() }; $body }
+            AnyServerTag::HTTPServer => { let $s = this.as_http(); $body }
+            AnyServerTag::HTTPSServer => { let $s = this.as_https(); $body }
+            AnyServerTag::DebugHTTPServer => { let $s = this.as_debug_http(); $body }
+            AnyServerTag::DebugHTTPSServer => { let $s = this.as_debug_https(); $body }
         }
     }};
 }
@@ -2847,9 +2939,8 @@ impl AnyServer {
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
         match self.tag {
-            // SAFETY: tag matches; ptr is a live server while AnyServer is held.
-            AnyServerTag::HTTPSServer => unsafe { &*self.ptr.cast::<HTTPSServer>() }.h3_alt_svc(),
-            AnyServerTag::DebugHTTPSServer => unsafe { &*self.ptr.cast::<DebugHTTPSServer>() }.h3_alt_svc(),
+            AnyServerTag::HTTPSServer => self.as_https().h3_alt_svc(),
+            AnyServerTag::DebugHTTPSServer => self.as_debug_https().h3_alt_svc(),
             _ => None,
         }
     }
@@ -3165,9 +3256,7 @@ pub mod http_server_agent {
                     // SAFETY: RefPtr.data is a live NonNull while held in the
                     // route table; `.bundle` (IntrusiveRc) derefs to the live
                     // HTMLBundle whose `path` outlives this borrow.
-                    AnyRoute::Html(r) => {
-                        BunString::init(&*unsafe { r.data.as_ref() }.bundle.path)
-                    }
+                    AnyRoute::Html(r) => BunString::init(&*r.data().bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

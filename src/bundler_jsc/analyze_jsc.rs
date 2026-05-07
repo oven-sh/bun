@@ -29,23 +29,17 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // immediately or keep it alive on the SourceProvider for the isolation
     // SourceProvider cache.
 
-    // SAFETY: caller (C++ BunAnalyzeTranspiledModule.cpp) passes a valid
-    // `ModuleInfoDeserialized` whose `*const [T]` fields point into the live
-    // `owner` allocation for the duration of this call; we hold no `&mut`
-    // aliases to that storage. `RecordKind` is `u8`-transparent so element
-    // reads are aligned; `StringID`/`FetchParameters`/`u32` slices are
-    // `align(1)` in the Zig serialization — supported targets (x86_64/aarch64)
-    // tolerate the unaligned loads the slice ops emit.
+    // Slice-field validity / alignment caveats are documented on the
+    // `ModuleInfoDeserialized` accessors.
     // TODO(port): switch element reads to `read_unaligned` per the upstream
     // note in `analyze_transpiled_module.rs` if a strict-alignment target is
     // ever added.
-    let strings_buf: &[u8] = unsafe { &*res.strings_buf };
-    let strings_lens: &[u32] = unsafe { &*res.strings_lens };
-    let requested_modules_keys: &[StringID] = unsafe { &*res.requested_modules_keys };
-    let requested_modules_values: &[RequestedModuleValue] =
-        unsafe { &*res.requested_modules_values };
-    let buffer: &[StringID] = unsafe { &*res.buffer };
-    let record_kinds: &[RecordKind] = unsafe { &*res.record_kinds };
+    let strings_buf: &[u8] = res.strings_buf();
+    let strings_lens: &[u32] = res.strings_lens();
+    let requested_modules_keys: &[StringID] = res.requested_modules_keys();
+    let requested_modules_values: &[RequestedModuleValue] = res.requested_modules_values();
+    let buffer: &[StringID] = res.buffer();
+    let record_kinds: &[RecordKind] = res.record_kinds();
 
     let identifiers = IdentifierArray::create(strings_lens.len());
     // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,

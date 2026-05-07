@@ -388,8 +388,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     if cfg!(debug_assertions) {
                         // SAFETY: arena slices valid for the link pass.
                         let name = unsafe { &*symbol.original_name };
-                        let path = unsafe {
-                            &(*c.parse_graph)
+                        let path = {
+                            &c.parse_graph()
                                 .input_files
                                 .items_source()[import_ref.source_index() as usize]
                                 .path

@@ -946,8 +946,7 @@ fn debug_css_order_impl(
         debug!("CSS order {}:\n", tag);
 
         let arena = bun_alloc::Arena::new();
-        // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
-        let parse_graph = unsafe { &*this.parse_graph };
+        let parse_graph = this.parse_graph();
         let ast_urls_for_css = parse_graph.ast.items_url_for_css();
         // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
         // layout; the column slice is reinterpreted read-only for the duration of `to_css`.

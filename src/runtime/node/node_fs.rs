@@ -573,6 +573,16 @@ pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
 impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
     pub const HEAP_LABEL: &'static str = F.heap_label_uv();
 
+    /// Deref the raw `global_object` pointer.
+    ///
+    /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
+    /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
+    #[inline]
+    pub fn global_object(&self) -> &JSGlobalObject {
+        // SAFETY: never null (set in `create`); JSC_BORROW — global outlives task.
+        unsafe { &*self.global_object }
+    }
+
     pub fn create(
         global_object: &JSGlobalObject,
         binding: &mut Binding,
@@ -644,8 +654,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                     sys::syslog!("uv close({}) SKIPPED", fd);
                     // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>, Ok(())) };
-                    // SAFETY: global_object outlives task (JSC_BORROW).
-                    unsafe { &*task.global_object }.bun_vm().event_loop().enqueue_task(Task::init(task as *mut Self));
+                    let task_ptr: *mut Self = task;
+                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 // SAFETY: libuv async request.
@@ -699,8 +709,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 if bufs.is_empty() {
                     // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>, Ok(ret::Write { bytes_written: 0 })) };
-                    // SAFETY: global_object outlives task (JSC_BORROW).
-                    unsafe { &*task.global_object }.bun_vm().event_loop().enqueue_task(Task::init(task as *mut Self));
+                    let task_ptr: *mut Self = task;
+                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -735,8 +745,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        unsafe { &*this.global_object }.bun_vm().event_loop().enqueue_task(Task::init(this));
+        let this_ptr: *mut Self = this;
+        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
     }
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
@@ -749,20 +759,22 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
         // No `err.clone()` needed — see `uv_callback` above.
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        unsafe { &*this.global_object }.bun_vm().event_loop().enqueue_task(Task::init(this));
+        let this_ptr: *mut Self = this;
+        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        let global_object = unsafe { &*self.global_object };
-        let success = matches!(self.result, Ok(_));
+        // Move `result` out so the `global_object()` `&self` borrow can coexist
+        // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
+        let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+        let global_object = self.global_object();
+        let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         let promise = unsafe { self.promise.get() };
-        let result = match &mut self.result {
+        let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
                 Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
@@ -789,7 +801,6 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
         // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
         this_ref.r#ref.unref(js_event_loop_ctx());
         this_ref.args.deinit_and_unprotect();
@@ -1010,6 +1021,17 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     pub const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
     pub const HEAP_LABEL: &'static str = F.heap_label();
 
+    /// Deref the raw `global_object` pointer.
+    ///
+    /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
+    /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
+    /// Safe to call from the work-pool thread for `bun_vm_concurrently()`.
+    #[inline]
+    pub fn global_object(&self) -> &JSGlobalObject {
+        // SAFETY: never null (set in `create`); JSC_BORROW — global outlives task.
+        unsafe { &*self.global_object }
+    }
+
     pub fn create(
         global_object: &JSGlobalObject,
         _binding: &mut Binding,
@@ -1051,12 +1073,13 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
         // documented accessor for off-thread (work-pool) callers; the
         // event-loop's concurrent queue is MPSC-safe.
+        let vm = this.global_object().bun_vm_concurrently();
+        // SAFETY: VirtualMachine and its event loop are process-static
+        // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
         unsafe {
-            let vm = (*this.global_object).bun_vm_concurrently();
             (*(*vm).event_loop()).enqueue_task_concurrent(
                 ConcurrentTask::create_from(std::ptr::from_mut::<Self>(this)),
             );
@@ -1066,16 +1089,18 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| unsafe { Self::destroy(p) });
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        let global_object = unsafe { &*self.global_object };
+        // Move `result` out so the `global_object()` `&self` borrow can coexist
+        // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
+        let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+        let global_object = self.global_object();
 
         let _dispatch = self.tracker.dispatch(global_object);
 
-        let success = matches!(self.result, Ok(_));
+        let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         let promise = unsafe { self.promise.get() };
-        let result = match &mut self.result {
+        let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
                 Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
@@ -1913,6 +1938,19 @@ impl ReaddirSubtask {
 impl AsyncReaddirRecursiveTask {
     pub fn new(init: Self) -> Box<Self> { Box::new(init) }
 
+    /// Borrow the owning `JSGlobalObject`.
+    ///
+    /// SAFETY: `global_object` is set from a live `&JSGlobalObject` in
+    /// `create()` (never null) and the JSC_BORROW invariant (LIFETIMES.tsv)
+    /// guarantees the global outlives every task it spawns. The pointee is a
+    /// pinned JSC heap object; `bun_vm_concurrently()` is the only method we
+    /// call off-thread and it reads init-immutable state, so a shared borrow
+    /// is sound from both the JS thread and the work pool.
+    #[inline]
+    pub fn global_object(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_object }
+    }
+
     /// `bun.default_allocator.free(this.root_path.slice())` — paired with the
     /// `dupeZ` in `create()`. Idempotent (`PathString::EMPTY` after first call).
     fn free_root_path(&mut self) {
@@ -2123,10 +2161,11 @@ impl AsyncReaddirRecursiveTask {
             }
         }
 
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
         // documented accessor for off-thread (work-pool) callers.
-        let vm = unsafe { &mut *(*self.global_object).bun_vm_concurrently() };
+        // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
+        // sole `&mut` borrow at this point on the work-pool thread.
+        let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
         vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self))));
     }
 
@@ -2150,7 +2189,10 @@ impl AsyncReaddirRecursiveTask {
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
+        // NOTE: cannot route through `self.global_object()` here -- the returned
+        // borrow would be tied to `&self` and conflict with the `&mut self.*`
+        // field accesses below, and it must also stay valid past `Self::destroy`.
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         let global_object = unsafe { &*self.global_object };
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();

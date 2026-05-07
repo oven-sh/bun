@@ -178,6 +178,66 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// allocator: dropped`), so nothing left to thread.
     }
 
+    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
+    #[inline]
+    pub fn fs(&self) -> &Fs::FileSystem {
+        // SAFETY: `self.fs` is set in `Transpiler::init` to the
+        // `Fs::FileSystem::instance` singleton (process-lifetime, never null,
+        // never freed). Reads of `top_level_dir` (the dominant use) are sound
+        // even concurrently with `fs_mut()` callers because that field is
+        // `&'static [u8]` written once at init.
+        unsafe { &*self.fs }
+    }
+
+    /// Mutable reborrow of the `Fs::FileSystem` singleton. The returned
+    /// lifetime is **decoupled** from `&self` so callers can pass it alongside
+    /// disjoint `&mut self.resolver` borrows (see `read_file_with_allocator`
+    /// call sites). Callers must not hold the result across any other
+    /// `fs()`/`fs_mut()` reborrow or across a resolver call that itself
+    /// dereferences the shared singleton mutably.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
+        // SAFETY: `self.fs` is the non-null process-lifetime singleton (see
+        // `fs()`). The unbounded `'r` mirrors the prior open-coded
+        // `unsafe { &mut *self.fs }` — the pointee outlives any `'r` a caller
+        // can name. Exclusive access is upheld by single-threaded use at each
+        // call site (no two live `&mut FileSystem` overlap).
+        unsafe { &mut *self.fs }
+    }
+
+    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
+    /// other `self.*` fields as arguments without a borrow-checker conflict;
+    /// callers must not hold two results live at once, nor hold a result
+    /// across a `self.{resolver,linker}` call that itself writes to the
+    /// aliased `*mut Log` (see field PORT NOTE — same allocation is threaded
+    /// into `linker.log` / `resolver.log`).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut<'r>(&self) -> &'r mut logger::Log {
+        // SAFETY: `self.log` is non-null after `init` (set to the
+        // caller-provided arena `Log`) and outlives `self`. The unbounded `'r`
+        // mirrors the prior open-coded `unsafe { &mut *self.log }`; the
+        // aliased raw copies in `self.{resolver,linker,options}.log` are never
+        // dereferenced while a `log_mut()` result is live (caller contract).
+        unsafe { &mut *self.log }
+    }
+
+    /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
+    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
+    /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
+    /// borrows (matching Zig's free `this.env.*` access).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn env_mut(&self) -> &'a mut dot_env::Loader<'a> {
+        // SAFETY: `self.env` is non-null after `init` — set to either the
+        // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
+        // which live for at least `'a`. No other live `&mut Loader` exists at
+        // any call site (single-threaded; `resolver.env_loader` aliases as a
+        // raw `NonNull`, never as a held `&mut`).
+        unsafe { &mut *self.env }
+    }
+
     /// Port of `bundle_v2.zig:198 initializeClientTranspiler`'s
     /// `client_transpiler.* = this_transpiler.*` value copy.
     ///
@@ -221,9 +281,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         entry_point: &[u8],
     ) -> Result<resolver::Result, bun_core::Error> {
-        // SAFETY: `self.fs` points at the global `Fs::FileSystem` singleton
-        // (see field comment); never null after `Transpiler::init`.
-        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+        let top_level_dir = self.fs().top_level_dir;
         match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
@@ -297,10 +355,7 @@ impl<'a> Transpiler<'a> {
 
                     // Spec: `bun.pathLiteral("..")` — `".."` is sep-agnostic.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    // SAFETY: `self.fs` points at the process-lifetime
-                    // `Fs::FileSystem` singleton; never null after
-                    // `Transpiler::init` (see field PORT NOTE).
-                    let top_level_dir = unsafe { (*self.fs).top_level_dir };
+                    let top_level_dir = self.fs().top_level_dir;
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,
@@ -322,13 +377,7 @@ impl<'a> Transpiler<'a> {
                     // ignore this error, we will print the original error
                 }
 
-                // SAFETY: `self.log` is non-null after `init` and outlives
-                // `Transpiler<'a>`. The aliased raw copies in
-                // `self.{resolver,linker,options}.log` are not dereferenced in
-                // this scope, so this `&mut` is the sole live reference to the
-                // `Log` allocation for the duration of the `add_error_fmt` call.
-                let log = unsafe { &mut *self.log };
-                bun_core::handle_oom(log.add_error_fmt(
+                bun_core::handle_oom(self.log_mut().add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
                     format_args!(
@@ -356,9 +405,7 @@ impl<'a> Transpiler<'a> {
 
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
-        // SAFETY: `self.env` points at the long-lived `DotEnv::Loader`
-        // (`init` always assigns it); never null here.
-        let env_loader = unsafe { &mut *self.env };
+        let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
         js_ast::Expr::data_store_create();
@@ -420,8 +467,7 @@ impl<'a> Transpiler<'a> {
         // uses for metafile/HTML-manifest JSON) so `"` / `\` / control bytes
         // are escaped exactly as `std.json.Stringify` does.
         bun_core::Output::flush();
-        // SAFETY: `self.env` is non-null after `init`.
-        let env = unsafe { &mut *self.env };
+        let env = self.env_mut();
         let w = bun_core::Output::writer();
         let _ = w.write_all(b"{\n");
         let mut first = true;
@@ -574,9 +620,7 @@ impl<'a> Transpiler<'a> {
 
         if auto_jsx {
             // Most of the time, this will already be cached
-            // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem`
-            // singleton (set in `Transpiler::init` from `FileSystem::init`).
-            let top_level_dir = unsafe { (*self.fs).top_level_dir };
+            let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 // SAFETY: `read_dir_info` returns a pointer into the resolver's
                 // BSS-backed `DirInfo` cache; entries live for process lifetime
@@ -604,11 +648,9 @@ impl<'a> Transpiler<'a> {
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         use bun_options_types::schema::api::DotEnvBehavior;
-        // SAFETY: `self.env` is non-null — set to either the caller-provided
-        // loader or the `dot_env::INSTANCE` singleton in `Transpiler::init`.
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call (Zig accessed `this.env.*` freely).
-        let env: &mut dot_env::Loader<'_> = unsafe { &mut *self.env };
+        let env: &mut dot_env::Loader<'_> = self.env_mut();
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix
@@ -637,8 +679,7 @@ impl<'a> Transpiler<'a> {
                 // (or a parent) is unreadable, readDirInfo may return null;
                 // bail out of .env file loading in that case, but process
                 // env vars were already loaded above.
-                // SAFETY: `self.fs` — process-lifetime singleton (see above).
-                let top_level_dir = unsafe { (*self.fs).top_level_dir };
+                let top_level_dir = self.fs().top_level_dir;
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
@@ -1284,14 +1325,11 @@ impl<'a> Transpiler<'a> {
         let file_hash = this_parse.file_hash;
         let path = this_parse.path;
         let loader = this_parse.loader;
-        // SAFETY: `self.log` is non-null after `init` and outlives `self`. The
-        // same allocation is aliased by `self.{resolver,linker,options}.log`
-        // (see header PORT NOTE), but those raw `*mut` copies are never
-        // dereferenced for the lifetime of this `&mut` — every `Log` access in
-        // this function body goes through the `log` binding below (the resolver
-        // fs/js caches reached via `self.resolver.caches.*` do not touch
-        // `resolver.log`). Hence this is the unique live `&mut Log`.
-        let log: &mut logger::Log = unsafe { &mut *self.log };
+        // Every `Log` access in this function body goes through the `log`
+        // binding below (the resolver fs/js caches reached via
+        // `self.resolver.caches.*` do not touch `resolver.log`), so this is
+        // the unique live `&mut Log` for the duration of the parse.
+        let log: &mut logger::Log = self.log_mut();
 
         let mut input_fd: Option<FD> = None;
         // Owns the heap allocation backing `source.contents` for the
@@ -1376,9 +1414,7 @@ impl<'a> Transpiler<'a> {
             // `read_file_with_allocator` drops the allocator (global mimalloc
             // for the non-shared path; see resolver/lib.rs PORT NOTE).
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
-                // SAFETY: `self.fs` is the non-null `&Fs.FileSystem.instance`
-                // singleton (see `Transpiler.fs` field PORT NOTE).
-                unsafe { &mut *self.fs },
+                self.fs_mut(),
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
@@ -2410,9 +2446,7 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:1225 normalizeEntryPointPath`.
     fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
-        // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem::instance`
-        // singleton wired in `Transpiler::init`.
-        let fs = unsafe { &*self.fs };
+        let fs = self.fs();
         let entry = fs.abs(&[_entry]);
 
         // Spec: `std.fs.accessAbsolute(entry, .{}) catch return _entry` — if the
@@ -2457,9 +2491,7 @@ impl<'a> Transpiler<'a> {
         // PORT NOTE: snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.iter().cloned().collect();
-        // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem::instance`
-        // singleton wired in `Transpiler::init`.
-        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+        let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
             let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
@@ -2560,8 +2592,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if bun_core::FeatureFlags::TRACING
-            // SAFETY: `self.options.log` is non-null after `init`.
-            && unsafe { &*self.options.log }.level.at_least(logger::Level::Info)
+            && self.options.log().level.at_least(logger::Level::Info)
         {
             bun_core::Output::pretty_errorln(format_args!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
@@ -2647,8 +2678,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        // SAFETY: `self.fs` is the process-lifetime singleton.
-        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+        let top_level_dir = self.fs().top_level_dir;
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
@@ -2773,10 +2803,8 @@ impl<'a> Transpiler<'a> {
                 {
                     use crate::ungate_support::bun_css;
 
-                    // SAFETY: `self.fs` is the process-lifetime singleton.
-                    let fs = unsafe { &mut *self.fs };
                     let entry = match self.resolver.caches.fs.read_file_with_allocator(
-                        fs,
+                        self.fs_mut(),
                         file_path_text,
                         resolve_result.dirname_fd,
                         false,
@@ -2784,8 +2812,7 @@ impl<'a> Transpiler<'a> {
                     ) {
                         Ok(e) => e,
                         Err(err) => {
-                            // SAFETY: `self.log` is non-null after `init`.
-                            let _ = unsafe { &mut *self.log }.add_error_fmt(
+                            let _ = self.log_mut().add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -2798,10 +2825,9 @@ impl<'a> Transpiler<'a> {
                         }
                     };
 
-                    // SAFETY: `self.log` is non-null after `init`; the
-                    // `ParserOptions.logger` `NonNull<Log>` borrow is dropped
-                    // when `sheet`/`opts` go out of scope at the end of this
-                    // arm, before any other `&mut *self.log` deref above.
+                    // The `ParserOptions.logger` `NonNull<Log>` borrow is
+                    // dropped when `sheet`/`opts` go out of scope at the end of
+                    // this arm, before any other `log_mut()` reborrow above.
                     let mut opts = bun_css::ParserOptions::default(None);
                     opts.logger = Some(core::ptr::NonNull::new(self.log).unwrap());
                     const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
@@ -2835,8 +2861,7 @@ impl<'a> Transpiler<'a> {
                     ) {
                         Ok(v) => v,
                         Err(e) => {
-                            // SAFETY: `self.log` is non-null after `init`.
-                            let _ = unsafe { &mut *self.log }.add_error_fmt(
+                            let _ = self.log_mut().add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!("{} parsing", e),
@@ -2847,8 +2872,7 @@ impl<'a> Transpiler<'a> {
                     if let Err(e) =
                         sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
                     {
-                        // SAFETY: `self.log` is non-null after `init`.
-                        bun_core::handle_oom(unsafe { &mut *self.log }.add_error_fmt(
+                        bun_core::handle_oom(self.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!("{} while minifying", e.kind),
@@ -2871,8 +2895,7 @@ impl<'a> Transpiler<'a> {
                     ) {
                         Ok(v) => v,
                         Err(e) => {
-                            // SAFETY: `self.log` is non-null after `init`.
-                            bun_core::handle_oom(unsafe { &mut *self.log }.add_error_fmt(
+                            bun_core::handle_oom(self.log_mut().add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!("{} while printing", e),

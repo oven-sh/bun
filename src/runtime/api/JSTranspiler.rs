@@ -1151,19 +1151,46 @@ struct TranspilerStateGuard {
     prev_macro_context: Option<Option<JSAst::Macro::MacroContext>>,
 }
 
+impl TranspilerStateGuard {
+    /// Mutable access to the guarded `Transpiler`.
+    ///
+    /// SAFETY: `self.transpiler` is always non-null — every construction site
+    /// initializes it from `&mut js_transpiler.transpiler`, which lives in the
+    /// heap-stable `Box<JSTranspiler>` and outlives this stack-local guard.
+    /// The guard is held as `let _restore = ...;` and never touched between
+    /// construction and `Drop`, so by the time `&mut self` is available here
+    /// the caller's own `&mut self.transpiler` borrows have ended and no other
+    /// `&mut` alias is live.
+    #[inline]
+    fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
+        unsafe { &mut *self.transpiler }
+    }
+
+    /// Raw `*mut Log` to restore on drop. Returned as a pointer (not `&mut`)
+    /// because the sole consumer, `Transpiler::set_log`, takes `*mut Log`, and
+    /// the pointee (`js_transpiler.config.log`) is never dereferenced by the
+    /// guard itself.
+    #[inline]
+    fn restore_log_ptr(&self) -> *mut logger::Log {
+        self.restore_log
+    }
+}
+
 impl Drop for TranspilerStateGuard {
     fn drop(&mut self) {
-        // SAFETY: `transpiler` and `restore_log` point into the heap-stable
+        // `transpiler` and `restore_log` point into the heap-stable
         // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
         // outlives this stack frame. The guard is declared after the temporary
         // arena/log and so drops before them (reverse-decl order), ensuring the
         // Transpiler never observes a dangling `&'static Arena`.
-        unsafe {
-            (*self.transpiler).set_log(self.restore_log);
-            (*self.transpiler).allocator = self.prev_allocator;
-            if let Some(prev) = self.prev_macro_context.take() {
-                (*self.transpiler).macro_context = prev;
-            }
+        let restore_log = self.restore_log_ptr();
+        let prev_allocator = self.prev_allocator;
+        let prev_macro_context = self.prev_macro_context.take();
+        let transpiler = self.transpiler_mut();
+        transpiler.set_log(restore_log);
+        transpiler.allocator = prev_allocator;
+        if let Some(prev) = prev_macro_context {
+            transpiler.macro_context = prev;
         }
     }
 }

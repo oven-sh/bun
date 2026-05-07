@@ -63,8 +63,7 @@ pub fn generate_chunk_json(
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
-    // SAFETY: parse_graph backref into BundleV2, valid for self's lifetime.
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
 
     // Start chunk entry: "path/to/output.js": {
@@ -211,8 +210,7 @@ pub fn generate(
 
     // Collect all input files that are reachable
     let mut first_input = true;
-    // SAFETY: parse_graph backref into BundleV2, valid for self's lifetime.
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let loaders = parse_graph.input_files.items_loader();
     let import_records_list = parse_graph.ast.items_import_records();

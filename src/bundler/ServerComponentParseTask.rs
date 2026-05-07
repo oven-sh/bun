@@ -266,7 +266,7 @@ fn generate_client_reference_proxy(
         // In production, the path here must be the final chunk path, but
         // that information is not yet available since chunks are not
         // computed. The unique_key replacement system is used here.
-        if !ctx.transpiler().options.dev_server.is_null() {
+        if ctx.transpiler().options.has_dev_server() {
             b.bump.alloc_slice_copy(data.other_source.path.pretty)
         } else {
             // PERF(port): was arena allocPrint — profile in Phase B

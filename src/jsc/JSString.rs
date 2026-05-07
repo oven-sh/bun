@@ -153,6 +153,25 @@ pub struct Iterator {
     pub write16: Option<JStringIteratorWrite16Callback>,
 }
 
+impl Iterator {
+    /// Raw type-erased user-data pointer (Zig: `data: ?*anyopaque`).
+    ///
+    /// This is the sole accessor for the `data` field. A `&T`-returning
+    /// accessor is intentionally **not** provided: `data` is an opaque
+    /// `*mut c_void` whose concrete pointee type is known only to the caller
+    /// that constructed the `Iterator`, and that pointee is mutated by the
+    /// append/write callbacks while C++ holds `*mut Iterator` re-entrantly.
+    /// Callers must cast and dereference under their own `unsafe` block.
+    ///
+    /// Invariant: may be null (Zig spec declares it optional). When set by
+    /// `iter()`-style constructors it points to a stack-local context struct
+    /// that outlives the `JSC__JSString__iterator` call.
+    #[inline]
+    pub fn data_ptr(&self) -> *mut c_void {
+        self.data
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/JSString.zig (103 lines)

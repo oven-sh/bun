@@ -58,17 +58,29 @@ impl SavedSourceMap {
         unsafe { (*map).lock_pointers() };
     }
 
+    /// Mutable access to the sibling `HashTable` on `VirtualMachine`.
+    ///
+    /// # Safety invariant
+    /// `self.map` is set in [`Self::init`] to a non-null pointer at a sibling
+    /// field on `VirtualMachine` and is never reassigned; the pointee outlives
+    /// `self`. Exclusive access is upheld by `&mut self` (and, for table
+    /// mutation, by `self.mutex` which callers must hold).
+    #[inline]
+    fn map_mut(&mut self) -> &mut HashTable {
+        debug_assert!(!self.map.is_null());
+        // SAFETY: see invariant above — non-null sibling backref, lives as long as `self`.
+        unsafe { &mut *self.map }
+    }
+
     #[inline]
     pub fn lock(&mut self) {
         self.mutex.lock();
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        unsafe { (*self.map).unlock_pointers() };
+        self.map_mut().unlock_pointers();
     }
 
     #[inline]
     pub fn unlock(&mut self) {
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        unsafe { (*self.map).lock_pointers() };
+        self.map_mut().lock_pointers();
         self.mutex.unlock();
     }
 }
@@ -189,8 +201,7 @@ impl SavedSourceMap {
         // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        let map = unsafe { &mut *self.map };
+        let map = self.map_mut();
         let key = hash(path);
         let Some(&ptr) = map.get(&key) else {
             self.unlock();
@@ -234,8 +245,7 @@ impl SavedSourceMap {
         // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        let map = unsafe { &mut *self.map };
+        let map = self.map_mut();
         let key = hash(path);
         let Some(&ptr) = map.get(&key) else {
             self.unlock();
@@ -284,8 +294,7 @@ impl Drop for SavedSourceMap {
     fn drop(&mut self) {
         {
             self.lock();
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            let map = unsafe { &mut *self.map };
+            let map = self.map_mut();
             // Zig `valueIterator()` → std `values()`.
             for val in map.values() {
                 let value = Value::from(Some(*val));
@@ -304,12 +313,9 @@ impl Drop for SavedSourceMap {
             self.unlock();
         }
 
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        unsafe {
-            (*self.map).unlock_pointers();
-            (*self.map).deinit();
-            // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
-        }
+        self.map_mut().unlock_pointers();
+        // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
+        self.map_mut().deinit();
     }
 }
 
@@ -332,9 +338,7 @@ impl SavedSourceMap {
             };
             if incoming.mapping_count() == 0 {
                 self.lock();
-                // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-                let contains =
-                    unsafe { (*self.map).contains_key(&hash(source.path.text)) };
+                let contains = self.map_mut().contains_key(&hash(source.path.text));
                 self.unlock();
                 if contains {
                     return Ok(());
@@ -377,11 +381,9 @@ impl SavedSourceMap {
         self.find_cache.invalidate_all();
         self.last_ism = None;
 
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly (Zig `getOrPut`).
-        let map = unsafe { &mut *self.map };
-        match map.entry(hash(path)) {
+        match self.map_mut().entry(hash(path)) {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
                 if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
@@ -417,9 +419,7 @@ impl SavedSourceMap {
         self.lock();
 
         // This mapping entry is only valid while the mutex is locked
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        let map = unsafe { &mut *self.map };
-        let Some(mapping) = map.get_mut(&h) else {
+        let Some(mapping) = self.map_mut().get_mut(&h) else {
             self.unlock();
             return SourceMap::ParseUrl::default();
         };
@@ -478,8 +478,7 @@ impl SavedSourceMap {
 
             self.lock();
             // does not have a valid source map. let's not try again
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(&h) };
+            self.map_mut().remove(&h);
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access.
@@ -507,8 +506,7 @@ impl SavedSourceMap {
 
             self.lock();
             // does not have a valid source map. let's not try again
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(&h) };
+            self.map_mut().remove(&h);
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access.
@@ -536,8 +534,7 @@ impl SavedSourceMap {
 
             self.lock();
             // does not have a valid source map. let's not try again
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(&h) };
+            self.map_mut().remove(&h);
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access.
@@ -561,8 +558,7 @@ impl SavedSourceMap {
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.
     pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
-        let raw = unsafe { *(*self.map).get(&h)? };
+        let raw = *self.map_mut().get(&h)?;
         Some(Value::from(Some(raw)))
     }
 

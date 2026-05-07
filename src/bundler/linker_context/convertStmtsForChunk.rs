@@ -525,8 +525,7 @@ pub fn convert_stmts_for_chunk(
                                     _ => unreachable!(
                                         "Unexpected type in source file {}",
                                         bstr::BStr::new(
-                                            // SAFETY: parse_graph is a backref into BundleV2.graph, valid here.
-                                            &unsafe { &*c.parse_graph }
+                                            &c.parse_graph()
                                                 .input_files
                                                 .get(c.graph.files.get(source_index as usize).input_file.get() as usize)
                                                 .source

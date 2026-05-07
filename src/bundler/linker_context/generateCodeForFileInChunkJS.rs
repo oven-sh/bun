@@ -189,9 +189,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             let mut source_storage: logger::Source;
             let source: &logger::Source =
                 if core::ptr::eq(source_ref.path.text.as_ptr(), source_ref.path.pretty.as_ptr()) {
-                    // SAFETY: `resolver` is a backref into `BundleV2.transpiler.resolver`
-                    // valid for the link step; `resolver.fs` points at the singleton FS.
-                    let top_level_dir = unsafe { (*(*c.resolver).fs).top_level_dir };
+                    // SAFETY: `resolver.fs` points at the singleton FS.
+                    let top_level_dir = unsafe { (*c.resolver().fs).top_level_dir };
                     let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                         source_ref.path.clone(),
                         c.options.target,

@@ -89,7 +89,10 @@ impl DashedIdentReference {
             None => false,
         };
         if dashed_idents {
-            // SAFETY: arena-owned slice; see DashedIdent.v
+            // NOTE: cannot use `self.ident.v()` here — `reference_dashed` requires
+            // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
+            // to `&self`. Raw deref yields the unbounded arena borrow.
+            // SAFETY: arena-owned slice; see `DashedIdent::v`.
             let ident_v = unsafe { &*self.ident.v };
             let source_index = dest.loc.source_index;
             let bump = dest.allocator;
@@ -143,6 +146,19 @@ pub struct DashedIdent {
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
+    /// Borrow the underlying arena-owned slice.
+    ///
+    /// `v` is always constructed from a valid parser-arena slice
+    /// (`expect_ident()` / source text) and the arena outlives every
+    /// `DashedIdent` produced from it. The slice is never null and never
+    /// mutated, so handing out `&[u8]` is sound.
+    #[inline]
+    pub fn v(&self) -> &[u8] {
+        // SAFETY: arena-owned, never null, immutable for the parse session
+        // (see type-level TODO(port) on `'bump` threading).
+        unsafe { &*self.v }
+    }
+
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
@@ -167,15 +183,14 @@ impl DashedIdent {
 
     pub fn hash(&self, hasher: &mut Wyhash) {
         // PORT NOTE: Zig used css.implementHash (comptime field-walk) → arena slice bytes.
-        // SAFETY: arena-owned slice valid for the parse session.
-        hasher.update(unsafe { &*self.v });
+        hasher.update(self.v());
     }
 
     /// Borrow the underlying arena slice.
     /// SAFETY: caller must ensure the parser arena outlives the borrow.
     #[inline]
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { &*self.v }
+        self.v()
     }
 }
 
@@ -189,15 +204,32 @@ pub struct Ident {
 }
 
 impl Ident {
+    /// Borrow the underlying arena-owned slice.
+    ///
+    /// `v` is always a non-null fat pointer into the parser's bump arena —
+    /// constructed from `expect_ident()` source text (or repacked via
+    /// `IdentOrRef::as_ident`). Arena bytes are immutable and outlive every
+    /// `Ident` produced from them, so handing out `&[u8]` is sound.
+    ///
+    /// NOTE: the borrow is tied to `&self`. Call sites that must return the
+    /// slice with the Phase-A `'static` placeholder lifetime (e.g.
+    /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
+    /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
+    /// still go through the raw field directly until Phase B threads `'bump`.
+    #[inline]
+    pub fn v(&self) -> &[u8] {
+        // SAFETY: arena-owned, never null, immutable for the parse session
+        // (see type-level TODO(port) on `'bump` threading).
+        unsafe { &*self.v }
+    }
+
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
         let ident = input.expect_ident()?;
         Ok(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // SAFETY: arena-owned slice valid for the printer's lifetime
-        let v = unsafe { &*self.v };
-        match css::serializer::serialize_identifier(v, dest) {
+        match css::serializer::serialize_identifier(self.v(), dest) {
             Ok(()) => Ok(()),
             Err(_) => Err(dest.add_fmt_error()),
         }
@@ -209,15 +241,14 @@ impl Ident {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        // SAFETY: arena-owned slice valid for the parse session.
-        hasher.update(unsafe { &*self.v });
+        hasher.update(self.v());
     }
 
     /// Borrow the underlying arena slice.
     /// SAFETY: caller must ensure the parser arena outlives the borrow.
     #[inline]
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { &*self.v }
+        self.v()
     }
 }
 
@@ -306,11 +337,8 @@ impl IdentOrRef {
     // which is the closest Rust equivalent.
 
     pub fn from_ident(ident: Ident) -> Self {
-        // SAFETY: ident.v is a valid fat pointer; we extract addr+len for packing
-        let (ptr, len) = unsafe {
-            let s = &*ident.v;
-            (s.as_ptr() as usize as u64, s.len() as u64)
-        };
+        let s = ident.v();
+        let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
         // @intCast(@intFromPtr(...)) — narrowing usize→u63 is checked in debug
         debug_assert!(ptr & (1u64 << 63) == 0);
         Self::pack(ptr, false, len)
@@ -401,9 +429,8 @@ impl IdentOrRef {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        if self.is_ident() {
-            // SAFETY: arena slice reconstructed from packed ptr/len
-            hasher.update(unsafe { &*self.as_ident().unwrap().v });
+        if let Some(ident) = self.as_ident() {
+            hasher.update(ident.v());
         } else {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
@@ -415,11 +442,8 @@ impl IdentOrRef {
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        if self.is_ident() && other.is_ident() {
-            // SAFETY: arena slices reconstructed from packed ptr/len
-            let a = unsafe { &*self.as_ident().unwrap().v };
-            let b = unsafe { &*other.as_ident().unwrap().v };
-            return a == b;
+        if let (Some(a), Some(b)) = (self.as_ident(), other.as_ident()) {
+            return a.v() == b.v();
         } else if self.is_ref() && other.is_ref() {
             let a = self.as_ref().unwrap();
             let b = other.as_ref().unwrap();
@@ -439,9 +463,8 @@ impl core::fmt::Display for IdentOrRef {
             let r = self.as_ref().unwrap();
             return write!(writer, "Ref({:?})", r);
         }
-        // SAFETY: arena slice reconstructed from packed ptr/len
-        let v = unsafe { &*self.as_ident().unwrap().v };
-        write!(writer, "Ident({})", bstr::BStr::new(v))
+        let ident = self.as_ident().unwrap();
+        write!(writer, "Ident({})", bstr::BStr::new(ident.v()))
     }
 }
 
@@ -454,6 +477,18 @@ pub struct CustomIdent {
 }
 
 impl CustomIdent {
+    /// Borrow the underlying arena slice.
+    ///
+    /// SAFETY: `v` is never null - it is always set from a valid parser-arena
+    /// slice in `parse()` (or copied from another `CustomIdent`). The arena is
+    /// immutable for the parse/print session and outlives every `CustomIdent`
+    /// constructed from it, so dereferencing is sound for any borrow no longer
+    /// than `&self`. (Phase B will thread the real `'bump` lifetime here.)
+    #[inline]
+    pub fn v(&self) -> &[u8] {
+        unsafe { &*self.v }
+    }
+
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
@@ -502,15 +537,14 @@ impl CustomIdent {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        // SAFETY: arena-owned slice valid for the parse session.
-        hasher.update(unsafe { &*self.v });
+        hasher.update(self.v());
     }
 
     /// Borrow the underlying arena slice.
     /// SAFETY: caller must ensure the parser arena outlives the borrow.
     #[inline]
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { &*self.v }
+        self.v()
     }
 }
 

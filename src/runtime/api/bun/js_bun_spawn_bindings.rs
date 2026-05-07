@@ -1570,7 +1570,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if let Writable::Buffer(buffer) = &mut subprocess.stdin {
         // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
         // ref-counted and we hold the owning ref via `subprocess.stdin`.
-        if let Err(err) = unsafe { (*buffer.data.as_ptr()).start() } {
+        if let Err(err) = unsafe { (*buffer.as_ptr()).start() } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1582,7 +1582,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
         // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        if let Err(err) = unsafe { (*pipe.data.as_ptr()).start(subprocess_nn, event_loop_nn) } {
+        if let Err(err) = unsafe { (*pipe.as_ptr()).start(subprocess_nn, event_loop_nn) } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1590,7 +1590,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout, Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = &mut subprocess.stdout {
                 // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.data.as_ptr()).read_all() };
+                unsafe { (*pipe.as_ptr()).read_all() };
             }
         }
     }
@@ -1598,7 +1598,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if let Readable::Pipe(pipe) = &mut subprocess.stderr {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
         // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        if let Err(err) = unsafe { (*pipe.data.as_ptr()).start(subprocess_nn, event_loop_nn) } {
+        if let Err(err) = unsafe { (*pipe.as_ptr()).start(subprocess_nn, event_loop_nn) } {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1607,7 +1607,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr, Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = &mut subprocess.stderr {
                 // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.data.as_ptr()).read_all() };
+                unsafe { (*pipe.as_ptr()).read_all() };
             }
         }
     }
@@ -1746,17 +1746,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Writable::Buffer(buffer) = &mut subprocess.stdin {
                 // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
                 // ref-counted and we hold the owning ref via `subprocess.stdin`.
-                unsafe { (*buffer.data.as_ptr()).watch() };
+                unsafe { (*buffer.as_ptr()).watch() };
             }
 
             if let Readable::Pipe(pipe) = &mut subprocess.stderr {
                 // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.data.as_ptr()).watch() };
+                unsafe { (*pipe.as_ptr()).watch() };
             }
 
             if let Readable::Pipe(pipe) = &mut subprocess.stdout {
                 // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.data.as_ptr()).watch() };
+                unsafe { (*pipe.as_ptr()).watch() };
             }
 
             // Tick the isolated event loop without passing timeout to avoid blocking

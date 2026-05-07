@@ -707,7 +707,7 @@ impl AnyRoute {
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning
                     // (`RefPtr<T>` has no `Drop`; this is the bit-copy Zig did).
-                    let borrowed = unsafe { RefPtr::from_raw(route.data.as_ptr()) };
+                    let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
                     v.insert(borrowed);
                     AnyRoute::Html(route)
                 }
@@ -1290,16 +1290,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { &mut *self.app.expect("server not listening") }
     }
 
-    /// Exclusive `&mut VirtualMachine` accessor. Goes through the raw
-    /// `VirtualMachine::get()` pointer (not `self.vm`) so the borrow does not
-    /// derive from `&self`'s read-only provenance.
-    #[inline]
-    fn vm_mut(&self) -> &mut jsc::virtual_machine::VirtualMachine {
-        // SAFETY: per-thread singleton; caller is on the JS thread and holds
-        // no other `&mut VirtualMachine` for this scope.
-        jsc::virtual_machine::VirtualMachine::get().as_mut()
-    }
-
     /// `server.zig:notifyInspectorServerStopped`. Unbounded so `deinit()` (in
     /// the unbounded `impl NewServer` in mod.rs) can call it without naming
     /// the per-transport `RequestContext` bounds.
@@ -1307,7 +1297,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.inspector_server_id.get() != 0 {
             #[cold] fn cold() {}
             cold();
-            if let Some(debugger) = &self.vm_mut().debugger {
+            if let Some(debugger) = &self.vm().as_mut().debugger {
                 cold();
                 // PORT NOTE (layering): `HTTPServerAgent.notifyServerStopped`
                 // takes `AnyServer` in Zig and unpacks `inspector_server_id`
@@ -2059,7 +2049,7 @@ where
         }
 
         if self.inspector_server_id.get() != 0 {
-            if let Some(debugger) = self.vm_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &mut debugger.http_server_agent,
                     self.as_any_server(),
@@ -2215,7 +2205,7 @@ where
                 headers,
                 // Zig: `bun.handleOom(this.vm.initRequestBodyValue(body))` —
                 // moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(self.vm_mut(), body),
+                crate::webcore::body::hive_alloc(self.vm().as_mut(), body),
                 method,
             ))
         } else if let Some(request_) = first_arg
@@ -2804,7 +2794,7 @@ where
         // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
         // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with
         // `ref_count = 1` (held by `ctx.request_body`).
-        let body_hive = crate::webcore::body::hive_alloc(self.vm_mut(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero (released in `RequestContext::deinit` and
         // `Request::finalize`).
@@ -3017,7 +3007,7 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        let body_hive = crate::webcore::body::hive_alloc(self.vm_mut(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
         // its refcount drops to zero.
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };

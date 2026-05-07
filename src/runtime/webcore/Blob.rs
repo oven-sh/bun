@@ -770,9 +770,9 @@ impl BlobExt for Blob {
 
         let mut context = FormDataContext {
             joiner: bun_str::string_joiner::StringJoiner::default(),
-            boundary: std::ptr::from_ref::<[u8]>(boundary),
+            boundary,
             failed: false,
-            global_this: global_this,
+            global_this,
         };
 
         // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
@@ -789,8 +789,9 @@ impl BlobExt for Blob {
             filename: *mut ZigString,
             is_blob: u8,
         ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below.
-            let ctx = unsafe { &mut *ctx_ptr.cast::<FormDataContext>() };
+            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
+            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
+            let ctx = unsafe { &mut *ctx_ptr.cast::<FormDataContext<'_>>() };
             let entry = if is_blob == 0 {
                 // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
                 FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
@@ -1186,11 +1187,7 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if strings::is_all_ascii(slice) {
-                        if self.content_type_allocated {
-                            // SAFETY: content_type_allocated implies content_type is a Box<[u8]>.
-                            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
-                            self.content_type_allocated = false;
-                        }
+                        self.free_content_type();
                         self.content_type_was_set = true;
 
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1361,9 +1358,12 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -1396,9 +1396,13 @@ impl BlobExt for Blob {
             {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
-                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() }.cast::<()>(),
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop()
+                            .cast::<()>(),
                     ),
                 );
 
@@ -1559,12 +1563,7 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if strings::is_all_ascii(slice) {
-                        if self.content_type_allocated {
-                            // SAFETY: `content_type_allocated` ⇒ the bytes were
-                            // a leaked `Box<[u8]>` (or default-allocator buf).
-                            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
-                            self.content_type_allocated = false;
-                        }
+                        self.free_content_type();
                         self.content_type_was_set = true;
                         // SAFETY: see other `mime_type` call sites.
                         if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
@@ -1676,11 +1675,14 @@ impl BlobExt for Blob {
                 )
             };
 
-            // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
             let sink = webcore::FileSink::init(
                 fd,
                 jsc::EventLoopHandle::init(
-                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
@@ -1705,9 +1707,13 @@ impl BlobExt for Blob {
         {
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
-                // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                 jsc::EventLoopHandle::init(
-                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() }.cast::<()>(),
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop()
+                        .cast::<()>(),
                 ),
             );
 
@@ -1765,10 +1771,7 @@ impl BlobExt for Blob {
 
         // dupe() deep-copies an allocated content_type; we're about to replace it,
         // so release that copy first to avoid leaking it.
-        if blob.content_type_allocated {
-            // SAFETY: content_type_allocated implies a Box<[u8]> was leaked into content_type.
-            unsafe { drop(Box::from_raw(blob.content_type.cast_mut())) };
-        }
+        blob.free_content_type();
 
         // infer the content type if it was not specified
         if content_type.is_empty() && !self.content_type_slice().is_empty() && !self.content_type_allocated {
@@ -3446,23 +3449,28 @@ where
 // FormDataContext
 // ──────────────────────────────────────────────────────────────────────────
 
-struct FormDataContext {
+/// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
+/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
+/// both strictly outlive this struct (Zig spec: `[]const u8` / non-optional
+/// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
+/// raw pointers.
+struct FormDataContext<'a> {
     joiner: StringJoiner,
-    boundary: *const [u8], // borrowed; outlives the joiner
+    boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
-    global_this: *const JSGlobalObject,
+    global_this: &'a JSGlobalObject,
 }
 
-impl FormDataContext {
+impl FormDataContext<'_> {
     pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
-        // SAFETY: global_this is valid for the duration of from_dom_form_data.
-        let global_this = unsafe { &*self.global_this };
+        // Copy the borrowed refs out first (disjoint-field reads) so the
+        // long-lived `&mut self.joiner` below doesn't conflict.
+        let global_this = self.global_this;
+        let boundary = self.boundary;
         let joiner = &mut self.joiner;
-        // SAFETY: boundary outlives the joiner (stack buffer in from_dom_form_data).
-        let boundary = unsafe { &*self.boundary };
 
         joiner.push_static(b"--");
         joiner.push_static(boundary); // note: "static" here means "outlives the joiner"
@@ -5152,6 +5160,12 @@ impl S3BlobDownloadTask {
         let _drop = scopeguard::guard(std::ptr::from_mut::<S3BlobDownloadTask>(this), |p| unsafe {
             drop(Box::from_raw(p));
         });
+        // NOTE(accessor-sweep): no `&`-returning accessor for
+        // `S3BlobDownloadTask::global_this` — the borrow must outlive
+        // `&mut this` calls (`this.call_handler`, `this.promise.*`) below,
+        // which a `fn(&self) -> &JSGlobalObject` lifetime cannot express.
+        // SAFETY: `global_this` is set from a live `&JSGlobalObject` in
+        // `init()` and `poll_ref` keeps the VM alive until this resolves.
         let global = unsafe { &*this.global_this };
         match result {
             crate::webcore::__s3_client::S3DownloadResult::Success(mut response) => {

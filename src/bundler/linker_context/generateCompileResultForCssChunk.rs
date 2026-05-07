@@ -149,8 +149,7 @@ fn generate_compile_result_for_css_chunk_impl(
     let local_names: &LocalsResultsMap = unsafe {
         &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
     };
-    // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
     // layout; the column slice is reinterpreted read-only for the duration of `to_css`.
     let unique_keys: &[&[u8]] = unsafe {

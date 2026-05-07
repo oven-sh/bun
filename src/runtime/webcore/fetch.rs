@@ -353,8 +353,7 @@ impl StringOrURL {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__fetch")]
+#[bun_jsc::host_fn(export = "Bun__fetch")]
 pub fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     fetch_impl::<false>(ctx, callframe)
 }

@@ -332,18 +332,28 @@ impl FileSystemRouter {
             }
         };
 
+        // PORT NOTE: `vm.refCountedString` is an interning cache — on a cache HIT it
+        // returns the existing `*mut RefString` WITHOUT bumping the refcount. The Zig
+        // spec gets away with this because `getScriptSrc`/`getOrigin` call `.slice()`
+        // (which leaks +1 each access) so the impl never reaches 0. The Rust port uses
+        // `.leak()` (no ref) there, which exposed the latent imbalance: N routers
+        // sharing one interned RefString → N finalizers deref a single +1 → UAF on the
+        // second deref. Claim an explicit +1 here so each `FileSystemRouter` owns its
+        // hold; `finalize` releases it. (Mirrors Zig's `fs_router.base_dir.?.ref()`.)
+        let claim = |p: *mut RefString| -> *mut RefString {
+            // SAFETY: `ref_counted_string` returns a live interned `*mut RefString`.
+            unsafe { (*p).ref_() };
+            p
+        };
         let mut fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
-                Some(vm.ref_counted_string::<true>(origin_str.slice(), None) as *mut RefString)
+                Some(claim(vm.ref_counted_string::<true>(origin_str.slice(), None)))
             } else {
                 None
             },
-            base_dir: Some(vm.ref_counted_string::<true>(base_dir_str, None) as *mut RefString),
+            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
-                Some(
-                    vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None)
-                        as *mut RefString,
-                )
+                Some(claim(vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None)))
             } else {
                 None
             },
@@ -353,7 +363,7 @@ impl FileSystemRouter {
 
         // PORT NOTE: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
         // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
-        // `Box<[u8]>`, so copy the bytes; no extra ref needed.
+        // `Box<[u8]>`, so copy the bytes; the `claim` above already took our +1.
         // SAFETY: `base_dir` was just set to Some above.
         fs_router.router.config.dir =
             Box::from(unsafe { (*fs_router.base_dir.unwrap()).leak() });

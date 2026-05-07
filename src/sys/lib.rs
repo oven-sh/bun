@@ -4034,9 +4034,12 @@ pub mod macho {
             if self.data.len() < core::mem::size_of::<T>() {
                 return None;
             }
-            // SAFETY: `data` is a slice into the dyld-mapped Mach-O header
-            // (4-byte aligned; every load_command struct in <mach-o/loader.h>
-            // has natural alignment ≤ 4). `T` is `#[repr(C)]` POD.
+            // SAFETY: `data` is a slice into the dyld-mapped Mach-O image.
+            // dyld maps each image at a page-aligned base; the 64-bit header
+            // is 32 bytes; and on MH_MAGIC_64 every `cmdsize` is required to
+            // be a multiple of 8. Hence each load command begins 8-byte
+            // aligned, satisfying `segment_command_64`'s 8-byte alignment
+            // (its `u64` fields). `T` is `#[repr(C)]` POD.
             Some(unsafe { &*(self.data.as_ptr().cast::<T>()) })
         }
     }

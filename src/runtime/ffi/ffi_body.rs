@@ -603,14 +603,38 @@ impl CompileC {
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
         {
-            // TODO(port): Zig calls `bun.spawnSync(&.{ argv = ["xcrun", "-sdk",
-            // "macosx", "-show-sdk-path"], stdout = .buffer, ... })` to
-            // auto-detect the active SDK root. The Rust `bun::spawn_sync`
-            // helper hasn't been ported yet (see install/repository.rs TODO).
-            // Until it lands, fall back to `SDKROOT` (handled by the caller's
-            // `dirs_to_try` loop) — same behavior as when xcrun is absent.
-            // This is best-effort; FFI compilation still works when SDKROOT is
-            // set or when the user passes `-isysroot` manually.
+            // Zig: `bun.spawnSync(&.{ argv = ["xcrun", "-sdk", "macosx",
+            // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
+            // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
+            // yet (see install/repository.rs TODO), so use std::process as a
+            // Phase-A shim — semantics match: inherit env, ignore stdin/stderr,
+            // capture stdout, treat any spawn/exit failure as "not found"
+            // (Zig: `catch return` / `if (process.result.isOK())`).
+            // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
+            // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            let out = match std::process::Command::new("xcrun")
+                .arg("-sdk")
+                .arg("macosx")
+                .arg("-show-sdk-path")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+            {
+                Ok(o) => o,
+                Err(_) => return,
+            };
+            if !out.status.success() {
+                return;
+            }
+            use bstr::ByteSlice as _;
+            let stdout = out.stdout.as_slice();
+            // Zig: `strings.trim(stdout, "\n\r")`
+            let trimmed: &[u8] = stdout.trim_with(|c| c == '\n' || c == '\r');
+            if trimmed.is_empty() {
+                return;
+            }
+            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                .set(bun_core::ZBox::from_bytes(trimmed));
         }
         #[cfg(target_os = "linux")]
         {

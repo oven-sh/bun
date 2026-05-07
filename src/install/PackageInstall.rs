@@ -965,13 +965,15 @@ impl<'a> PackageInstall<'a> {
                             )
                         } {
                             0 => {}
-                            _ => match sys::Errno::from_raw(sys::last_errno() as u16) {
-                                sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
-                                sys::Errno::EOPNOTSUPP => return Err(bun_core::err!("NotSupported")),
-                                sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
+                            // `init` bounds-checks (None for out-of-range errno) — avoids
+                            // `from_raw`'s release-mode transmute on an unexpected value.
+                            _ => match sys::Errno::init(sys::last_errno() as i64) {
+                                Some(sys::Errno::EXDEV) => return Err(bun_core::err!("NotSupported")), // not same file system
+                                Some(sys::Errno::EOPNOTSUPP) => return Err(bun_core::err!("NotSupported")),
+                                Some(sys::Errno::ENOENT) => return Err(bun_core::err!("FileNotFound")),
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
-                                sys::Errno::EEXIST => {}
-                                sys::Errno::EACCES => return Err(bun_core::err!("AccessDenied")),
+                                Some(sys::Errno::EEXIST) => {}
+                                Some(sys::Errno::EACCES) => return Err(bun_core::err!("AccessDenied")),
                                 _ => return Err(bun_core::err!("Unexpected")),
                             },
                         }

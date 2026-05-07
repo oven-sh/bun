@@ -938,6 +938,9 @@ impl Poll {
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = unsafe { core::mem::zeroed() };
         // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
+        // Zig `@intCast` would trap on a negative fd in safe builds — keep that
+        // safety net so a stray -1 doesn't silently register ident=u64::MAX.
+        debug_assert!(fd.native() >= 0, "register: negative fd {:?}", fd);
         kqueue_event.ident = fd.native() as _;
         kqueue_event.filter = filter;
         kqueue_event.flags = flags_;

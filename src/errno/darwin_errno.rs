@@ -335,7 +335,11 @@ macro_rules! impl_get_errno_libc {
         impl GetErrno for $t {
             #[inline]
             fn get_errno(self) -> E {
-                if self as i64 == -1 {
+                // Zig `getErrno` compares with @bitCast semantics: an unsigned
+                // sentinel of all-ones (e.g. 0xFFFF_FFFF_u32) must read errno.
+                // `(-1i64 as $t as i64)` yields -1 for signed $t and the
+                // zero-extended all-ones value for unsigned $t.
+                if self as i64 == (-1i64 as $t as i64) {
                     // CYCLEBREAK: bun_sys::c::errno MOVE_DOWN → crate::posix (move-in pass)
                     // SAFETY: errno is always a valid E discriminant on Darwin
                     unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }

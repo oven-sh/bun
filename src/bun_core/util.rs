@@ -1196,7 +1196,8 @@ fn thread_id() -> u64 {
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
     // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
-    unsafe { libc::pthread_self() as u64 }
+    // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
+    unsafe { libc::pthread_self() as usize as u64 }
     #[cfg(windows)]
     unsafe {
         unsafe extern "system" { fn GetCurrentThreadId() -> u32; }

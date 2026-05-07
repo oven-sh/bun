@@ -1993,8 +1993,14 @@ it("http2 request.destroy() with error", async () => {
 // connection window first (as gRPC servers routinely do), the
 // SETTINGS change was effectively ignored and any queued DATA past
 // the default 65535-byte stream window hung forever.
-it("applies SETTINGS_INITIAL_WINDOW_SIZE delta to existing streams (GH-30342)", async () => {
+describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling (GH-30342)", () => {
   const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "ascii");
+  const TYPE_DATA = 0x0;
+  const TYPE_HEADERS = 0x1;
+  const TYPE_SETTINGS = 0x4;
+  const TYPE_WINDOW_UPDATE = 0x8;
+  const SETTING_INITIAL_WINDOW_SIZE = 0x4;
+
   function rawFrame(type, flags, streamId, payload) {
     const len = payload.length;
     const buf = Buffer.alloc(9 + len);
@@ -2007,23 +2013,59 @@ it("applies SETTINGS_INITIAL_WINDOW_SIZE delta to existing streams (GH-30342)", 
     payload.copy(buf, 9);
     return buf;
   }
-  const TYPE_DATA = 0x0;
-  const TYPE_HEADERS = 0x1;
-  const TYPE_SETTINGS = 0x4;
-  const TYPE_WINDOW_UPDATE = 0x8;
 
-  const { promise: listening, resolve: resolveListening } = Promise.withResolvers();
-  const server = net.createServer(sock => {
-    let buf = Buffer.alloc(0);
-    let gotPreface = false;
+  function settingsPayload(id, value) {
+    const p = Buffer.alloc(6);
+    p.writeUInt16BE(id, 0);
+    p.writeUInt32BE(value >>> 0, 2);
+    return p;
+  }
+
+  // Drives a raw-frame HTTP/2 server. `hooks` fires on the client's
+  // initial SETTINGS ACK of the server's SETTINGS, on HEADERS, and on
+  // each DATA frame. Caller closes server via the returned object.
+  async function startRawServer(hooks) {
+    const { promise, resolve } = Promise.withResolvers();
+    const server = net.createServer(sock => {
+      let buf = Buffer.alloc(0);
+      let gotPreface = false;
+      sock.on("error", () => {});
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!gotPreface) {
+          if (buf.length < PREFACE.length) return;
+          buf = buf.subarray(PREFACE.length);
+          gotPreface = true;
+          hooks.onPreface?.(sock);
+        }
+        while (buf.length >= 9) {
+          const length = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+          if (buf.length < 9 + length) break;
+          const type = buf[3];
+          const flags = buf[4];
+          const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+          const payload = buf.subarray(9, 9 + length);
+          buf = buf.subarray(9 + length);
+          if (type === TYPE_SETTINGS) {
+            if (flags & 0x1) hooks.onClientSettingsAck?.(sock);
+            else sock.write(rawFrame(TYPE_SETTINGS, 0x1, 0, Buffer.alloc(0)));
+          } else if (type === TYPE_HEADERS) {
+            hooks.onClientHeaders?.(sock, streamId);
+          } else if (type === TYPE_DATA) {
+            hooks.onClientData?.(sock, streamId, payload, (flags & 0x1) !== 0);
+          }
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1", () => resolve());
+    await promise;
+    return { server, port: server.address().port };
+  }
+
+  it("positive delta unblocks queued DATA", async () => {
     let secondSettingsSent = false;
-    sock.on("error", () => {});
-    sock.on("data", chunk => {
-      buf = Buffer.concat([buf, chunk]);
-      if (!gotPreface) {
-        if (buf.length < PREFACE.length) return;
-        buf = buf.subarray(PREFACE.length);
-        gotPreface = true;
+    const { server, port } = await startRawServer({
+      onPreface(sock) {
         // Empty SETTINGS (defaults) + connection-level WINDOW_UPDATE.
         // Raising the connection window first is the trigger: the old
         // buggy code compared the new per-stream window against
@@ -2033,59 +2075,157 @@ it("applies SETTINGS_INITIAL_WINDOW_SIZE delta to existing streams (GH-30342)", 
         const winInc = Buffer.alloc(4);
         winInc.writeUInt32BE(10 << 20, 0);
         sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, winInc));
-      }
-      while (buf.length >= 9) {
-        const length = (buf[0] << 16) | (buf[1] << 8) | buf[2];
-        if (buf.length < 9 + length) break;
-        const type = buf[3];
-        const flags = buf[4];
-        const streamId = buf.readUInt32BE(5) & 0x7fffffff;
-        const payload = buf.subarray(9, 9 + length);
-        buf = buf.subarray(9 + length);
-        if (type === TYPE_SETTINGS) {
-          if (flags & 0x1) {
-            if (!secondSettingsSent) {
-              secondSettingsSent = true;
-              // Raise SETTINGS_INITIAL_WINDOW_SIZE to 1 MiB.
-              const p = Buffer.alloc(6);
-              p.writeUInt16BE(0x4, 0);
-              p.writeUInt32BE(1 << 20, 2);
-              sock.write(rawFrame(TYPE_SETTINGS, 0, 0, p));
-            }
-          } else {
-            sock.write(rawFrame(TYPE_SETTINGS, 0x1, 0, Buffer.alloc(0)));
-          }
-        } else if (type === TYPE_DATA) {
-          // Ack only the CONNECTION window. No per-stream WINDOW_UPDATE —
-          // the INITIAL_WINDOW_SIZE bump alone has to unblock queued DATA.
-          const inc = Buffer.alloc(4);
-          inc.writeUInt32BE(payload.length || 1, 0);
-          sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, inc));
-          if (flags & 0x1) {
-            // minimal :status 200 response to close the stream
-            sock.write(rawFrame(TYPE_HEADERS, 0x4 | 0x1, streamId, Buffer.from([0x88])));
-          }
+      },
+      onClientSettingsAck(sock) {
+        if (secondSettingsSent) return;
+        secondSettingsSent = true;
+        // Raise SETTINGS_INITIAL_WINDOW_SIZE to 1 MiB.
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, settingsPayload(SETTING_INITIAL_WINDOW_SIZE, 1 << 20)));
+      },
+      onClientData(sock, streamId, payload, end) {
+        // Ack only the CONNECTION window. No per-stream WINDOW_UPDATE —
+        // the INITIAL_WINDOW_SIZE bump alone has to unblock queued DATA.
+        const inc = Buffer.alloc(4);
+        inc.writeUInt32BE(payload.length || 1, 0);
+        sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, inc));
+        if (end) {
+          // minimal :status 200 response to close the stream
+          sock.write(rawFrame(TYPE_HEADERS, 0x4 | 0x1, streamId, Buffer.from([0x88])));
         }
-      }
+      },
     });
-  });
-  server.listen(0, "127.0.0.1", () => resolveListening());
-  await listening;
 
-  try {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const req = client.request({ ":method": "POST", ":path": "/" });
-    // 87136 > 65535 default per-stream window — the client must queue
-    // the tail until the SETTINGS bump raises the window.
-    const body = Buffer.alloc(87136, 0x61);
-    req.on("end", resolve);
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-    await promise;
-    client.close();
-  } finally {
-    server.close();
-  }
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      // 87136 > 65535 default per-stream window — the client must queue
+      // the tail until the SETTINGS bump raises the window.
+      const body = Buffer.alloc(87136, 0x61);
+      req.on("end", resolve);
+      req.on("error", reject);
+      req.write(body);
+      req.end();
+      await promise;
+      client.close();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("negative delta applied to existing stream holds DATA until WINDOW_UPDATE", async () => {
+    // Sequence exercises the *existing-stream* delta path specifically:
+    //  1. server sends empty SETTINGS (initial=65535 default)
+    //  2. client opens a stream via HEADERS; stream's remoteWindowSize
+    //     is 65535 at that point
+    //  3. ONLY AFTER the HEADERS frame is visible on the wire, server
+    //     sends SETTINGS shrinking INITIAL_WINDOW_SIZE to 0. RFC 6.9.2
+    //     requires the delta (-65535) to apply to the live stream,
+    //     driving its remoteWindowSize to 0.
+    //  4. client writes 65535 bytes; DATA must NOT be sent
+    //  5. assert nothing was sent after 200ms, emit per-stream
+    //     WINDOW_UPDATE to reopen, and verify DATA finally flows
+    let peerSocket;
+    let dataBeforeReopen = 0;
+    let reopenArmed = false;
+    const { server, port } = await startRawServer({
+      onPreface(sock) {
+        peerSocket = sock;
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, Buffer.alloc(0)));
+      },
+      onClientSettingsAck() {},
+      onClientHeaders(sock) {
+        // Shrink per-stream initial window to 0. The delta (-65535) is
+        // applied to the stream that just opened.
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, settingsPayload(SETTING_INITIAL_WINDOW_SIZE, 0)));
+      },
+      onClientData(sock, streamId, payload, end) {
+        if (!reopenArmed) dataBeforeReopen += payload.length;
+        const inc = Buffer.alloc(4);
+        inc.writeUInt32BE(payload.length || 1, 0);
+        sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, inc));
+        if (end) {
+          sock.write(rawFrame(TYPE_HEADERS, 0x4 | 0x1, streamId, Buffer.from([0x88])));
+        }
+      },
+    });
+
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("end", resolve);
+      req.on("error", reject);
+      // Let HEADERS reach the server and the shrink SETTINGS come back
+      // and get applied before we write a body the size of the original
+      // window. Without the delta fix, remoteWindowSize stays at 65535
+      // and the write flies; with the fix it's driven to 0.
+      await new Promise(r => setTimeout(r, 150));
+      const body = Buffer.alloc(65535, 0x62);
+      req.write(body);
+      req.end();
+      await new Promise(r => setTimeout(r, 200));
+      expect(dataBeforeReopen).toBe(0);
+      reopenArmed = true;
+      // Emit WINDOW_UPDATE for stream 1 large enough to send the body.
+      const inc = Buffer.alloc(4);
+      inc.writeUInt32BE(body.length, 0);
+      peerSocket.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 1, inc));
+      await promise;
+      client.close();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("delta that overflows 2^31-1 closes the session with FLOW_CONTROL_ERROR", async () => {
+    // Sequence:
+    //  1. server sends empty SETTINGS (initial=65535)
+    //  2. on the client's first DATA, server emits WINDOW_UPDATE on the
+    //     stream to push its remoteWindowSize near 2^31-1
+    //  3. server then sends SETTINGS raising INITIAL_WINDOW_SIZE by 2;
+    //     the resulting delta applied to the primed stream overflows
+    //  4. client must emit GOAWAY with NGHTTP2_FLOW_CONTROL_ERROR (3),
+    //     surfaced as ERR_HTTP2_SESSION_ERROR on the 'error' event
+    const MAX = 2 ** 31 - 1;
+    let primed = false;
+    const { server, port } = await startRawServer({
+      onPreface(sock) {
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, Buffer.alloc(0)));
+      },
+      onClientSettingsAck() {},
+      onClientData(sock, streamId) {
+        if (primed) return;
+        primed = true;
+        // Raise the stream's send window to (MAX - 1).
+        // Default is 65535, so add (MAX - 1 - 65535).
+        const inc = Buffer.alloc(4);
+        inc.writeUInt32BE(MAX - 1 - 65535, 0);
+        sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, streamId, inc));
+        // Now raise INITIAL_WINDOW_SIZE from 65535 to 65537. Delta = +2,
+        // applied to a stream at (MAX - 1) overflows.
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, settingsPayload(SETTING_INITIAL_WINDOW_SIZE, 65537)));
+      },
+    });
+
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      const { promise, resolve } = Promise.withResolvers();
+      client.on("error", resolve);
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      // tiny DATA (fits in default window) so the parser registers the
+      // stream before the overflow-inducing SETTINGS arrives
+      req.write(Buffer.from([0x61]));
+      const err = await promise;
+      expect(err).toBeDefined();
+      expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+      expect(err.message).toBe("Session closed with error code NGHTTP2_FLOW_CONTROL_ERROR");
+      try {
+        client.destroy();
+      } catch {}
+    } finally {
+      server.close();
+    }
+  });
 });

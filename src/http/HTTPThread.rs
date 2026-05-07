@@ -504,7 +504,7 @@ impl HttpThread {
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
                 let (_k, entry) = map.swap_remove_at(i);
                 // SAFETY: cache holds one strong ref taken at insert.
-                NewHttpContext::<true>::deref(entry.ctx.as_ptr());
+                unsafe { NewHttpContext::<true>::deref(entry.ctx.as_ptr()) };
                 drop(entry.config_ref); // entry.config_ref.deinit()
             } else {
                 i += 1;
@@ -911,7 +911,7 @@ fn evict_oldest_ssl_context() {
     }
     let (_k, entry) = map.swap_remove_at(oldest_idx);
     // SAFETY: cache holds one strong ref taken at insert.
-    NewHttpContext::<true>::deref(entry.ctx.as_ptr());
+    unsafe { NewHttpContext::<true>::deref(entry.ctx.as_ptr()) };
     drop(entry.config_ref); // entry.config_ref.deinit()
 }
 

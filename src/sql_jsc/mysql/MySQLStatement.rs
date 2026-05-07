@@ -93,39 +93,18 @@ pub enum Status {
     Failed,
 }
 
+// Intrusive refcount (Zig: `RefCount.ref`/`RefCount.deref`).
+bun_ptr::impl_cell_ref_counted! {
+    impl MySQLStatement {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: count hit 0; `this` came from `Box::into_raw`. Field cleanup
+        // runs via `Drop for MySQLStatement`; the Box drop frees the
+        // allocation (mirrors `bun.destroy`).
+        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+    }
+}
+
 impl MySQLStatement {
-    /// Intrusive refcount increment (Zig: `RefCount.ref`).
-    ///
-    /// # Safety
-    /// `this` must point to a live `MySQLStatement` allocated via
-    /// `Box::into_raw` (Zig: `bun.create`).
-    pub unsafe fn ref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live boxed MySQLStatement.
-        let rc = unsafe { &(*this).ref_count };
-        rc.set(rc.get() + 1);
-    }
-
-    /// Intrusive refcount decrement (Zig: `RefCount.deref`). Runs `deinit`
-    /// (field Drop + `bun.destroy`) when the count hits 0.
-    ///
-    /// # Safety
-    /// `this` must point to a live `MySQLStatement` allocated via
-    /// `Box::into_raw` (Zig: `bun.create`). Caller must not use `this` after
-    /// the count reaches 0.
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live boxed MySQLStatement.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // Zig deinit: per-field deinit + `bun.destroy(this)`. Field cleanup
-            // runs via `Drop for MySQLStatement`; the Box drop frees the
-            // allocation (mirrors `bun.destroy`).
-            // SAFETY: count hit 0; `this` came from Box::into_raw.
-            drop(unsafe { Box::from_raw(this) });
-        }
-    }
-
     pub fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;

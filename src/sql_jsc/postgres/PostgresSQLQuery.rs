@@ -585,7 +585,7 @@ impl PostgresSQLQuery {
                     let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
                     this.statement = Some(stmt);
                     // SAFETY: `stmt` is the live map entry.
-                    unsafe { (*stmt).r#ref() };
+                    unsafe { (*stmt).ref_() };
                     drop(signature);
 
                     // SAFETY: `stmt` is live (just ref'd).

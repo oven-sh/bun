@@ -379,7 +379,7 @@ impl MySQLQuery {
                 // Zig: `this.#statement = stmt; stmt.ref();`
                 self.statement = stmt;
                 // SAFETY: `stmt` is a live boxed `MySQLStatement` (owned by the map).
-                unsafe { MySQLStatement::ref_(stmt) };
+                unsafe { (*stmt).ref_() };
                 drop(signature);
                 signature = Signature::default();
                 let _ = signature; // matches Zig reassign-to-empty; silences unused.

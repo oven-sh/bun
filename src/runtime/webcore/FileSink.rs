@@ -68,35 +68,13 @@ pub struct FileSink {
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
 // refcount. `*FileSink` crosses FFI (JSSink wrapper, `@fieldParentPtr`,
 // `asPromisePtr`), so this stays intrusive rather than `Rc<T>`.
-// TODO(port): replace hand-rolled ref/deref with `bun_ptr::IntrusiveRc<FileSink>` once available.
-impl FileSink {
-    #[inline]
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Decrement the intrusive refcount; frees the allocation on zero.
-    ///
-    /// # Safety
-    /// `this` must point to a live `FileSink` allocated via `Box::into_raw`
-    /// (see `create*`/`init`) and must carry write+dealloc provenance — i.e.
-    /// be derived from the original `*mut FileSink` or an `&mut FileSink`,
-    /// never from a `&FileSink`. Taking `&self` here would strip write
-    /// provenance and make the `deinit` path UB under Stacked Borrows.
-    #[inline]
-    pub unsafe fn deref(this: *const Self) {
-        // SAFETY: caller contract — `this` is live; `ref_count` is `Cell<u32>`
-        // so the shared borrow of just that field is sound.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; we hold the sole remaining reference.
-            // `this` retains the caller's write provenance (no `&self` in the
-            // chain), so the `*mut` cast is sound for `deinit` to write through
-            // and `Box::from_raw` to reclaim.
-            unsafe { Self::deinit(this as *mut Self) };
-        }
+bun_ptr::impl_cell_ref_counted! {
+    impl FileSink {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: refcount hit zero; sole remaining reference. `this` retains
+        // write provenance (no `&self` in the chain) so `deinit` can write
+        // through and `Box::from_raw` can reclaim.
+        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
 

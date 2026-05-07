@@ -165,37 +165,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
         Self::handle_handshake;
 }
 
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+bun_ptr::impl_cell_ref_counted! {
+    impl[const SSL: bool] HTTPClient<SSL> {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: refcount hit zero; no other live references remain.
+        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
+    }
+}
+
 impl<const SSL: bool> HTTPClient<SSL> {
-    /// Intrusive refcount increment.
-    ///
-    /// Takes `&self` (not `*mut`) because it only touches `ref_count: Cell<u32>`,
-    /// which is `UnsafeCell`-backed and sound to mutate through a shared ref.
-    pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Intrusive refcount decrement; runs `deinit` (clearData + free) on 0.
-    ///
-    /// Zig: `RefCount.deref(self: *Self)`. Takes a raw `*mut Self` because the
-    /// zero-count path mutates non-`UnsafeCell` fields and frees the allocation;
-    /// deriving that pointer from a `&self` (`as *const Self as *mut Self`) and
-    /// writing through it is UB under Stacked Borrows.
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self` allocated via `Box::into_raw` in
-    /// `connect`. If the refcount reaches zero, `this` is freed and must not be
-    /// accessed afterward.
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell`.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; no other live references remain.
-            unsafe { Self::deinit(this) };
-        }
-    }
-
     /// Called by `RefCount` when the count hits zero.
     ///
     /// # Safety
@@ -522,7 +501,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     client_ref.tcp.timeout(120);
                     client_ref.state = State::Reading;
                     // +1 for cpp_websocket
-                    client_ref.r#ref();
+                    client_ref.ref_();
                     return Some(client);
                 }
                 Err(_) => {
@@ -563,7 +542,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 out.tcp.timeout(120);
                 out.state = State::Reading;
                 // +1 for cpp_websocket
-                out.r#ref();
+                out.ref_();
                 Some(client)
             }
             Err(_) => {
@@ -626,7 +605,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
         // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
         // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).r#ref() };
+        unsafe { (*this).ref_() };
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
         // SAFETY: short-lived `&mut` for the field take; ends before any reentrant call.
@@ -871,7 +850,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).r#ref() };
+        unsafe { (*this).ref_() };
         // TODO(port): defer self.deref() — placed at all return points below.
 
         // SAFETY: short-lived `&self` for the comparison.
@@ -1690,7 +1669,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return;
                 }
                 // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-                unsafe { (*this).r#ref() };
+                unsafe { (*this).ref_() };
                 // TODO(port): defer self.deref() — placed at return points below.
                 // SAFETY: short-lived `&self` for `to_send()`.
                 // SAFETY: `p` holds a live ref on `tunnel`.
@@ -1721,7 +1700,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).r#ref() };
+        unsafe { (*this).ref_() };
         // TODO(port): defer self.deref() — placed at return points below.
 
         // SAFETY: short-lived `&self` for `to_send()`.

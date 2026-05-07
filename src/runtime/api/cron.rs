@@ -1323,16 +1323,21 @@ pub enum ClearMode {
     Teardown,
 }
 
-/// RAII owner for one intrusive refcount on a [`CronJob`]. Dropping calls
-/// [`CronJob::deref`], which may free `*self.0` — callers must not hold a live
-/// `&`/`&mut CronJob` across the guard's drop point. Construct via
-/// [`CronJob::ref_guard`].
-struct CronJobDerefOnDrop(*mut CronJob);
-impl Drop for CronJobDerefOnDrop {
-    fn drop(&mut self) {
-        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
-        // pointer with at least one outstanding ref owned by this guard.
-        CronJob::deref(self.0);
+/// RAII owner for one intrusive refcount on a [`CronJob`].
+type CronJobDerefOnDrop = bun_ptr::ScopedRef<CronJob>;
+
+// Intrusive refcount (bun.ptr.RefCount).
+bun_ptr::impl_cell_ref_counted! {
+    impl CronJob {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        unsafe fn destroy(this: *mut Self) {
+            // deinit: this_value.deinit() then destroy.
+            // SAFETY: last ref; nobody else holds a pointer.
+            // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
+            // reassignment handles teardown (JSRef.rs trailer).
+            (*this).this_value = JsRef::empty();
+            drop(Box::from_raw(this));
+        }
     }
 }
 
@@ -1345,10 +1350,6 @@ impl CronJob {
         )))
     }
 
-    // Intrusive refcount (bun.ptr.RefCount).
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
     /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
     /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
@@ -1359,23 +1360,7 @@ impl CronJob {
     #[inline]
     unsafe fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
         // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
-        CronJobDerefOnDrop(this)
-    }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive RC; this is valid until count hits 0.
-        let rc = unsafe { (*this).ref_count.get() - 1 };
-        unsafe { (*this).ref_count.set(rc) };
-        if rc == 0 {
-            // deinit: this_value.deinit() then destroy.
-            // SAFETY: last ref; nobody else holds a pointer.
-            unsafe {
-                // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
-                // reassignment handles teardown (JSRef.rs trailer).
-                (*this).this_value = JsRef::empty();
-                drop(Box::from_raw(this));
-            }
-        }
+        unsafe { CronJobDerefOnDrop::new(this) }
     }
 
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
@@ -1393,7 +1378,8 @@ impl CronJob {
         if this_ref.pending_ref {
             this_ref.pending_ref = false;
             this_ref.maybe_downgrade();
-            Self::deref(this);
+            // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
+            unsafe { Self::deref(this) };
         }
     }
 
@@ -1443,7 +1429,8 @@ impl CronJob {
         if let Some(rare) = rare {
             if let Some(i) = rare.cron_jobs.iter().position(|&j| j as *mut () == needle) {
                 rare.cron_jobs.swap_remove(i);
-                Self::deref(this);
+                // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
+                unsafe { Self::deref(this) };
             }
         }
     }
@@ -1471,14 +1458,16 @@ impl CronJob {
             if MODE == ClearMode::Teardown {
                 Self::release_pending_ref(job);
             }
-            Self::deref(job);
+            // SAFETY: `job` is a live Box-allocated CronJob; this releases one ref.
+            unsafe { Self::deref(job) };
         }
     }
 
     pub fn finalize(this: *mut Self) {
         // SAFETY: called from JSC finalizer on mutator thread.
         unsafe { (*this).this_value.finalize() };
-        Self::deref(this);
+        // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
+        unsafe { Self::deref(this) };
     }
 
     fn compute_next_timespec(&mut self) -> Option<bun_core::Timespec> {
@@ -1710,7 +1699,8 @@ impl CronJob {
         let job_ref = unsafe { &mut *job };
 
         let Some(next_time) = job_ref.compute_next_timespec() else {
-            Self::deref(job);
+            // SAFETY: `job` is a live Box-allocated CronJob; this releases one ref.
+            unsafe { Self::deref(job) };
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cron expression '{}' has no future occurrences",
                 bstr::BStr::new(schedule_slice.slice())

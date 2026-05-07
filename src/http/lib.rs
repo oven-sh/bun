@@ -540,7 +540,7 @@ impl Drop for HTTPClient {
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
         if let Some(ctx) = self.custom_ssl_ctx.take() {
             // SAFETY: we hold one strong ref taken in set_custom_ssl_ctx.
-            HttpsContext::deref(ctx.as_ptr());
+            unsafe { HttpsContext::deref(ctx.as_ptr()) };
         }
         self.unix_socket_path = ZigStringSlice::EMPTY;
     }
@@ -1756,7 +1756,7 @@ impl HTTPClient {
         unsafe { (*ctx.as_ptr()).ref_() };
         if let Some(old) = self.custom_ssl_ctx.replace(ctx) {
             // SAFETY: old points at a live HttpsContext we held a ref on.
-            HttpsContext::deref(old.as_ptr());
+            unsafe { HttpsContext::deref(old.as_ptr()) };
         }
     }
 

@@ -105,7 +105,7 @@ unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
-    ClientSession::deref(session);
+    unsafe { ClientSession::deref(session) };
 }
 
 unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {

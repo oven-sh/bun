@@ -46,6 +46,16 @@ pub struct ClientSession {
     pub pending: Vec<*mut Stream>,
 }
 
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+bun_ptr::impl_cell_ref_counted! {
+    impl ClientSession {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: ref_count hitting 0 means no other alias remains; `this`
+        // carries the original `Box::into_raw` provenance from `new`.
+        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+    }
+}
+
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
@@ -61,26 +71,6 @@ impl ClientSession {
             registry_index: u32::MAX,
             pending: Vec::new(),
         }))
-    }
-
-    // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-    // PORT NOTE: `ref` is a Rust keyword so `ref_`.
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-    // Takes `*mut Self` (not `&self`) so the `Box::from_raw` on the zero-ref path
-    // inherits write-capable provenance from the original `Box::into_raw` pointer
-    // — deriving it from a `&self` would be a `*const → *mut` cast (UB on drop).
-    pub fn deref(this: *mut Self) {
-        // SAFETY: `this` is a live heap allocation produced by `new` (Box::into_raw);
-        // ref_count is `Cell<u32>` so the autoref'd `&Cell` access is sound.
-        let n = unsafe { (*this).ref_count.get() } - 1;
-        unsafe { (*this).ref_count.set(n) };
-        if n == 0 {
-            // SAFETY: ref_count hitting 0 means no other alias remains; `this` carries
-            // the original Box provenance so reclaiming it here is sound.
-            unsafe { drop(Box::from_raw(this)) };
-        }
     }
 
     pub fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
@@ -183,7 +173,8 @@ impl ClientSession {
         // SAFETY: stream was Box::into_raw'd by Stream::new; ownership is reclaimed
         // here. `Stream::Drop` decrements live_streams.
         unsafe { drop(Box::from_raw(stream)) };
-        ClientSession::deref(self);
+        // SAFETY: `self` is a live heap allocation produced by `new`.
+        unsafe { ClientSession::deref(self) };
     }
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {

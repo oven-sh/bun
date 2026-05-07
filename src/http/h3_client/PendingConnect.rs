@@ -32,7 +32,8 @@ impl Drop for PendingConnect {
     fn drop(&mut self) {
         // Invariant: a constructed PendingConnect holds exactly one ref on `session`
         // (taken in `register`); release it here.
-        ClientSession::deref(self.session);
+        // SAFETY: ref taken in `register`; session is live until this drops it.
+        unsafe { ClientSession::deref(self.session) };
     }
 }
 
@@ -150,7 +151,7 @@ impl PendingConnect {
         // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
         // session is intrusive-refcounted; this drops the connection-alive ref.
-        ClientSession::deref(session);
+        unsafe { ClientSession::deref(session) };
     }
 }
 

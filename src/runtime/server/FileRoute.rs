@@ -644,29 +644,12 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 }
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-// PORT NOTE: `bun_ptr` has no `intrusive_rc!` macro; the canonical Rust shape is
-// `impl bun_ptr::RefCounted` over a `RefCount<Self>` field. FileRoute keeps its
-// `Cell<u32>` field for now (initialized at 3 sites above and crossed as raw
-// userdata into FileResponseStream), so expand the mixin inline.
-impl FileRoute {
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// # Safety
-    /// `this` must have been produced by `Box::into_raw` in one of the
-    /// constructors above (write provenance preserved through FFI userdata
-    /// round-trips). Caller must not hold any live `&`/`&mut` to `*this`
-    /// across this call when the refcount may reach zero.
-    pub unsafe fn deref(this: *mut FileRoute) {
-        // SAFETY: caller contract — `this` is live and uniquely held when n→0.
-        unsafe {
-            let n = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(n);
-            if n == 0 {
-                FileRoute::deinit(this);
-            }
-        }
+bun_ptr::impl_cell_ref_counted! {
+    impl FileRoute {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: `this` was produced by `Box::into_raw` (write provenance
+        // preserved through FFI userdata round-trips); uniquely held at zero.
+        unsafe fn destroy(this: *mut Self) { FileRoute::deinit(this) }
     }
 }
 

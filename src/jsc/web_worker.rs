@@ -206,6 +206,9 @@ pub enum Status {
 unsafe extern "C" {
     fn WebWorker__teardownJSCVM(global: *const JSGlobalObject);
     fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // Re-declared here (also private in VM.rs) so `thread_main` can take the
+    // API lock as a raw FFI call with NO RAII guard — see PORT NOTE there.
+    fn JSC__VM__getAPILock(vm: *mut jsc::VM);
     fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: *const JSGlobalObject);
     fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: *const JSGlobalObject);
     fn WebWorker__dispatchError(
@@ -758,15 +761,21 @@ impl WebWorker {
         // In Rust we cannot use `pthread_exit` (its forced unwind aborts at
         // the first `extern "C"` boundary — see `shutdown` PORT NOTE), so
         // `spin()` returns. To preserve the Zig invariant that the API lock
-        // is simply abandoned along with the destroyed VM, take the lock
-        // manually and `forget` the guard so its `Drop` (`releaseAPILock`)
-        // never touches the now-freed `JSC::VM`. `WebWorker__teardownJSCVM`
-        // correspondingly `deref`s once, since there is no `JSLockHolder`
-        // ref to release on its behalf — see the matching note in
-        // `Worker.cpp`.
-        let api_lock = unsafe { &*global }.vm().get_api_lock();
+        // is simply abandoned along with the destroyed VM, take the lock via
+        // raw FFI (NOT the `Lock<'_>` RAII guard) and never release it.
+        // `WebWorker__teardownJSCVM` correspondingly `deref`s once, since
+        // unlike Zig's `JSLockHolder` this path takes no extra `RefPtr<VM>`
+        // — see the matching note in `Worker.cpp`.
+        //
+        // We deliberately do NOT use `get_api_lock()` + `mem::forget(guard)`:
+        // the guard holds `vm: &VM`, which would dangle after `spin()` →
+        // `shutdown()` destroys the `JSC::VM`, and a live `&T` to freed
+        // memory is UB under Rust's validity rules even when never
+        // dereferenced. The raw FFI call has no such reference to leak.
+        // SAFETY: `global` is the live worker global published in start_vm;
+        // `vm_ptr()` returns the valid `JSC::VM*` it was created with.
+        unsafe { JSC__VM__getAPILock((&*global).vm_ptr()) };
         self.spin();
-        core::mem::forget(api_lock);
     }
 
     /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
@@ -1122,8 +1131,12 @@ impl WebWorker {
     ///                                  null and skips wakeup() instead of touching
     ///                                  memory freed in step 5.
     ///   2. `vm.onExit()`             — user 'exit' handlers run; needs the JSC VM.
-    ///   3. `teardownJSCVM()`         — collectNow + vm.deref×2; can re-enter Zig
-    ///                                  via finalizers, so must precede step 5.
+    ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — Zig
+    ///                                  derefs ×2 because `JSLockHolder` holds
+    ///                                  a `RefPtr<VM>`; the Rust API-lock path
+    ///                                  takes no extra ref, see `thread_main`
+    ///                                  PORT NOTE); can re-enter via
+    ///                                  finalizers, so must precede step 5.
     ///   4. `dispatchExit()`          — posts close task → parent releases
     ///                                  parent_poll_ref + thread-held Worker ref.
     ///                                  After this `this` may be freed at any time.
@@ -1385,7 +1398,28 @@ fn on_unhandled_rejection(
         );
     }
     let _ = worker.set_requested_terminate();
-    worker.shutdown();
+    // PORT NOTE: Zig calls `worker.shutdown()` here, which is `noreturn`
+    // (`bun.exitThread` longjmps out, abandoning the C++ frames on the
+    // stack). In Rust `shutdown()` RETURNS — calling it here would destroy
+    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and post
+    // `dispatchExit` (after which `worker` itself may be freed), then return
+    // through `VirtualMachine::uncaught_exception` (which writes
+    // `is_handling_uncaught_exception = false` on the freed VM), through live
+    // JSC C++ frames operating on a destroyed `JSC::VM`, and back into
+    // `spin()` which dereferences the freed `*vm` and calls `shutdown()` a
+    // second time (double `dispatchExit` → double C++ `Worker` deref).
+    //
+    // Instead, arm the JSC termination trap so any further JS halts at the
+    // next safepoint, and let the stack unwind normally back to `spin()`,
+    // whose loop observes `requested_terminate` and reaches the single
+    // `shutdown()` call at its bottom with no live JSC frames above it. The
+    // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
+    // `uncaught_exception` returns `handled == false`, so `spin()` calls
+    // `return self.shutdown()` directly — same observable ordering as Zig.
+    // SAFETY: `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it
+    // via `global_object`); `notify_need_termination` is documented
+    // thread-safe (VMTraps).
+    unsafe { (*vm.jsc_vm.cast_const()).notify_need_termination() };
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

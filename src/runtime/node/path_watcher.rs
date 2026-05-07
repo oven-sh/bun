@@ -539,7 +539,8 @@ type Platform = WindowsStub;
 #[cfg(windows)]
 type PlatformWatch = WindowsStubWatch;
 
-// TODO(port): wasm → compile_error!("unsupported")
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd", windows)))]
+compile_error!("path_watcher: unsupported platform");
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Linux

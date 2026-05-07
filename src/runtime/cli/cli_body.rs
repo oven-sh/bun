@@ -1431,10 +1431,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
             }
         }
 
+        // SAFETY: `ctx.log` is set by `Command::init` and outlives this call.
+        let log = unsafe { &mut *ctx.log };
         bun_install::lockfile::Printer::print(
-            ctx.log,
+            log,
             &ctx.args.entry_points[0],
-            bun_install::lockfile_real::PrinterFormat::Yarn,
+            bun_install::lockfile::PrinterFormat::Yarn,
         )
     }
 

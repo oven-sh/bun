@@ -369,12 +369,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 name,
                 is_extended_manifest,
             } => {
-                let name = name.clone();
+                // PORT NOTE: reshaped for borrowck — capture the name's slice
+                // pointer (`StringOrTinyString` is self-referential and not
+                // `Clone`) so the loop body can read `name` after the
+                // `&mut task.callback` borrow ends.
+                let name_ptr: *const [u8] = name;
+                // SAFETY: `name` lives in `task.callback` which outlives this
+                // match arm (the task is only `put` back to the pool by a later
+                // resolve-task pass, never inside this loop iteration).
+                let name = unsafe { &*name_ptr };
+                let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
                             unsafe { &mut *manager.downloads_node.unwrap() },
-                            name.slice(),
+                            name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
                         *has_updated_this_run = true;
@@ -409,7 +418,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     format_args!(
                                         "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
                                         bstr::BStr::new(err.name().as_bytes()),
-                                        bstr::BStr::new(name.slice()),
+                                        bstr::BStr::new(name),
                                         task.retried,
                                         manager.options.max_retry_count,
                                     ),
@@ -428,12 +437,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(
                             extract_ctx,
-                            name.slice(),
+                            name,
                             err,
                             &task.url_buf,
                         );
                     } else {
-                        let fmt_args = (err.name(), name.slice());
+                        let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
                             let _ = unsafe { &mut *manager.log }.add_error_fmt(
                                 None,
@@ -458,7 +467,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         if manager.subcommand != Subcommand::Remove {
                             for request in manager.update_requests.iter_mut() {
-                                if strings::eql(&request.name, name.slice()) {
+                                if strings::eql(&request.name, name) {
                                     request.failed = true;
                                     manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                     manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -486,7 +495,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         C::on_package_manifest_error(
                             extract_ctx,
-                            name.slice(),
+                            name,
                             err.into(),
                             &task.url_buf,
                         );
@@ -517,7 +526,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, name.slice()) {
+                            if strings::eql(&request.name, name) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -536,7 +545,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     );
                     bun_core::pretty_error!(
                         "\n<d>Downloaded <r><green>{}<r> versions\n",
-                        bstr::BStr::new(name.slice()),
+                        bstr::BStr::new(name),
                     );
                     Output::flush();
                 }
@@ -570,7 +579,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
                             npm::package_manifest::Serializer::save_async(
                                 entry.value_ptr.manifest_mut(),
-                                manager.scope_for_package_name(name.slice()),
+                                manager.scope_for_package_name(name),
                                 directories::get_temporary_directory(manager).handle,
                                 directories::get_cache_directory(manager),
                             );
@@ -641,7 +650,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     format_args!(
                                         "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                         bstr::BStr::new(err.name().as_bytes()),
-                                        bstr::BStr::new(extract.name.slice()),
+                                        bstr::BStr::new(extract.name),
                                         extract.resolution.fmt(
                                             &manager.lockfile.buffers.string_bytes,
                                             PathSep::Auto,
@@ -690,7 +699,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             C::on_package_download_error(
                                 extract_ctx,
                                 task.task_id,
-                                extract.name.slice(),
+                                extract.name,
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -702,7 +711,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 extract_ctx,
                                 // TODO(port): second arg is PackageID here, Task::Id above — see trait note
                                 Task::Id::from_package_id(package_id),
-                                extract.name.slice(),
+                                extract.name,
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -718,7 +727,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             format_args!(
                                 "{} downloading tarball <b>{}@{}<r>",
                                 err.name(),
-                                bstr::BStr::new(extract.name.slice()),
+                                bstr::BStr::new(extract.name),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
                                     PathSep::Auto,
@@ -732,7 +741,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             format_args!(
                                 "{} downloading tarball <b>{}@{}<r>",
                                 err.name(),
-                                bstr::BStr::new(extract.name.slice()),
+                                bstr::BStr::new(extract.name),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
                                     PathSep::Auto,
@@ -742,7 +751,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name.slice()) {
+                            if strings::eql(&request.name, extract.name) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -786,7 +795,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             C::on_package_download_error(
                                 extract_ctx,
                                 task.task_id,
-                                extract.name.slice(),
+                                extract.name,
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -798,7 +807,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 extract_ctx,
                                 // TODO(port): PackageID vs Task::Id — see trait note
                                 Task::Id::from_package_id(package_id),
-                                extract.name.slice(),
+                                extract.name,
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
@@ -830,7 +839,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name.slice()) {
+                            if strings::eql(&request.name, extract.name) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -853,7 +862,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
-                        bstr::BStr::new(extract.name.slice()),
+                        bstr::BStr::new(extract.name),
                     );
                     Output::flush();
                 }
@@ -862,7 +871,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
                             unsafe { &mut *manager.downloads_node.unwrap() },
-                            extract.name.slice(),
+                            extract.name,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
                         *has_updated_this_run = true;
@@ -937,7 +946,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(
                             extract_ctx,
-                            name.slice(),
+                            name,
                             err,
                             &task.request.package_manifest().network.url_buf,
                         );
@@ -948,7 +957,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             format_args!(
                                 "{} parsing package manifest for <b>{}<r>",
                                 err.name(),
-                                bstr::BStr::new(name.slice()),
+                                bstr::BStr::new(name),
                             ),
                         );
                     }
@@ -1001,7 +1010,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let dependency_id = tarball.dependency_id;
                 let mut package_id =
                     manager.lockfile.buffers.resolutions[dependency_id as usize];
-                let alias = tarball.name.slice();
+                let alias = tarball.name;
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1200,7 +1209,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             Task::Tag::GitClone => {
                 let clone = &task.request.git_clone();
                 let repo_fd = task.data.git_clone;
-                let name = clone.name.slice();
+                let name = clone.name;
                 let url = clone.url.slice();
 
                 manager.git_repositories.insert(task.id, repo_fd);

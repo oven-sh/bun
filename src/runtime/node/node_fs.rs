@@ -555,30 +555,6 @@ impl AbortSignalRefExt for NonNull<AbortSignal> {
     #[inline] fn aborted(self) -> bool { unsafe { self.as_ref() }.aborted() }
 }
 
-/// `JSValue.createObject2` — not yet surfaced on `bun_jsc::JSValue`; forward
-/// to the C++ binding directly (JSValue.zig:536).
-fn jsvalue_create_object_2(
-    global: &JSGlobalObject,
-    key1: &ZigString,
-    key2: &ZigString,
-    value1: JSValue,
-    value2: JSValue,
-) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        fn JSC__JSValue__createObject2(
-            global: *const JSGlobalObject,
-            key1: *const ZigString,
-            key2: *const ZigString,
-            value1: JSValue,
-            value2: JSValue,
-        ) -> JSValue;
-    }
-    // SAFETY: `global`/keys borrowed for the call; `fromJSHostCall` semantics.
-    let v = unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) };
-    if global.has_exception() { return Err(JsError::Thrown); }
-    Ok(v)
-}
-
 /// All async FS functions are run in a thread pool, but some implementations may
 /// decide to do something slightly different. For example, reading a file has
 /// an extra stack buffer in the async case.
@@ -3609,7 +3585,7 @@ pub mod ret {
         const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
         pub fn to_js(&self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| if !v.is_empty_or_undefined_or_null() { v.unprotect() });
-            jsvalue_create_object_2(
+            JSValue::create_object2(
                 ctx,
                 &Self::FIELD_BYTES_READ,
                 &Self::FIELD_BUFFER,
@@ -3631,7 +3607,7 @@ pub mod ret {
         pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| if !v.is_empty_or_undefined_or_null() { v.unprotect() });
             let buffer_js = if matches!(self.buffer, StringOrBuffer::Buffer(_)) { self.buffer_val } else { self.buffer.to_js(global_object)? };
-            jsvalue_create_object_2(
+            JSValue::create_object2(
                 global_object,
                 &Self::FIELD_BYTES_WRITTEN,
                 &Self::FIELD_BUFFER,

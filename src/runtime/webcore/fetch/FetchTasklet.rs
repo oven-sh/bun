@@ -1713,6 +1713,16 @@ impl FetchTasklet {
             result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
 
+        // Zig: `task.response_buffer = result.body.?.*` — verify the aliasing invariant
+        // that makes that bitwise copy a no-op (see PORT NOTE below at the original site).
+        debug_assert!(
+            result
+                .body
+                .as_deref()
+                .map_or(true, |b| core::ptr::eq(b, &task_ref.response_buffer)),
+            "HTTPClientResult.body must alias FetchTasklet.response_buffer",
+        );
+
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
@@ -1747,13 +1757,12 @@ impl FetchTasklet {
         task_ref.body_size = task_ref.result.body_size;
 
         let success = task_ref.result.is_success();
-        // PORT NOTE: Zig copied `result.body.?.*` (MutableString) by value — that's a shallow
-        // bitwise copy of the Vec header (ptr/len/cap), which Rust forbids (would alias the
-        // same allocation across two `Vec`s). The HTTP client side already points
-        // `result.body` at `task_ref.response_buffer` via the `*mut MutableString` passed to
-        // `AsyncHTTP::init`, so the data is already in place; just leave it.
-        // TODO(port): verify aliasing once AsyncHTTP::init is wired.
-        let _ = &task_ref.result.body;
+        // PORT NOTE: Zig `task.response_buffer = result.body.?.*` is a bitwise self-copy of
+        // the Vec header — `result.body` always aliases `task_ref.response_buffer` (the
+        // `*mut MutableString` passed to `AsyncHTTP::init` at FetchTasklet::create flows
+        // through `HTTPClient.state.body_out_str` and back out in the result). Asserted
+        // above before the lifetime-erasing transmute; the bytes are already in place, so
+        // no copy is needed and the `reset()` calls below operate on the right allocation.
 
         if task_ref.ignore_data {
             task_ref.response_buffer.reset();

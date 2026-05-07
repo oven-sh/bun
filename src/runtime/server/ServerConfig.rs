@@ -12,9 +12,11 @@ pub use http_method::{Method, Optional as MethodOptional};
 // TODO(port): confirm crate path for bun.URL (internal URL parser, not jsc::URL)
 use bun_url::URL;
 
-use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, Strong};
+use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
+use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
+use bun_core::fmt as bun_fmt;
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
 pub use crate::socket::ssl_config::SSLConfig;

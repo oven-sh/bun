@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
+use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
 use bun_str::strings::EncodingNonAscii;
 use bun_sys::UV_E;
@@ -8,9 +8,10 @@ use crate::node::util::validators;
 
 #[bun_jsc::host_fn]
 pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(1).slice();
-    if arguments.len() < 1 {
-        return global.throw_not_enough_arguments("internalErrorName", 1, arguments.len());
+    let arguments = frame.arguments_old::<1>();
+    let arguments = arguments.slice();
+    if arguments.is_empty() {
+        return Err(global.throw_not_enough_arguments("internalErrorName", 1, arguments.len()));
     }
 
     let err_value = arguments[0];
@@ -105,7 +106,7 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if err_int == -UV_E::NOEXEC { return Ok(BunString::static_("ENOEXEC").to_js(global)); }
 
     let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
-    Ok(fmtstring.transfer_to_js(global))
+    bun_string_jsc::transfer_to_js(&mut fmtstring, global)
 }
 
 #[bun_jsc::host_fn]

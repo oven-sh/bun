@@ -508,10 +508,10 @@ impl Terminal {
     }
 
     /// Constructor for Terminal - called from JavaScript
-    /// With constructNeedsThis: true, we receive the JSValue wrapper directly
-    // TODO(b2-blocked): #[bun_jsc::host_fn] — macro shim emits `constructor(__g, __f)`
-    // (free-fn, 2 args) but `constructNeedsThis` requires a 3rd `this_value` arg;
-    // the C++ shim is hand-declared in `mod js` above.
+    /// With constructNeedsThis: true, we receive the JSValue wrapper directly.
+    /// Thunk emitted by `.classes.ts` codegen (`TerminalClass__construct` in
+    /// `generated_classes.rs`); the `JsClass(no_construct)` attribute suppresses
+    /// the macro's 2-arg default.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1976,7 +1976,7 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/Terminal.zig (1220 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      IntrusiveRc<Terminal> for RefCount (crosses FFI as m_ctx); termios uses bun_sys::posix shims (Phase B); StreamingWriter callback wiring needs trait; globalThis stored as NonNull (JSC_BORROW on heap m_ctx).
+//   confidence: high
+//   todos:      0
+//   notes:      IntrusiveRc<Terminal> for RefCount (crosses FFI as m_ctx); termios uses bun_sys::posix + libc constants; StreamingWriter/BufferedReader wired via trait impls; globalThis stored as NonNull (JSC_BORROW on heap m_ctx); js:: re-exports generated_classes::js_Terminal.
 // ──────────────────────────────────────────────────────────────────────────

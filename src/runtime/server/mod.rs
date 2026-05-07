@@ -1043,9 +1043,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_request_complete(&mut self) {
-        // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`;
-        // single-threaded JS context, no aliasing `&mut`.
-        unsafe { (*self.vm_mut().event_loop()).process_gc_timer() };
+        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
+        // for the server's lifetime); `.event_loop()` returns the VM-owned
+        // `*mut EventLoop`. Single-threaded JS context, no aliasing `&mut`.
+        unsafe { (*(*self.vm_mut()).event_loop()).process_gc_timer() };
         self.pending_requests -= 1;
         self.deinit_if_we_can();
     }

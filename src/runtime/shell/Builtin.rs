@@ -148,49 +148,35 @@ impl BuiltinIO {
 
     /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
     /// `on_io_writer_chunk` to fire when the chunk completes. Spec: Builtin.zig
-    /// `BuiltinIO.Output.enqueue` (via IOWriter).
+    /// `BuiltinIO.Output.enqueue` — delegates to `fd.writer.enqueue` passing
+    /// `fd.captured` as the tee bytelist.
     ///
     /// `_safeguard` proves the caller checked `needs_io()`.
     pub fn enqueue(
         &mut self,
-        _child: crate::shell::io_writer::ChildPtr,
+        child: crate::shell::io_writer::ChildPtr,
         buf: &[u8],
         _safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         match &self.kind {
-            OutKind::Fd(fd) => {
-                // Tee into the captured buffer if any (Zig: `if (fd.captured) |cap| cap.append(...)`).
-                if let Some(cap) = fd.captured {
-                    // SAFETY: `captured` points into a live ShellExecEnv Bufio.
-                    let _ = unsafe { (*cap).append_slice(buf) };
-                }
-                // TODO(b2-blocked): IOWriter::enqueue(child, buf) — register the
-                // chunk on the underlying writer and return a `Yield` that
-                // either completes synchronously (`OnIoWriterChunk`) or
-                // suspends. Stubbed until IOWriter body lands.
-                Yield::suspended()
-            }
+            OutKind::Fd(fd) => fd.writer.enqueue(child, fd.captured, buf),
             _ => unreachable!("enqueue() on non-fd output; caller must check needs_io()"),
         }
     }
 
-    /// Spec: Builtin.zig `BuiltinIO.Output.enqueueFmtBltn` — format then
-    /// enqueue. The arena allocation is owned by the Cmd's bump arena in Zig;
-    /// here we heap-allocate (the IOWriter copies into its own buffer anyway).
+    /// Spec: Builtin.zig `BuiltinIO.Output.enqueueFmtBltn` — format with the
+    /// optional `"{kind}: "` prefix and enqueue on the underlying IOWriter.
     pub fn enqueue_fmt(
         &mut self,
         child: crate::shell::io_writer::ChildPtr,
         kind: Option<Kind>,
         args: core::fmt::Arguments<'_>,
-        safeguard: OutputNeedsIOSafeGuard,
+        _safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        if let Some(k) = kind {
-            let _ = write!(&mut buf, "{}: ", k.as_str());
+        match &self.kind {
+            OutKind::Fd(fd) => fd.writer.enqueue_fmt_bltn(child, fd.captured, kind, args),
+            _ => unreachable!("enqueue_fmt() on non-fd output; caller must check needs_io()"),
         }
-        let _ = buf.write_fmt(args);
-        self.enqueue(child, &buf, safeguard)
     }
 }
 

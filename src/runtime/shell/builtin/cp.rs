@@ -1,5 +1,7 @@
 use core::ffi::CStr;
 
+use bun_paths::resolve_path;
+
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
     parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
@@ -129,7 +131,7 @@ impl Cp {
     pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         loop {
             #[allow(dead_code)]
-            enum Action { Done(ExitCode), Schedule { start: usize, target: usize }, Ebusy }
+            enum Action { Done(ExitCode), Schedule { start: usize, target: usize }, Ebusy(ExitCode) }
             let action = match &mut Self::state_mut(interp, cmd).state {
                 State::Idle => panic!(
                     "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
@@ -141,8 +143,9 @@ impl Cp {
                             exec.err = None;
                             #[cfg(windows)]
                             let act = if !exec.ebusy.tasks.is_empty() {
-                                Action::Ebusy
+                                Action::Ebusy(exit_code)
                             } else {
+                                // Spec: `exec.ebusy.deinit()` — Drop handles it.
                                 Action::Done(exit_code)
                             };
                             #[cfg(not(windows))]
@@ -175,18 +178,20 @@ impl Cp {
                     Self::state_mut(interp, cmd).state = State::Done;
                     return Builtin::done(interp, cmd, code);
                 }
-                Action::Ebusy => {
+                Action::Ebusy(exit_code) => {
                     #[cfg(windows)]
                     {
                         let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                             unreachable!()
                         };
-                        let ebusy = core::mem::take(&mut exec.ebusy);
+                        let mut ebusy = core::mem::take(&mut exec.ebusy);
+                        ebusy.idx = 0;
+                        ebusy.main_exit_code = exit_code;
                         Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
                         continue;
                     }
                     #[cfg(not(windows))]
-                    unreachable!();
+                    { let _ = exit_code; unreachable!(); }
                 }
                 Action::Schedule { start, target } => {
                     let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
@@ -204,7 +209,7 @@ impl Cp {
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
                         );
                         // SAFETY: freshly Box::into_raw'd.
-                        unsafe { ShellTask::schedule(task) };
+                        unsafe { ShellCpTask::schedule(task) };
                     }
                     return Yield::suspended();
                 }
@@ -512,27 +517,273 @@ impl ShellCpTask {
     ///
     /// # Safety
     /// `this` is the live `Box::into_raw`'d task originally passed to
-    /// `ShellTask::schedule`; not touched again on this thread after return.
+    /// [`schedule`](Self::schedule); not touched again on this thread after
+    /// return.
     pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         if let Err(e) = result {
             // SAFETY: caller contract — `this` is live and exclusively owned
-            // by this thread until `on_finish` enqueues it.
+            // by this thread until `enqueue_to_event_loop` hands it off.
             unsafe { (*this).err = Some(ShellErr::new_sys(e)) };
         }
         // SAFETY: same allocation handed to `schedule`.
+        unsafe { Self::enqueue_to_event_loop(this) };
+    }
+
+    /// Spec: cp.zig `schedule` — `WorkPool.schedule(&this.task)`. Unlike most
+    /// shell builtins this does NOT use the generic [`ShellTask::schedule`]
+    /// trampoline (which auto-enqueues back to main on return): on the
+    /// success path the [`ShellAsyncCpTask`](crate::node::fs::ShellAsyncCpTask)
+    /// owns the bounce-back via `cp_on_finish`, so an unconditional post would
+    /// double-enqueue. The embedded [`ShellTask`] is reused for its
+    /// `WorkPoolTask` / `concurrent_task` / `keep_alive` storage.
+    ///
+    /// # Safety
+    /// `this` must be a fresh `Box::into_raw`'d task (see [`create`]).
+    pub unsafe fn schedule(this: *mut ShellCpTask) {
+        use bun_threading::work_pool::WorkPool;
+        // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
+        // raw pointers — once `WorkPool::schedule` returns the worker thread
+        // may already be running.
+        unsafe {
+            let st = &raw mut (*this).task;
+            (*st).task.callback = Self::work_pool_callback;
+            (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            WorkPool::schedule(&raw mut (*st).task);
+        }
+    }
+
+    /// Spec: cp.zig `runFromThreadPool` — recover `*ShellCpTask` from the
+    /// intrusive `*WorkPoolTask`, run the impl, and on error post back
+    /// immediately (success path defers the post to `cp_on_finish`).
+    unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
+        // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
+        // is embedded in `ShellCpTask` at `TASK_OFFSET` (Zig: `@fieldParentPtr`).
+        let this = unsafe {
+            (task as *mut u8)
+                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
+                as *mut ShellCpTask
+        };
+        // SAFETY: `this` is a live Box::into_raw'd task; the worker thread
+        // has exclusive access until the bounce-back is posted.
+        if let Some(e) = unsafe { &mut *this }.run_from_thread_pool_impl() {
+            // SAFETY: still exclusive.
+            unsafe { (*this).err = Some(e) };
+            // SAFETY: same allocation handed to `schedule`.
+            unsafe { Self::enqueue_to_event_loop(this) };
+        }
+    }
+
+    /// Spec: cp.zig `enqueueToEventLoop`. Post this task to the main-thread
+    /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
+    ///
+    /// # Safety
+    /// `this` is the live `Box::into_raw`'d task; not touched again on this
+    /// thread after return.
+    unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
+        // Reuse the generic `ShellTask` post-back (identical to Zig's manual
+        // `concurrent_task.{js,mini}.from(...)` + enqueue).
+        // SAFETY: caller contract.
         unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
     }
 
-    /// Spec: cp.zig `runFromThreadPoolImpl`.
-    pub fn run_from_thread_pool(this: *mut ShellCpTask) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
-        let this = unsafe { &mut *this };
-        // TODO(b2-blocked): bun_paths::join_z, bun_sys::lstat /
-        // get_file_attributes, NodeFS::ShellAsyncCpTask. The full body
-        // (~150 lines) classifies src/tgt as file/dir, resolves the
-        // applicable POSIX synopsis, then schedules the node:fs cp.
-        let _ = (&this.src, &this.tgt, &this.cwd_path, this.operands, this.opts);
-        // Bounce-back is posted by `shell_task_trampoline`.
+    /// Spec: cp.zig `hasTrailingSep`.
+    fn has_trailing_sep(path: &[u8]) -> bool {
+        path.last()
+            .map_or(false, |&c| resolve_path::Platform::AUTO.is_separator(c))
+    }
+
+    /// Spec: cp.zig `isDir`.
+    fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
+        #[cfg(windows)]
+        {
+            match bun_sys::get_file_attributes(path) {
+                Some(attrs) => Ok(attrs.is_directory),
+                None => Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOENT,
+                    bun_sys::Tag::copyfile,
+                )
+                .with_path(path.as_bytes())),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let st = bun_sys::lstat(path)?;
+            Ok(bun_sys::S::ISDIR(st.st_mode as _))
+        }
+    }
+
+    /// Spec: cp.zig `runFromThreadPoolImpl`. Resolves src/tgt to absolute
+    /// paths, classifies them per the three POSIX `cp` synopses
+    /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
+    /// the node:fs async cp implementation.
+    fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
+        use resolve_path::{platform, Platform};
+
+        let mut buf2 = bun_paths::PathBuffer::uninit();
+        let mut buf3 = bun_paths::PathBuffer::uninit();
+        // We have to give an absolute path to our cp implementation for it to
+        // work with cwd.
+        let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
+            // PORT NOTE: `self.src` is the bare argv bytes (no NUL); the Zig
+            // path is `[:0]const u8` so `break :brk this.src` was already
+            // NUL-terminated. Re-terminate via the thread-local join buffer.
+            resolve_path::join_z::<platform::Auto>(&[&self.src])
+        } else {
+            resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
+        };
+        let mut tgt: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.tgt) {
+            resolve_path::join_z_buf::<platform::Auto>(buf2.as_mut_slice(), &[&self.tgt])
+        } else {
+            resolve_path::join_z_buf::<platform::Auto>(
+                buf2.as_mut_slice(),
+                &[&self.cwd_path, &self.tgt],
+            )
+        };
+
+        // Cases:
+        //   SRC       DEST
+        //   ----------------
+        //   file   -> file
+        //   file   -> folder
+        //   folder -> folder
+        // We need to check dest to see what it is; if it doesn't exist we
+        // need to create it.
+        let src_is_dir = match Self::is_dir(src) {
+            Ok(x) => x,
+            Err(e) => return Some(ShellErr::new_sys(e)),
+        };
+
+        // Any source directory without -R is an error.
+        if src_is_dir && !self.opts.recursive {
+            return Some(ShellErr::Custom(
+                format!(
+                    "{} is a directory (not copied)",
+                    bstr::BStr::new(&self.src)
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            ));
+        }
+
+        if !src_is_dir && src.as_bytes() == tgt.as_bytes() {
+            return Some(ShellErr::Custom(
+                format!(
+                    "{0} and {0} are identical (not copied)",
+                    bstr::BStr::new(&self.src)
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            ));
+        }
+
+        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+            Ok(is_dir) => (is_dir, true),
+            Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                // If it has a trailing directory separator, it's a directory.
+                (Self::has_trailing_sep(tgt.as_bytes()), false)
+            }
+            Err(e) => return Some(ShellErr::new_sys(e)),
+        };
+
+        let mut _copying_many = false;
+
+        // The following logic is based on the POSIX spec.
+        if !src_is_dir && !tgt_is_dir && self.operands == 2 {
+            // 1st synopsis: source_file -> target_file. Nothing to adjust.
+        } else if self.opts.recursive {
+            // 2nd synopsis: -R source_files... -> target.
+            if tgt_exists {
+                let basename = resolve_path::basename(src.as_bytes());
+                tgt = resolve_path::join_z_buf::<platform::Auto>(
+                    buf3.as_mut_slice(),
+                    &[tgt.as_bytes(), basename],
+                );
+            } else if self.operands == 2 {
+                // source_dir -> new_target_dir.
+            } else {
+                return Some(ShellErr::Custom(
+                    format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
+                        .into_bytes()
+                        .into_boxed_slice(),
+                ));
+            }
+            _copying_many = true;
+        } else {
+            // 3rd synopsis: source_files... -> target.
+            if src_is_dir {
+                return Some(ShellErr::Custom(
+                    format!(
+                        "{} is a directory (not copied)",
+                        bstr::BStr::new(&self.src)
+                    )
+                    .into_bytes()
+                    .into_boxed_slice(),
+                ));
+            }
+            if !tgt_exists || !tgt_is_dir {
+                return Some(ShellErr::Custom(
+                    format!("{} is not a directory", bstr::BStr::new(&self.tgt))
+                        .into_bytes()
+                        .into_boxed_slice(),
+                ));
+            }
+            let basename = resolve_path::basename(src.as_bytes());
+            tgt = resolve_path::join_z_buf::<platform::Auto>(
+                buf3.as_mut_slice(),
+                &[tgt.as_bytes(), basename],
+            );
+            _copying_many = true;
+        }
+
+        self.src_absolute = Some(src.as_bytes().to_vec());
+        self.tgt_absolute = Some(tgt.as_bytes().to_vec());
+
+        let args = crate::node::fs::args::Cp {
+            src: bun_jsc::node::PathLike::String(bun_string::PathString::init(
+                self.src_absolute.as_deref().unwrap(),
+            )),
+            dest: bun_jsc::node::PathLike::String(bun_string::PathString::init(
+                self.tgt_absolute.as_deref().unwrap(),
+            )),
+            flags: crate::node::fs::args::CpFlags {
+                mode: crate::node::fs::constants::Copyfile::from_raw(0),
+                recursive: self.opts.recursive,
+                force: true,
+                error_on_exist: false,
+                deinit_paths: false,
+            },
+        };
+
+        // PORT NOTE: Zig passed an `ArenaAllocator` for the async-cp
+        // bookkeeping; the Rust `NewAsyncCpTask` owns its allocations.
+        match self.task.event_loop {
+            EventLoopHandle::Js { .. } => {
+                let vm_ptr = self.task.event_loop.bun_vm()
+                    as *mut bun_jsc::virtual_machine::VirtualMachine;
+                // SAFETY: `Js` arm always has a live VM (set at interpreter
+                // construction); accessed read-only here for the
+                // global-object handle and event-loop pointer — same as Zig's
+                // `event_loop.js.getVmImpl()` from the work-pool thread.
+                let vm = unsafe { &mut *vm_ptr };
+                let global = vm.global();
+                let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
+                    global,
+                    args,
+                    vm,
+                    self as *mut ShellCpTask,
+                    false,
+                );
+            }
+            EventLoopHandle::Mini(mini) => {
+                let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
+                    args,
+                    mini,
+                    self as *mut ShellCpTask,
+                );
+            }
+        }
+
+        None
     }
 
     pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &mut Interpreter) {
@@ -548,7 +799,16 @@ impl bun_event_loop::Taskable for ShellCpTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(_this: *mut Self) {
+        // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`
+        // directly (cp.zig does NOT use `InnerShellTask` — the generic
+        // trampoline auto-posts back, which would double-enqueue when the
+        // `ShellAsyncCpTask` later calls `cp_on_finish`).
+        debug_assert!(
+            false,
+            "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
+        );
+    }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
@@ -626,7 +886,6 @@ impl FlagParser for Opts {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/cp.zig (771 lines)
-//   confidence: low-medium (NodeId style; thread-pool body + EBUSY stubbed)
-//   blocked_on: NodeFS::ShellAsyncCpTask, bun_sys::lstat, WorkPool,
-//               bun_collections::StringArrayHashMap, IOWriter::enqueue body
+//   confidence: medium (NodeId style; thread-pool body + EBUSY ported)
+//   blocked_on: IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

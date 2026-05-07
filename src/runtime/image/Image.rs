@@ -838,82 +838,90 @@ impl Image {
 //
 // PORT NOTE: `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
 // shim, but these are *static* class accessors (no receiver). The C-ABI shim
-// is emitted by `.classes.ts` codegen instead, so no attribute here.
+// is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
+// as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
+// exact arity — including the trailing opaque `PropertyName` it threads
+// through but Zig's `getBackend` ignores.
 
-pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
-    // SAFETY: `BACKEND` only ever stores a valid `Backend as u8` discriminant.
-    let b: codecs::Backend = unsafe {
-        core::mem::transmute(codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed))
-    };
-    bun_str::String::static_(<&'static str>::from(&b)).to_js(global)
-}
-
-pub fn set_backend(_: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
-    match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
-        Ok(b) => {
-            codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
-            true
-        }
-        Err(_) => false,
-    }
-}
-
-// ───────────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ──
-//
-// JS-thread synchronous read of the system clipboard for an image
-// representation, returning a fresh `Bun.Image` wrapping the raw container
-// bytes. Decode/encode still go through the normal off-thread pipeline; only
-// the pasteboard fetch is synchronous, and that's a memcpy of bytes the OS
-// already has in-process. `null` ⇔ no image present. Linux returns `null`
-// unconditionally — there's no stable native API to dlopen and shelling out
-// to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong layer.
-
-#[bun_jsc::host_fn]
-pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // `comptime codecs.system_backend` → cfg-gated module re-export.
-    #[cfg(any(target_os = "macos", windows))]
-    {
-        use codecs::system_backend;
-        let bytes = match system_backend::clipboard() {
-            Ok(Some(b)) => b,
-            Ok(None) => return Ok(JSValue::NULL),
-            Err(system_backend::BackendError::OutOfMemory) => return global.throw_out_of_memory(),
-            // BackendUnavailable (and any other backend error) ⇔ no image present.
-            Err(_) => return Ok(JSValue::NULL),
+impl Image {
+    pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
+        // SAFETY: `BACKEND` only ever stores a valid `Backend as u8` discriminant.
+        let b: codecs::Backend = unsafe {
+            core::mem::transmute(codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed))
         };
-        let img = Box::new(Image { source: Source::Owned(bytes), ..Default::default() });
-        return Ok(img.to_js(global));
+        bun_str::String::static_(<&'static str>::from(&b)).to_js(global)
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    {
-        let _ = global;
-        Ok(JSValue::NULL)
-    }
-}
 
-#[bun_jsc::host_fn]
-pub fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    #[cfg(any(target_os = "macos", windows))]
-    {
-        return Ok(JSValue::from(codecs::system_backend::has_clipboard_image()));
+    pub fn set_backend(
+        global: &JSGlobalObject,
+        _: JSValue,
+        value: JSValue,
+        _: PropertyName,
+    ) -> bool {
+        match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
+            Ok(b) => {
+                codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
+                true
+            }
+            Err(_) => false,
+        }
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    Ok(JSValue::FALSE)
-}
 
-/// Monotone counter that increments on every system-wide clipboard write
-/// (NSPasteboard.changeCount / GetClipboardSequenceNumber). macOS has no
-/// clipboard-change notification, so polling this and calling
-/// `hasClipboardImage()` only when it moves is the cheapest hint-UI pattern.
-/// `-1` on Linux.
-#[bun_jsc::host_fn]
-pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    #[cfg(any(target_os = "macos", windows))]
-    {
-        return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count()));
+    // ──────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ───
+    //
+    // JS-thread synchronous read of the system clipboard for an image
+    // representation, returning a fresh `Bun.Image` wrapping the raw container
+    // bytes. Decode/encode still go through the normal off-thread pipeline;
+    // only the pasteboard fetch is synchronous, and that's a memcpy of bytes
+    // the OS already has in-process. `null` ⇔ no image present. Linux returns
+    // `null` unconditionally — there's no stable native API to dlopen and
+    // shelling out to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong
+    // layer.
+
+    pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        // `comptime codecs.system_backend` → cfg-gated module re-export.
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            use codecs::system_backend;
+            let bytes = match system_backend::clipboard() {
+                Ok(Some(b)) => b,
+                Ok(None) => return Ok(JSValue::NULL),
+                Err(system_backend::BackendError::OutOfMemory) => return global.throw_out_of_memory(),
+                // BackendUnavailable (and any other backend error) ⇔ no image present.
+                Err(_) => return Ok(JSValue::NULL),
+            };
+            let img = Box::new(Image { source: Source::Owned(bytes), ..Default::default() });
+            return Ok(img.to_js(global));
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            let _ = global;
+            Ok(JSValue::NULL)
+        }
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    Ok(JSValue::js_number(-1.0))
+
+    pub fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            return Ok(JSValue::from(codecs::system_backend::has_clipboard_image()));
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        Ok(JSValue::FALSE)
+    }
+
+    /// Monotone counter that increments on every system-wide clipboard write
+    /// (NSPasteboard.changeCount / GetClipboardSequenceNumber). macOS has no
+    /// clipboard-change notification, so polling this and calling
+    /// `hasClipboardImage()` only when it moves is the cheapest hint-UI
+    /// pattern. `-1` on Linux.
+    pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count()));
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        Ok(JSValue::js_number(-1.0))
+    }
 }
 
 // ───────────────────────────── getters ──────────────────────────────────────

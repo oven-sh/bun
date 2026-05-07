@@ -1158,10 +1158,14 @@ impl Interpreter {
         // unconditionally. Paired with the increment in `run_from_js`; harmless
         // wrap on the mini path (flag is only read from the JS GC
         // `hasPendingActivity()` hook).
-        struct DecrOnDrop<'a>(&'a AtomicU32);
-        impl Drop for DecrOnDrop<'_> {
+        // PORT NOTE: reshaped for borrowck — guard holds a raw ptr so the
+        // `AtomicU32` borrow doesn't conflict with `&mut self` below; the
+        // counter is `Sync` and the interpreter outlives this stack frame.
+        struct DecrOnDrop(*const AtomicU32);
+        impl Drop for DecrOnDrop {
             fn drop(&mut self) {
-                Interpreter::decr_pending_activity_flag(self.0);
+                // SAFETY: points into the live `Interpreter` for this frame.
+                Interpreter::decr_pending_activity_flag(unsafe { &*self.0 });
             }
         }
         let _decr = DecrOnDrop(&self.has_pending_activity);
@@ -1324,6 +1328,7 @@ impl Interpreter {
         drop(slice);
         str.deref();
         if let Err(e) = result {
+            use bun_sys_jsc::SystemErrorJsc as _;
             return Err(global_this.throw_value(e.to_shell_system_error().to_error_instance(global_this)));
         }
         Ok(crate::jsc::JSValue::UNDEFINED)

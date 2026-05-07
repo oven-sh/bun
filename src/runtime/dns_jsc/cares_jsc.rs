@@ -591,33 +591,73 @@ pub fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // TODO(port): @typeInfo reflection over struct_any_reply fields ending in "_reply".
-    // Phase B must enumerate the actual *_reply fields on c_ares::struct_any_reply and
-    // expand the two loops below per-field. Sketch (replace `any_reply_fields!` with the
-    // manual expansion or a macro_rules! over the known field list):
-    //
-    //   for each field `${name}_reply: Option<&mut T>`:
-    //     len += this.${name}_reply.is_some() as usize;
-    //   ...
-    //   if let Some(reply) = this.${name}_reply {
-    //     let response = if name == "txt" {
-    //       txt_reply_to_js_for_any(reply, global_this, b"txt")?
-    //     } else {
-    //       ${name}_reply_to_js_response(reply, global_this, b"${name}")?
-    //     };
-    //     any_reply_append_all(global_this, array, &mut i, response, b"${name}")?;
-    //   }
-    let array = JSValue::create_empty_array(global_this, {
-        let mut len: usize = 0;
-        // TODO(port): expand per *_reply field
-        let _ = &mut len;
-        let _ = &this;
-        len
-    })?;
+    // PORT NOTE: Zig used `inline for (@typeInfo(struct_any_reply).@"struct".fields)` to
+    // iterate every `*_reply` field. Rust has no struct reflection, so the field set is
+    // expanded manually here. Keep in lockstep with `c_ares::struct_any_reply`'s fields.
+    let len: usize = this.a_reply.is_some() as usize
+        + this.aaaa_reply.is_some() as usize
+        + (!this.mx_reply.is_null()) as usize
+        + (!this.ns_reply.is_null()) as usize
+        + (!this.txt_reply.is_null()) as usize
+        + (!this.srv_reply.is_null()) as usize
+        + (!this.ptr_reply.is_null()) as usize
+        + (!this.naptr_reply.is_null()) as usize
+        + (!this.soa_reply.is_null()) as usize
+        + (!this.caa_reply.is_null()) as usize;
 
+    let array = JSValue::create_empty_array(global_this, len)?;
     let mut i: u32 = 0;
-    // TODO(port): expand per *_reply field
-    let _ = &mut i;
+
+    if let Some(reply) = this.a_reply.as_deref_mut() {
+        let response = hostent_with_ttls_to_js_response(reply, global_this, b"a")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"a")?;
+    }
+    if let Some(reply) = this.aaaa_reply.as_deref_mut() {
+        let response = hostent_with_ttls_to_js_response(reply, global_this, b"aaaa")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"aaaa")?;
+    }
+    if !this.mx_reply.is_null() {
+        // SAFETY: non-null c-ares-owned linked list head.
+        let response = mx_reply_to_js_response(unsafe { &mut *this.mx_reply }, global_this, b"mx")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"mx")?;
+    }
+    if !this.ns_reply.is_null() {
+        // SAFETY: non-null c-ares-owned hostent.
+        let response = hostent_to_js_response(unsafe { &mut *this.ns_reply }, global_this, b"ns")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"ns")?;
+    }
+    if !this.txt_reply.is_null() {
+        // SAFETY: non-null c-ares-owned linked list head.
+        // PORT NOTE: txt is the only reply type whose Zig struct defines `toJSForAny`, so
+        // `anyReplyAppendAll`'s `@hasDecl(.., "toJSForAny")` branch dispatched to it.
+        let response = txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
+    }
+    if !this.srv_reply.is_null() {
+        // SAFETY: non-null c-ares-owned linked list head.
+        let response = srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"srv")?;
+    }
+    if !this.ptr_reply.is_null() {
+        // SAFETY: non-null c-ares-owned hostent.
+        let response = hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"ptr")?;
+    }
+    if !this.naptr_reply.is_null() {
+        // SAFETY: non-null c-ares-owned linked list head.
+        let response = naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"naptr")?;
+    }
+    if !this.soa_reply.is_null() {
+        // SAFETY: non-null c-ares-owned soa reply.
+        let response = soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"soa")?;
+    }
+    if !this.caa_reply.is_null() {
+        // SAFETY: non-null c-ares-owned linked list head.
+        let response = caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
+    }
 
     Ok(array)
 }
@@ -694,8 +734,7 @@ impl ErrorDeferred {
                 let this = unsafe { Box::from_raw(this) };
                 // SAFETY: global_this outlives the enqueued task (VM-owned).
                 let global = unsafe { &*this.global_this };
-                let _ = this.deferred.reject(global);
-                Ok(())
+                this.deferred.reject(global).map_err(Into::into)
             }
         }
 
@@ -854,5 +893,5 @@ pub fn bun_canonicalize_ip(
 //   source:     src/runtime/dns_jsc/cares_jsc.zig (612 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      any_reply_to_js needs manual @typeInfo field expansion; bun_dns::Address/sockaddr types and JSObject::create_with builder are guessed; comptime lookup_name demoted to runtime &'static [u8].
+//   notes:      bun_dns::Address/sockaddr types and JSObject::create_with builder are guessed; comptime lookup_name demoted to runtime &'static [u8].
 // ──────────────────────────────────────────────────────────────────────────

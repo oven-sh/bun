@@ -3,7 +3,6 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
-use core::marker::PhantomData;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;

@@ -362,7 +362,16 @@ pub fn get_cwd_windows_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     )
     .len();
     if len == 0 {
-        // Indirectly calls std.os.windows.kernel32.GetLastError().
+        // Zig's `MaybeBuf(u16).errnoSys(0, .getcwd)` indirectly captures
+        // kernel32.GetLastError() on Windows. In practice top_level_dir is
+        // never empty so this arm is unreachable, but preserve the errno
+        // source on the platform where it matters.
+        #[cfg(windows)]
+        return Err(bun_sys::Error::from_code(
+            bun_sys::windows::get_last_errno(),
+            bun_sys::Tag::getcwd,
+        ));
+        #[cfg(not(windows))]
         return Err(bun_sys::Error::from_code_int(0, bun_sys::Tag::getcwd));
     }
     Ok(&mut buf[0..len])
@@ -2436,9 +2445,19 @@ pub fn relative_posix_t<'a, T: PathChar>(
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
-    let to_orig_len = match resolve_posix_t(&[to], buf, buf3) {
-        Ok(r) => r.len(),
-        Err(e) => return Err(e),
+    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
+    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
+    // resolved value (matches Zig, which captures the returned slice itself).
+    let to_orig_len = {
+        let (ptr, len) = match resolve_posix_t(&[to], buf, buf3) {
+            Ok(r) => (r.as_ptr(), r.len()),
+            Err(e) => return Err(e),
+        };
+        if ptr != buf.as_ptr() {
+            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
+            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
+        }
+        len
     };
     let to_orig = &buf[0..to_orig_len];
 
@@ -2581,9 +2600,19 @@ pub fn relative_windows_t<'a, T: PathChar>(
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
-    let to_orig_len = match resolve_windows_t(&[to], buf, buf3) {
-        Ok(r) => r.len(),
-        Err(e) => return Err(e),
+    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
+    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
+    // resolved value (matches Zig, which captures the returned slice itself).
+    let to_orig_len = {
+        let (ptr, len) = match resolve_windows_t(&[to], buf, buf3) {
+            Ok(r) => (r.as_ptr(), r.len()),
+            Err(e) => return Err(e),
+        };
+        if ptr != buf.as_ptr() {
+            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
+            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
+        }
+        len
     };
 
     if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
@@ -3436,8 +3465,9 @@ pub fn resolve(
 
         let path = args[i as usize];
         validate_string(global_object, path, format_args!("paths[{}]", i))?;
-        let path_str = path.to_bun_string(global_object)?;
-        // path_str.deref() on Drop
+        // `to_bun_string` returns +1 ref; `bun_str::String` is `Copy` (no Drop),
+        // so wrap in the RAII guard for Zig's `defer path_str.deref()`.
+        let path_str = bun_str::OwnedString::new(path.to_bun_string(global_object)?);
 
         if path_str.length() == 0 {
             continue;

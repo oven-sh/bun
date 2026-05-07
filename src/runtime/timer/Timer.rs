@@ -19,8 +19,7 @@ use bun_uws::Loop as UwsLoop;
 
 use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
-    TimerObjectInternals, ID,
+    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
 
 /// Recover this thread's `timer::All` via the high-tier `RuntimeState`.
@@ -132,27 +131,27 @@ impl All {
         let warning_js = match warning_string.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => {
-                let _ = clear_exception_except_termination(global_this);
+                let _ = global_this.clear_exception_except_termination();
                 return;
             }
         };
         let warning_type_js = match warning_type_string.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => {
-                let _ = clear_exception_except_termination(global_this);
+                let _ = global_this.clear_exception_except_termination();
                 return;
             }
         };
-        if emit_warning(
-            global_this,
-            warning_js,
-            warning_type_js,
-            JSValue::UNDEFINED,
-            JSValue::UNDEFINED,
-        )
-        .is_err()
+        if global_this
+            .emit_warning(
+                warning_js,
+                warning_type_js,
+                JSValue::UNDEFINED,
+                JSValue::UNDEFINED,
+            )
+            .is_err()
         {
-            let _ = clear_exception_except_termination(global_this);
+            let _ = global_this.clear_exception_except_termination();
         }
     }
 
@@ -228,7 +227,7 @@ impl All {
 
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::Clamp, true)?;
-        let wrapped_promise = with_async_context_if_needed(promise, global);
+        let wrapped_promise = promise.with_async_context_if_needed(global);
         Ok(TimeoutObject::init(
             global,
             id,
@@ -251,7 +250,7 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = with_async_context_if_needed(callback, global);
+        let wrapped_callback = callback.with_async_context_if_needed(global);
         Ok(ImmediateObject::init(global, id, wrapped_callback, arguments))
     }
 
@@ -268,7 +267,7 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = with_async_context_if_needed(callback, global);
+        let wrapped_callback = callback.with_async_context_if_needed(global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(
@@ -294,7 +293,7 @@ impl All {
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
-        let wrapped_callback = with_async_context_if_needed(callback, global);
+        let wrapped_callback = callback.with_async_context_if_needed(global);
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::OneMs, true)?;
         Ok(TimeoutObject::init(

@@ -236,9 +236,10 @@ impl PatchTask {
         // the worker thread only touches the lock-free `patch_task_queue` and the
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
+        let mgr = self.manager;
         unsafe {
-            self.manager().patch_task_queue.push(self as *mut Self);
-            PackageManager::wake_raw(self.manager as *mut PackageManager);
+            (*mgr).patch_task_queue.push(self as *mut Self);
+            PackageManager::wake_raw(mgr as *mut PackageManager);
         }
     }
 
@@ -509,7 +510,7 @@ impl PatchTask {
             // TODO: fix this threadsafety issue.
             // SAFETY: BACKREF; the lockfile is read-only while apply tasks run
             // off-thread (same contract as the Zig pointer dereference here).
-            let manager = unsafe { self.manager() };
+            let manager = unsafe { &*self.manager };
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
             let mut label = Vec::<u8>::new();
@@ -548,7 +549,7 @@ impl PatchTask {
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
         // SAFETY: BACKREF — see `manager()`.
-        let lockfile = unsafe { &self.manager().lockfile };
+        let lockfile = unsafe { &(*self.manager).lockfile };
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
@@ -702,7 +703,7 @@ impl PatchTask {
                 if e.get_errno() == sys::Errno::ENOENT {
                     // SAFETY: BACKREF — read-only lockfile access on the worker
                     // thread; same contract as the Zig pointer dereference here.
-                    let manager = unsafe { self.manager() };
+                    let manager = unsafe { &*self.manager };
                     log.add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -803,9 +804,10 @@ impl PatchTask {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
+        let mgr = self.manager;
         unsafe {
-            self.manager().patch_task_queue.push(self as *mut Self);
-            PackageManager::wake_raw(self.manager as *mut PackageManager);
+            (*mgr).patch_task_queue.push(self as *mut Self);
+            PackageManager::wake_raw(mgr as *mut PackageManager);
         }
     }
 

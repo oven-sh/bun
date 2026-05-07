@@ -138,34 +138,40 @@ pub fn install_with_manager(
                     ),
                 }
 
-                if !manager.options.enable.fail_early {
+                if !manager.options.enable.fail_early() {
                     Output::print_errorln("");
                     Output::warn("Ignoring lockfile");
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager
-                        .log_mut()
+                    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+                    unsafe { &*manager.log }
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
-                    manager.log_mut().reset();
+                    unsafe { &mut *manager.log }.reset();
                 }
                 Output::flush();
             }
 
-            if manager.options.enable.fail_early {
+            if manager.options.enable.fail_early() {
                 Global::crash();
             }
         }
         lockfile::LoadResult::Ok(ok) => {
             if manager.subcommand == Subcommand::Update {
                 // existing lockfile, get the original version is updating
-                let lockfile = &manager.lockfile;
+                // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while
+                // also mutating `manager.updating_packages`. Route through a raw
+                // provenance root and reborrow disjoint fields through it.
+                let mgr: *mut PackageManager = manager;
+                // SAFETY: `mgr` is the sole provenance root; the shared
+                // `lockfile` reborrow and the `&mut updating_packages` reborrow
+                // touch disjoint `PackageManager` fields.
+                let lockfile: &Lockfile = unsafe { &(*mgr).lockfile };
                 let packages = lockfile.packages.slice();
                 let resolutions = packages.items_resolution();
-                let workspace_package_id = manager
-                    .root_package_id
-                    .get(lockfile, manager.workspace_name_hash);
+                let workspace_package_id = unsafe { &(*mgr).root_package_id }
+                    .get(lockfile, unsafe { (*mgr).workspace_name_hash });
                 let workspace_dep_list = packages.items_dependencies()[workspace_package_id as usize];
                 let workspace_res_list = packages.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps = workspace_dep_list.get(&lockfile.buffers.dependencies);
@@ -181,8 +187,7 @@ pub fn install_with_manager(
                         continue;
                     }
 
-                    if let Some(entry_ptr) = manager
-                        .updating_packages
+                    if let Some(entry_ptr) = unsafe { &mut (*mgr).updating_packages }
                         .get_mut(dep.name.slice(&lockfile.buffers.string_bytes))
                     {
                         let original_resolution: Resolution = resolutions[package_id as usize];

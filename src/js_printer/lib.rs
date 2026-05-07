@@ -213,7 +213,7 @@ pub mod analyze_transpiled_module {
     }
     impl<'a> ModuleInfoDeserialized<'a> {
         pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            w.write_all(&(self.record_kinds.len() as u32).to_le_bytes())?;
+            w.write_all(&u32::try_from(self.record_kinds.len()).unwrap().to_le_bytes())?;
             // SAFETY: RecordKind is #[repr(u8)].
             w.write_all(unsafe {
                 core::slice::from_raw_parts(self.record_kinds.as_ptr().cast::<u8>(), self.record_kinds.len())
@@ -221,17 +221,17 @@ pub mod analyze_transpiled_module {
             let pad = (4 - (self.record_kinds.len() % 4)) % 4;
             w.write_all(&[0u8; 4][..pad])?; // alignment padding
 
-            w.write_all(&(self.buffer.len() as u32).to_le_bytes())?;
+            w.write_all(&u32::try_from(self.buffer.len()).unwrap().to_le_bytes())?;
             w.write_all(slice_as_bytes(self.buffer))?;
 
-            w.write_all(&(self.requested_modules_keys.len() as u32).to_le_bytes())?;
+            w.write_all(&u32::try_from(self.requested_modules_keys.len()).unwrap().to_le_bytes())?;
             w.write_all(slice_as_bytes(self.requested_modules_keys))?;
             w.write_all(slice_as_bytes(self.requested_modules_values))?;
 
             w.write_all(&[self.flags.to_byte()])?;
             w.write_all(&[0u8; 3])?; // alignment padding
 
-            w.write_all(&(self.strings_lens.len() as u32).to_le_bytes())?;
+            w.write_all(&u32::try_from(self.strings_lens.len()).unwrap().to_le_bytes())?;
             w.write_all(slice_as_bytes(self.strings_lens))?;
             w.write_all(self.strings_buf)?;
             Ok(())
@@ -540,9 +540,9 @@ pub mod analyze_transpiled_module {
             if let Some(&idx) = self.strings_map.get(value) {
                 return StringID(idx);
             }
-            let idx = self.strings_lens.len() as u32;
+            let idx = u32::try_from(self.strings_lens.len()).unwrap();
             self.strings_buf.extend_from_slice(value);
-            self.strings_lens.push(value.len() as u32);
+            self.strings_lens.push(u32::try_from(value.len()).unwrap());
             // PERF(port): Zig avoided this owned-key dupe via adapted hashmap over
             // strings_buf offsets; revisit with a raw-entry API in Phase B.
             self.strings_map.insert(value.to_vec(), idx);
@@ -692,11 +692,11 @@ pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
 pub fn can_print_without_escape<const ASCII_ONLY: bool>(c: i32) -> bool {
     if c <= LAST_ASCII as i32 {
         c >= FIRST_ASCII as i32
-            && c != b'\\' as i32
-            && c != b'"' as i32
-            && c != b'\'' as i32
-            && c != b'`' as i32
-            && c != b'$' as i32
+            && c != i32::from(b'\\')
+            && c != i32::from(b'"')
+            && c != i32::from(b'\'')
+            && c != i32::from(b'`')
+            && c != i32::from(b'$')
     } else {
         !ASCII_ONLY
             && c != 0xFEFF
@@ -719,18 +719,18 @@ where
     let mut i: usize = 0;
     while i < str.len().min(1024) {
         match str[i].into() {
-            c if c == b'\'' as u32 => single_cost += 1,
-            c if c == b'"' as u32 => double_cost += 1,
-            c if c == b'`' as u32 => backtick_cost += 1,
-            c if c == b'\n' as u32 => {
+            c if c == u32::from(b'\'') => single_cost += 1,
+            c if c == u32::from(b'"') => double_cost += 1,
+            c if c == u32::from(b'`') => backtick_cost += 1,
+            c if c == u32::from(b'\n') => {
                 single_cost += 1;
                 double_cost += 1;
             }
-            c if c == b'\\' as u32 => {
+            c if c == u32::from(b'\\') => {
                 i += 1;
             }
-            c if c == b'$' as u32 => {
-                if i + 1 < str.len() && str[i + 1].into() == b'{' as u32 {
+            c if c == u32::from(b'$') => {
+                if i + 1 < str.len() && str[i + 1].into() == u32::from(b'{') {
                     backtick_cost += 1;
                 }
             }

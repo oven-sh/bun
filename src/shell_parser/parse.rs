@@ -2441,7 +2441,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
             // Special token to denote substituted JS variables
             // we use 8 or \b which is a non printable char
-            if char == SPECIAL_JS_CHAR as u32 {
+            if char == u32::from(SPECIAL_JS_CHAR) {
                 if self.looks_like_js_string_ref() {
                     if let Some(bunstr) = self.eat_js_string_ref() {
                         self.break_word(false)?;
@@ -2469,7 +2469,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 'escaped: {
                     match char {
                         // possibly double bracket open
-                        c if c == b'[' as u32 => {
+                        c if c == u32::from(b'[') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'[' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2477,7 +2477,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             if let Some(p) = self.peek() {
-                                if p.escaped || p.char != b'[' as u32 {
+                                if p.escaped || p.char != u32::from(b'[') {
                                     break 'escaped;
                                 }
                                 let state = self.make_snapshot();
@@ -2496,10 +2496,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                         break 'do_backtrack;
                                     }
                                     match p2.char {
-                                        c2 if c2 == b' ' as u32
-                                            || c2 == b'\r' as u32
-                                            || c2 == b'\n' as u32
-                                            || c2 == b'\t' as u32 =>
+                                        c2 if c2 == u32::from(b' ')
+                                            || c2 == u32::from(b'\r')
+                                            || c2 == u32::from(b'\n')
+                                            || c2 == u32::from(b'\t') =>
                                         {
                                             self.break_word(true)?;
                                             self.tokens.push(Token::DoubleBracketOpen);
@@ -2513,7 +2513,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             break 'escaped;
                         }
-                        c if c == b']' as u32 => {
+                        c if c == u32::from(b']') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b']' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2521,7 +2521,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             if let Some(p) = self.peek() {
-                                if p.escaped || p.char != b']' as u32 {
+                                if p.escaped || p.char != u32::from(b']') {
                                     break 'escaped;
                                 }
                                 let state = self.make_snapshot();
@@ -2558,7 +2558,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             break 'escaped;
                         }
-                        c if c == b'#' as u32 => {
+                        c if c == u32::from(b'#') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'#' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2577,7 +2577,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.eat_comment();
                             fell_through = true;
                         }
-                        c if c == b';' as u32 => {
+                        c if c == u32::from(b';') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b';' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2588,7 +2588,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Semicolon);
                             fell_through = true;
                         }
-                        c if c == b'\n' as u32 => {
+                        c if c == u32::from(b'\n') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\n' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2600,7 +2600,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // glob asterisks
-                        c if c == b'*' as u32 => {
+                        c if c == u32::from(b'*') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'*' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2608,7 +2608,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             if let Some(next) = self.peek() {
-                                if !next.escaped && next.char == b'*' as u32 {
+                                if !next.escaped && next.char == u32::from(b'*') {
                                     let _ = self.eat();
                                     self.break_word(false)?;
                                     self.tokens.push(Token::DoubleAsterisk);
@@ -2621,7 +2621,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // brace expansion syntax
-                        c if c == b'{' as u32 => {
+                        c if c == u32::from(b'{') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'{' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2632,7 +2632,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::BraceBegin);
                             fell_through = true;
                         }
-                        c if c == b',' as u32 => {
+                        c if c == u32::from(b',') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b',' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2643,7 +2643,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Comma);
                             fell_through = true;
                         }
-                        c if c == b'}' as u32 => {
+                        c if c == u32::from(b'}') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'}' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2655,7 +2655,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // Command substitution
-                        c if c == b'`' as u32 => {
+                        c if c == u32::from(b'`') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'`' as usize));
                             if self.chars.state == CharState::Single {
                                 break 'escaped;
@@ -2675,14 +2675,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // Command substitution/vars
-                        c if c == b'$' as u32 => {
+                        c if c == u32::from(b'$') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'$' as usize));
                             if self.chars.state == CharState::Single {
                                 break 'escaped;
                             }
 
                             let peeked = self.peek().unwrap_or(InputChar { char: 0, escaped: false });
-                            if !peeked.escaped && peeked.char == b'(' as u32 {
+                            if !peeked.escaped && peeked.char == u32::from(b'(') {
                                 self.break_word(false)?;
                                 self.eat_subshell(SubShellKind::Dollar)?;
                                 fell_through = true;
@@ -2695,7 +2695,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
                             match var_tok.len() {
                                 0 => {
-                                    self.append_char_to_str_pool(b'$' as u32)?;
+                                    self.append_char_to_str_pool(u32::from(b'$'))?;
                                     self.break_word(false)?;
                                 }
                                 1 => 'blk: {
@@ -2713,7 +2713,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.word_start = self.j;
                             fell_through = true;
                         }
-                        c if c == b'(' as u32 => {
+                        c if c == u32::from(b'(') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'(' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2724,7 +2724,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.eat_subshell(SubShellKind::Normal)?;
                             fell_through = true;
                         }
-                        c if c == b')' as u32 => {
+                        c if c == u32::from(b')') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b')' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2762,7 +2762,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             return Ok(());
                         }
-                        c if (b'0' as u32..=b'9' as u32).contains(&c) => {
+                        c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
                             // PERF(port): was `comptime for ('0'..'9') |c| assertSpecialChar(c);`
                             if self.chars.state != CharState::Normal {
                                 break 'escaped;
@@ -2778,7 +2778,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             break 'escaped;
                         }
                         // Operators
-                        c if c == b'|' as u32 => {
+                        c if c == u32::from(b'|') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'|' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2794,19 +2794,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     return Ok(());
                                 }
                             };
-                            if !next.escaped && next.char == b'&' as u32 {
+                            if !next.escaped && next.char == u32::from(b'&') {
                                 self.add_error(b"Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.");
                                 return Ok(());
                             }
-                            if next.escaped || next.char != b'|' as u32 {
+                            if next.escaped || next.char != u32::from(b'|') {
                                 self.tokens.push(Token::Pipe);
-                            } else if next.char == b'|' as u32 {
+                            } else if next.char == u32::from(b'|') {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoublePipe);
                             }
                             fell_through = true;
                         }
-                        c if c == b'>' as u32 => {
+                        c if c == u32::from(b'>') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'>' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2818,7 +2818,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Redirect(redirect));
                             fell_through = true;
                         }
-                        c if c == b'<' as u32 => {
+                        c if c == u32::from(b'<') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'<' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2830,7 +2830,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Redirect(redirect));
                             fell_through = true;
                         }
-                        c if c == b'&' as u32 => {
+                        c if c == u32::from(b'&') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'&' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
@@ -2848,7 +2848,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 }
                             };
 
-                            if next.char == b'>' as u32 && !next.escaped {
+                            if next.char == u32::from(b'>') && !next.escaped {
                                 let _ = self.eat();
                                 let inner = if self.eat_simple_redirect_operator(RedirectDirection::Out)
                                 {
@@ -2857,9 +2857,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     ast::RedirectFlags::amp_gt()
                                 };
                                 self.tokens.push(Token::Redirect(inner));
-                            } else if next.escaped || next.char != b'&' as u32 {
+                            } else if next.escaped || next.char != u32::from(b'&') {
                                 self.tokens.push(Token::Ampersand);
-                            } else if next.char == b'&' as u32 {
+                            } else if next.char == u32::from(b'&') {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoubleAmpersand);
                             } else {
@@ -2870,7 +2870,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // 2. State switchers
-                        c if c == b'\'' as u32 => {
+                        c if c == u32::from(b'\'') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\'' as usize));
                             if self.chars.state == CharState::Single {
                                 self.break_word(false)?;
@@ -2886,7 +2886,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             break 'escaped;
                         }
-                        c if c == b'"' as u32 => {
+                        c if c == u32::from(b'"') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'"' as usize));
                             if self.chars.state == CharState::Single {
                                 break 'escaped;
@@ -2901,7 +2901,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // 3. Word breakers
-                        c if c == b' ' as u32 => {
+                        c if c == u32::from(b' ') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b' ' as usize));
                             if self.chars.state == CharState::Normal {
                                 self.break_word_impl(true, true, false)?;
@@ -2921,7 +2921,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 // break 'escaped fall through to appendCharToStrPool below.
             }
             // Treat newline preceded by backslash as whitespace
-            else if char == b'\n' as u32 {
+            else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
                 if self.chars.state != CharState::Double {
                     self.break_word_impl(true, true, false)?;
@@ -2985,11 +2985,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     #[inline]
     fn is_immediately_escaped_quote(&self) -> bool {
         (self.chars.state == CharState::Double
-            && self.chars.current.is_some_and(|c| !c.escaped && c.char == b'"' as u32)
-            && self.chars.prev.is_some_and(|p| !p.escaped && p.char == b'"' as u32))
+            && self.chars.current.is_some_and(|c| !c.escaped && c.char == u32::from(b'"'))
+            && self.chars.prev.is_some_and(|p| !p.escaped && p.char == u32::from(b'"')))
             || (self.chars.state == CharState::Single
-                && self.chars.current.is_some_and(|c| !c.escaped && c.char == b'\'' as u32)
-                && self.chars.prev.is_some_and(|p| !p.escaped && p.char == b'\'' as u32))
+                && self.chars.current.is_some_and(|c| !c.escaped && c.char == u32::from(b'\''))
+                && self.chars.prev.is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
     fn break_word_impl(
@@ -3076,14 +3076,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return false;
             }
             match peeked.char {
-                c if c == b'>' as u32 => {
+                c if c == u32::from(b'>') => {
                     if dir == RedirectDirection::Out {
                         let _ = self.eat();
                         return true;
                     }
                     return false;
                 }
-                c if c == b'<' as u32 => {
+                c if c == u32::from(b'<') => {
                     if dir == RedirectDirection::In {
                         let _ = self.eat();
                         return true;
@@ -3100,9 +3100,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     fn eat_redirect(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
         let mut flags = ast::RedirectFlags::default();
         match first.char {
-            c if c == b'0' as u32 => flags |= ast::RedirectFlags::STDIN,
-            c if c == b'1' as u32 => flags |= ast::RedirectFlags::STDOUT,
-            c if c == b'2' as u32 => flags |= ast::RedirectFlags::STDERR,
+            c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
+            c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
+            c if c == u32::from(b'2') => flags |= ast::RedirectFlags::STDERR,
             // Just allow the std file descriptors for now
             _ => return None,
         }
@@ -3112,7 +3112,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
             match input.char {
-                c if c == b'>' as u32 => {
+                c if c == u32::from(b'>') => {
                     let _ = self.eat();
                     dir = RedirectDirection::Out;
                     let is_double = self.eat_simple_redirect_operator(dir);
@@ -3120,11 +3120,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         flags |= ast::RedirectFlags::APPEND;
                     }
                     if let Some(peeked) = self.peek() {
-                        if !peeked.escaped && peeked.char == b'&' as u32 {
+                        if !peeked.escaped && peeked.char == u32::from(b'&') {
                             let _ = self.eat();
                             if let Some(peeked2) = self.peek() {
                                 match peeked2.char {
-                                    c2 if c2 == b'1' as u32 => {
+                                    c2 if c2 == u32::from(b'1') => {
                                         let _ = self.eat();
                                         if !flags.stdout() && flags.stderr() {
                                             flags |= ast::RedirectFlags::DUPLICATE_OUT;
@@ -3134,7 +3134,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                             return None;
                                         }
                                     }
-                                    c2 if c2 == b'2' as u32 => {
+                                    c2 if c2 == u32::from(b'2') => {
                                         let _ = self.eat();
                                         if !flags.stderr() && flags.stdout() {
                                             flags |= ast::RedirectFlags::DUPLICATE_OUT;
@@ -3151,7 +3151,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     }
                     Some(flags)
                 }
-                c if c == b'<' as u32 => {
+                c if c == u32::from(b'<') => {
                     dir = RedirectDirection::In;
                     let is_double = self.eat_simple_redirect_operator(dir);
                     if is_double {
@@ -3172,7 +3172,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         } else if self.matches_ascii_literal(b"1>&2") {
         } else {
             match first.char {
-                c if (b'0' as u32..=b'9' as u32).contains(&c) => {
+                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
                     let mut count: usize = 1;
                     let mut buf = [u8::try_from(first.char).unwrap(); 32];
@@ -3180,7 +3180,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     while let Some(peeked) = self.peek() {
                         let char = peeked.char;
                         match char {
-                            c2 if (b'0' as u32..=b'9' as u32).contains(&c2) => {
+                            c2 if (u32::from(b'0')..=u32::from(b'9')).contains(&c2) => {
                                 let _ = self.eat();
                                 if count >= 32 {
                                     return None;
@@ -3213,7 +3213,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                     }
                 }
-                c if c == b'&' as u32 => {
+                c if c == u32::from(b'&') => {
                     if first.escaped {
                         return None;
                     }
@@ -3231,8 +3231,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
             match input.char {
-                c if c == b'>' as u32 => dir = RedirectDirection::Out,
-                c if c == b'<' as u32 => dir = RedirectDirection::In,
+                c if c == u32::from(b'>') => dir = RedirectDirection::Out,
+                c if c == u32::from(b'<') => dir = RedirectDirection::In,
                 _ => return None,
             }
             let _ = self.eat();
@@ -3289,7 +3289,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         while let Some(result) = self.eat() {
             let char = result.char;
             match char {
-                c if (b'0' as u32..=b'9' as u32).contains(&c) => {
+                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
                     if count >= 32 {
                         return None;
                     }
@@ -3569,19 +3569,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
             if i == 0 {
                 match char {
-                    c if c == b'=' as u32 => {
+                    c if c == u32::from(b'=') => {
                         return Ok(TextRange { start, end: self.j });
                     }
-                    c if (b'0' as u32..=b'9' as u32).contains(&c) => {
+                    c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
                         is_int = true;
                         self.eat().unwrap();
                         self.append_char_to_str_pool(char)?;
                         i += 1;
                         continue;
                     }
-                    c if (b'a' as u32..=b'z' as u32).contains(&c)
-                        || (b'A' as u32..=b'Z' as u32).contains(&c)
-                        || c == b'_' as u32 => {}
+                    c if (u32::from(b'a')..=u32::from(b'z')).contains(&c)
+                        || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
+                        || c == u32::from(b'_') => {}
                     _ => return Ok(TextRange { start, end: self.j }),
                 }
             }
@@ -3601,19 +3601,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 _ => {
                     if !escaped
                         && ((self.in_subshell == Some(SubShellKind::Dollar)
-                            && char == b')' as u32)
+                            && char == u32::from(b')'))
                             || (self.in_subshell == Some(SubShellKind::Backtick)
-                                && char == b'`' as u32)
+                                && char == u32::from(b'`'))
                             || (self.in_subshell == Some(SubShellKind::Normal)
-                                && char == b')' as u32))
+                                && char == u32::from(b')')))
                     {
                         return Ok(TextRange { start, end: self.j });
                     }
                     match char {
-                        c if (b'0' as u32..=b'9' as u32).contains(&c)
-                            || (b'a' as u32..=b'z' as u32).contains(&c)
-                            || (b'A' as u32..=b'Z' as u32).contains(&c)
-                            || c == b'_' as u32 =>
+                        c if (u32::from(b'0')..=u32::from(b'9')).contains(&c)
+                            || (u32::from(b'a')..=u32::from(b'z')).contains(&c)
+                            || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
+                            || c == u32::from(b'_') =>
                         {
                             self.eat().expect("unreachable");
                             self.append_char_to_str_pool(char)?;
@@ -3635,7 +3635,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if peeked.escaped {
                 continue;
             }
-            if peeked.char == b'\n' as u32 {
+            if peeked.char == u32::from(b'\n') {
                 break;
             }
         }
@@ -3842,7 +3842,7 @@ pub struct ShellCharIter<'a, const ENCODING: StringEncoding> {
 
 impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
     pub fn is_whitespace(char: InputChar) -> bool {
-        matches!(char.char, c if c == b'\t' as u32 || c == b'\r' as u32 || c == b'\n' as u32 || c == b' ' as u32)
+        matches!(char.char, c if c == u32::from(b'\t') || c == u32::from(b'\r') || c == u32::from(b'\n') || c == u32::from(b' '))
     }
 
     pub fn init(bytes: &'a [u8]) -> Self {
@@ -3910,7 +3910,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                 (iv.char, iv.width)
             }
         };
-        if char != b'\\' as u32 || self.state == CharState::Single {
+        if char != u32::from(b'\\') || self.state == CharState::Single {
             return Some(InputChar { char, escaped: false });
         }
 
@@ -3930,12 +3930,12 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                 }?;
                 match peeked {
                     // Backslash only applies to these characters
-                    c if c == b'$' as u32
-                        || c == b'`' as u32
-                        || c == b'"' as u32
-                        || c == b'\\' as u32
-                        || c == b'\n' as u32
-                        || c == b'#' as u32 =>
+                    c if c == u32::from(b'$')
+                        || c == u32::from(b'`')
+                        || c == u32::from(b'"')
+                        || c == u32::from(b'\\')
+                        || c == u32::from(b'\n')
+                        || c == u32::from(b'#') =>
                     {
                         char = peeked;
                     }
@@ -3974,19 +3974,19 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
     // PORT NOTE: `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
     // ASCII-range matches below; negative sentinel never matches anyway.
     match cursor.c as u32 {
-        c if c == b'=' as u32 || (b'0' as u32..=b'9' as u32).contains(&c) => return false,
-        c if (b'a' as u32..=b'z' as u32).contains(&c)
-            || (b'A' as u32..=b'Z' as u32).contains(&c)
-            || c == b'_' as u32 => {}
+        c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => return false,
+        c if (u32::from(b'a')..=u32::from(b'z')).contains(&c)
+            || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
+            || c == u32::from(b'_') => {}
         _ => return false,
     }
 
     while iter.next(&mut cursor) {
         match cursor.c as u32 {
-            c if (b'0' as u32..=b'9' as u32).contains(&c)
-                || (b'a' as u32..=b'z' as u32).contains(&c)
-                || (b'A' as u32..=b'Z' as u32).contains(&c)
-                || c == b'_' as u32 => {}
+            c if (u32::from(b'0')..=u32::from(b'9')).contains(&c)
+                || (u32::from(b'a')..=u32::from(b'z')).contains(&c)
+                || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
+                || c == u32::from(b'_') => {}
             _ => return false,
         }
     }
@@ -4029,7 +4029,7 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
     let iter = CodepointIterator::init(str);
     let mut cursor = CodepointCursor::default();
     while iter.next(&mut cursor) {
-        if cursor.c as u32 == b'=' as u32 {
+        if cursor.c as u32 == u32::from(b'=') {
             return Some(cursor.i);
         }
     }

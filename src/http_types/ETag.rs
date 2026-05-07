@@ -211,20 +211,20 @@ impl Headers {
 
     // PORT NOTE: was `!void`; only `try` sites were allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
-        let mut offset: u32 = self.buf.len() as u32;
+        let mut offset: u32 = u32::try_from(self.buf.len()).unwrap();
         self.buf.reserve(name.len() + value.len());
         let name_ptr = StringPointer {
             offset,
-            length: name.len() as u32,
+            length: u32::try_from(name.len()).unwrap(),
         };
         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
         self.buf.extend_from_slice(name);
-        offset = self.buf.len() as u32;
+        offset = u32::try_from(self.buf.len()).unwrap();
         self.buf.extend_from_slice(value);
 
         let value_ptr = StringPointer {
             offset,
-            length: value.len() as u32,
+            length: u32::try_from(value.len()).unwrap(),
         };
         self.entries
             .append(HeaderEntry {

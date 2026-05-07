@@ -129,10 +129,10 @@ impl HeadersExt for Headers {
             let value = header.value();
             let name_offset = offset;
             result.buf[offset as usize..][..name.len()].copy_from_slice(name);
-            offset += name.len() as u32;
+            offset += u32::try_from(name.len()).unwrap();
             let value_offset = offset;
             result.buf[offset as usize..][..value.len()].copy_from_slice(value);
-            offset += value.len() as u32;
+            offset += u32::try_from(value.len()).unwrap();
 
             // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
             // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above
@@ -140,11 +140,11 @@ impl HeadersExt for Headers {
             result.entries.append_assume_capacity(Entry {
                 name: api::StringPointer {
                     offset: name_offset,
-                    length: name.len() as u32,
+                    length: u32::try_from(name.len()).unwrap(),
                 },
                 value: api::StringPointer {
                     offset: value_offset,
-                    length: value.len() as u32,
+                    length: u32::try_from(value.len()).unwrap(),
                 },
             });
         }
@@ -170,7 +170,7 @@ impl HeadersExt for Headers {
                         || !fetch_headers_ref.as_ref().unwrap().fast_has(HeaderName::ContentType))
                 {
                     header_count += 1;
-                    buf_len += (body.content_type().len() + b"Content-Type".len()) as u32;
+                    buf_len += u32::try_from(body.content_type().len() + b"Content-Type".len()).unwrap();
                     break 'brk true;
                 }
             }
@@ -209,7 +209,7 @@ impl HeadersExt for Headers {
             unsafe {
                 *names_ptr.add(header_count as usize - 1) = api::StringPointer {
                     offset: buf_len_before_content_type,
-                    length: ct.len() as u32,
+                    length: u32::try_from(ct.len()).unwrap(),
                 };
             }
 
@@ -219,8 +219,8 @@ impl HeadersExt for Headers {
             // SAFETY: see above.
             unsafe {
                 *values_ptr.add(header_count as usize - 1) = api::StringPointer {
-                    offset: buf_len_before_content_type + ct.len() as u32,
-                    length: options.body.unwrap().content_type().len() as u32,
+                    offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
+                    length: u32::try_from(options.body.unwrap().content_type().len()).unwrap(),
                 };
             }
         }

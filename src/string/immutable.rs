@@ -1410,7 +1410,7 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
     // ASCII literals (Zig was `comptime`).
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() == alt.len()
-        && self_.iter().zip(alt.iter()).all(|(&u, &b)| u == b as u16)
+        && self_.iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
 }
 
 pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
@@ -1424,7 +1424,7 @@ pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
 pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() >= alt.len()
-        && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == b as u16)
+        && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
 }
 
 pub fn has_prefix_comptime_type<T: Copy + Eq>(self_: &[T], alt: &'static [T]) -> bool {
@@ -1548,10 +1548,10 @@ pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     debug_assert_eq!(a.len(), b.len());
     for (c, &d) in a.iter().zip(b) {
         let c: u32 = (*c).into();
-        let d = d as u32;
-        if (b'a' as u32..=b'z' as u32).contains(&c) {
+        let d = u32::from(d);
+        if (u32::from(b'a')..=u32::from(b'z')).contains(&c) {
             if c != d && c & 0b1101_1111 != d { return false; }
-        } else if (b'A' as u32..=b'Z' as u32).contains(&c) {
+        } else if (u32::from(b'A')..=u32::from(b'Z')).contains(&c) {
             if c != d && c | 0b0010_0000 != d { return false; }
         } else if c != d {
             return false;
@@ -1840,13 +1840,13 @@ pub struct Utf16CodepointLen {
 }
 #[inline]
 pub fn utf16_codepoint(input: &[u16]) -> Utf16CodepointLen {
-    let c0 = input[0] as u32;
+    let c0 = u32::from(input[0]);
     if c0 & !0x03ff == 0xd800 {
         // high surrogate
         if input.len() < 2 {
             return Utf16CodepointLen { code_point: c0, len: 1 };
         }
-        let c1 = input[1] as u32;
+        let c1 = u32::from(input[1]);
         if c1 & !0x03ff != 0xdc00 {
             // PORT NOTE: Zig (unicode.zig:1378) falls THROUGH the dead
             // `if (input.len == 1)` and returns `len = 2` here. The sole
@@ -1897,13 +1897,13 @@ impl UTF16Replacement {
 /// failure (`fail`/`is_lead`) instead of silently passing the lead through
 /// (unicode.zig:1378 vs. `utf16_codepoint`).
 pub fn utf16_codepoint_with_fffd(input: &[u16]) -> UTF16Replacement {
-    let c0 = input[0] as u32;
+    let c0 = u32::from(input[0]);
     if c0 & !0x03ff == 0xd800 {
         // surrogate pair
         if input.len() == 1 {
             return UTF16Replacement { len: 1, is_lead: true, ..Default::default() };
         }
-        let c1 = input[1] as u32;
+        let c1 = u32::from(input[1]);
         if c1 & !0x03ff != 0xdc00 {
             // PORT NOTE: unicode.zig has a dead `if input.len() == 1` here
             // (already excluded above); preserved fail+is_lead branch only.
@@ -1983,7 +1983,7 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
     }
 
     let i = highway::index_of_space_or_newline_or_non_ascii(remaining)?;
-    Some((i as u32) + offset)
+    Some(u32::try_from(i).unwrap() + offset)
 }
 
 pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
@@ -2005,7 +2005,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     }
 
     let i = highway::index_of_newline_or_non_ascii(remaining)?;
-    Some((i as u32) + offset)
+    Some(u32::try_from(i).unwrap() + offset)
 }
 
 pub fn contains_newline_or_non_ascii_or_quote(text: &[u8]) -> bool {
@@ -2064,7 +2064,7 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
             || char == b'|'
             || char == b'~'
         {
-            return Some(i as u32);
+            return Some(u32::try_from(i).unwrap());
         }
     }
 
@@ -2077,7 +2077,7 @@ pub fn index_of_char_z(slice_z: &crate::ZStr, char: u8) -> Option<u64> {
 }
 
 pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
-    index_of_char_usize(slice, char).map(|i| i as u32)
+    index_of_char_usize(slice, char).map(|i| u32::try_from(i).unwrap())
 }
 
 pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
@@ -2126,7 +2126,7 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     // PERF(port): Zig used @Vector(16,u8) != splat + @ctz. Scalar loop here.
     for (i, &current) in slice.iter().enumerate() {
         if current != char {
-            return Some(i as u32);
+            return Some(u32::try_from(i).unwrap());
         }
     }
 
@@ -2359,7 +2359,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     else {
         if target_line == 0 {
             // PERF(port): was assume_capacity
-            ranges.push(LineRange { start: 0, end: text.len() as u32 });
+            ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() });
         }
         return ranges;
     };
@@ -2384,7 +2384,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
                 _ => {}
             }
         }
-        let _ = ranges.push(LineRange { start: 0, end: text.len() as u32 });
+        let _ = ranges.push(LineRange { start: 0, end: u32::try_from(text.len()).unwrap() });
         return ranges;
     };
 
@@ -2396,7 +2396,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     let mut prev_end = first_newline_range.end;
     while let Some(current_i) =
-        index_of_newline_or_non_ascii_check_start::<true>(text, cursor.i + cursor.width as u32)
+        index_of_newline_or_non_ascii_check_start::<true>(text, cursor.i + u32::from(cursor.width))
     {
         cursor.i = current_i;
         cursor.width = 0;
@@ -2466,7 +2466,7 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
     // loop here; Phase B: portable_simd or simdutf utf16 validator.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
-            return Some(i as u32);
+            return Some(u32::try_from(i).unwrap());
         }
     }
     None
@@ -3311,7 +3311,7 @@ pub fn to_utf16_alloc_for_real(
     }
     // All-ASCII path: widen each byte.
     let mut out = Vec::with_capacity(bytes.len() + sentinel as usize);
-    out.extend(bytes.iter().map(|&b| b as u16));
+    out.extend(bytes.iter().map(|&b| u16::from(b)));
     if sentinel {
         out.push(0);
     }
@@ -3351,9 +3351,9 @@ pub use paths::from_w_path as from_wpath;
 /// followed by at least one more byte (Zig: `s.len > 2`).
 #[inline]
 pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
-    s.len() > 2 && s[1].into() == b':' as u32 && {
+    s.len() > 2 && s[1].into() == u32::from(b':') && {
         let c = s[0].into();
-        (c >= b'a' as u32 && c <= b'z' as u32) || (c >= b'A' as u32 && c <= b'Z' as u32)
+        (c >= u32::from(b'a') && c <= u32::from(b'z')) || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
     }
 }
 
@@ -3435,7 +3435,7 @@ pub fn to_utf16_alloc(
     while let Some(i) = first_non_ascii(remaining) {
         let i = i as usize;
         // Copy ASCII prefix as-is (one u16 per byte).
-        out.extend(remaining[..i].iter().map(|&b| b as u16));
+        out.extend(remaining[..i].iter().map(|&b| u16::from(b)));
         remaining = &remaining[i..];
         // Decode one codepoint via the same routine Zig uses
         // (`convertUTF8BytesIntoUTF16`) so the number/position of U+FFFD
@@ -3450,7 +3450,7 @@ pub fn to_utf16_alloc(
             out.push(unicode_draft::u16_trail(c));
         }
     }
-    out.extend(remaining.iter().map(|&b| b as u16));
+    out.extend(remaining.iter().map(|&b| u16::from(b)));
     if sentinel {
         out.push(0);
     }

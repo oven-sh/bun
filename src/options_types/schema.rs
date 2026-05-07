@@ -48,7 +48,7 @@ impl<'a> Writer<'a> {
     /// Zig: `writeArray(u8, slice)` — length-prefixed byte slice.
     #[inline]
     pub fn write_array_u8(&mut self, slice: &[u8]) {
-        self.write_int(slice.len() as u32);
+        self.write_int(u32::try_from(slice.len()).unwrap());
         self.write(slice);
     }
     #[inline]
@@ -645,7 +645,7 @@ pub mod api {
         pub fn encode(&self, w: &mut super::Writer<'_>) {
             w.write_int(self.code);
             w.write_array_u8(&self.name);
-            w.write_int(self.exceptions.len() as u32);
+            w.write_int(u32::try_from(self.exceptions.len()).unwrap());
             for ex in &self.exceptions {
                 ex.encode(w);
             }
@@ -686,11 +686,11 @@ pub mod api {
 
     impl StringMap {
         pub fn encode(&self, w: &mut super::Writer<'_>) {
-            w.write_int(self.keys.len() as u32);
+            w.write_int(u32::try_from(self.keys.len()).unwrap());
             for k in &self.keys {
                 w.write_array_u8(k);
             }
-            w.write_int(self.values.len() as u32);
+            w.write_int(u32::try_from(self.values.len()).unwrap());
             for v in &self.values {
                 w.write_array_u8(v);
             }

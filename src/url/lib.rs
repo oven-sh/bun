@@ -64,8 +64,8 @@ fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<(u32, u32)> {
     if !bun_alloc::is_slice_in_buffer(slice, buffer) {
         return None;
     }
-    let off = (slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize) as u32;
-    let len = slice.len() as u32;
+    let off = u32::try_from((slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize)).unwrap();
+    let len = u32::try_from(slice.len()).unwrap();
     debug_assert!(strings::eql_long(slice, &buffer[off as usize..][..len as usize], false));
     Some((off, len))
 }
@@ -972,10 +972,10 @@ impl QueryStringMap {
             let mut value = result.value;
             let name_slice = result.raw_name(scanner.pathname.routename);
 
-            name.length = name_slice.len() as u32;
+            name.length = u32::try_from(name_slice.len()).unwrap();
             name.offset = buf_writer_pos;
             buf.extend_from_slice(name_slice);
-            buf_writer_pos += name_slice.len() as u32;
+            buf_writer_pos += u32::try_from(name_slice.len()).unwrap();
 
             let name_hash: u64 = wyhash(name_slice);
 
@@ -1349,7 +1349,7 @@ impl PercentEncoding {
                         i += 1;
                     }
                     writer.write_all(&input[start..i])?;
-                    written += (i - start) as u32;
+                    written += u32::try_from(i - start).unwrap();
                 }
             }
         }
@@ -1435,8 +1435,8 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
             debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
 
             return api::StringPointer {
-                offset: i as u32,
-                length: in_.len() as u32,
+                offset: u32::try_from(i).unwrap(),
+                length: u32::try_from(in_.len()).unwrap(),
             };
         }
     }
@@ -1520,7 +1520,7 @@ impl<'a> Scanner<'a> {
 
             let slice = &self.query_string[self.i..];
             relative_i = 0;
-            let mut name = api::StringPointer { offset: self.i as u32, length: 0 };
+            let mut name = api::StringPointer { offset: u32::try_from(self.i).unwrap(), length: 0 };
             let mut value = api::StringPointer { offset: 0, length: 0 };
             let mut name_needs_decoding = false;
 
@@ -1528,10 +1528,10 @@ impl<'a> Scanner<'a> {
                 let char = slice[relative_i];
                 match char {
                     b'=' => {
-                        name.length = relative_i as u32;
+                        name.length = u32::try_from(relative_i).unwrap();
                         relative_i += 1;
 
-                        value.offset = (relative_i + self.i) as u32;
+                        value.offset = u32::try_from(relative_i + self.i).unwrap();
 
                         let offset = relative_i;
                         let mut value_needs_decoding = false;
@@ -1540,7 +1540,7 @@ impl<'a> Scanner<'a> {
                                 || matches!(slice[relative_i], b'%' | b'+');
                             relative_i += 1;
                         }
-                        value.length = (relative_i - offset) as u32;
+                        value.length = u32::try_from(relative_i - offset).unwrap();
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if name.length == 0 {
@@ -1561,7 +1561,7 @@ impl<'a> Scanner<'a> {
                     b'&' => {
                         // key&
                         if relative_i > 0 {
-                            name.length = relative_i as u32;
+                            name.length = u32::try_from(relative_i).unwrap();
                             self.i += relative_i;
                             return Some(ScannerResult {
                                 name,
@@ -1591,7 +1591,7 @@ impl<'a> Scanner<'a> {
                 return None;
             }
 
-            name.length = relative_i as u32;
+            name.length = u32::try_from(relative_i).unwrap();
             self.i += relative_i;
             return Some(ScannerResult { name, value, name_needs_decoding, value_needs_decoding: false });
         }

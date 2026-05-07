@@ -67,7 +67,7 @@ impl SrcAscii {
         if self.i >= b.len() {
             return None;
         }
-        Some(AsciiIndexValue { char: b[self.i] as u32, escaped: false })
+        Some(AsciiIndexValue { char: u32::from(b[self.i]), escaped: false })
     }
     #[inline]
     fn index_next(&self) -> Option<AsciiIndexValue> {
@@ -75,7 +75,7 @@ impl SrcAscii {
         if self.i + 1 >= b.len() {
             return None;
         }
-        Some(AsciiIndexValue { char: b[self.i + 1] as u32, escaped: false })
+        Some(AsciiIndexValue { char: u32::from(b[self.i + 1]), escaped: false })
     }
     #[inline]
     fn eat(&mut self, escaped: bool) {
@@ -102,7 +102,7 @@ impl SrcUnicode {
     fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor) {
         if !CodepointIterator::next(iter, cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = (iter.bytes.len() + 1) as u32;
+            cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
             cursor.width = 1;
             cursor.c = CodepointIterator::ZERO_VALUE;
         }
@@ -123,7 +123,7 @@ impl SrcUnicode {
         if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
             return None;
         }
-        Some(UnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width as u8 })
+        Some(UnicodeIndexValue { char: self.cursor.c as u32, width: self.cursor.width })
     }
     #[inline]
     fn index_next(&self) -> Option<UnicodeIndexValue> {
@@ -132,7 +132,7 @@ impl SrcUnicode {
         }
         Some(UnicodeIndexValue {
             char: self.next_cursor.c as u32,
-            width: self.next_cursor.width as u8,
+            width: self.next_cursor.width,
         })
     }
     #[inline]
@@ -274,7 +274,7 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
                 _width_or_escaped = iv.width;
             }
         }
-        if ch != b'\\' as u32 || self.state == ShellCharIterState::Single {
+        if ch != u32::from(b'\\') || self.state == ShellCharIterState::Single {
             return Some(InputChar { char: ch, escaped: false });
         }
 
@@ -294,12 +294,12 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
                 };
                 match peeked {
                     // Backslash only applies to these characters
-                    c if c == b'$' as u32
-                        || c == b'`' as u32
-                        || c == b'"' as u32
-                        || c == b'\\' as u32
-                        || c == b'\n' as u32
-                        || c == b'#' as u32 =>
+                    c if c == u32::from(b'$')
+                        || c == u32::from(b'`')
+                        || c == u32::from(b'"')
+                        || c == u32::from(b'\\')
+                        || c == u32::from(b'\n')
+                        || c == u32::from(b'#') =>
                     {
                         ch = peeked;
                     }
@@ -1254,19 +1254,19 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             if !escaped {
                 // PORT NOTE: `char` is u32 (CodepointType unified across encodings).
                 match char {
-                    c if c == b'{' as u32 => {
+                    c if c == u32::from(b'{') => {
                         brace_stack.push(u32::try_from(self.tokens.len()).unwrap());
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
-                    c if c == b'}' as u32 => {
+                    c if c == u32::from(b'}') => {
                         if brace_stack.len() > 0 {
                             let _ = brace_stack.pop();
                             self.tokens.push(Token::Close);
                             continue;
                         }
                     }
-                    c if c == b',' as u32 => {
+                    c if c == u32::from(b',') => {
                         if brace_stack.len() > 0 {
                             self.tokens.push(Token::Comma);
                             continue;

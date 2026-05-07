@@ -170,6 +170,114 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });
 
+const audit_full_params: []const ParamType = &(shared_params ++ audit_params[0..audit_params.len].*);
+
+/// Returns the clap parameter table for `subcommand` (the same table used by
+/// `printHelp`). `parse` uses `streamParamsFor` for the actual parsing subset.
+fn paramsFor(comptime subcommand: Subcommand) []const ParamType {
+    return switch (subcommand) {
+        .install => install_params,
+        .update => update_params,
+        .pm => pm_params,
+        .add => add_params,
+        .remove => remove_params,
+        .link => link_params,
+        .unlink => unlink_params,
+        .patch => patch_params,
+        .@"patch-commit" => patch_commit_params,
+        .outdated => outdated_params,
+        .pack => pack_params,
+        .publish => publish_params,
+        .why => why_params,
+        .audit => audit_full_params,
+        .info => info_params,
+        .scan => pm_params, // scan uses the same params as pm command
+    };
+}
+
+/// Do `a` and `b` describe the same logical parameter? Matching by long name
+/// (or positional/short-only) — not by help text or short alias — so that
+/// subcommand tables that expose the same long name with different short
+/// aliases (e.g. `--filter` vs `-F, --filter`) share a storage slot.
+fn isSameParam(a: ParamType, b: ParamType) bool {
+    if (a.names.long == null and a.names.short == null) {
+        return b.names.long == null and b.names.short == null;
+    }
+    if (a.names.long) |a_long| {
+        const b_long = b.names.long orelse return false;
+        return std.mem.eql(u8, a_long, b_long);
+    }
+    if (a.names.short) |a_short| {
+        if (b.names.long != null) return false;
+        return b.names.short == a_short;
+    }
+    return false;
+}
+
+/// Deduplicated union of every subcommand's params. Used as the single
+/// comptime `params` argument to `clap.parse` so the body of `parse` is
+/// instantiated once instead of once per subcommand. The per-subcommand
+/// subset is selected at runtime via `ParseOptions.stream_params`.
+const all_params: []const ParamType = all: {
+    @setEvalBranchQuota(1_000_000);
+    var merged: []const ParamType = &.{};
+    for (std.enums.values(Subcommand)) |subcommand| {
+        for (paramsFor(subcommand)) |param| {
+            const exists = for (merged) |existing| {
+                if (isSameParam(param, existing)) break true;
+            } else false;
+            if (!exists) merged = merged ++ &[_]ParamType{param};
+        }
+    }
+    break :all merged;
+};
+
+const AllClap = clap.ComptimeClap(clap.Help, all_params);
+
+/// Build the streaming-parser subset for one subcommand. Each entry keeps
+/// that subcommand's exact `names` (so short-alias differences between
+/// subcommands are preserved) while its `id` points at the matching storage
+/// slot in the shared `all_params` result struct.
+fn buildStreamParams(comptime subcommand_params: []const ParamType) []const clap.Param(usize) {
+    @setEvalBranchQuota(1_000_000);
+    comptime {
+        var out: [subcommand_params.len]clap.Param(usize) = undefined;
+        for (subcommand_params, 0..) |param, i| {
+            const match = for (AllClap.params_converted) |converted| {
+                const original: ParamType = .{
+                    .names = converted.names,
+                    .takes_value = converted.takes_value,
+                };
+                if (isSameParam(param, original)) break converted;
+            } else @compileError("subcommand param missing from all_params");
+            if (match.takes_value != param.takes_value) {
+                @compileError("param '" ++ (param.names.long orelse "<positional>") ++
+                    "' has inconsistent takes_value across subcommands");
+            }
+            out[i] = .{
+                .id = match.id,
+                .names = param.names,
+                .takes_value = param.takes_value,
+            };
+        }
+        const final = out;
+        return &final;
+    }
+}
+
+const stream_params_by_subcommand = blk: {
+    @setEvalBranchQuota(1_000_000);
+    var table: std.EnumArray(Subcommand, []const clap.Param(usize)) = undefined;
+    for (std.enums.values(Subcommand)) |subcommand| {
+        table.set(subcommand, buildStreamParams(paramsFor(subcommand)));
+    }
+    break :blk table;
+};
+
+fn streamParamsFor(subcommand: Subcommand) []const clap.Param(usize) {
+    return stream_params_by_subcommand.get(subcommand);
+}
+
 cache_dir: ?string = null,
 lockfile: string = "",
 token: string = "",
@@ -749,36 +857,15 @@ pub fn printHelp(subcommand: Subcommand) void {
     }
 }
 
-pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+pub fn parse(allocator: std.mem.Allocator, subcommand: Subcommand) !CommandLineArguments {
     Output.is_verbose = Output.isVerbose();
-
-    const params: []const ParamType = switch (subcommand) {
-        .install => install_params,
-        .update => update_params,
-        .pm => pm_params,
-        .add => add_params,
-        .remove => remove_params,
-        .link => link_params,
-        .unlink => unlink_params,
-        .patch => patch_params,
-        .@"patch-commit" => patch_commit_params,
-        .outdated => outdated_params,
-        .pack => pack_params,
-        .publish => publish_params,
-        .why => why_params,
-
-        // TODO: we will probably want to do this for other *_params. this way extra params
-        // are not included in the help text
-        .audit => shared_params ++ audit_params,
-        .info => info_params,
-        .scan => pm_params, // scan uses the same params as pm command
-    };
 
     var diag = clap.Diagnostic{};
 
-    var args = clap.parse(clap.Help, params, .{
+    var args = clap.parse(clap.Help, all_params, .{
         .diagnostic = &diag,
         .allocator = allocator,
+        .stream_params = streamParamsFor(subcommand),
     }) catch |err| {
         printHelp(subcommand);
         diag.report(Output.errorWriter(), err) catch {};
@@ -868,23 +955,23 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     // commands that support --filter
-    if (comptime subcommand.supportsWorkspaceFiltering()) {
+    if (subcommand.supportsWorkspaceFiltering()) {
         cli.filters = args.options("--filter");
     }
 
-    if (comptime subcommand.supportsJsonOutput()) {
+    if (subcommand.supportsJsonOutput()) {
         cli.json_output = args.flag("--json");
     }
 
-    if (comptime subcommand == .outdated) {
+    if (subcommand == .outdated) {
         // fake --dry-run, we don't actually resolve+clean the lockfile
         cli.dry_run = true;
         cli.recursive = args.flag("--recursive");
         // cli.json_output = args.flag("--json");
     }
 
-    if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
-        if (comptime subcommand != .publish) {
+    if (subcommand == .pack or subcommand == .pm or subcommand == .publish) {
+        if (subcommand != .publish) {
             if (args.option("--destination")) |dest| {
                 cli.pack_destination = dest;
             }
@@ -898,7 +985,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
     }
 
-    if (comptime subcommand == .publish) {
+    if (subcommand == .publish) {
         if (args.option("--tag")) |tag| {
             cli.publish_config.tag = tag;
         }
@@ -926,7 +1013,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     // link and unlink default to not saving, all others default to
     // saving.
-    if (comptime subcommand == .link or subcommand == .unlink) {
+    if (subcommand == .link or subcommand == .unlink) {
         cli.no_save = !args.flag("--save");
     } else {
         cli.no_save = args.flag("--no-save");
@@ -954,7 +1041,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         };
     }
 
-    if (comptime subcommand == .audit) {
+    if (subcommand == .audit) {
         if (args.option("--audit-level")) |level| {
             cli.audit_level = AuditLevel.fromString(level) orelse {
                 Output.errGeneric("invalid `--audit-level` value: '{s}'. Valid values are: low, moderate, high, critical", .{level});
@@ -1017,7 +1104,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.os = os_negatable.combine();
     }
 
-    if (comptime subcommand == .add or subcommand == .install) {
+    if (subcommand == .add or subcommand == .install) {
         cli.development = args.flag("--development") or args.flag("--dev");
         cli.optional = args.flag("--optional");
         cli.peer = args.flag("--peer");
@@ -1051,7 +1138,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         };
     }
 
-    if (comptime subcommand == .update) {
+    if (subcommand == .update) {
         cli.latest = args.flag("--latest");
         cli.interactive = args.flag("--interactive");
         cli.recursive = args.flag("--recursive");
@@ -1103,7 +1190,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         Global.crash();
     }
 
-    if (comptime subcommand == .pm) {
+    if (subcommand == .pm) {
         // `bun pm version` command options
         if (args.option("--git-tag-version")) |git_tag_version| {
             if (strings.eqlComptime(git_tag_version, "true")) {
@@ -1126,7 +1213,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     // `bun pm why` and `bun why` options
-    if (comptime subcommand == .pm or subcommand == .why) {
+    if (subcommand == .pm or subcommand == .why) {
         cli.top_only = args.flag("--top");
         if (args.option("--depth")) |depth| {
             cli.depth = std.fmt.parseInt(usize, depth, 10) catch {

@@ -39,6 +39,11 @@ pub fn ComptimeClap(
         passthrough_positionals: []const []const u8,
         allocator: mem.Allocator,
 
+        /// The comptime `params` with each id remapped to its storage slot in
+        /// this struct. Exposed so callers can build runtime subsets for
+        /// `ParseOptions.stream_params` that share the same storage layout.
+        pub const params_converted = converted_params;
+
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
             const allocator = opt.allocator;
             var multis = [_]std.array_list.Managed([]const u8){undefined} ** multi_options;
@@ -59,7 +64,7 @@ pub fn ComptimeClap(
             };
 
             var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child){
-                .params = converted_params,
+                .params = opt.stream_params orelse converted_params,
                 .iter = iter,
                 .diagnostic = opt.diagnostic,
             };

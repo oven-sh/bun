@@ -667,6 +667,7 @@ pub mod ws2_32 {
         /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
         /// because `SystemErrno` is a higher-tier type.
         pub fn WSAGetLastError() -> c_int;
+        pub fn WSASetLastError(err: c_int);
         pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;

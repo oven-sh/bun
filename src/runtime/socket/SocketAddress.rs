@@ -920,14 +920,21 @@ mod WellKnownAddress {
 
 #[cfg(windows)]
 pub mod inet {
+    #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
-    pub use ws2::IN4ADDR_LOOPBACK;
-    pub use ws2::INET6_ADDRSTRLEN;
+    // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
+    // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
+    // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
+    // build resolves without widening the leaf crate.
+    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
+    pub const INET6_ADDRSTRLEN: usize = 65;
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub type sa_family_t = ws2::ADDRESS_FAMILY;
-    pub type in_port_t = bun_sys::windows::USHORT;
+    /// `ws2def.h`: `typedef USHORT ADDRESS_FAMILY;`
+    pub type sa_family_t = u16;
+    pub type in_port_t = u16;
     pub type socklen_t = super::ares::socklen_t;
     pub type sockaddr_in = bun_sys::posix::sockaddr_in;
     pub type sockaddr_in6 = bun_sys::posix::sockaddr_in6;

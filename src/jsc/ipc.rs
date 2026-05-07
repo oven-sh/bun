@@ -1681,8 +1681,12 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
-    fn on_read(this: &mut Self, data: &[u8]) {
-        IPCHandlers::WindowsNamedPipe::on_read(this, data);
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
+        // `read_start_ctx`. `data` points into our own `incoming` buffer
+        // (returned from `on_read_alloc`); `WindowsNamedPipe::on_read` copies
+        // it out before mutating `incoming`, so the reborrow is sound.
+        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, data);
     }
 }
 

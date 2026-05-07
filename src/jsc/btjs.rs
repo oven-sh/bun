@@ -557,12 +557,15 @@ mod zig_std_debug {
         /// Port of `Module.getSymbolAtAddress`.
         #[cfg(windows)]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
-            // Windows: Zig's `std.debug.SelfInfo` walks the loaded PE's PDB
-            // via `dbghelp.dll`. That path is not yet ported (requires the
-            // `Coff`/`Pdb` parsers); return the same default-initialized
-            // `Symbol` Zig uses when the lookup fails so the caller still
-            // prints the raw address line. Functionally equivalent to a
-            // missing-PDB build.
+            // TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
+            // resolves symbols on Windows via the loaded PE's PDB
+            // (`dbghelp.dll` `SymFromAddr`). That path is not yet ported, so
+            // every Windows backtrace currently prints bare addresses even
+            // when a PDB is shipped. This is NOT equivalent to the Zig spec
+            // for symbol-bearing builds; return the default-initialized
+            // `Symbol` (`name = "???"`) so the caller still prints the
+            // address line, but the dbghelp lookup must be implemented
+            // before Windows crash reports are usable.
             let _ = (address, self.base_address);
             Ok(SymbolInfo {
                 name: b"???".to_vec().into_boxed_slice(),

@@ -918,7 +918,7 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::WindowsFd::Uv(uv_file) => {
+                                bun_sys::fd::DecodeWindows::Uv(uv_file) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
@@ -926,7 +926,7 @@ impl BlobExt for Blob {
                                         uv_file,
                                     )?;
                                 }
-                                bun_sys::WindowsFd::Windows(handle) => {
+                                bun_sys::fd::DecodeWindows::Windows(handle) => {
                                     if cfg!(debug_assertions) {
                                         panic!("this shouldn't be reachable.");
                                     }
@@ -1634,7 +1634,7 @@ impl BlobExt for Blob {
 
         #[cfg(windows)]
         {
-            use bun_io::pipe_writer::WindowsPipeWriter as _;
+            use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.

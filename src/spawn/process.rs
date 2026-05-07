@@ -2320,11 +2320,12 @@ pub mod sync {
                     .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
                     .to_error(bun_sys::Tag::listen)
                 {
-                    // Reclaim the allocation on the error path so we don't leak
-                    // the reader (and its boxed `uv::Pipe`). `on_close` won't
-                    // fire because `read_start` failed before registering, so
-                    // this is the only owner.
-                    drop(Box::from_raw(this));
+                    // Intentionally leak `this` (matches Zig process.zig, which has
+                    // no cleanup on this branch). The boxed `uv::Pipe` was already
+                    // `uv_pipe_init`'d by the spawn path and is linked into the
+                    // loop's handle queue; freeing it here without `uv_close()`
+                    // would leave a dangling `uv_handle_t`. The sole caller
+                    // `Output::panic`s on error, so the leak is bounded.
                     return Err(err);
                 }
             }

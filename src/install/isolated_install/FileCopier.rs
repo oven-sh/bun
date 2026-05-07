@@ -48,21 +48,20 @@ impl FileCopier {
     pub fn copy(&mut self) -> sys::Result<()> {
         // Zig: `bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{})`.
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
-        // narrow it (store paths are built from UTF-8 package names, always
-        // representable). On POSIX `OSPathChar == u8` and `slice_z()` already
-        // yields `&ZStr`, so deref-coerce to `&[u8]`.
+        // narrow it via the same infallible `from_w_path` transcode that
+        // `bun_sys::make_path_w` uses (bun.zig:2319). Zig stays in u16 the
+        // whole way and has no error path here, so don't synthesise EINVAL on
+        // conversion — store paths are built from UTF-8 package names and are
+        // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
+        // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
-        let dest_subpath_u8: &[u8] = match bun_str::strings::convert_utf16_to_utf8_in_buffer(
+        let dest_subpath_u8: &[u8] = bun_str::strings::paths::from_w_path(
             &mut dest_u8_buf[..],
             self.dest_subpath.slice(),
-        ) {
-            Ok(s) => &*s,
-            Err(_) => {
-                return sys::Result::Err(sys::Error::from_code(E::EINVAL, sys::Tag::copyfile))
-            }
-        };
+        )
+        .as_bytes();
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
         let dest_dir = match bun_sys::make_path::make_open_path(

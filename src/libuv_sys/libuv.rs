@@ -780,8 +780,14 @@ pub unsafe trait UvStream: UvHandle {
             nreads: ReturnCodeI64,
             buffer: *const uv_buf_t,
         ) {
+            // Keep `ctx` raw — `(*buffer).base` was derived from the `&mut T`
+            // borrow taken in `uv_allocb`, so materialising a fresh `&mut T`
+            // here would pop that pointer's Stacked-Borrows tag before we
+            // read through it. Recover the raw `*mut T`, build the slice
+            // first, and hand the raw pointer to `on_read` so the impl owns
+            // the reborrow ordering.
             // SAFETY: `req.data` was set to `context` above.
-            let ctx: &mut T = unsafe { &mut *(*req).data.cast::<T>() };
+            let ctx: *mut T = unsafe { (*req).data.cast::<T>() };
             let n = nreads.int();
             if n == 0 {
                 return; // EAGAIN / EWOULDBLOCK
@@ -789,14 +795,16 @@ pub unsafe trait UvStream: UvHandle {
             if n < 0 {
                 // SAFETY: stream prefix invariant.
                 let _ = unsafe { uv_read_stop(req) };
-                T::on_read_error(ctx, n as c_int);
+                // SAFETY: `ctx` is the live context stashed in `handle.data`.
+                T::on_read_error(unsafe { &mut *ctx }, n as c_int);
             } else {
                 // SAFETY: `buffer` was filled by `uv_allocb` above with a
                 // slice of length `>= n`.
                 let slice = unsafe {
                     core::slice::from_raw_parts((*buffer).base.cast::<u8>(), n as usize)
                 };
-                T::on_read(ctx, slice);
+                // SAFETY: `ctx` is the live context stashed in `handle.data`.
+                unsafe { T::on_read(ctx, slice) };
             }
         }
         // SAFETY: stream prefix invariant.
@@ -814,7 +822,14 @@ pub trait StreamReader: Sized {
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
     fn on_read_error(this: &mut Self, err: c_int);
-    fn on_read(this: &mut Self, data: &[u8]);
+    /// `this` is raw because `data` typically points *into* `*this` (it was
+    /// returned from [`on_read_alloc`]). Forming `&mut Self` in the trampoline
+    /// would alias with `data` under Stacked Borrows; the implementor decides
+    /// how to split the borrow.
+    ///
+    /// # Safety
+    /// `this` is the live context passed to [`UvStream::read_start_ctx`].
+    unsafe fn on_read(this: *mut Self, data: &[u8]);
 }
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}

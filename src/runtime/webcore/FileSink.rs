@@ -1195,8 +1195,8 @@ impl FileSink {
         #[cfg(windows)]
         {
             match self.fd.decode_windows() {
-                bun_sys::WindowsFd::Windows(_) => -1, // TODO:
-                bun_sys::WindowsFd::Uv(num) => num,
+                bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
+                bun_sys::fd::DecodeWindows::Uv(num) => num,
             }
         }
         #[cfg(not(windows))]

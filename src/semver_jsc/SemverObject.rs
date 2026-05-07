@@ -131,6 +131,6 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 // PORT STATUS
 //   source:     src/semver_jsc/SemverObject.zig (139 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      arena/stack-fallback dropped (non-AST); now uses real bun_jsc types.
+//   todos:      0
+//   notes:      arena/stack-fallback dropped (non-AST); Group frees via Drop.
 // ──────────────────────────────────────────────────────────────────────────

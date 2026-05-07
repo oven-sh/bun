@@ -1513,7 +1513,9 @@ pub use self::web_worker::WebWorker;
 // reference `bun_runtime::test_runner::{jest, expect, snapshot}` directly
 // instead of routing through `bun_jsc`. No alias is exported here.
 
-pub use self::js_property_iterator::JSPropertyIterator;
+pub use self::js_property_iterator::{
+    IntoIterObject, JSPropertyIterator, JSPropertyIteratorOptions, PropertyIteratorOptions,
+};
 
 #[path = "event_loop.rs"] pub mod event_loop;
 pub use self::event_loop as EventLoop;

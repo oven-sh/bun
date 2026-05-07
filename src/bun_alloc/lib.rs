@@ -156,7 +156,6 @@ pub type TypedArena<T> = typed_arena::Arena<T>;
 /// `bun.use_mimalloc` — always true in Rust (mimalloc is the global allocator).
 pub const USE_MIMALLOC: bool = true;
 
-/// `bun.default_allocator.realloc(buf, new_size)` — shrink or grow a
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 // These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`

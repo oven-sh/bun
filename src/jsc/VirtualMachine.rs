@@ -473,7 +473,7 @@ impl ExitHandler {
         let exit_code = unsafe { (*vm).exit_handler.exit_code };
         // SAFETY: per fn contract; vm.global valid for VM lifetime.
         let global = unsafe { &*(*vm).global };
-        let _ = jsc::from_js_host_call_generic(global, core::panic::Location::caller(), || unsafe {
+        let _ = jsc::from_js_host_call_generic(global, || unsafe {
             Process__dispatchOnBeforeExit((*vm).global, exit_code)
         });
     }

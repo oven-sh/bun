@@ -1316,120 +1316,22 @@ impl JSGlobalObject {
     }
 
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         let exc = self
             .take_exception(proof)
-            .as_exception(self.vm())
+            .as_exception(self.vm_ptr())
             .expect("exception value must be an Exception cell");
-        let _ = report_uncaught_exception(self, exc);
+        // SAFETY: `as_exception` returned `Some(non-null *mut Exception)`; the cell is
+        // GC-rooted via the value held on this stack frame for the duration of the call.
+        let _ = report_uncaught_exception(self, unsafe { &*exc });
     }
 
-    fn get_body_stream_or_bytes_for_wasm_streaming(
-        &self,
-        response_value: JSValue,
-        streaming_compiler: *mut c_void,
-    ) -> JsResult<JSValue> {
-        let response = match Response::from_js(response_value) {
-            Some(r) => r,
-            None => {
-                return Err(self.throw_invalid_argument_type_value2(
-                    b"source",
-                    b"an instance of Response or an Promise resolving to Response",
-                    response_value,
-                ));
-            }
-        };
-
-        let content_type = if let Some(content_type) = response.get_content_type()? {
-            content_type.to_zig_string()
-        } else {
-            ZigString::static_str("null").clone()
-        };
-
-        if !content_type.eql_comptime(b"application/wasm") {
-            return Err(self
-                .err(
-                    JscError::WEBASSEMBLY_RESPONSE,
-                    format_args!(
-                        "WebAssembly response has unsupported MIME type '{}'",
-                        content_type
-                    ),
-                )
-                .throw());
-        }
-
-        if !response.is_ok() {
-            return Err(self
-                .err(
-                    JscError::WEBASSEMBLY_RESPONSE,
-                    format_args!("WebAssembly response has status code {}", response.status_code()),
-                )
-                .throw());
-        }
-
-        if response.get_body_used(self).to_boolean() {
-            return Err(self
-                .err(
-                    JscError::WEBASSEMBLY_RESPONSE,
-                    format_args!("WebAssembly response body has already been used"),
-                )
-                .throw());
-        }
-
-        let body = response.get_body_value();
-        // TODO(port): `body` is a *Body.Value tagged union; matching on `.Error` etc.
-        // assumes Rust models it as `enum BodyValue { Error(..), Locked(..), ... }`.
-        if let crate::webcore::BodyValue::Error(err) = &*body {
-            return Err(self.throw_value(err.to_js(self)));
-        }
-
-        // We're done validating. From now on, deal with extracting the body.
-        body.to_blob_if_possible();
-
-        if matches!(&*body, crate::webcore::BodyValue::Locked(_)) {
-            if let Some(stream) = response.get_body_readable_stream(self) {
-                return Ok(stream.value);
-            }
-        }
-
-        let mut any_blob = match &*body {
-            crate::webcore::BodyValue::Locked(_) => match body.try_use_as_any_blob() {
-                Some(b) => b,
-                None => return Ok(body.to_readable_stream(self)),
-            },
-            _ => body.use_as_any_blob(),
-        };
-
-        if let Some(store) = any_blob.store() {
-            if !matches!(store.data, crate::webcore::BlobStoreData::Bytes(_)) {
-                // This is a file or an S3 object, which aren't accessible synchronously.
-                // (using any_blob.slice() would return a bogus empty slice)
-
-                // Logic from JSC.WebCore.Body.Value.toReadableStream
-                let mut blob = any_blob.blob;
-                // TODO(port): `defer blob.detach()` ordering — manual scope for Phase A.
-                blob.resolve_size();
-                let result = ReadableStream::from_blob_copy_ref(self, &blob, blob.size);
-                blob.detach();
-                return Ok(result);
-            }
-        }
-
-        // defer any_blob.detach() — see end of scope.
-
-        // Push the blob contents into the streaming compiler by passing a pointer and
-        // length, and return null to signify this has been done.
-        let slice = any_blob.slice();
-        // SAFETY: FFI — `streaming_compiler` is a valid C++ StreamingCompiler* passed in by
-        // the caller; `slice.as_ptr()/len()` describe a buffer kept alive by `any_blob`
-        // until `detach()` below.
-        unsafe {
-            JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.as_ptr(), slice.len());
-        }
-
-        any_blob.detach();
-        Ok(JSValue::NULL)
-    }
+    // LAYERING: `getBodyStreamOrBytesForWasmStreaming` (JSGlobalObject.zig:922) is
+    // exported to C++ but its body is entirely WebCore (`Response`, `Body.Value`,
+    // `ReadableStream`, `Blob.Store`) — types that live in `bun_runtime::webcore`, a
+    // crate that depends on `bun_jsc`. The implementation + `#[no_mangle]` export live
+    // in `bun_runtime::webcore::wasm_streaming` to break the cycle; nothing in this
+    // crate needs to reference it.
 
     pub fn create_error(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {

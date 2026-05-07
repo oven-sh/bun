@@ -391,8 +391,12 @@ impl Queue {
         bun_core::scoped_log!(AsyncModule, "onWake");
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { &mut *(ctx as *mut Queue) };
-        this.vm()
-            .enqueue_task_concurrent(ConcurrentTaskItem::create_from(this));
+        // PORT NOTE: reshaped for borrowck — `vm()` derives a `&mut
+        // VirtualMachine` from `&mut *this` via `@fieldParentPtr`, which
+        // overlaps the `*mut Queue` payload of the concurrent task. Build the
+        // task first (it stores only the raw pointer), then enqueue.
+        let task = ConcurrentTaskItem::create_from(this as *mut Queue);
+        this.vm().enqueue_task_concurrent(task);
     }
 
     pub fn on_poll(&mut self) {

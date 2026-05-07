@@ -719,9 +719,11 @@ impl<'a> Run<'a> {
                 // SAFETY: `obj` is a live JSC heap cell; `'a` is bounded by the
                 // surrounding stack frame.
                 let obj_ref = unsafe { &*obj };
-                let mut object_iter = JSPropertyIterator::<
-                    { JSPropertyIteratorOptions::new(false, true) },
-                >::init(self.global, obj_ref)?;
+                let mut object_iter = JSPropertyIterator::init(
+                    self.global,
+                    obj_ref,
+                    JSPropertyIteratorOptions::new(false, true),
+                )?;
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
                 // Build properties list

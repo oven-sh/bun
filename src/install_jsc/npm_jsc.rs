@@ -142,40 +142,16 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     // `defer manifest_file.close()` — closed at fn return.
     let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
 
-    // PORT NOTE: `npm::registry::Scope.url` is `bun_url::URL<'static>` (the
-    // Rust port hard-codes `'static` pending an `OwnedURL` — see TODO(b2) in
-    // npm.rs). Zig's `bun.URL` has no lifetime parameter, and `load_by_file`
-    // / `read_all` only read `scope.url_hash` and `scope.url.href.len()` and
-    // do not retain the slice past the call. Extend the borrow lifetime to
-    // satisfy the field type; `scope` is stack-local and dropped before
-    // `registry` (the borrowee).
-    #[inline(always)]
-    unsafe fn extend<'a>(url: bun_url::URL<'a>) -> bun_url::URL<'static> {
-        unsafe { core::mem::transmute(url) }
-    }
+    // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
+    // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
+    // is `OwnedURL`, which stores only the href buffer and re-derives components
+    // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
+    // `scope.url_hash` and `scope.url.href().len()`, so copying the raw href is
+    // sufficient and drops the unsafe lifetime-extension hack the earlier draft
+    // needed.
     let scope = npm::registry::Scope {
         url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-        // SAFETY: see PORT NOTE above — slices outlive `scope`, callee does not retain.
-        url: unsafe {
-            extend(bun_url::URL {
-                host: strings::without_trailing_slash(strings::without_prefix(
-                    registry.slice(),
-                    b"http://",
-                )),
-                hostname: strings::without_trailing_slash(strings::without_prefix(
-                    registry.slice(),
-                    b"http://",
-                )),
-                href: registry.slice(),
-                origin: strings::without_trailing_slash(registry.slice()),
-                protocol: if let Some(colon) = strings::index_of_char(registry.slice(), b':') {
-                    &registry.slice()[..colon as usize]
-                } else {
-                    b""
-                },
-                ..Default::default()
-            })
-        },
+        url: bun_url::OwnedURL::from_href(Box::from(registry.slice())),
         ..Default::default()
     };
 
@@ -237,7 +213,11 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install_jsc/npm_jsc.zig (125 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Scope/URL struct literal borrows from local slice; bun_sys file-open API and PackageManifest::Serializer path need Phase-B verification; libcIsMatch Zig source missing `try`. js_parse_manifest body fully un-gated against live PackageManifest fields.
+//   confidence: high
+//   todos:      0
+//   notes:      js_parse_manifest body fully ported against live PackageManifest
+//               fields; Scope.url constructed via OwnedURL::from_href (no unsafe
+//               lifetime extension). libcIsMatch Zig source omits `try` —
+//               mirrored with `?` for JsResult typing (semantically identical:
+//               the body re-checks `has_exception()` immediately after).
 // ──────────────────────────────────────────────────────────────────────────

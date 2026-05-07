@@ -83,6 +83,39 @@ impl Status {
 }
 
 impl PostgresSQLStatement {
+    // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
+    // Intrusive single-thread refcount over a `Box`-allocated `Self`. Inherent
+    // methods so callers don't reimplement the count locally.
+    #[inline]
+    pub fn r#ref(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
+    }
+
+    /// Intrusive refcount decrement; on zero, runs `Drop` and frees the box
+    /// (Zig: `RefCount.deref` → `deinit` → `bun.default_allocator.destroy(this)`).
+    ///
+    /// Raw-pointer receiver: when the count hits zero this path ends in
+    /// `Box::from_raw(this)`, and a `&self`/`&mut self` argument would carry a
+    /// Stacked Borrows protector across that dealloc. Mirrors Zig's `*@This()`.
+    ///
+    /// # Safety
+    /// `this` must point to a live `PostgresSQLStatement` produced by
+    /// `Box::into_raw`. If this call drops the count to zero, no other
+    /// `&`/`&mut` borrow of `*this` may be live.
+    #[inline]
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: `this` is live per caller invariant; ref_count touched only
+        // on the JS thread.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
+        if n == 0 {
+            // SAFETY: produced by `Box::into_raw`; ref_count is 0; reclaim.
+            // `Drop` (below) handles field teardown.
+            drop(unsafe { Box::from_raw(this) });
+        }
+    }
+
     pub fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

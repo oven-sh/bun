@@ -1409,12 +1409,12 @@ pub struct RuntimeHooks {
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
 }
 
-/// `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — supplies the
-/// `platform_event_loop` slot needed by `KeepAlive::{ref_, unref}` so callers
-/// in this crate can `.ref()` a SPECIFIC VM's loop (e.g. a worker reffing its
-/// parent) rather than the thread-local one returned by `aio::get_vm_ctx`.
-/// PORT NOTE: in Zig the `KeepAlive::ref(anytype)` accepted `*VirtualMachine`
-/// directly; the Rust port uses a manual vtable (cycle-break for `bun_aio`).
+/// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
+/// half of `bun_aio`'s cycle-break manual vtable. Every slot is implementable
+/// from in-crate data (spec posix_event_loop.zig:100-104 / RareData.zig:441),
+/// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
+/// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
+/// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
 pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
     platform_event_loop: {
         unsafe fn f(owner: *mut ()) -> *mut bun_aio::Loop {
@@ -1423,9 +1423,29 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
         }
         f
     },
-    // Unreached by `KeepAlive::{ref_, unref}` (only `platform_event_loop`).
-    file_polls: { unsafe fn f(_: *mut ()) -> *mut bun_aio::Store { unreachable!() } f },
-    alloc_file_poll: { unsafe fn f(_: *mut ()) -> *mut bun_aio::FilePoll { unreachable!() } f },
+    file_polls: {
+        unsafe fn f(owner: *mut ()) -> *mut bun_aio::Store {
+            // SAFETY: `owner` is `*mut VirtualMachine`; `rare_data()` lazily
+            // boxes the per-VM `RareData` and `file_polls_` lazily boxes the
+            // hive store (spec RareData.zig:441 `vm.rareData().filePolls(vm)`).
+            let rare = unsafe { (*owner.cast::<VirtualMachine>()).rare_data() };
+            &mut **rare
+                .file_polls_
+                .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
+        }
+        f
+    },
+    alloc_file_poll: {
+        unsafe fn f(owner: *mut ()) -> *mut bun_aio::FilePoll {
+            // SAFETY: `owner` is `*mut VirtualMachine`. Spec
+            // posix_event_loop.zig:716 `vm.filePolls().get()`.
+            let rare = unsafe { (*owner.cast::<VirtualMachine>()).rare_data() };
+            rare.file_polls_
+                .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
+                .get()
+        }
+        f
+    },
     is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
     increment_pending_unref_counter: {
         unsafe fn f(owner: *mut ()) {
@@ -1434,14 +1454,39 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
         }
         f
     },
-    ref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
-    unref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
+    ref_concurrently: {
+        unsafe fn f(owner: *mut ()) {
+            // SAFETY: `owner` is `*mut VirtualMachine`; `event_loop()` is the
+            // self-pointer into the sibling `regular_event_loop` field. Spec
+            // posix_event_loop.zig:100 `vm.event_loop.refConcurrently()`.
+            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).ref_concurrently() };
+        }
+        f
+    },
+    unref_concurrently: {
+        unsafe fn f(owner: *mut ()) {
+            // SAFETY: see `ref_concurrently`.
+            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).unref_concurrently() };
+        }
+        f
+    },
     after_event_loop_callback: {
-        unsafe fn f(_: *mut ()) -> Option<bun_aio::OpaqueCallback> { unreachable!() }
+        unsafe fn f(owner: *mut ()) -> Option<bun_aio::OpaqueCallback> {
+            // SAFETY: `owner` is `*mut VirtualMachine`; field read only.
+            unsafe { (*owner.cast::<VirtualMachine>()).after_event_loop_callback }
+        }
         f
     },
     set_after_event_loop_callback: {
-        unsafe fn f(_: *mut (), _: Option<bun_aio::OpaqueCallback>, _: *mut c_void) { unreachable!() }
+        unsafe fn f(owner: *mut (), cb: Option<bun_aio::OpaqueCallback>, ctx: *mut c_void) {
+            // SAFETY: `owner` is `*mut VirtualMachine`; both fields are plain
+            // data (no Drop) so per-field raw write is sound.
+            let vm = owner.cast::<VirtualMachine>();
+            unsafe {
+                (*vm).after_event_loop_callback = cb;
+                (*vm).after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
+            }
+        }
         f
     },
 };

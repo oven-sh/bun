@@ -1247,6 +1247,6 @@ pub type Writer = my_sql_connection::Writer;
 // PORT STATUS
 //   source:     src/sql_jsc/mysql/JSMySQLConnection.zig (801 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      3
 //   notes:      SocketHandler conditional onHandshake unresolved; global_object JSC_BORROW lifetime deferred; deref/deinit raw-ptr-shaped to avoid dangling &mut across Box::from_raw
 // ──────────────────────────────────────────────────────────────────────────

@@ -1198,6 +1198,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,
+    cron_clear_all_reload,
     retroactively_report_discovered_tests,
 };
 
@@ -1281,6 +1282,20 @@ unsafe fn cron_clear_all_teardown(vm: *mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     // SAFETY: per fn contract.
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(unsafe { &mut *vm });
+}
+
+/// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
+/// VirtualMachine.zig:815. Same impl as [`cron_clear_all_teardown`] but skips
+/// the pending-promise force-release (the event loop survives a hot reload, so
+/// settle callbacks will still run).
+///
+/// # Safety
+/// `vm` is the live JS-thread VM; called from `VirtualMachine::reload` with
+/// exclusive `&mut self`.
+unsafe fn cron_clear_all_reload(vm: *mut VirtualMachine) {
+    use crate::api::cron::{ClearMode, CronJob};
+    // SAFETY: per fn contract.
+    CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(unsafe { &mut *vm });
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec

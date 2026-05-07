@@ -1359,10 +1359,7 @@ pub fn init(
     }
 
     // Zig: `Fs.FileSystem.init(null)` — registers the resolver-tier singleton
-    // and seeds `top_level_dir` from `getcwd`. `bun_resolver` is a lower tier
-    // than `bun_install` (transitive dep via `bun_transpiler` → `bun_bundler`),
-    // so call the real `init` directly; this also installs the `bun_sys::fs`
-    // vtable so the `crate::bun_fs` shim used below sees the same instance.
+    // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
@@ -1737,15 +1734,16 @@ pub fn init(
     }
 
     // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)`
-    // (PackageManager.zig:779). Routes through the FsVTable to the resolver's
-    // BSSMap-owned `*DirEntry` slot.
-    // SAFETY: the vtable returns an erased `*mut bun_resolver::fs::DirEntry`
-    // (provenance is `&mut **e as *mut _`, see resolver/fs.rs SYS_FS_VTABLE);
-    // the BSSMap singleton owns it for the process lifetime, and `init()` runs
-    // single-threaded before any other access — sole `&'static mut` is sound.
+    // (PackageManager.zig:779). Returns the resolver's BSSMap-owned
+    // `*EntriesOption` slot.
     let entries_option: &'static mut fs::DirEntry =
         match fs.read_directory(fs.top_level_dir(), 0, true)? {
-            fs::EntriesOption::Entries(p) => unsafe { &mut *(p as *mut fs::DirEntry) },
+            fs::EntriesOption::Entries(e) => {
+                // SAFETY: the BSSMap singleton owns `*e` for the process
+                // lifetime, and `init()` runs single-threaded before any other
+                // access — sole `&'static mut` is sound.
+                unsafe { &mut *(*e as *mut fs::DirEntry) }
+            }
             fs::EntriesOption::Err(e) => return Err(e.canonical_error),
         };
 
@@ -2193,19 +2191,17 @@ pub fn init_with_runtime_once(
     // yields a raw `*PackageManager` with no validity invariant).
     let manager_ptr: *mut PackageManager = unsafe { holder::RAW_PTR };
     // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, null, 0, true)`
-    // (PackageManager.zig:1014). Routes through the FsVTable to the resolver's
-    // BSSMap-owned `*DirEntry` slot. On error Zig calls `Output.err` then
-    // `@panic` (lines 1019-1022) — match that: this is the runtime auto-install
-    // path where the resolver already opened `top_level_dir`, so failure is a
+    // (PackageManager.zig:1014). Returns the resolver's BSSMap-owned
+    // `*EntriesOption` slot. On error Zig calls `Output.err` then `@panic`
+    // (lines 1019-1022) — match that: this is the runtime auto-install path
+    // where the resolver already opened `top_level_dir`, so failure is a
     // programmer-error / fs-disappeared edge.
     let fs_instance = FileSystem::instance();
     let root_dir: &'static mut fs::DirEntry =
-        match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true) {
-            // SAFETY: vtable returns an erased `*mut bun_resolver::fs::DirEntry`
-            // (mut-derived provenance, see resolver/fs.rs SYS_FS_VTABLE); the
-            // BSSMap singleton owns it for the process lifetime, and runtime init
-            // runs once on the main thread before any other access.
-            Ok(fs::EntriesOption::Entries(p)) => unsafe { &mut *(p as *mut fs::DirEntry) },
+        match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true).map(|r| &mut *r) {
+            // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
+            // and runtime init runs once on the main thread before any other access.
+            Ok(fs::EntriesOption::Entries(e)) => unsafe { &mut *(*e as *mut fs::DirEntry) },
             Ok(fs::EntriesOption::Err(e)) => {
                 Output::err(
                     e.canonical_error,

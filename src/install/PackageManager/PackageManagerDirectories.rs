@@ -348,32 +348,32 @@ pub struct CacheDir {
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir { path: FileSystem::instance().abs(&[dir]), is_node_modules: false };
+        return CacheDir { path: FileSystem::instance().abs(&[dir]).to_vec(), is_node_modules: false };
     }
 
     if let Some(opts) = options {
         if !opts.cache_directory.is_empty() {
-            return CacheDir { path: FileSystem::instance().abs(&[opts.cache_directory]), is_node_modules: false };
+            return CacheDir { path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(), is_node_modules: false };
         }
     }
 
     if let Some(dir) = env.get(b"BUN_INSTALL") {
         let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts), is_node_modules: false };
+        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
     }
 
     if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts), is_node_modules: false };
+        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
     }
 
     if let Some(dir) = env_var::HOME.get() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir { path: FileSystem::instance().abs(&parts), is_node_modules: false };
+        return CacheDir { path: FileSystem::instance().abs(&parts).to_vec(), is_node_modules: false };
     }
 
     let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
-    CacheDir { is_node_modules: true, path: FileSystem::instance().abs(&fallback_parts) }
+    CacheDir { is_node_modules: true, path: FileSystem::instance().abs(&fallback_parts).to_vec() }
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────

@@ -114,26 +114,6 @@ fn verify_error_to_js(
     Ok(fallback.to_error_instance(global))
 }
 
-/// Local FFI shim for `JSGlobalObject.queueMicrotask` — `bun_jsc` only exposes
-/// the C-style `queue_microtask_callback`; the JS-function form lives in the
-/// gated `JSGlobalObject.rs` module. Forward to the C++ symbol directly.
-// TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
-// drop this and call it directly.
-fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
-    unsafe extern "C" {
-        fn JSC__JSGlobalObject__queueMicrotaskJob(
-            global: *const JSGlobalObject,
-            function: JSValue,
-            first: JSValue,
-            second: JSValue,
-        );
-    }
-    let first = args.get(0).copied().unwrap_or(JSValue::ZERO);
-    let second = args.get(1).copied().unwrap_or(JSValue::ZERO);
-    // SAFETY: `global` is live; JSValues are stack-rooted for the call.
-    unsafe { JSC__JSGlobalObject__queueMicrotaskJob(global, function, first, second) }
-}
-
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLConnection {
     // TODO(port): bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive refcount;
@@ -640,7 +620,7 @@ impl PostgresSQLConnection {
                 };
                 let js_value = self.js_value.get();
                 js_value.ensure_still_alive();
-                queue_microtask(self.global(), on_connect, &[JSValue::NULL, js_value]);
+                self.global().queue_microtask(on_connect, &[JSValue::NULL, js_value]);
                 self.poll_ref.unref(self.vm_ctx());
             }
             _ => {}

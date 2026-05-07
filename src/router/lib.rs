@@ -41,12 +41,10 @@ mod b1_stubs {
         pub use bun_logger::{Loc, Log, Source};
     }
 
-    // CYCLEBREAK B-2: bun_sys::fs landed opaque MOVE_DOWN stubs for FileSystem /
-    // Entry / DirEntry / DirnameStore. Re-export so router types name the real
-    // lower-tier surface; bodies that need fields the stub doesn't expose stay
-    // gated below with a precise blocked_on.
-    pub use bun_sys::fs as Fs;
-    pub use bun_sys::fs::FileSystem;
+    // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
+    // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
+    pub use bun_resolver::fs as Fs;
+    pub use bun_resolver::fs::FileSystem;
 
     // peechy batch 2 landed: re-export the real schema types so
     // `RouteConfig::{to_api, from_loaded_routes, from_api}` and
@@ -960,7 +958,7 @@ impl<'a> RouteLoader<'a> {
                 // pointer and reborrows internally.
                 let entry: &Fs::Entry = unsafe { &*entry_ptr };
                 match kind {
-                    bun_sys::fs::FsEntryKind::Dir => {
+                    Fs::EntryKind::Dir => {
                         for banned_dir in BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
                                 continue 'outer;
@@ -977,7 +975,7 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    bun_sys::fs::FsEntryKind::File => {
+                    Fs::EntryKind::File => {
                         let extname = bun_paths::extension(entry.base());
                         // exclude "." or ""
                         if extname.len() < 2 {
@@ -1150,8 +1148,6 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // PORT NOTE: bun_sys::fs::Entry is opaque — field reads go through
-        // accessor methods (abs_path()/dir()/base()/cache()).
         // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
         // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
@@ -1335,8 +1331,7 @@ impl Route {
                             return None;
                         }
                     }
-                    FileSystem::instance()
-                        .set_max_fd(file.as_ref().unwrap().handle().native());
+                    FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
                 }
 
                 let fd = file.as_ref().unwrap().handle();
@@ -1582,14 +1577,12 @@ impl<'a> Match<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait ResolverLike {
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem — singleton in Zig, so
-    // 'static here is faithful and avoids threading the resolver borrow into
-    // RouteLoader<'a>.
+    // `bun_resolver::fs::FileSystem` is a singleton in Zig, so `'static` here
+    // is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
     /// Zig: `&fs.fs` — the resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat. Erased to `*mut c_void` here so this crate
-    /// stays tier-clean (concrete type lives in `bun_resolver::fs`).
-    fn fs_impl(&self) -> *mut core::ffi::c_void;
+    /// `Entry.kind` for lazy stat.
+    fn fs_impl(&self) -> *mut Fs::Implementation;
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
 }
 

@@ -22,7 +22,6 @@
 //! actually published — which is what this policy needs to judge.
 
 const Violation = struct {
-    package_id: PackageID,
     parent_id: PackageID,
     dep_id: DependencyID,
     literal_tag: Dependency.Version.Tag,
@@ -76,7 +75,6 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
             if (gop.found_existing) continue;
 
             try violations.append(manager.allocator, .{
-                .package_id = dep_pkg_id,
                 .parent_id = parent_id,
                 .dep_id = dep_id,
                 .literal_tag = literal_tag,
@@ -121,14 +119,17 @@ inline fn isTopLevel(tag: Resolution.Tag) bool {
 }
 
 /// A specifier tag is "exotic" when it names a non-registry source. Registry
-/// specifiers (`npm:`/plain semver/dist-tag) and `catalog:` references (which
-/// dereference to another specifier that's checked separately) are allowed.
+/// specifiers (`npm:`/plain semver/dist-tag) are allowed; `catalog:`
+/// references are also allowed because catalog entries are defined by the
+/// user in the workspace-root `package.json`, not by the transitive package —
+/// they can only point at something the root user already opted into, so
+/// they're not an attacker-controlled vector.
 inline fn isExoticSpecifier(tag: Dependency.Version.Tag) bool {
     return switch (tag) {
         // uninitialized + npm + dist_tag — the NPM-registry-family specifiers.
         .uninitialized, .npm, .dist_tag => false,
-        // catalog:name — indirection, the target is its own dep that gets
-        // its own independent check; don't double-flag the reference itself.
+        // catalog:name — the catalog is defined by the root user, not the
+        // transitive package, so it can't smuggle in an arbitrary source.
         .catalog => false,
         // folder, symlink, workspace, git, github, tarball — genuinely exotic.
         .folder, .symlink, .workspace, .git, .github, .tarball => true,

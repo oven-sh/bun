@@ -707,7 +707,7 @@ impl AnyRoute {
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning
                     // (`RefPtr<T>` has no `Drop`; this is the bit-copy Zig did).
-                    let borrowed = unsafe { RefPtr::from_raw(route.data.as_ptr()) };
+                    let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
                     v.insert(borrowed);
                     AnyRoute::Html(route)
                 }

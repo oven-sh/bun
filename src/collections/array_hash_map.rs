@@ -917,6 +917,13 @@ impl<V, C: Default> Default for StringArrayHashMap<V, C> {
     }
 }
 
+impl<V: Clone, C: Default> StringArrayHashMap<V, C> {
+    /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
+    pub fn clone(&self) -> Result<Self, AllocError> {
+        Ok(Self { inner: self.inner.clone()?, ctx: C::default() })
+    }
+}
+
 impl<V, C> Deref for StringArrayHashMap<V, C> {
     type Target = ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>;
     fn deref(&self) -> &Self::Target {

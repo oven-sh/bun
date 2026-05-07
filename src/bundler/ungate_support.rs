@@ -428,8 +428,8 @@ impl Default for CompileResult {
 /// `Logger::Source.path`, which is what every caller passes) rather than
 /// `bun_resolver::fs::Path<'a>`. `dupeAllocFixPretty` lives on the
 /// resolver-side `Path<'a>` only, so the body round-trips through that type
-/// via a layout-identical transmute (same shim as
-/// `bundle_v2::fs_path_to_logger`). The interned result borrows
+/// via a field-by-field move (both mirrors of `fs.zig:Path` with all-`Copy`
+/// fields, so this is zero-alloc). The interned result borrows
 /// `FilenameStore` (process-static), so the `'static` bound on the logger
 /// `Path` fields is satisfied.
 pub fn generic_path_with_pretty_initialized(
@@ -440,19 +440,43 @@ pub fn generic_path_with_pretty_initialized(
 ) -> Result<bun_logger::fs::Path, bun_core::Error> {
     use std::io::Write as _;
 
-    // PORT NOTE: `bun_logger::fs::Path` and `bun_resolver::fs::Path<'a>` are
-    // field-identical mirrors of `fs.zig:Path` that haven't been unified yet
-    // (TYPE_ONLY split). These shims bit-cast between them so the resolver's
-    // `dupe_alloc_fix_pretty` (which interns to `FilenameStore`) is reachable.
-    // SAFETY: identical field set (`pretty`/`text`/`namespace`/`name{dir,base,
-    // ext,filename}`/`is_disabled`/`is_symlink`); see `bundle_v2::fs_path_to_logger`.
+    // PORT NOTE: `bun_logger::fs::Path` and `bun_resolver::fs::Path<'static>`
+    // are field-identical mirrors of `fs.zig:Path` that haven't been unified
+    // yet (TYPE_ONLY split). Convert by field — every field is `Copy`
+    // (`&'static [u8]` / `bool`), so this is a plain move, no `unsafe`.
+    // A `transmute` here would be UB: neither struct is `#[repr(C)]`, so
+    // default-repr layout is unspecified across distinct nominal types.
     #[inline]
     fn to_resolver(p: bun_logger::fs::Path) -> bun_fs::Path<'static> {
-        unsafe { core::mem::transmute::<bun_logger::fs::Path, bun_fs::Path<'static>>(p) }
+        bun_fs::Path {
+            pretty: p.pretty,
+            text: p.text,
+            namespace: p.namespace,
+            name: bun_fs::PathName {
+                base: p.name.base,
+                dir: p.name.dir,
+                ext: p.name.ext,
+                filename: p.name.filename,
+            },
+            is_disabled: p.is_disabled,
+            is_symlink: p.is_symlink,
+        }
     }
     #[inline]
     fn to_logger(p: bun_fs::Path<'static>) -> bun_logger::fs::Path {
-        unsafe { core::mem::transmute::<bun_fs::Path<'static>, bun_logger::fs::Path>(p) }
+        bun_logger::fs::Path {
+            pretty: p.pretty,
+            text: p.text,
+            namespace: p.namespace,
+            name: bun_logger::fs::PathName {
+                base: p.name.base,
+                dir: p.name.dir,
+                ext: p.name.ext,
+                filename: p.name.filename,
+            },
+            is_disabled: p.is_disabled,
+            is_symlink: p.is_symlink,
+        }
     }
 
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -695,30 +719,12 @@ pub mod html_import_manifest {
     }
 }
 
-/// `HTMLScanner` — gated module; ParseTask only constructs it.
-pub mod html_scanner {
-    use bun_collections::BabyList;
-    use bun_options_types::ImportRecord;
-
-    pub struct HTMLScanner {
-        pub import_records: BabyList<ImportRecord>,
-    }
-    impl HTMLScanner {
-        pub fn init(
-            _bump: &bun_alloc::Arena,
-            _log: &mut bun_logger::Log,
-            _source: &bun_logger::Source,
-        ) -> HTMLScanner {
-            HTMLScanner { import_records: BabyList::default() }
-        }
-        pub fn scan(&mut self, _contents: &[u8]) -> Result<(), bun_core::Error> {
-            // TODO(port): real body lives in `crate::HTMLScanner` (gated module).
-            // ParseTask only needs `import_records` populated; un-gate forwards
-            // to the real lol-html scanner.
-            Ok(())
-        }
-    }
-}
+/// `HTMLScanner` — re-export of the real un-gated module so
+/// `crate::html_scanner::HTMLScanner` (the path ParseTask imports) resolves to
+/// the lol-html-backed implementation in `HTMLScanner.rs`. The previous local
+/// stub here was a no-op `scan()` that silently dropped every `<script>`/`<link>`
+/// import record; with the real module un-gated there is no reason to shadow it.
+pub use crate::HTMLScanner as html_scanner;
 
 /// `LinkerGraph.zig:JSMeta` / `WrapKind` / `ExportData` — minimal surface so
 /// `LinkerContext.rs` field types resolve while `LinkerGraph.rs` is gated.

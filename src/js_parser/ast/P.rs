@@ -3566,7 +3566,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 if let Some(remap) = macro_remap {
                     if let Some(remapped_path) = remap.get(b"default") {
-                        let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, *remapped_path);
+                        let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
                         self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: Some(b"default") })?;
 
                         self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;
@@ -3635,7 +3635,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             if let Some(remap) = macro_remap {
                 if let Some(remapped_path) = remap.get(alias) {
-                    let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, *remapped_path);
+                    let new_import_id = self.add_import_record(ImportKind::Stmt, path.loc, remapped_path);
                     self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: new_import_id, name: Some(alias) })?;
 
                     self.import_records.items_mut()[new_import_id as usize].path.namespace = js_ast::Macro::NAMESPACE;

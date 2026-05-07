@@ -423,10 +423,7 @@ impl BuildCommand {
                 // PORT NOTE: `MacroOptions::Map` carries the
                 // `bun_options_types::Context::MacroMap` redeclaration; the
                 // bundler-side `options.macro_remap` is the resolver crate's
-                // `StringArrayHashMap` shape. Re-key into that shape here,
-                // duplicating value bytes into the process-lifetime `arena`
-                // (which is `&'static`) so the resolver-side `&'static [u8]`
-                // values are well-formed without leaking individual boxes.
+                // `StringArrayHashMap` shape. Re-key into that shape here.
                 use bun_resolver::package_json::{
                     MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
                 };
@@ -434,8 +431,7 @@ impl BuildCommand {
                 for (pkg, imports) in macros.iter() {
                     let mut inner = ResolverInner::default();
                     for (name, path) in imports.iter() {
-                        let path: &'static [u8] = arena.alloc_slice_copy(path);
-                        inner.insert(name, path);
+                        inner.insert(name, Box::<[u8]>::from(path.as_ref()));
                     }
                     remap.insert(pkg, inner);
                 }

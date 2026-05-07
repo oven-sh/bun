@@ -1498,31 +1498,17 @@ impl Lockfile {
                     unsafe { extern_strings_list.set_len(new_len) };
                     let start = new_len - bin_extern_strings_count as usize;
 
-                    // Spec lockfile.zig:1023/1068 passes `extern_strings_list.items` (full
-                    // slice) and a tail subslice to `bin.clone()` — these intentionally alias.
-                    // PORTING.md §Forbidden patterns: never construct two live overlapping
-                    // `&mut [_]`. `Bin::clone` only uses `all_extern_strings` for pointer
-                    // arithmetic in `ExternalStringList::init` (offset computation) and never
-                    // reads elements that overlap the tail being written.
-                    //
-                    // SAFETY: `all_extern_strings` is constructed from a raw pointer captured
-                    // before `extern_strings_slice` is borrowed. It is *only* used by
-                    // `Bin::clone` to compute `(tail.ptr - all.ptr) / size_of::<T>()` via
-                    // `ExternalStringList::init`; no element of the overlap region is
-                    // dereferenced through the shared slice while the tail is held mutably.
-                    // This matches the Zig invariant (overlapping slices, write-only tail).
-                    // TODO(port): change `Bin::clone` to take `(base_ptr: *const ExternalString,
-                    // base_len: usize)` or `(start, len)` instead of an aliasing `&[_]` to make
-                    // this fully sound under Stacked Borrows. Requires editing bin.rs.
-                    let all_ptr = extern_strings_list.as_ptr();
+                    // PORT NOTE: Zig passes both `extern_strings_list.items` (full slice)
+                    // and a tail subslice to `bin.clone()`; the full slice is only used to
+                    // compute the tail's offset for `ExternalStringList::init`. In Rust the
+                    // two views would alias, so `Bin::clone_with_buffers` takes the offset
+                    // directly.
                     let extern_strings_slice = &mut extern_strings_list[start..new_len];
-                    let all_extern_strings: &[ExternalString] =
-                        unsafe { core::slice::from_raw_parts(all_ptr, new_len) };
 
-                    *pkg_bin = pkg.package.bin.clone(
+                    *pkg_bin = pkg.package.bin.clone_with_buffers(
                         manifest.string_buf,
                         manifest.extern_strings_bin_entries,
-                        all_extern_strings,
+                        start as u32,
                         extern_strings_slice,
                         &mut builder,
                     );

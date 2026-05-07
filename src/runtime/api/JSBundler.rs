@@ -1423,7 +1423,7 @@ pub mod js_bundler {
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::AnyEventLoop::Js { owner, vtable } => {
+                    bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
                         // SAFETY: vtable populated by runtime; `owner` is the
                         // erased `*mut jsc::EventLoop`.
                         (vtable.enqueue_task_concurrent)(
@@ -1431,7 +1431,7 @@ pub mod js_bundler {
                             ConcurrentTask::from_callback(ctx, on_notify_defer_raw),
                         );
                     }
-                    bun_event_loop::AnyEventLoop::AnyEventLoop::Mini(mini) => {
+                    bun_event_loop::AnyEventLoop::Mini(mini) => {
                         // `mini.enqueueTaskConcurrentWithExtraCtx(
                         //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(

@@ -3270,7 +3270,7 @@ pub use serializer as Serializer;
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/Package.zig (2300 lines)
-//   confidence: low
-//   todos:      29
-//   notes:      Heavy comptime reflection (@field/@typeInfo) in fromNPM/Serializer/Diff needs trait/proc-macro in Phase B; ResolverContext needs trait; borrowck reshaping needed for overlapping lockfile buffer borrows.
+//   confidence: medium
+//   todos:      23
+//   notes:      Serializer.sizes hand-expanded (no comptime reflection). Remaining @field/@typeInfo in fromNPM/Diff still needs trait surface in Phase B; borrowck reshaping needed for overlapping lockfile buffer borrows.
 // ──────────────────────────────────────────────────────────────────────────

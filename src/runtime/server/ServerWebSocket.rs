@@ -310,11 +310,11 @@ impl ServerWebSocket {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Rejected => {
-                    // Zig: `_ = promise.result(vm)` — discards the value, the
-                    // side effect is marking the rejected promise as handled so
-                    // it doesn't surface as an unhandledRejection. `AnyPromise`
-                    // doesn't forward `result`; `set_handled` is the equivalent.
-                    promise.set_handled(global_object.vm());
+                    // Zig: `_ = promise.result(vm)` — value discarded; the side
+                    // effect (JSC__JSPromise__result) conditionally sets
+                    // `isHandledFlag` so this doesn't surface as an
+                    // unhandledRejection.
+                    let _ = promise.result(global_object.vm());
                     return;
                 }
                 _ => {}
@@ -940,9 +940,7 @@ impl ServerWebSocket {
         let args = callframe.arguments_old::<1>();
 
         if args.len < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Not enough arguments to 'cork'. Expected 1, got 0."
-            )));
+            return Err(global_this.throw_not_enough_arguments("cork", 1, 0));
         }
 
         let callback = args.ptr[0];
@@ -1626,16 +1624,22 @@ impl ServerWebSocket {
         let mut text_buf = [0u8; 512];
 
         let address_bytes = self.websocket().get_remote_address(&mut buf);
-        // TODO(port): std.net.Address — bun_core::fmt::format_ip takes &impl Display;
-        // use std::net::IpAddr (pure value type, no I/O) until bun_sys::net::Address
-        // grows init_ip4/init_ip6.
-        let address: std::net::IpAddr = match address_bytes.len() {
-            4 => std::net::Ipv4Addr::from(
-                <[u8; 4]>::try_from(&address_bytes[0..4]).unwrap(),
+        // Zig: `std.net.Address.initIp{4,6}(.., 0)` → `bun.fmt.formatIp` (strips
+        // trailing `:port` and `[..]`). Mirror with `SocketAddr{V4,V6}` so
+        // `format_ip`'s strip logic sees the same `addr:port` / `[addr]:port`
+        // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,
+        // so the rfind(':') strip eats the last hextet).
+        let address: std::net::SocketAddr = match address_bytes.len() {
+            4 => std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(&address_bytes[0..4]).unwrap()),
+                0,
             )
             .into(),
-            16 => std::net::Ipv6Addr::from(
-                <[u8; 16]>::try_from(&address_bytes[0..16]).unwrap(),
+            16 => std::net::SocketAddrV6::new(
+                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(&address_bytes[0..16]).unwrap()),
+                0,
+                0,
+                0,
             )
             .into(),
             _ => return Ok(JSValue::UNDEFINED),
@@ -1708,6 +1712,6 @@ impl<'a> Corker<'a> {
 //   notes:      handler kept as `*const` (server-lifetime) + active_connections
 //               mutated through &; on_close defer reshaped via scopeguard with
 //               raw ptr; signal: ?*AbortSignal kept as NonNull (intrusive C++
-//               refcount, never Arc); std.net.Address → std::net::IpAddr +
+//               refcount, never Arc); std.net.Address → std::net::SocketAddr +
 //               bun_core::fmt::format_ip
 // ──────────────────────────────────────────────────────────────────────────

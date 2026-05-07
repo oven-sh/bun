@@ -801,10 +801,41 @@ unsafe fn print_exception(
     value: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
-    let _ = (vm, value, exception_list);
-    // TODO(b2-cycle): port `printErrorlikeObject` body — needs
-    // `ConsoleObject::Formatter` + `Exception::value()` un-gated.
-    todo!("blocked_on: bun_jsc::console_object::Formatter (print_exception hook body)")
+    // Spec VirtualMachine.zig:2164-2188 — the print half of `runErrorHandler`
+    // (the `had_errors` save/restore lives in the low-tier caller). Route via
+    // the buffered error writer so the `defer writer.flush()` flush happens
+    // exactly once after the formatter is done.
+    let writer = bun_core::Output::error_writer_buffered();
+    let _flush = scopeguard::guard((), |_| {
+        let _ = writer.flush();
+    });
+
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let vm_ref = unsafe { &mut *vm };
+    // SAFETY: `vm.global` is set during init and live for VM lifetime.
+    let global = unsafe { &*vm_ref.global };
+
+    if let Some(exception) = value.as_exception(vm_ref.jsc_vm) {
+        // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
+        // JSC heap; we only read through it for the duration of this call.
+        let exception = unsafe { &*exception };
+        vm_ref.print_exception(exception, exception_list, writer, true);
+    } else {
+        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        // Spec: `.error_display_level = .full` — `Formatter::new` already
+        // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
+        let colors = bun_core::Output::enable_ansi_colors_stderr();
+        vm_ref.print_errorlike_object(
+            value,
+            None,
+            exception_list,
+            &mut formatter,
+            writer,
+            colors,
+            true,
+        );
+        // `defer formatter.deinit()` → Drop.
+    }
 }
 
 /// `vm.timer.insert(timer)` — Spec Timer.zig `All.insert`. The heap lives in
@@ -980,9 +1011,7 @@ fn transpile_source_code_inner(
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };
-            // TODO(b2-blocked): `Transpiler::reset_store` — gated in
-            // `bun_bundler::transpiler::__phase_a_draft`. Spec :122.
-            
+            // Spec :122 — `Transpiler::reset_store`.
             unsafe { (*jsc_vm).transpiler.reset_store() };
 
             let hash = bun_watcher::Watcher::get_hash(path.text);

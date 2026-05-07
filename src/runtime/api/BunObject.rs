@@ -131,6 +131,15 @@ pub mod r#gen {
     pub use bun_jsc::generated::bun_object::BracesOptions;
 }
 
+/// `Bun.color()` requires the `css` feature (`bun_css` crate). When that
+/// feature is disabled, throw instead of silently returning undefined.
+#[cfg(not(feature = "css"))]
+pub fn color_unsupported(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    Err(global_this.throw_invalid_arguments(format_args!(
+        "Bun.color() is unavailable: built without the `css` feature"
+    )))
+}
+
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // Zig's `host_fn.wrapStaticMethod(T, "name", auto_protect)` reflects on the
 // target fn's parameter types and decodes each from the CallFrame. The Rust

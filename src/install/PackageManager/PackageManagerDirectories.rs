@@ -726,19 +726,26 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
     match resolution.tag {
         ResolutionTag::Npm => {
-            cache_dir_subpath = cached_npm_package_folder_name(manager, name, resolution.value.npm.version, patch_hash);
+            // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
+            let version = unsafe { resolution.value.npm }.version;
+            cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
             cache_dir = cache_directory;
         }
         ResolutionTag::Git => {
-            cache_dir_subpath = cached_git_folder_name(manager, &resolution.value.git, patch_hash);
+            // SAFETY: tag == Git guarantees `value.git` is the active union arm.
+            let git = unsafe { &resolution.value.git };
+            cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
             cache_dir = cache_directory;
         }
         ResolutionTag::Github => {
-            cache_dir_subpath = cached_github_folder_name(manager, &resolution.value.github, patch_hash);
+            // SAFETY: tag == Github guarantees `value.github` is the active union arm.
+            let github = unsafe { &resolution.value.github };
+            cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
             cache_dir = cache_directory;
         }
         ResolutionTag::Folder => {
-            let folder = resolution.value.folder.slice(buf);
+            // SAFETY: tag == Folder guarantees `value.folder` is the active union arm.
+            let folder = unsafe { resolution.value.folder }.slice(buf);
             // Handle when a package depends on itself via file:
             // example:
             //   "mineflayer": "file:."
@@ -920,11 +927,7 @@ pub fn save_lockfile(
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
-                if !this
-                    .lockfile
-                    .eql(lockfile_before_install, packages_len_before_install)
-                    .unwrap_or(true)
-                {
+                if !this.lockfile.eql(lockfile_before_install, packages_len_before_install)? {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
                 }
             } else {
@@ -1015,7 +1018,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             lockfile: &this.lockfile,
             options: &options_stub,
             successfully_installed: None,
-            updates: &this.update_requests[..],
+            // PORT NOTE: Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
+            // never reads `updates`, but pass an empty slice to match the spec
+            // exactly rather than `&this.update_requests`.
+            updates: &[],
         };
         // PORT NOTE: Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the

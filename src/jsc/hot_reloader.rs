@@ -732,8 +732,7 @@ where
             _event_loop: PhantomData,
         }));
 
-        let watcher_fs = ctx.watcher_fs();
-        let watcher = match Watcher::init(reloader, watcher_fs) {
+        let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
             Ok(w) => w,
             Err(err) => {
                 // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet

@@ -132,9 +132,10 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Zig: `inline for (comptime std.meta.fieldNames(@TypeOf(fields)))` — comptime
     // reflection over an anonymous struct. Unrolled manually here; keep in sync with
     // `FIELDS` below.
-    let object = JSValue::create_empty_object(global_object, FIELDS.len() + 2);
+    let fields = FIELDS();
+    let object = JSValue::create_empty_object(global_object, fields.len() + 2);
 
-    for &(name, func) in FIELDS {
+    for &(name, func) in &fields {
         if name == "CString" {
             // CString needs to be callable as a constructor for backward compatibility.
             // Pass the same function as the constructor so `new CString(ptr)` works.
@@ -867,16 +868,22 @@ mod fields {
 }
 
 // Represented here as a const slice of (name, JSHostFn) so `to_js` can iterate.
-const FIELDS: &[(&str, jsc::JSHostFn)] = &[
-    ("viewSource", wrap_host_fn::<{ fields::view_source }>()),
-    ("dlopen", wrap_host_fn::<{ fields::dlopen }>()),
-    ("callback", wrap_host_fn::<{ fields::callback }>()),
-    ("linkSymbols", wrap_host_fn::<{ fields::link_symbols }>()),
-    ("toBuffer", wrap_host_fn::<{ fields::to_buffer }>()),
-    ("toArrayBuffer", wrap_host_fn::<{ fields::to_array_buffer }>()),
-    ("closeCallback", wrap_host_fn::<{ fields::close_callback }>()),
-    ("CString", wrap_host_fn::<{ fields::cstring }>()),
-];
+// PORT NOTE: cannot be `const` — `wrap_host_fn!` expands to a block expression
+// (item + cast), which const-eval rejects in array-literal position. The slice
+// is tiny and only built once in `to_js`, so the runtime cost is nil.
+#[allow(non_snake_case)]
+fn FIELDS() -> [(&'static str, jsc::JSHostFn); 8] {
+    [
+        ("viewSource", wrap_host_fn!(fields::view_source)),
+        ("dlopen", wrap_host_fn!(fields::dlopen)),
+        ("callback", wrap_host_fn!(fields::callback)),
+        ("linkSymbols", wrap_host_fn!(fields::link_symbols)),
+        ("toBuffer", wrap_host_fn!(fields::to_buffer)),
+        ("toArrayBuffer", wrap_host_fn!(fields::to_array_buffer)),
+        ("closeCallback", wrap_host_fn!(fields::close_callback)),
+        ("CString", wrap_host_fn!(fields::cstring)),
+    ]
+}
 
 const MAX_ADDRESSABLE_MEMORY: usize = u56_max();
 

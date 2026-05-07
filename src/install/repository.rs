@@ -257,8 +257,58 @@ pub static HOSTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"gitlab" => b".com",
 };
 
-impl Repository {
-    pub fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError> {
+/// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
+/// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
+/// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
+/// Re-exported from `bun_install::repository` so existing
+/// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
+pub trait RepositoryExt: Sized {
+    fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
+    fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
+    fn create_dependency_name_from_version_literal(
+        repository: &Repository,
+        lockfile: &mut Install::Lockfile,
+        dep_id: Install::DependencyID,
+    ) -> Vec<u8>;
+    fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
+    fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8]) -> StorePathFormatter<'a>;
+    fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
+    fn try_ssh(url: &[u8]) -> Option<&[u8]>;
+    fn try_https(url: &[u8]) -> Option<&[u8]>;
+    fn download(
+        env: &bun_dotenv::Map,
+        log: &mut bun_logger::Log,
+        cache_dir: bun_sys::Dir,
+        task_id: crate::package_manager_task::Id,
+        name: &[u8],
+        url: &[u8],
+        attempt: u8,
+    ) -> Result<bun_sys::Dir, Error>;
+    fn find_commit(
+        env: &mut bun_dotenv::Loader,
+        log: &mut bun_logger::Log,
+        repo_dir: bun_sys::Dir,
+        name: &[u8],
+        committish: &[u8],
+        task_id: crate::package_manager_task::Id,
+    ) -> Result<Vec<u8>, Error>;
+    fn checkout(
+        env: &bun_dotenv::Map,
+        log: &mut bun_logger::Log,
+        cache_dir: bun_sys::Dir,
+        repo_dir: bun_sys::Dir,
+        name: &[u8],
+        url: &[u8],
+        resolved: &[u8],
+    ) -> Result<ExtractData, Error>;
+}
+
+fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
+    Repository::__exec(env, argv)
+}
+
+impl RepositoryExt for Repository {
+    fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError> {
         let mut remain = input;
         if remain.starts_with(b"git+") {
             remain = &remain[b"git+".len()..];

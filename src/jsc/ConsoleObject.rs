@@ -19,10 +19,6 @@ use crate::{
 use crate::virtual_machine::VirtualMachine;
 use bun_string::{self as strings, String as BunString};
 
-// High-tier deps (CLI command-line, JS lexer/printer, Jest pretty-format) —
-// gated; bodies that reference them are gated below.
-// TODO(port): bun_runtime / bun_js_parser cycle.
-
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
 /// `JSPrinter.writeJsonString`) while the underlying crates expose slightly

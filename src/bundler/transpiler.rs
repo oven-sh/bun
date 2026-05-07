@@ -2081,23 +2081,6 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_options_types::
     }
 }
 
-/// Map `bun_options_types::schema::api::CssInJsBehavior` (the canonical peechy
-/// enum returned by `BundleOptions::css_import_behavior()`) onto the
-/// js_printer-local stand-in `js_printer::CssInJsBehavior`. The two enums are
-/// semantically 1:1 but the printer's variant names were typo'd
-/// (`*OnlyCssFiles` vs the spec's `*Onimportcss`); Phase B-3 collapses them to
-/// a single `pub use bun_options_types::schema::api::CssInJsBehavior` and this
-/// helper goes away. Spec: transpiler.zig:595/621/647.
-#[inline]
-fn to_printer_css_behavior(b: api::CssInJsBehavior) -> js_printer::CssInJsBehavior {
-    use js_printer::CssInJsBehavior as P;
-    match b {
-        api::CssInJsBehavior::_none | api::CssInJsBehavior::Facade => P::Facade,
-        api::CssInJsBehavior::FacadeOnimportcss => P::FacadeOnlyCssFiles,
-        api::CssInJsBehavior::AutoOnimportcss => P::AutoOnlyCssFiles,
-    }
-}
-
 /// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
 /// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
@@ -2132,12 +2115,6 @@ impl<'a> Transpiler<'a> {
         // PERF(port): one extra alloc vs Zig's borrowed-slice — profile Phase B.
         let symbols = js_ast::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
-        // `css_import_behavior` is now forwarded via `to_printer_css_behavior`
-        // below — `self.options.css_import_behavior()` returns the peechy
-        // `api::CssInJsBehavior` while `js_printer::Options` still uses its
-        // local stand-in `js_printer::CssInJsBehavior`; the helper bridges the
-        // variant-name skew (`AutoOnimportcss` ↔ `AutoOnlyCssFiles`) until
-        // Phase B-3 unifies the two enums. Spec: zig:595/621/647.
         // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
         // is the real `parser::Runtime::Imports`, the same type
         // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
@@ -2176,7 +2153,7 @@ impl<'a> Transpiler<'a> {
                     bundling: false,
                     runtime_imports: ast.runtime_imports.clone(),
                     require_ref: Some(require_ref),
-                    css_import_behavior: to_printer_css_behavior(self.options.css_import_behavior()),
+                    css_import_behavior: self.options.css_import_behavior(),
                     source_map_handler: source_map_context,
                     minify_whitespace: self.options.minify_whitespace,
                     minify_syntax: self.options.minify_syntax,
@@ -2195,7 +2172,7 @@ impl<'a> Transpiler<'a> {
                     bundling: false,
                     runtime_imports: ast.runtime_imports.clone(),
                     require_ref: Some(require_ref),
-                    css_import_behavior: to_printer_css_behavior(self.options.css_import_behavior()),
+                    css_import_behavior: self.options.css_import_behavior(),
                     source_map_handler: source_map_context,
                     minify_whitespace: self.options.minify_whitespace,
                     minify_syntax: self.options.minify_syntax,
@@ -2270,7 +2247,7 @@ impl<'a> Transpiler<'a> {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
-            css_import_behavior: to_printer_css_behavior(self.options.css_import_behavior()),
+            css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,

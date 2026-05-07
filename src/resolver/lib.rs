@@ -2960,10 +2960,9 @@ impl FdExt for ::bun_sys::Fd {
 trait FdZero { const ZERO: ::bun_sys::Fd; }
 impl FdZero for ::bun_sys::Fd { const ZERO: ::bun_sys::Fd = ::bun_sys::Fd::INVALID; }
 
-// ── bun_alloc::allocators — extend with `Result`/`Status` ────────────────
-// TODO(b2-blocked): the real `allocators::{Result, ItemStatus}` are gated in
-// bun_alloc::_bss_gated. Locally re-export the un-gated subset and add the
-// `Result`/`Status` shapes the BSSMap path needs.
+// ── bun_alloc::allocators re-export ──────────────────────────────────────
+// `Result`/`ItemStatus` live at the `bun_alloc` crate root (re-exported via
+// `bun_alloc::allocators`); add the `Status` alias the resolver body spells.
 pub mod allocators {
     pub use bun_alloc::allocators::*;
     pub use bun_alloc::ItemStatus as Status;

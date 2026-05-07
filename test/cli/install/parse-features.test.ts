@@ -3,8 +3,8 @@
 // peerDependencies / trustedDependencies / peerDependenciesMeta, across the root
 // package and workspace packages. Guards the refactor that made `features: Features`
 // a runtime parameter.
-import { which, write } from "bun";
-import { expect, test } from "bun:test";
+import { which } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -48,95 +48,85 @@ test.skipIf(isWindows || !which("nm"))(
   },
 );
 
-test("parseWithJSON handles all dependency groups across root and workspace packages", async () => {
-  using dir = tempDir("parse-features", {
-    "package.json": JSON.stringify({
-      name: "root",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-      dependencies: {
-        "pkg-a": "workspace:*",
-      },
-      devDependencies: {
-        "pkg-b": "workspace:*",
-      },
-      optionalDependencies: {
-        "pkg-c": "workspace:*",
-      },
-      peerDependencies: {
-        "pkg-a": "workspace:*",
-      },
-      trustedDependencies: ["pkg-a", "pkg-b"],
-    }),
-    "packages/pkg-a/package.json": JSON.stringify({
-      name: "pkg-a",
-      version: "1.0.0",
-      dependencies: {
-        "pkg-b": "workspace:*",
-      },
-      peerDependencies: {
-        "pkg-c": "*",
-      },
-      peerDependenciesMeta: {
-        "pkg-c": { optional: true },
-        // meta-only entry (no matching peerDependencies key) → synthesised
-        // optional peer on "*"
-        "pkg-b": { optional: true },
-      },
-    }),
-    "packages/pkg-b/package.json": JSON.stringify({
-      name: "pkg-b",
-      version: "2.0.0",
-      devDependencies: {
-        "pkg-a": "workspace:^",
-      },
-      optionalDependencies: {
-        "pkg-c": "workspace:~",
-      },
-    }),
-    "packages/pkg-c/package.json": JSON.stringify({
-      name: "pkg-c",
-      version: "3.0.0",
-    }),
-  });
+describe.concurrent("parseWithJSON", () => {
+  test("handles all dependency groups across root and workspace packages", async () => {
+    using dir = tempDir("parse-features", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "pkg-a": "workspace:*",
+        },
+        devDependencies: {
+          "pkg-b": "workspace:*",
+        },
+        optionalDependencies: {
+          "pkg-c": "workspace:*",
+        },
+        peerDependencies: {
+          "pkg-a": "workspace:*",
+        },
+        trustedDependencies: ["pkg-a", "pkg-b"],
+      }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-b": "workspace:*",
+        },
+        peerDependencies: {
+          "pkg-c": "*",
+        },
+        peerDependenciesMeta: {
+          "pkg-c": { optional: true },
+          // meta-only entry (no matching peerDependencies key) → synthesised
+          // optional peer on "*"
+          "pkg-b": { optional: true },
+        },
+      }),
+      "packages/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        version: "2.0.0",
+        devDependencies: {
+          "pkg-a": "workspace:^",
+        },
+        optionalDependencies: {
+          "pkg-c": "workspace:~",
+        },
+      }),
+      "packages/pkg-c/package.json": JSON.stringify({
+        name: "pkg-c",
+        version: "3.0.0",
+        dependencies: {
+          // folder dep — exercises the Features.folder path
+          "local-dep": "file:../../local-dep",
+        },
+      }),
+      "local-dep/package.json": JSON.stringify({
+        name: "local-dep",
+        version: "0.0.1",
+        peerDependencies: { "pkg-a": "*" },
+      }),
+    });
 
-  // folder dep below points at a relative dir with its own package.json
-  await write(
-    join(String(dir), "local-dep", "package.json"),
-    JSON.stringify({
-      name: "local-dep",
-      version: "0.0.1",
-      peerDependencies: { "pkg-a": "*" },
-    }),
-  );
-  await write(
-    join(String(dir), "packages", "pkg-c", "package.json"),
-    JSON.stringify({
-      name: "pkg-c",
-      version: "3.0.0",
-      dependencies: {
-        "local-dep": "file:../../local-dep",
-      },
-    }),
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--lockfile-only"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
 
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
 
-  const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
-
-  // Root package: all five dependency groups present, in a stable order,
-  // plus trustedDependencies surviving the Features.is_main path.
-  expect(lockfile).toMatchInlineSnapshot(`
+    // Root package: all five dependency groups present, in a stable order,
+    // plus trustedDependencies surviving the Features.is_main path.
+    expect(lockfile).toMatchInlineSnapshot(`
     "{
       "lockfileVersion": 1,
       "configVersion": 1,
@@ -205,40 +195,41 @@ test("parseWithJSON handles all dependency groups across root and workspace pack
     }
     "
   `);
-});
-
-test("parseWithJSON warns on duplicate dependencies in root package.json", async () => {
-  // Features.main sets check_for_duplicate_dependencies=true; a key listed in both
-  // dependencies and devDependencies should warn (not in optionalDependencies though,
-  // where duplication is allowed and the optional entry wins).
-  using dir = tempDir("parse-features-dup", {
-    "package.json": JSON.stringify({
-      name: "root",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-      dependencies: {
-        "pkg-a": "workspace:*",
-      },
-      devDependencies: {
-        "pkg-a": "workspace:*",
-      },
-    }),
-    "packages/pkg-a/package.json": JSON.stringify({
-      name: "pkg-a",
-      version: "1.0.0",
-    }),
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--lockfile-only"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  test("warns on duplicate dependencies in root package.json", async () => {
+    // Features.main sets check_for_duplicate_dependencies=true; a key listed in both
+    // dependencies and devDependencies should warn (not in optionalDependencies though,
+    // where duplication is allowed and the optional entry wins).
+    using dir = tempDir("parse-features-dup", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "pkg-a": "workspace:*",
+        },
+        devDependencies: {
+          "pkg-a": "workspace:*",
+        },
+      }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+      }),
+    });
 
-  expect(stderr).toContain("Duplicate dependency");
-  expect(stderr).toContain('"pkg-a"');
-  expect(exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Duplicate dependency");
+    expect(stderr).toContain('"pkg-a"');
+    expect(exitCode).toBe(0);
+  });
 });

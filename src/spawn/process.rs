@@ -55,6 +55,16 @@ pub struct WaitPidResult {
     pub status: c_int,
 }
 
+/// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
+/// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
+/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
+/// keep their `bun_spawn::process::spawn_sys::*` import path.
+pub mod spawn_sys {
+    pub use bun_sys::{can_use_memfd, set_close_on_exec};
+    #[cfg(target_os = "linux")]
+    pub use bun_sys::{memfd_create, MemfdFlags, MemfdFlags as MemfdFlag};
+}
+
 bun_core::declare_scope!(PROCESS, visible);
 
 #[cfg(unix)]

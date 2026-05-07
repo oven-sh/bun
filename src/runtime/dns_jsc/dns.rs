@@ -1545,7 +1545,7 @@ impl CAresReverse {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -1613,6 +1613,17 @@ impl<T: CAresRecordType> CAresLookup<T> {
         })
     }
 
+    /// Borrow the owning [`JSGlobalObject`].
+    ///
+    /// SAFETY: `global_this` is a JSC_BORROW backref set at construction (both
+    /// `init()` and the inline `head` of `ResolveInfoRequest::init()`) from a
+    /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
+    /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
@@ -1632,7 +1643,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, syscall.as_bytes(), Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
@@ -1682,8 +1693,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
-        // SAFETY: JSGlobalObject outlives the request.
-        let _ = unsafe { &*self.global_this };
+        let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
@@ -3701,8 +3711,8 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = (*addr).to_js_response(&*prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut prev_global = (*key.lookup).head.global_this();
+            let mut array = (*addr).to_js_response(prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
             let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
             array.ensure_still_alive();
@@ -3712,9 +3722,9 @@ impl Resolver {
             array.ensure_still_alive();
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_response(&*new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = (*addr).to_js_response(new_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;

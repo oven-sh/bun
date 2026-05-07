@@ -401,9 +401,8 @@ impl IdentOrRef {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        if self.is_ident() {
-            // SAFETY: arena slice reconstructed from packed ptr/len
-            hasher.update(unsafe { &*self.as_ident().unwrap().v });
+        if let Some(ident) = self.as_ident() {
+            hasher.update(ident.v());
         } else {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
@@ -415,11 +414,8 @@ impl IdentOrRef {
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        if self.is_ident() && other.is_ident() {
-            // SAFETY: arena slices reconstructed from packed ptr/len
-            let a = unsafe { &*self.as_ident().unwrap().v };
-            let b = unsafe { &*other.as_ident().unwrap().v };
-            return a == b;
+        if let (Some(a), Some(b)) = (self.as_ident(), other.as_ident()) {
+            return a.v() == b.v();
         } else if self.is_ref() && other.is_ref() {
             let a = self.as_ref().unwrap();
             let b = other.as_ref().unwrap();
@@ -454,6 +450,18 @@ pub struct CustomIdent {
 }
 
 impl CustomIdent {
+    /// Borrow the underlying arena slice.
+    ///
+    /// SAFETY: `v` is never null - it is always set from a valid parser-arena
+    /// slice in `parse()` (or copied from another `CustomIdent`). The arena is
+    /// immutable for the parse/print session and outlives every `CustomIdent`
+    /// constructed from it, so dereferencing is sound for any borrow no longer
+    /// than `&self`. (Phase B will thread the real `'bump` lifetime here.)
+    #[inline]
+    pub fn v(&self) -> &[u8] {
+        unsafe { &*self.v }
+    }
+
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
@@ -502,15 +510,14 @@ impl CustomIdent {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        // SAFETY: arena-owned slice valid for the parse session.
-        hasher.update(unsafe { &*self.v });
+        hasher.update(self.v());
     }
 
     /// Borrow the underlying arena slice.
     /// SAFETY: caller must ensure the parser arena outlives the borrow.
     #[inline]
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { &*self.v }
+        self.v()
     }
 }
 

@@ -35,8 +35,7 @@ impl Hash for KeyframesName {
         // Matches Zig: hash only the underlying string bytes; variant tag does NOT
         // participate (Zig's `hash` switches and calls `hashString` on the slice).
         match self {
-            // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-            KeyframesName::Ident(ident) => state.write(unsafe { &*ident.v }),
+            KeyframesName::Ident(ident) => state.write(ident.v()),
             KeyframesName::Custom(s) => state.write(s),
         }
     }
@@ -46,8 +45,7 @@ impl PartialEq for KeyframesName {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-                bun_string::strings::eql(unsafe { &*a.v }, unsafe { &*b.v })
+                bun_string::strings::eql(a.v(), b.v())
             }
             (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_string::strings::eql(a, b),
             _ => false,

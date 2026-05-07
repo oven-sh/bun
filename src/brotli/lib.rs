@@ -250,16 +250,14 @@ impl<'a> BrotliReaderArrayList<'a> {
 
             match result {
                 c::BrotliDecoderResult::success => {
-                    // SAFETY: self.brotli is a live decoder instance.
-                    debug_assert!(BrotliDecoder::is_finished(unsafe { &*self.brotli }));
+                    debug_assert!(BrotliDecoder::is_finished(self.brotli()));
                     self.end();
                     return Ok(());
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
                     if cfg!(debug_assertions) {
-                        // SAFETY: self.brotli is a live decoder instance.
-                        let code = BrotliDecoder::get_error_code(unsafe { &*self.brotli });
+                        let code = BrotliDecoder::get_error_code(self.brotli());
                         bun_core::Output::debug_warn(&format_args!("Brotli error: {:?} ({})", code, code as i32));
                     }
 
@@ -295,9 +293,8 @@ impl<'a> BrotliReaderArrayList<'a> {
 impl<'a> Drop for BrotliReaderArrayList<'a> {
     fn drop(&mut self) {
         if !self.brotli.is_null() {
-            // SAFETY: self.brotli was created by BrotliDecoder::create_instance
-            // and is destroyed exactly once here.
-            BrotliDecoder::destroy_instance(unsafe { &mut *self.brotli });
+            // Created by BrotliDecoder::create_instance; destroyed exactly once here.
+            BrotliDecoder::destroy_instance(self.brotli_mut());
         }
         // PORT NOTE: Zig's `bun.destroy(this)` is implicit — callers hold a
         // `Box<Self>` and dropping it frees the allocation.
@@ -350,19 +347,25 @@ impl BrotliCompressionStream {
         })
     }
 
+    /// Exclusive access to the owned brotli encoder instance.
+    #[inline]
+    fn brotli_mut(&mut self) -> &mut c::BrotliEncoder {
+        // SAFETY: `self.brotli` is set exactly once in `init` from
+        // `BrotliEncoder::create_instance` (never null), is never reassigned,
+        // and is freed only in `Drop`. The brotli C API does not call back
+        // into Rust, so no re-entrant aliasing is possible. `&mut self`
+        // guarantees no other Rust reference to the encoder is live.
+        unsafe { &mut *self.brotli }
+    }
+
     // The returned slice borrows brotli's internal buffer, valid until the
     // next compress_stream/destroy call. Tying it to `&mut self` prevents
     // overlapping calls that would invalidate it.
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
         // TODO(port): narrow error set
         self.total_in += input.len();
-        // SAFETY: self.brotli is a live encoder instance; `input` is valid for
-        // the duration of the call.
-        let result = BrotliEncoder::compress_stream(
-            unsafe { &mut *self.brotli },
-            if last { self.finish_flush_op } else { self.flush_op },
-            input,
-        );
+        let op = if last { self.finish_flush_op } else { self.flush_op };
+        let result = BrotliEncoder::compress_stream(self.brotli_mut(), op, input);
 
         if !result.success {
             self.state = CompressionState::Error;

@@ -727,13 +727,9 @@ impl Expect {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — capture as raw ptr so the
-        // guard does not hold a `&Self` borrow across the `&mut self` calls below.
-        let this_ptr: *mut Self = this;
-        let _post = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the wrapper's m_ctx; alive for the duration of the host call.
-            unsafe { (*this_ptr).post_match(global_this) }
-        });
+        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&mut Self` and calls
+        // post_match on drop; the body re-borrows through DerefMut so no raw-pointer alias is needed.
+        let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();

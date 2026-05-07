@@ -159,8 +159,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     Output::print(format_args!("\n"));
     Output::flush();
 
-    Output::disable_buffering();
-    let _reenable = scopeguard::guard((), |_| Output::enable_buffering());
+    let _unbuffered = Output::disable_buffering_scope();
 
     let _ = spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
@@ -1412,7 +1411,7 @@ impl CreateCommand {
 
             Output::pretty(format_args!("<r>\n"));
             Output::flush();
-            let _trailer = scopeguard::guard((), |_| {
+            scopeguard::defer! {
                 Output::print_errorln("\n");
                 Output::print_start_end(start_time, bun_core::time::nano_timestamp());
                 Output::pretty_error(format_args!(
@@ -1423,7 +1422,7 @@ impl CreateCommand {
 
                 Output::print(format_args!("\n"));
                 Output::flush();
-            });
+            }
 
             let process = spawn_sync::spawn(&spawn_sync::Options {
                 argv: install_args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
@@ -1777,7 +1776,11 @@ fn file_copier_copy(
                     }
                 }
                 bun_sys::FileKind::File => {
-                    let _complete = scopeguard::guard((), |_| node_.complete_one());
+                    // PORT NOTE: capture `node_` as a raw pointer so the defer closure
+                    // doesn't hold a unique borrow across the error-path `node_.end()` below.
+                    let node_ptr: *mut ProgressNode = node_;
+                    // SAFETY: `node_` outlives this match arm; single-threaded progress access.
+                    scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
                     if bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) == bun_sys::windows::FALSE {
                         if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
                             let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);

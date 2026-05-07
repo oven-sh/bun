@@ -170,12 +170,8 @@ impl FileResponseStream {
         let this_parent = this as *mut FileResponseStream as *mut c_void;
         this.reader.set_parent(this_parent);
 
-        this.r#ref();
-        let this_ptr: *mut FileResponseStream = this;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this_ptr` is the live Box::into_raw allocation above.
-            unsafe { Self::deref(this_ptr) }
-        });
+        // SAFETY: `this` reborrows the live Box::into_raw allocation above.
+        let _guard = unsafe { Self::ref_guard(this) };
 
         let start_result = if opts.offset > 0 {
             this.reader
@@ -210,12 +206,9 @@ impl FileResponseStream {
     // ───────────────────────── reader backend ─────────────────────────
 
     pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
-        self.r#ref();
         let this: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the live intrusive allocation owning `self`.
-            unsafe { Self::deref(this) }
-        });
+        // SAFETY: `this` is the live intrusive allocation owning `self`.
+        let _guard = unsafe { Self::ref_guard(this) };
 
         if self.state.contains(State::RESPONSE_DONE) {
             return false;
@@ -272,11 +265,9 @@ impl FileResponseStream {
 
         match self.resp.write(chunk) {
             WriteResult::Backpressure(_) => {
-                // release the read ref; on_writable re-takes it
-                let _guard2 = scopeguard::guard((), move |_| {
-                    // SAFETY: see outer `_guard`.
-                    unsafe { Self::deref(this) }
-                });
+                // release the read ref; on_writable re-takes it. Adopts the ref
+                // taken before `reader.read()` — no fresh `r#ref()` here.
+                let _guard2 = DerefOnDrop(this);
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below.
@@ -293,31 +284,21 @@ impl FileResponseStream {
     }
 
     pub fn on_reader_done(&mut self) {
-        let this: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the live intrusive allocation owning `self`.
-            unsafe { Self::deref(this) }
-        });
+        // Adopts the in-flight read ref taken before `reader.read()`.
+        let _guard = DerefOnDrop(self);
         self.finish();
     }
 
     pub fn on_reader_error(&mut self, err: sys::Error) {
-        let this: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the live intrusive allocation owning `self`.
-            unsafe { Self::deref(this) }
-        });
+        // Adopts the in-flight read ref taken before `reader.read()`.
+        let _guard = DerefOnDrop(self);
         self.fail_with(err);
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
-        self.r#ref();
-        let this: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `this` is the live intrusive allocation owning `self`.
-            unsafe { Self::deref(this) }
-        });
+        // SAFETY: `self` is the live intrusive allocation (uWS userdata ptr).
+        let _guard = unsafe { Self::ref_guard(self) };
 
         if self.mode == Mode::Sendfile {
             return self.on_sendfile();
@@ -580,6 +561,21 @@ impl FileResponseStream {
                 drop(Box::from_raw(this));
             }
         }
+    }
+}
+
+/// RAII owner for one intrusive refcount on a `FileResponseStream`. Dropping
+/// calls [`FileResponseStream::deref`], which may free `*self.0` — so callers
+/// must not hold a live `&`/`&mut FileResponseStream` across the guard's drop
+/// point. Construct via [`FileResponseStream::ref_guard`] (which also bumps the
+/// count) or directly when adopting a ref taken elsewhere (e.g. the in-flight
+/// read ref taken before `reader.read()`).
+struct DerefOnDrop(*mut FileResponseStream);
+impl Drop for DerefOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // pointer with at least one outstanding ref owned by this guard.
+        unsafe { FileResponseStream::deref(self.0) }
     }
 }
 

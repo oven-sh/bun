@@ -1317,13 +1317,15 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 
 pub fn allocate_package_manager() {
     // SAFETY: called once before get(); allocates uninitialized PackageManager.
-    // Zig: `bun.default_allocator.create(PackageManager)` — uninitialized memory.
-    // TODO(port): Rust cannot Box<MaybeUninit<PackageManager>> and later treat as init
-    // without unsafe transmute. The init() functions below write the full struct via
-    // `*manager = PackageManager { ... }`. Using raw alloc + ptr::write pattern:
+    // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
+    // memory, abort-on-OOM. The init() functions below write the full struct via
+    // `core::ptr::write` (no Drop on the uninit bytes).
     unsafe {
         let layout = core::alloc::Layout::new::<PackageManager>();
         let ptr = std::alloc::alloc(layout) as *mut PackageManager;
+        if ptr.is_null() {
+            bun_alloc::out_of_memory();
+        }
         holder::RAW_PTR = ptr;
     }
 }
@@ -1361,8 +1363,12 @@ pub fn init(
 ) -> Result<(*mut PackageManager, Box<[u8]>), Error> {
     // TODO(port): narrow error set
     if cli.global {
+        // Zig: `if (ctx.install) |opts|` — non-consuming peek. `ctx.install` is
+        // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
+        // `as_deref()` so the boxed config remains in `ctx` for the
+        // `get_or_insert_with` calls below (npmrc loading).
         let mut explicit_global_dir: &[u8] = b"";
-        if let Some(opts) = ctx.install {
+        if let Some(opts) = ctx.install.as_deref() {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;

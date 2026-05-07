@@ -83,13 +83,11 @@ impl<'a, T> Weak<'a, T> {
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
         // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
-        // returns a raw `*mut EventLoop` (see VirtualMachine.rs). Per-use reborrow keeps
-        // `&mut EventLoop` lifetimes disjoint between `enter()` and the deferred `exit()`.
-        let loop_: *mut crate::event_loop::EventLoop =
-            unsafe { (*VirtualMachine::get()).event_loop() };
-        unsafe { (*loop_).enter() };
-        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
-        // PORT NOTE: `defer loop.exit()` → scopeguard; `exit()` is a side effect, not a free.
+        // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
+        // `enter_scope` calls `enter()` now and `exit()` on drop (RAII for Zig's
+        // `loop.enter(); defer loop.exit();`).
+        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.reject(global, val);
     }
 
@@ -100,10 +98,8 @@ impl<'a, T> Weak<'a, T> {
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
         // SAFETY: see `reject_task`.
-        let loop_: *mut crate::event_loop::EventLoop =
-            unsafe { (*VirtualMachine::get()).event_loop() };
-        unsafe { (*loop_).enter() };
-        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.resolve(global, val);
     }
 
@@ -205,12 +201,10 @@ impl Strong {
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
-        // returns a raw `*mut EventLoop`. Per-use reborrow keeps `&mut EventLoop` lifetimes
-        // disjoint between `enter()` and the deferred `exit()`.
-        let loop_: *mut crate::event_loop::EventLoop =
-            unsafe { (*VirtualMachine::get()).event_loop() };
-        unsafe { (*loop_).enter() };
-        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
+        // `enter_scope` calls `enter()` now and `exit()` on drop.
+        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.reject(global, Ok(val))
     }
 
@@ -226,10 +220,8 @@ impl Strong {
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: see `reject_task`.
-        let loop_: *mut crate::event_loop::EventLoop =
-            unsafe { (*VirtualMachine::get()).event_loop() };
-        unsafe { (*loop_).enter() };
-        let _guard = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.resolve(global, val)
     }
 

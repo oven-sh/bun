@@ -2407,7 +2407,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
     let written = core::cell::Cell::new(0usize);
 
-    let _cleanup = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // we only truncate if it's a path
         // if it's a file descriptor, we assume they want manual control over that behavior
         if truncate.get() {
@@ -2416,7 +2416,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         if NEEDS_OPEN {
             let _ = bun_sys::close(fd);
         }
-    });
+    }
 
     if !str.is_empty() {
         let decoded = str.to_utf8();
@@ -2486,7 +2486,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
-    let _close = scopeguard::guard((), |_| if NEEDS_OPEN { let _ = bun_sys::close(fd); });
+    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -4604,11 +4604,11 @@ impl Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            let _free = scopeguard::guard((), |_| {
+            scopeguard::defer! {
                 if LIFETIME == Lifetime::Temporary {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
-            });
+            }
             // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
             let out = BunString::clone_utf16(unsafe {
@@ -4778,12 +4778,15 @@ impl Blob {
         // false == can't be
         let could_be_all_ascii = self.is_all_ascii().or(self.store.as_ref().and_then(|s| s.is_all_ascii));
         // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
-        // free the original allocation, not the offset pointer.
-        let _free = scopeguard::guard((), |_| {
+        // free the original allocation, not the offset pointer. `buf` borrows
+        // into `raw_bytes`, so reconstituting the `Box` up-front would alias —
+        // free at scope exit instead.
+        scopeguard::defer! {
             if LIFETIME == Lifetime::Temporary {
+                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
                 unsafe { drop(Box::from_raw(raw_bytes)) };
             }
-        });
+        };
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             // PERF(port): was stack-fallback alloc — profile in Phase B.

@@ -1012,6 +1012,30 @@ pub fn disable_buffering() {
     }
 }
 
+/// RAII: `disable_buffering()` now, `enable_buffering()` on drop. Covers the
+/// Zig `Output.disableBuffering(); defer Output.enableBuffering();` pair used
+/// around child-process exec where the child writes directly to inherited
+/// stdio and Bun's buffer must not interleave.
+#[must_use = "dropping immediately re-enables buffering; bind to `let _scope = ...`"]
+pub struct DisableBufferingScope(());
+
+impl DisableBufferingScope {
+    pub fn init() -> DisableBufferingScope {
+        disable_buffering();
+        DisableBufferingScope(())
+    }
+}
+
+impl Drop for DisableBufferingScope {
+    fn drop(&mut self) {
+        enable_buffering();
+    }
+}
+
+pub fn disable_buffering_scope() -> DisableBufferingScope {
+    DisableBufferingScope::init()
+}
+
 #[cold]
 pub fn panic(args: fmt::Arguments<'_>) -> ! {
     // PORT NOTE: Zig branched on enable_ansi_colors_stderr to pick the comptime-colored

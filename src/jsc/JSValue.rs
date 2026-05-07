@@ -1119,6 +1119,13 @@ impl JSValue {
         // SAFETY: pure FFI; C++ side handles non-cell values.
         unsafe { Bun__JSValue__unprotect(self) }
     }
+    /// RAII form of [`protect`]/[`unprotect`]: protects now, unprotects when
+    /// the returned guard drops. Use instead of a manual `defer unprotect()`.
+    #[inline]
+    pub fn protected(self) -> Protected {
+        self.protect();
+        Protected(self)
+    }
 
     /// `JSValue.call(global, thisValue, args)` (JSValue.zig:249).
     /// Calls `function` with `this_value` as the receiver. Returns
@@ -1140,6 +1147,20 @@ impl JSValue {
             }
         })
     }
+}
+
+/// RAII guard returned by [`JSValue::protected`]. Calls [`JSValue::unprotect`]
+/// on drop. JSC's `gcProtect` is refcounted, so this composes with nested
+/// protect/unprotect pairs.
+#[must_use = "dropping immediately unprotects; bind to a local"]
+pub struct Protected(JSValue);
+impl Protected {
+    #[inline]
+    pub fn value(&self) -> JSValue { self.0 }
+}
+impl Drop for Protected {
+    #[inline]
+    fn drop(&mut self) { self.0.unprotect(); }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

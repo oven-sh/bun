@@ -986,7 +986,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             );
                         }
                     } else if version.tag.is_npm() {
-                        let name_str = this.lockfile.str(&name);
+                        // PORT NOTE: reshaped for borrowck — `name_str` borrows
+                        // `this.lockfile.buffers.string_bytes`. Route the whole
+                        // branch through a raw root so the slice and the
+                        // `&mut PackageManager` calls below can coexist (Zig
+                        // passes the aliased `*PackageManager` freely).
+                        let this_ptr: *mut PackageManager = this;
+                        // SAFETY: `string_bytes` is not resized in the
+                        // manifest-lookup path; every call below either copies
+                        // `name_str` out or only reads it before any append.
+                        let name_str = unsafe { &*this_ptr }.lockfile.str(&name);
                         let task_id = Task::Id::for_manifest(name_str);
 
                         if cfg!(debug_assertions) {
@@ -1012,13 +1021,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
-                                    // PORT NOTE: reshaped for borrowck — Zig passes the
-                                    // aliased `*this` while also holding `this.manifests`.
-                                    // Split through a raw root so the disjoint fields
-                                    // (`manifests` vs. `options`/`cache_directory_`/
-                                    // `timestamp_for_manifest_cache_control`) can be
-                                    // borrowed separately.
-                                    let this_ptr: *mut PackageManager = this;
                                     // SAFETY: `this_ptr` is the live exclusive borrow's
                                     // address; `by_name_hash_allow_expired` only reads
                                     // `pm` fields disjoint from `pm.manifests`.
@@ -1034,18 +1036,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             needs_extended_manifest,
                                         )
                                     {
-                                        loaded_manifest = Some(*manifest);
+                                        loaded_manifest = Some(manifest.clone());
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
                                         if version.tag == dependency::version::Tag::Npm
-                                            && version.value.npm.version.is_exact()
+                                            // SAFETY: `version.tag == Npm` checked above.
+                                            && unsafe { &version.value.npm }.version.is_exact()
                                         {
                                             if let Some(find_result) = loaded_manifest
                                                 .as_ref()
                                                 .unwrap()
                                                 .find_by_version(
-                                                    version.value.npm.version.head.head.range.left.version,
+                                                    // SAFETY: `version.tag == Npm` checked above.
+                                                    unsafe { &version.value.npm }
+                                                        .version.head.head.range.left.version,
                                                 )
                                             {
                                                 if let Some(min_age_ms) =
@@ -1076,16 +1081,26 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         return Ok(());
                                                     }
                                                 }
+                                                // PORT NOTE: reshaped for borrowck — `find_result`
+                                                // borrows `loaded_manifest`; route the manifest
+                                                // through a raw pointer so the `&mut PackageManager`
+                                                // call below doesn't conflict.
+                                                let manifest_ptr: *const Npm::PackageManifest =
+                                                    loaded_manifest.as_ref().unwrap();
                                                 if let Some(new_resolve_result) =
                                                     get_or_put_resolved_package_with_find_result(
-                                                        this,
+                                                        // SAFETY: see `this_ptr` note above.
+                                                        unsafe { &mut *this_ptr },
                                                         name_hash,
                                                         name,
                                                         dependency,
-                                                        version,
+                                                        version.clone(),
                                                         id,
                                                         dependency.behavior,
-                                                        loaded_manifest.as_ref().unwrap(),
+                                                        // SAFETY: `loaded_manifest` is owned by this
+                                                        // stack frame and not touched until the call
+                                                        // returns.
+                                                        unsafe { &*manifest_ptr },
                                                         find_result,
                                                         install_peer,
                                                         success_fn,
@@ -1115,7 +1130,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     ));
                                 }
 
-                                let network_task = this.get_network_task();
+                                // SAFETY: see `this_ptr` note above; `get_network_task`
+                                // touches only the preallocated pool, not `string_bytes`.
+                                let network_task = unsafe { &mut *this_ptr }.get_network_task();
                                 // SAFETY: `network_task` is the unique handle to a
                                 // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
                                 // resets every defaulted field; `write_init` mirrors that
@@ -1124,12 +1141,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     NetworkTask::write_init(
                                         network_task,
                                         task_id,
-                                        (this as *mut PackageManager).cast(),
+                                        this_ptr.cast(),
                                         None,
                                     );
                                 }
 
-                                let scope = this.scope_for_package_name(name_str);
+                                // SAFETY: see `this_ptr` note above.
+                                let scope = unsafe { &*this_ptr }.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
                                 unsafe {
                                     (*network_task).for_manifest(

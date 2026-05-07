@@ -1123,17 +1123,11 @@ impl FilesContext {
 
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         use libarchive::lib;
-        let archive = lib::Archive::read_new();
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: archive handle valid until guard runs after the loop.
-            let _ = unsafe { (*archive).read_free() };
-        });
-        configure_archive_reader(archive);
+        let archive = lib::ReadArchive::new();
+        configure_archive_reader(&archive);
 
-        // SAFETY: non-null handle from read_new(); used single-threaded.
-        let archive_ref = unsafe { &*archive };
-        if archive_ref.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Ok(if let Some(err) = Self::clone_error_string(archive) {
+        if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
+            return Ok(if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
                 FilesResult::LibarchiveErr(err)
             } else {
                 FilesResult::Err(FilesError::ReadError)
@@ -1144,7 +1138,7 @@ impl FilesContext {
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
+        while archive.read_next_header(&mut entry) == lib::Result::Ok {
             // SAFETY: read_next_header returned Ok; entry valid until next call.
             let entry_ref = unsafe { &*entry };
             if entry_ref.filetype() != FILETYPE_REGULAR {
@@ -1168,13 +1162,13 @@ impl FilesContext {
                 data = vec![0u8; size];
                 let mut total_read: usize = 0;
                 while total_read < size {
-                    let read = archive_ref.read_data(&mut data[total_read..]);
+                    let read = archive.read_data(&mut data[total_read..]);
                     if read < 0 {
                         // Read error - returned as a normal Result (not a Zig error), so the
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
-                        return Ok(if let Some(err) = Self::clone_error_string(archive) {
+                        return Ok(if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
                             FilesResult::LibarchiveErr(err)
                         } else {
                             FilesResult::Err(FilesError::ReadError)

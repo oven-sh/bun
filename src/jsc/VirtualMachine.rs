@@ -485,6 +485,21 @@ pub const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
 // VirtualMachine impl — core surface (compiles at this tier)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// RAII guard returned by [`VirtualMachine::auto_gc_on_drop`]. Calls
+/// [`VirtualMachine::auto_garbage_collect`] when dropped — the Rust spelling
+/// of Zig's `defer globalThis.bunVM().autoGarbageCollect()`.
+#[must_use = "dropping immediately runs GC now; bind to `let _gc = ...` to defer to scope end"]
+pub struct AutoGcOnDrop<'a> {
+    vm: &'a VirtualMachine,
+}
+
+impl Drop for AutoGcOnDrop<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.vm.auto_garbage_collect();
+    }
+}
+
 impl VirtualMachine {
     /// Spec VirtualMachine.zig:357-366 returns a raw `*VirtualMachine`.
     /// Returning `&'static mut` would let any two overlapping calls (e.g. a JS
@@ -718,6 +733,14 @@ impl VirtualMachine {
         if self.aggressive_garbage_collection != GCLevel::None {
             let _ = self.garbage_collect(self.aggressive_garbage_collection == GCLevel::Aggressive);
         }
+    }
+
+    /// RAII form of `auto_garbage_collect`: returns a guard that calls
+    /// `auto_garbage_collect()` when it goes out of scope. Ports Zig's
+    /// `defer vm.autoGarbageCollect()` without `scopeguard::guard((), ...)`.
+    #[inline]
+    pub fn auto_gc_on_drop(&self) -> AutoGcOnDrop<'_> {
+        AutoGcOnDrop { vm: self }
     }
 
     pub fn enable_macro_mode(&mut self) {

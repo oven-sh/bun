@@ -473,14 +473,26 @@ pub fn set_current_action(action: Option<Action>) {
     CURRENT_ACTION.with(|c| c.set(action));
 }
 
-/// RAII guard returned by [`set_current_action_resolver`]. Restores the
-/// previous `CURRENT_ACTION` on drop (Zig: `defer current_action = old`).
+/// RAII guard returned by [`scoped_action`] / [`set_current_action_resolver`].
+/// Restores the previous `CURRENT_ACTION` on drop (Zig: `defer current_action = old`).
 pub struct ActionGuard(Option<Action>);
 impl Drop for ActionGuard {
     #[inline]
     fn drop(&mut self) {
         set_current_action(self.0);
     }
+}
+
+/// Scoped `CURRENT_ACTION = action`. Snapshots the previous value, installs
+/// `action`, and returns an [`ActionGuard`] that restores the previous value
+/// on drop. Zig: `const old = current_action; defer current_action = old;
+/// current_action = ...;`.
+#[inline]
+#[must_use]
+pub fn scoped_action(action: Action) -> ActionGuard {
+    let prev = current_action();
+    set_current_action(Some(action));
+    ActionGuard(prev)
 }
 
 /// Scoped `CURRENT_ACTION = .resolver{...}`. Zig (resolver.zig:672-679) sets

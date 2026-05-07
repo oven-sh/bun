@@ -2,7 +2,6 @@ use core::mem;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
 use bun_core::{Global, Output};
-use crate::bun_json::{Expr, ExprData};
 use bun_logger as logger;
 use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BYTES};
 // CYCLEBREAK: `FileSystem` lives in `bun_resolver::fs`, but bun_resolver

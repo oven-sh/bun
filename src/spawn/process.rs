@@ -1847,7 +1847,7 @@ impl PosixSpawnResult {
     #[cfg(target_os = "linux")]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if WaiterThread::should_use_waiter_thread() {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, spawn_sys::TAG_PIDFD_OPEN));
+            return Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open));
         }
 
         let pidfd_flags = Self::pidfd_flags_for_linux();
@@ -1911,7 +1911,7 @@ impl PosixSpawnResult {
 
     #[cfg(not(target_os = "linux"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, spawn_sys::TAG_PIDFD_OPEN))
+        Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open))
     }
 }
 
@@ -2215,7 +2215,7 @@ impl Drop for PosixSpawnFdGuard {
             }
         }
         for fd in self.to_set_cloexec.iter() {
-            let _ = spawn_sys::set_close_on_exec(*fd);
+            let _ = bun_sys::set_close_on_exec(*fd);
         }
         for fd in self.to_close_at_end.iter() {
             fd.close();
@@ -2351,7 +2351,7 @@ pub fn spawn_process_posix(
             PosixStdio::Buffer => {
                 #[cfg(target_os = "linux")]
                 'use_memfd: {
-                    if !options.stream && i > 0 && spawn_sys::can_use_memfd() {
+                    if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
                         let label: &[u8] = match i {
                             0 => b"spawn_stdio_stdin",
@@ -3424,7 +3424,7 @@ pub mod sync {
         // [*:null]?[*:0]const u8
         // SAFETY: std.c.environ is the C environ array
         let envp: *const *const c_char =
-            options.envp.unwrap_or_else(|| spawn_sys::raw_environ());
+            options.envp.unwrap_or_else(|| bun_sys::environ_ptr());
         let argv = &options.argv;
         let mut string_builder = bun_str::StringBuilder::default();
         for arg in argv {

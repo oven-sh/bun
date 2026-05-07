@@ -501,10 +501,10 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     {
         return Err(OsError::Any);
     }
-    let _dealloc = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: info/info_size returned by host_processor_info
         unsafe { let _ = c::vm_deallocate(c::mach_task_self(), info as usize, info_size as usize); }
-    });
+    };
 
     // Ensure we got the amount of data we expected to guard against buffer overruns
     if info_size != c::PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus {
@@ -578,10 +578,10 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
     if err != 0 {
         return Err(OsError::Any);
     }
-    let _free = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: returned by uv_cpu_info
         unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
-    });
+    };
 
     let values = JSValue::create_empty_array(global_this, usize::try_from(count).unwrap())?;
 
@@ -858,10 +858,10 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
 
         return Err(global_this.throw_value(err.to_error_instance(global_this)));
     }
-    let _free = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: returned by getifaddrs
         unsafe { libc::freeifaddrs(interface_start) };
-    });
+    };
 
     // We'll skip interfaces that aren't actually available
     fn skip(iface: &libc::ifaddrs) -> bool {
@@ -1102,10 +1102,10 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
         };
         return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
     }
-    let _free = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: returned by uv_interface_addresses
         unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
-    });
+    };
 
     let ret = JSValue::create_empty_object(global_this, 8);
 

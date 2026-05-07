@@ -2545,7 +2545,6 @@ where
         let mut level = level_;
         let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
         if wrap { self.print(b"("); }
-        let _wrap_guard = scopeguard::guard((), |_| { /* defer if wrap p.print(")") — handled at fn tail */ });
         // PORT NOTE: Zig used `defer if (wrap) p.print(")")`. We close at every `return` below.
 
         debug_assert!(self.import_records.len() > import_record_index as usize);
@@ -7074,9 +7073,7 @@ pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM:
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
-    let prev_action = bun_crash_handler::current_action();
-    let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
-    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
+    let _restore = bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
     type PrinterType<'a, W, const B: bool, const G: bool> = Printer<'a, W, /*ASCII_ONLY=*/B, false, B, false, G>;
     let module_type = opts.module_type;
@@ -7163,9 +7160,7 @@ pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERAT
     source: &'a logger::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
-    let prev_action = bun_crash_handler::current_action();
-    let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
-    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
+    let _restore = bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
     type PrinterType<'a, W, const A: bool, const G: bool> = Printer<'a, W, A, true, false, false, G>;
     let writer = _writer;

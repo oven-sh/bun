@@ -860,6 +860,20 @@ where
         // SAFETY: caller contract — `ptr` is non-null.
         Self(unsafe { NonNull::new_unchecked(ptr) })
     }
+
+    /// Adopt an already-held ref: does **not** bump on construction, but still
+    /// derefs on `Drop`. Use when the matching `ref()` was taken earlier (e.g.
+    /// by an in-flight async op) and this scope is responsible for releasing
+    /// it (Zig: `defer this.deref();` with no preceding `this.ref()`).
+    ///
+    /// # Safety
+    /// `ptr` must point to a live `T` for which the caller owns one outstanding
+    /// ref that this guard will consume.
+    #[inline]
+    pub unsafe fn adopt(ptr: *mut T) -> Self {
+        // SAFETY: caller contract — `ptr` is non-null and live.
+        Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
 }
 
 impl<T: AnyRefCounted> Drop for ScopedRef<T>

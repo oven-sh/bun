@@ -379,6 +379,33 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
     }
 }
 
+/// RAII: on drop, detaches the borrowed stack `uws::Request` from the heap
+/// `webcore::Request` — the Rust spelling of Zig's
+/// `defer request_object.request_context.detachRequest();` so the JS request
+/// object never dangles a pointer past the uWS frame it borrowed.
+pub(crate) struct DetachRequestOnDrop(*mut crate::webcore::Request);
+
+impl DetachRequestOnDrop {
+    /// # Safety
+    /// `request_object` must point to a live heap `webcore::Request` (the one
+    /// produced by `Request::new` / `PreparedRequest::save`) and remain valid
+    /// for the guard's lifetime — kept alive by `ctx.request_weakref`.
+    #[inline]
+    pub(crate) unsafe fn new(request_object: *mut crate::webcore::Request) -> Self {
+        Self(request_object)
+    }
+}
+
+impl Drop for DetachRequestOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: per `new()` contract — `self.0` is the heap allocation
+        // produced by `Request::new`; kept alive by `ctx.request_weakref`
+        // until `RequestContext::deinit` releases it.
+        unsafe { (*self.0).request_context.detach_request() };
+    }
+}
+
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub const SSL_ENABLED: bool = SSL;
     pub const DEBUG_MODE: bool = DEBUG;

@@ -202,18 +202,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if ptask_ptr.is_null() {
             break;
         }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-        let ptask = unsafe { &mut *ptask_ptr };
+        // SAFETY: `next()` returned non-null; node is exclusively owned by this
+        // batch. `ptask_ptr` was produced by `Box::into_raw` in `PatchTask::new_*`
+        // — reclaim ownership exactly once here so the `Box` drops at end of
+        // iteration on every path (Zig: `defer ptask.deinit();`).
+        let mut ptask = unsafe { Box::from_raw(ptask_ptr) };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
         manager.decrement_pending_tasks();
-        // Zig: `defer ptask.deinit();` — reclaim the Box at end of iteration.
-        let _ptask_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `ptask_ptr` was produced by `Box::into_raw` in
-            // `PatchTask::new_*`; ownership returned exactly once here.
-            unsafe { PatchTask::destroy(ptask_ptr) };
-        });
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {

@@ -195,46 +195,10 @@ fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
     unsafe { &mut *global.bun_vm() }
 }
 
-/// Local shim for `globalObject.ERR(.CODE, msg, .{}).throw()` (Zig codegen helpers).
-struct NodeHttpErrBuilder<'a> {
-    global: &'a JSGlobalObject,
-    code: ErrorCode,
-    msg: &'static str,
-}
-impl<'a> NodeHttpErrBuilder<'a> {
-    #[inline]
-    fn throw<T>(self) -> JsResult<T> {
-        Err(self.global.err(self.code, format_args!("{}", self.msg)).throw())
-    }
-}
-trait NodeHttpGlobalErrExt {
-    fn err_http_headers_sent(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
-    fn err_stream_already_finished(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
-    fn err_stream_write_after_end(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
-    fn err_http_content_length_mismatch(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
-    fn err_invalid_char(&self, msg: &'static str) -> NodeHttpErrBuilder<'_>;
-}
-impl NodeHttpGlobalErrExt for JSGlobalObject {
-    #[inline]
-    fn err_http_headers_sent(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
-        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_HTTP_HEADERS_SENT, msg }
-    }
-    #[inline]
-    fn err_stream_already_finished(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
-        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_STREAM_ALREADY_FINISHED, msg }
-    }
-    #[inline]
-    fn err_stream_write_after_end(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
-        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_STREAM_WRITE_AFTER_END, msg }
-    }
-    #[inline]
-    fn err_http_content_length_mismatch(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
-        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, msg }
-    }
-    #[inline]
-    fn err_invalid_char(&self, msg: &'static str) -> NodeHttpErrBuilder<'_> {
-        NodeHttpErrBuilder { global: self, code: ErrorCode::ERR_INVALID_CHAR, msg }
-    }
+/// `globalObject.ERR(.CODE, msg, .{}).throw()`
+#[inline]
+fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> JsResult<T> {
+    Err(global.err(code, format_args!("{}", msg)).throw())
 }
 
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).

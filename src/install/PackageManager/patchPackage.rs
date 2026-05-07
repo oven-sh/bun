@@ -367,9 +367,9 @@ pub fn do_patch_commit(
             }
             break 'has_bun_patch_tag Some(patch_tag);
         };
-        // PORT NOTE: errdefer-like deferred restore — using scopeguard for the rename-back logic.
-        // Captures borrow into stack buffers; restored before `'brk` returns.
-        let _restore = scopeguard::guard((), |_| {
+        // PORT NOTE: deferred restore — one-off rename-back logic on every exit
+        // path of `'brk`. Captures borrow into stack buffers.
+        scopeguard::defer! {
             if has_nested_node_modules || bun_patch_tag.is_some() {
                 let new_folder_handle = match sys::open_dir(Dir::cwd(), new_folder) {
                     Ok(h) => h,
@@ -382,7 +382,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-                let _close = scopeguard::guard((), |_| new_folder_handle.close());
+                let _close = sys::CloseOnDrop::dir(new_folder_handle);
 
                 if has_nested_node_modules {
                     if let Err(e) = sys::renameat_concurrently_a(
@@ -408,7 +408,7 @@ pub fn do_patch_commit(
                     }
                 }
             }
-        });
+        }
 
         let mut cwdbuf = PathBuffer::uninit();
         let cwd = match sys::getcwd_z(&mut cwdbuf) {

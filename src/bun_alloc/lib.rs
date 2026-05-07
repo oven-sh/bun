@@ -2050,10 +2050,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         result: &mut Result,
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
-        self.mutex.lock();
-        let mutex = core::ptr::addr_of!(self.mutex);
-        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
+        let _guard = self.mutex.lock();
 
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
             result
@@ -2228,10 +2225,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     // 1. Storing the underlying string.
     // 2. Making the key accessible at the index.
     pub fn put_key(&mut self, key: &[u8], result: &mut Result) -> core::result::Result<(), AllocError> {
-        self.map.mutex.lock();
-        let mutex = core::ptr::addr_of!(self.map.mutex);
-        // SAFETY: `mutex` points into `*self.map`, which outlives `_guard` (drops at end of fn).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
+        let _guard = self.map.mutex.lock();
 
         let slice: &'static [u8];
 

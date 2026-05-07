@@ -20,16 +20,10 @@ use crate::test_runner::jest;
 // of collapsing to a single static string.
 mod group_log {
     use crate::test_runner::debug::group;
-    pub struct Guard;
-    impl Drop for Guard {
-        #[inline]
-        fn drop(&mut self) {
-            group::end();
-        }
-    }
+
     #[inline]
     #[track_caller]
-    pub fn begin() -> Guard {
+    pub fn begin() -> group::GroupGuard {
         let loc = core::panic::Location::caller();
         // Mirrors Zig `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
         // in debug.zig). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
@@ -39,8 +33,7 @@ mod group_log {
             loc.file(),
             loc.line(),
             loc.column(),
-        ));
-        Guard
+        ))
     }
     #[inline]
     pub fn log(args: core::fmt::Arguments<'_>) {

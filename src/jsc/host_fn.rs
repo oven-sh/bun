@@ -138,6 +138,113 @@ pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>
     }
 }
 
+// ──────────────────────── codegen-thunk dispatch helpers ────────────────────────
+//
+// `generate-classes.ts::generateRust()` emits per-property `#[no_mangle]` thunks
+// of the form `host_fn_result(global, || T::method(&mut *this, …))`. These wrap
+// the inherent-method body in an `ExceptionValidationScope` (mirroring
+// `toJSHostCall`) and normalize the body's return type — `JSValue` /
+// `JsResult<JSValue>` for fns and getters, `()` / `JsResult<()>` for setters,
+// `*mut T` / `Box<T>` / `JsResult<_>` for constructors — to the raw C ABI value
+// the C++ side expects. Kept in `bun_jsc` (not the proc-macro crate) so the
+// generated `bun_runtime::generated_classes` module can name them without a
+// crate cycle.
+
+/// Normalize a host-fn / getter body's return type to `JsResult<JSValue>`.
+pub trait IntoHostFnReturn {
+    fn into_host_fn_return(self) -> JsResult<JSValue>;
+}
+impl IntoHostFnReturn for JSValue {
+    #[inline]
+    fn into_host_fn_return(self) -> JsResult<JSValue> { Ok(self) }
+}
+impl IntoHostFnReturn for JsResult<JSValue> {
+    #[inline]
+    fn into_host_fn_return(self) -> JsResult<JSValue> { self }
+}
+
+/// Normalize a setter body's return type to `JsResult<()>`. Zig setters return
+/// `void` or `JSError!void`; both map to `bool` (true on success) at the ABI.
+pub trait IntoHostSetterReturn {
+    fn into_host_setter_return(self) -> JsResult<()>;
+}
+impl IntoHostSetterReturn for () {
+    #[inline]
+    fn into_host_setter_return(self) -> JsResult<()> { Ok(()) }
+}
+impl IntoHostSetterReturn for JsResult<()> {
+    #[inline]
+    fn into_host_setter_return(self) -> JsResult<()> { self }
+}
+
+/// Normalize a constructor body's return type to a nullable `*mut c_void`.
+pub trait IntoHostConstructReturn {
+    fn into_host_construct_return(self) -> JsResult<*mut c_void>;
+}
+impl<T> IntoHostConstructReturn for *mut T {
+    #[inline]
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> { Ok(self.cast()) }
+}
+impl<T> IntoHostConstructReturn for Box<T> {
+    #[inline]
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        Ok(Box::into_raw(self).cast())
+    }
+}
+impl<T> IntoHostConstructReturn for JsResult<*mut T> {
+    #[inline]
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> { self.map(|p| p.cast()) }
+}
+impl<T> IntoHostConstructReturn for JsResult<Box<T>> {
+    #[inline]
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        self.map(|b| Box::into_raw(b).cast())
+    }
+}
+
+/// Codegen thunk entry for prototype fns and getters.
+#[track_caller]
+#[inline]
+pub fn host_fn_result<R: IntoHostFnReturn>(
+    global: &JSGlobalObject,
+    f: impl FnOnce() -> R,
+) -> JSValue {
+    to_js_host_call(global, Location::caller(), || f().into_host_fn_return())
+}
+
+/// Codegen thunk entry for prototype setters.
+#[track_caller]
+#[inline]
+pub fn host_setter_result<R: IntoHostSetterReturn>(
+    global: &JSGlobalObject,
+    f: impl FnOnce() -> R,
+) -> bool {
+    let scope = jsc::ExceptionValidationScope::new(global, Location::caller());
+    let r = to_js_host_setter_value(global, f().into_host_setter_return());
+    scope.assert_exception_presence_matches(!r);
+    r
+}
+
+/// Codegen thunk entry for `${T}Class__construct`.
+#[track_caller]
+#[inline]
+pub fn host_construct_result<R: IntoHostConstructReturn>(
+    global: &JSGlobalObject,
+    f: impl FnOnce() -> R,
+) -> *mut c_void {
+    let scope = jsc::ExceptionValidationScope::new(global, Location::caller());
+    let ptr = match f().into_host_construct_return() {
+        Ok(p) => p,
+        Err(JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory_value();
+            core::ptr::null_mut()
+        }
+        Err(_) => core::ptr::null_mut(),
+    };
+    scope.assert_exception_presence_matches(ptr.is_null());
+    ptr
+}
+
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.
 ///
 /// Zig signature took `comptime function: anytype` + an args tuple and `@call`'d it; in Rust the

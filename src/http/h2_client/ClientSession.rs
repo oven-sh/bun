@@ -535,14 +535,7 @@ impl ClientSession {
     /// `response_body_streaming`, so flush any body bytes that arrived between
     /// metadata delivery and `getReader()`.
     pub fn drain_response_body_by_http_id(&mut self, async_http_id: u32) {
-        self.r#ref();
-        // PORT NOTE: scopeguard borrows &self via raw ptr to avoid &mut overlap.
-        let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr derives from &mut self (write provenance); guard
-            // runs last so no access follows the final deref.
-            unsafe { ClientSession::deref(self_ptr) }
-        });
+        let _guard = self.ref_scope();
         for &stream in self.streams.values() {
             // SAFETY: owned live Stream pointer (disjoint heap alloc). Shared
             // borrow only — we read the `client` backref, never mutate the
@@ -563,13 +556,7 @@ impl ClientSession {
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
-        self.r#ref();
-        let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr derives from &mut self (write provenance); guard
-            // runs last so no access follows the final deref.
-            unsafe { ClientSession::deref(self_ptr) }
-        });
+        let _guard = self.ref_scope();
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
@@ -666,13 +653,7 @@ impl ClientSession {
     /// remain. Structured "parse all → deliver all" because delivering may
     /// free the client.
     pub fn on_data(&mut self, incoming: &[u8]) {
-        self.r#ref();
-        let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr derives from &mut self (write provenance); guard
-            // runs last so no access follows the final deref.
-            unsafe { ClientSession::deref(self_ptr) }
-        });
+        let _guard = self.ref_scope();
         self.stream_progressed = false;
         if self.read_buffer.is_empty() {
             let consumed = dispatch::parse_frames(self, incoming);
@@ -769,13 +750,7 @@ impl ClientSession {
 
     /// Socket onWritable entry point.
     pub fn on_writable(&mut self) {
-        self.r#ref();
-        let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr derives from &mut self (write provenance); guard
-            // runs last so no access follows the final deref.
-            unsafe { ClientSession::deref(self_ptr) }
-        });
+        let _guard = self.ref_scope();
         if let Err(err) = self.flush() {
             return self.fail_all(err);
         }
@@ -810,13 +785,7 @@ impl ClientSession {
     /// Socket onClose / onTimeout entry point. The socket is already gone, so
     /// streams just fail and the session is destroyed.
     pub fn on_close(&mut self, err: Error) {
-        self.r#ref();
-        let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr derives from &mut self (write provenance); guard
-            // runs last so no access follows the final deref.
-            unsafe { ClientSession::deref(self_ptr) }
-        });
+        let _guard = self.ref_scope();
         // SAFETY: ctx back-ref is valid for the session's lifetime. on_close is
         // reachable synchronously from connect() → adopt() → attach() flush
         // failure → fail_all() while connect() still holds `&mut HTTPContext`,
@@ -1212,7 +1181,7 @@ enum HeaderResult {
 //   confidence: medium
 //   todos:      1
 //   notes:      heavy raw-ptr back-refs (ctx/client/stream); ref()/deref()
-//               RAII guards via scopeguard + raw self ptr; HTTPClient/
+//               RAII via SessionRefGuard (ref_scope); HTTPClient/
 //               HTTPContext methods routed through h2_* bridge stubs until
 //               lib.rs _phase_a_draft un-gates; u31/u24 aliased to u32;
 //               parse_frames borrows read_buffer via raw slice

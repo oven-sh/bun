@@ -352,13 +352,14 @@ unsafe fn load_preloads_inner(
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
-    // PORT NOTE: `move` so the closure captures the `Copy` raw ptr by value
-    // instead of borrowing the local — otherwise borrowck rejects later
-    // `(*vm).pending_internal_promise = …` while the guard is live.
-    let _preload_guard = scopeguard::guard((), move |_| {
+    // PORT NOTE: copy the raw ptr into a guard-owned local so the defer body
+    // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
+    // would otherwise alias the guard's capture.
+    let vm_for_guard = vm;
+    scopeguard::defer! {
         // SAFETY: per fn contract.
-        unsafe { (*vm).is_in_preload = false };
-    });
+        unsafe { (*vm_for_guard).is_in_preload = false };
+    }
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { (*vm).global };
@@ -482,10 +483,7 @@ unsafe fn load_preloads_inner(
 
         // SAFETY: per fn contract.
         unsafe { (*vm).pending_internal_promise = Some(promise) };
-        JSValue::from_cell(promise).protect();
-        let _protect_guard = scopeguard::guard((), move |_| {
-            JSValue::from_cell(promise).unprotect();
-        });
+        let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
          // TODO(b2-cycle): HMR `pending_internal_promise` swap loop (spec VirtualMachine.zig:2248-2261) — un-gate with `hot_reloader.rs` / ImportWatcher. Until then, fall through to the non-watcher `wait_for_promise` path below.
@@ -1441,9 +1439,9 @@ fn transpile_source_code_inner(
             // deferred `.close()` (which the parse path always reaches) UB.
             let should_close_ptr: *mut bool = &mut should_close_input_file_fd;
             let input_file_fd_ptr: *mut bun_sys::Fd = &mut input_file_fd;
-            let _fd_guard = scopeguard::guard((), move |_| {
+            scopeguard::defer! {
                 // SAFETY: `should_close_input_file_fd` / `input_file_fd` are
-                // declared earlier in this stack frame and outlive `_fd_guard`
+                // declared earlier in this stack frame and outlive this guard
                 // (locals drop in reverse declaration order); the guard runs on
                 // the same thread before either is destroyed.
                 unsafe {
@@ -1453,7 +1451,7 @@ fn transpile_source_code_inner(
                         *input_file_fd_ptr = bun_sys::Fd::INVALID;
                     }
                 }
-            });
+            }
 
             // ── Node-fallback virtual source ────────────────────────────────
             // Spec :258-264.
@@ -3472,9 +3470,9 @@ unsafe fn resolve_embedded_node_file_hook(
             return false;
         };
         let tmpfile_fd = tmpfile.fd;
-        let _close = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             let _ = bun_sys::close(tmpfile_fd);
-        });
+        }
 
         // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
         // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
@@ -3907,11 +3905,16 @@ unsafe fn resolve_hook(
         // TODO(b2-cycle): `transpiler.resolver.package_manager` log swap —
         // gated alongside the PM field (see transpile_source_code §log-swap).
     }
-    let _restore = scopeguard::guard((), |_| unsafe {
-        (*vm).log = core::ptr::NonNull::new(old_log);
-        (*vm).transpiler.resolver.log = old_log;
-        (*vm).transpiler.linker.log = old_log;
-    });
+    scopeguard::defer! {
+        // SAFETY: `vm` is the live per-thread VM; restoring the raw `*mut Log`
+        // fields swapped just above so early-return paths don't leave a
+        // dangling stack pointer.
+        unsafe {
+            (*vm).log = core::ptr::NonNull::new(old_log);
+            (*vm).transpiler.resolver.log = old_log;
+            (*vm).transpiler.linker.log = old_log;
+        }
+    }
 
     // Spec :1955 — `jsc_vm._resolve(...)`.
     let mut result_path: &[u8] = b"";

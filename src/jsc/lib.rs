@@ -196,7 +196,8 @@ pub mod schema_api {
 
 pub use self::js_value::{
     js_value_hash, BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromJsEnum, JSValue,
-    PropertyIteratorFn, ProxyField, ProxyInternalField, SerializedFlags, SerializedScriptValue,
+    PropertyIteratorFn, ProtectedJSValue, ProxyField, ProxyInternalField, SerializedFlags,
+    SerializedScriptValue,
 };
 
 // LAYERING (PORTING.md §Dispatch): `Task.run` (jsc/Task.zig:39) is a giant

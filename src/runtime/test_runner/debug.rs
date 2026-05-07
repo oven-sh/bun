@@ -55,14 +55,13 @@ pub fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
-    group::begin_msg(format_args!(
+    let _guard = group::begin_msg(format_args!(
         "{} \"{}\" (concurrent={}, only={})",
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
         current.base.only.tag_name(),
     ));
-    let _guard = scopeguard::guard((), |_| group::end());
     Ok(())
 }
 
@@ -70,22 +69,19 @@ pub fn dump_order(this: &Execution) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
-    group::begin_msg(format_args!("dumpOrder"));
-    let _guard = scopeguard::guard((), |_| group::end());
+    let _guard = group::begin_msg(format_args!("dumpOrder"));
 
     for (group_index, group_value) in this.groups.iter().enumerate() {
-        group::begin_msg(format_args!(
+        let _guard = group::begin_msg(format_args!(
             "{} ConcurrentGroup ({}-{})",
             group_index, group_value.sequence_start, group_value.sequence_end,
         ));
-        let _guard = scopeguard::guard((), |_| group::end());
 
         for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {
-            group::begin_msg(format_args!(
+            let _guard = group::begin_msg(format_args!(
                 "{} Sequence ({}x)",
                 sequence_index, sequence.remaining_repeat_count,
             ));
-            let _guard = scopeguard::guard((), |_| group::end());
 
             let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
             while let Some(entry_ptr) = current_entry {

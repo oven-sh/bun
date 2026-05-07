@@ -63,9 +63,7 @@ impl BakeSourceProvider {
     /// current global is a `Bake::GlobalObject`; `None` otherwise (caller falls
     /// back to reading `<source>.map` from disk).
     pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM pointer;
-        // we only read its `global` field.
-        let global = unsafe { (*bun_jsc::virtual_machine::VirtualMachine::get()).global };
+        let global = bun_jsc::virtual_machine::VirtualMachine::get().global;
         // SAFETY: `global` is the live JSGlobalObject for this VM thread.
         if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;

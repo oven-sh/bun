@@ -800,7 +800,6 @@ impl StreamResult {
         promise: *mut JSPromise,
         global_this: &JSGlobalObject,
     ) {
-        // SAFETY: bun_vm() returns the per-global VM singleton; `&`-borrow is
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = global_this.bun_vm();
         // PORT NOTE: Zig holds `loop` and `promise` across re-entrant resolve/reject.
@@ -1852,9 +1851,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered {
-            // SAFETY: global_this set before any auto-flusher registration; bun_vm()
-            // returns the per-global VM singleton, valid for the program lifetime.
-            let vm = unsafe { &*(*self.global_this).bun_vm() };
+            // SAFETY: global_this set before any auto-flusher registration.
+            let vm = unsafe { &*self.global_this }.bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1865,7 +1863,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         res.reset_timeout();
         if !self.auto_flusher.registered {
             // SAFETY: global_this set before first write; see unregister_auto_flusher.
-            let vm = unsafe { &*(*self.global_this).bun_vm() };
+            let vm = unsafe { &*self.global_this }.bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }

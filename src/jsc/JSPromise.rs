@@ -470,7 +470,7 @@ impl JSPromise {
         {
             // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
             // per VirtualMachine::event_loop() contract.
-            let loop_ = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
+            let loop_ = VirtualMachine::get().event_loop_mut();
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
@@ -493,7 +493,7 @@ impl JSPromise {
         {
             // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
             // per VirtualMachine::event_loop() contract.
-            let loop_ = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
+            let loop_ = VirtualMachine::get().event_loop_mut();
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {

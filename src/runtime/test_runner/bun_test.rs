@@ -74,7 +74,7 @@ fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
 fn strong_create(value: JSValue) -> Strong {
     // SAFETY: `VirtualMachine::get()` is the live per-thread VM; `global`
     // is non-null after VM init.
-    let global = unsafe { &*VirtualMachine::get().as_mut().global };
+    let global = VirtualMachine::get().global();
     Strong::create(value, global)
 }
 
@@ -817,7 +817,6 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                // SAFETY: bun_vm() returns the live per-thread VM.
                 let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
             }
         }
@@ -1306,7 +1305,6 @@ impl BunTest {
             Output::flush();
         }
 
-        // SAFETY: bun_vm() returns the live per-thread VM.
         global_this.bun_vm().as_mut().run_error_handler(exception, None);
 
         if matches!(

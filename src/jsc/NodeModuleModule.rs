@@ -156,9 +156,8 @@ fn on_require_extension_modify(
     loader: ApiLoader,
     value: JSValue,
 ) -> Result<(), bun_alloc::AllocError> {
-    // SAFETY: `bun_vm_ptr` returns the live `*mut VirtualMachine` for this
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
-    let vm = unsafe { &mut *global.bun_vm_ptr() };
+    let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
     let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
@@ -199,7 +198,7 @@ fn on_require_extension_modify_non_function(
     str: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
     // SAFETY: see `on_require_extension_modify`.
-    let vm = unsafe { &mut *global.bun_vm_ptr() };
+    let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
     if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {

@@ -1582,8 +1582,7 @@ impl WindowsNamedPipeListeningContext {
             uv_pipe: unsafe { core::mem::zeroed() },
             listener: NonNull::new(listener),
             global_this,
-            // SAFETY: bun_vm() returns the per-thread VM; valid for program lifetime.
-            vm: unsafe { global_this.bun_vm() },
+            vm: global_this.bun_vm_ptr(),
             ctx: None,
         }));
         // SAFETY: just allocated, non-null, exclusive.

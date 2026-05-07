@@ -195,7 +195,6 @@ pub fn emit_handle_ipc_message(
 ) -> JsResult<JSValue> {
     let [target, message, handle] = callframe.arguments_as_array::<3>();
     if target.is_null() {
-        // SAFETY: bun_vm_ptr() yields the live per-thread VM (Zig `bunVM()` is
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
         let vm = unsafe { &mut *global_this.bun_vm_ptr() };
         let Some(ipc) = vm.get_ipc_instance() else { return Ok(JSValue::UNDEFINED) };
@@ -225,9 +224,8 @@ pub fn emit_handle_ipc_message(
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
 pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    // SAFETY: bun_vm_ptr() yields the live per-thread VM (Zig `bunVM()` is
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
-    let vm = unsafe { &mut *global.bun_vm_ptr() };
+    let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).

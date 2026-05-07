@@ -364,10 +364,7 @@ impl DeferredFailure {
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(Box::into_raw(self), run_raw);
-        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM; `event_loop()` is a
-        // self-pointer set at init. Short-lived `&mut *p` formed at the use site per
-        // VirtualMachine.rs guidance.
-        unsafe { (*VirtualMachine::get().as_mut().event_loop()).enqueue_task(managed_task) };
+        VirtualMachine::get().event_loop_mut().enqueue_task(managed_task);
     }
 }
 

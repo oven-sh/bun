@@ -652,6 +652,29 @@ impl VirtualMachine {
         self.event_loop
     }
 
+    /// Safe `&mut EventLoop` accessor — the [`JsCell`] escape hatch applied to
+    /// the active event loop. `event_loop` is a self-pointer into either
+    /// `regular_event_loop` or `macro_event_loop` (both owned by this VM), so it
+    /// is live for the VM lifetime. Same single-JS-thread soundness contract as
+    /// [`Self::as_mut`]; keep the borrow short and do not hold across reentrant
+    /// JS calls. Prefer this over `unsafe { &mut *vm.event_loop() }` at call
+    /// sites.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn event_loop_mut(&self) -> &mut EventLoop {
+        // SAFETY: `event_loop` points at a sibling field of this VM; non-null
+        // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
+        unsafe { &mut *self.event_loop }
+    }
+
+    /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
+    /// `init()` and live for the VM lifetime.
+    #[inline]
+    pub fn jsc_vm(&self) -> &VM {
+        // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime.
+        unsafe { &*self.jsc_vm }
+    }
+
     #[inline]
     pub fn transpiler(&mut self) -> &mut Transpiler<'static> {
         &mut self.transpiler
@@ -776,8 +799,7 @@ impl VirtualMachine {
     }
 
     pub fn wakeup(&mut self) {
-        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed here.
-        unsafe { (*self.event_loop()).wakeup() };
+        self.event_loop_mut().wakeup();
     }
 
     pub fn on_quiet_unhandled_rejection_handler(this: &mut VirtualMachine, _: &JSGlobalObject, _: JSValue) {
@@ -881,19 +903,16 @@ impl VirtualMachine {
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
-        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
         // accessed here (no overlapping `&mut EventLoop`).
-        unsafe { (*self.event_loop()).enqueue_task(task) };
+        self.event_loop_mut().enqueue_task(task);
     }
 
     pub fn tick(&mut self) {
-        // SAFETY: see `enqueue_task`.
-        unsafe { (*self.event_loop()).tick() };
+        self.event_loop_mut().tick();
     }
 
     pub fn drain_microtasks(&mut self) {
-        // SAFETY: see `enqueue_task`.
-        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+        let _ = self.event_loop_mut().drain_microtasks();
     }
 
     pub fn assert_on_js_thread(&self) {
@@ -1251,8 +1270,7 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            if let Some(t) = unsafe { (*self.event_loop()).forever_timer.take() } {
+            if let Some(t) = self.event_loop_mut().forever_timer.take() {
                 // SAFETY: `t` is the live usockets timer created in
                 // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
                 // frees it without re-entering the loop. Spec
@@ -1954,9 +1972,8 @@ impl VirtualMachine {
     /// [`crate::event_loop::EventLoop::wait_for_promise`] (spec event_loop.zig).
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
-        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
         // accessed here (no overlapping `&mut EventLoop`).
-        unsafe { (*self.event_loop()).wait_for_promise(promise) };
+        self.event_loop_mut().wait_for_promise(promise);
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -1969,8 +1986,7 @@ impl VirtualMachine {
             unsafe { (hooks.auto_tick)(self) };
         } else {
             // No high tier (unit tests) — fall back to a non-blocking tick.
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).tick() };
+            self.event_loop_mut().tick();
         }
     }
 
@@ -1989,8 +2005,7 @@ impl VirtualMachine {
         } else {
             // No high-tier hook (unit tests) — drain JS tasks only so callers
             // observe forward progress without blocking on the I/O loop.
-            // SAFETY: `event_loop` self-ptr; uniquely accessed here.
-            unsafe { (*self.event_loop()).tick() };
+            self.event_loop_mut().tick();
         }
     }
 
@@ -2118,17 +2133,15 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
             // accessed here (no overlapping `&mut EventLoop`).
-            unsafe { (*self.event_loop()).perform_gc() };
+            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
                 if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
                     break;
                 }
-                // SAFETY: see above re: `event_loop`.
-                unsafe { (*self.event_loop()).tick() };
+                self.event_loop_mut().tick();
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: see above.
                 if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
@@ -2140,8 +2153,7 @@ impl VirtualMachine {
             if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).perform_gc() };
+            self.event_loop_mut().perform_gc();
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -2155,13 +2167,11 @@ impl VirtualMachine {
     pub fn drain_queues_if_needed(&mut self) {
         // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
         // accessed here (no overlapping `&mut EventLoop`).
-        if unsafe { (*self.event_loop()).entered_event_loop_count } > 0 {
+        if self.event_loop_mut().entered_event_loop_count > 0 {
             return;
         }
-        // SAFETY: see above.
-        unsafe { (*self.event_loop()).tick() };
-        // SAFETY: see above.
-        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+        self.event_loop_mut().tick();
+        let _ = self.event_loop_mut().drain_microtasks();
         // SAFETY: global is valid for VM lifetime.
         unsafe { (*self.global).handle_rejected_promises() };
     }
@@ -2517,7 +2527,7 @@ impl IPCInstance {
         crate::mark_binding!();
         let global_this = self.global_this;
         // SAFETY: VM singleton + its event loop are process-lifetime.
-        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
+        let event_loop = VirtualMachine::get().event_loop_mut();
 
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -2985,8 +2995,7 @@ impl VirtualMachine {
                 // :667-669 RETURNS on `error.JSTerminated` from this drain
                 // (the VM is dead; don't bump the counter or invoke the
                 // handler).
-                // SAFETY: `event_loop` is a self-pointer into this VM.
-                if unsafe { (*self.event_loop()).drain_microtasks() }.is_err() {
+                if self.event_loop_mut().drain_microtasks().is_err() {
                     return;
                 }
             }
@@ -3172,22 +3181,19 @@ impl VirtualMachine {
     /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*self.event_loop()).enqueue_immediate_task(task) };
+        self.event_loop_mut().enqueue_immediate_task(task);
     }
 
     /// Spec VirtualMachine.zig:1020 `enqueueTaskConcurrent`.
     #[inline]
     pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*self.event_loop()).enqueue_task_concurrent(task) };
+        self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
     /// Spec VirtualMachine.zig:1028 `waitFor`.
     pub fn wait_for(&mut self, cond: &mut bool) {
         while !*cond {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).tick() };
+            self.event_loop_mut().tick();
             if !*cond {
                 self.auto_tick();
             }
@@ -3197,8 +3203,7 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:1042 `waitForTasks`.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).tick() };
+            self.event_loop_mut().tick();
             if self.is_event_loop_alive() {
                 self.auto_tick();
             }
@@ -4115,8 +4120,7 @@ impl VirtualMachine {
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*self.event_loop()).ensure_waker() };
+        self.event_loop_mut().ensure_waker();
 
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract.
@@ -4155,13 +4159,9 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*self.event_loop()).perform_gc() };
-        // SAFETY: see above.
-        unsafe {
-            (*self.event_loop())
-                .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise))
-        };
+        self.event_loop_mut().perform_gc();
+        self.event_loop_mut()
+            .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker {
             // SAFETY: `worker` is a heap `WebWorker` owned by C++ (BACKREF).
             let worker = unsafe { &*(worker as *const crate::web_worker::WebWorker) };
@@ -4181,16 +4181,14 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).perform_gc() };
+            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
                 if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
                     break;
                 }
-                // SAFETY: see above re: `event_loop`.
-                unsafe { (*self.event_loop()).tick() };
+                self.event_loop_mut().tick();
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: see above.
                 if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
@@ -4202,8 +4200,7 @@ impl VirtualMachine {
             if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            unsafe { (*self.event_loop()).perform_gc() };
+            self.event_loop_mut().perform_gc();
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -4231,8 +4228,7 @@ impl VirtualMachine {
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+        let _ = self.event_loop_mut().drain_microtasks();
 
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.close_all_watchers_for_isolation();
@@ -4288,8 +4284,7 @@ impl VirtualMachine {
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
         }
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        let _ = unsafe { (*self.event_loop()).drain_microtasks() };
+        let _ = self.event_loop_mut().drain_microtasks();
 
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
@@ -5997,8 +5992,7 @@ impl VirtualMachine {
 
         bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
-        // SAFETY: event loop is process-lifetime; sole `&mut` on JS thread.
-        unsafe { (*self.event_loop()).ensure_waker() };
+        self.event_loop_mut().ensure_waker();
 
         // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `self` and
         // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw

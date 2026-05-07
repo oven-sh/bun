@@ -923,7 +923,6 @@ impl JSGlobalObject {
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
-            // SAFETY: bun_vm() returns the live VirtualMachine for this global.
             let _ = self.bun_vm().as_mut().uncaught_exception(self, exception, false);
         }
     }
@@ -1072,8 +1071,7 @@ impl JSGlobalObject {
     #[inline]
     pub fn assert_on_js_thread(&self) {
         if cfg!(debug_assertions) {
-            // SAFETY: bun_vm() returns the live VirtualMachine for this global.
-            unsafe { &*self.bun_vm() }.assert_on_js_thread();
+            self.bun_vm().assert_on_js_thread();
         }
     }
 

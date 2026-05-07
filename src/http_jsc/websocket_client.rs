@@ -1701,7 +1701,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
         let tcp = input_socket as *mut us_socket_t;
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
@@ -1732,7 +1731,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
-            event_loop: unsafe { &*global_this.bun_vm().as_mut().event_loop() },
+            event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -1854,7 +1853,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // that handle_close() releases). It is released in clear_data() when
         // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
         // paired with m_connectedWebSocket.
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
@@ -1885,7 +1883,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
-            event_loop: unsafe { &*global_this.bun_vm().as_mut().event_loop() },
+            event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -2279,7 +2277,6 @@ impl Mask {
         output: &mut [u8],
         input: &[u8],
     ) {
-        // SAFETY: bun_vm() never returns null for a Bun-owned global.
         let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
@@ -2292,7 +2289,6 @@ impl Mask {
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        // SAFETY: bun_vm() never returns null for a Bun-owned global.
         let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;

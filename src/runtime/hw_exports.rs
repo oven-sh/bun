@@ -40,10 +40,8 @@ pub extern "C" fn Bun__isMainThreadVM() -> bool {
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
 pub fn Bun__drainMicrotasksFromJS(global: *mut JSGlobalObject, _callframe: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC passes a live global; `bun_vm()` returns its owning VM.
-    let vm = unsafe { (*global).bun_vm() } as *const VirtualMachine as *mut VirtualMachine;
-    // SAFETY: VM is uniquely live on this thread for the duration of the call.
-    unsafe { (*vm).drain_microtasks() };
+    // SAFETY: JSC passes a live global.
+    unsafe { &*global }.bun_vm().as_mut().drain_microtasks();
     JSValue::UNDEFINED
 }
 
@@ -148,10 +146,9 @@ pub extern "C" fn Bun__VM__specifierIsEvalEntryPoint(
 /// the next tick on the event loop.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__closeChildIPC(global: *mut JSGlobalObject) {
-    // SAFETY: `global` is live; `bun_vm()` returns its owning VM.
-    let vm = unsafe { (*global).bun_vm() } as *const VirtualMachine as *mut VirtualMachine;
-    // SAFETY: VM is uniquely live on this thread.
-    if let Some(current_ipc) = unsafe { (*vm).get_ipc_instance() } {
+    // SAFETY: `global` is live.
+    let vm = unsafe { &*global }.bun_vm().as_mut();
+    if let Some(current_ipc) = vm.get_ipc_instance() {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
         unsafe { (*current_ipc).data.close_socket_next_tick(true) };
     }

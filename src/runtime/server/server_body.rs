@@ -942,9 +942,7 @@ impl ServePlugins {
         let ServePluginsState::Unqueued(plugin_list) = &self.state else { unreachable!() };
         // PORT NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
-        // SAFETY: `bun_vm()` returns the JS-thread singleton; `transpiler.options` is
-        // process-lifetime once VM is initialized.
-        let bunfig_path: &[u8] = unsafe { &global.bun_vm().as_mut().transpiler.options.bunfig_path };
+        let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
         let bunfig_folder: &[u8] =
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
@@ -970,10 +968,7 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        // SAFETY: `bun_vm()` returns a live raw `*mut VirtualMachine`;
-        // `event_loop()` returns a live raw `*mut EventLoop`. Reborrowed for
-        // each call so no aliased `&mut` outlives the statement.
-        unsafe { (*global.bun_vm().as_mut().event_loop()).enter() };
+        global.bun_vm().event_loop_mut().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -981,8 +976,7 @@ impl ServePlugins {
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        // SAFETY: see `enter()` above.
-        unsafe { (*global.bun_vm().as_mut().event_loop()).exit() };
+        global.bun_vm().event_loop_mut().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1082,7 +1076,6 @@ impl ServePlugins {
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
-        // SAFETY: bun_vm() returns a non-null *mut to the active VM
         global.bun_vm().as_mut().run_error_handler(err, None);
     }
 }
@@ -2557,8 +2550,7 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = logger::Source::init_empty_file(b"info.json");
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread after VM init.
-        let transpiler = unsafe { &(*VirtualMachine::VirtualMachine::get()).transpiler };
+        let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
         let _ = bun_js_printer::print_json(
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
@@ -3213,8 +3205,8 @@ where
                 Ok(v) => v,
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
-            // SAFETY: bun_vm()/event_loop() return live raw pointers tied to the global.
-            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().as_mut().event_loop()) };
+            // SAFETY: event_loop() returns a live raw pointer tied to the global.
+            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
             if let Err(err) = callback.call(
                 global,
                 JSValue::UNDEFINED,

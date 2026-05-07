@@ -935,7 +935,7 @@ impl Runner {
 
         // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
         // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
-        let global_object = unsafe { &*VirtualMachine::get().as_mut().global };
+        let global_object = VirtualMachine::get().global();
 
         match &caller.data {
             ExprData::ECall(call) => {

@@ -686,8 +686,7 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd = refd;
-        // SAFETY: `bun_vm()` returns the live VM owning `global_this`; mutator-thread only.
-        let uws_loop = unsafe { (*self.global_this().bun_vm()).uws_loop() };
+        let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
         // SAFETY: single JS thread; `timer_all()` points into the boxed
         // per-thread `RuntimeState`.
@@ -1281,9 +1280,7 @@ impl Subprocess<'_> {
 
         debug_assert!(
             !this.compute_has_pending_activity()
-                // SAFETY: VirtualMachine::get() returns a non-null thread-local; finalize
-                // runs on the JS thread so the VM is live.
-                || unsafe { (*VirtualMachine::VirtualMachine::get()).is_shutting_down() }
+                || VirtualMachine::VirtualMachine::get().is_shutting_down()
         );
         this.finalize_streams();
 
@@ -1389,7 +1386,6 @@ impl Subprocess<'_> {
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
-                        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
                         let event_loop = global_this.bun_vm().as_mut().event_loop();
                         unsafe {
                             (*event_loop).run_callback(
@@ -1425,7 +1421,6 @@ impl Subprocess<'_> {
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) = Self::consume_on_disconnect_callback(this_jsvalue, global_this)
             {
-                // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
                 unsafe {
                     (*event_loop).run_callback(

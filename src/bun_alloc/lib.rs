@@ -249,24 +249,38 @@ pub mod stubs {
     }
 }
 
-// ── Non-RAII Mutex ────────────────────────────────────────────────────────
-// Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard); the BSS
-// containers below were ported against that shape. Wrap parking_lot's
-// `RawMutex` so callers can lock/unlock across `&mut self` borrows without
-// the borrow checker tying the guard to `self`.
+// ── RAII Mutex ────────────────────────────────────────────────────────────
+// Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard). The BSS
+// containers below need to hold the lock across `&mut self` method calls, so
+// the returned `MutexGuard` deliberately captures a *raw* pointer to the
+// `RawMutex` instead of a borrow — the guard therefore has no lifetime tie to
+// `self` and won't conflict with subsequent `&mut self` borrows. This is sound
+// because every `Mutex` here lives inside a `'static` BSS singleton (see
+// `instance()` below), so the pointee always outlives the guard.
 pub struct Mutex(parking_lot::RawMutex);
 impl Mutex {
     pub const fn new() -> Self {
         Self(<parking_lot::RawMutex as parking_lot::lock_api::RawMutex>::INIT)
     }
     #[inline]
-    pub fn lock(&self) {
+    pub fn lock(&self) -> MutexGuard {
         parking_lot::lock_api::RawMutex::lock(&self.0);
+        MutexGuard(core::ptr::addr_of!(self.0))
     }
+}
+
+/// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
+/// [`Mutex`] for why this holds a raw pointer rather than a reference.
+#[must_use = "if unused the Mutex will immediately unlock"]
+pub struct MutexGuard(*const parking_lot::RawMutex);
+impl Drop for MutexGuard {
     #[inline]
-    pub fn unlock(&self) {
-        // SAFETY: caller contract — paired with a prior `lock()` on this mutex.
-        unsafe { parking_lot::lock_api::RawMutex::unlock(&self.0) };
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was obtained from a live `Mutex` in `lock()`; the
+        // BSS singletons that own these mutexes are `'static`, so the pointee
+        // outlives this guard. `lock()` acquired the raw mutex exactly once
+        // and this is the paired release.
+        unsafe { parking_lot::lock_api::RawMutex::unlock(&*self.0) };
     }
 }
 impl Default for Mutex {
@@ -1576,12 +1590,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         &mut self,
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
-        self.mutex.lock();
-        // Hold the lock across the body via raw-ptr scopeguard so the guard
-        // doesn't borrow `self` (Zig: `defer self.mutex.unlock()`).
-        let mutex = core::ptr::addr_of!(self.mutex);
-        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
+        let _guard = self.mutex.lock();
         // TODO(port): Zig reads `instance.*` here even though `self == instance`; kept as `self`.
         if self.used as usize > Self::MAX_INDEX {
             self.append_overflow(value)
@@ -1811,10 +1820,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         &mut self,
         value: A,
     ) -> core::result::Result<&[u8], AllocError> {
-        self.mutex.lock();
-        let mutex = core::ptr::addr_of!(self.mutex);
-        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
+        let _guard = self.mutex.lock();
         self.do_append(value)
     }
 
@@ -1822,10 +1828,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         &mut self,
         value: &[u8],
     ) -> core::result::Result<&[u8], AllocError> {
-        self.mutex.lock();
-        let mutex = core::ptr::addr_of!(self.mutex);
-        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
+        let _guard = self.mutex.lock();
 
         thread_local! {
             static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =

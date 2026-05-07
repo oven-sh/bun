@@ -9,6 +9,8 @@ use core::fmt;
 use crate::shell::interpreter::{OutputNeedsIOSafeGuard};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
+use crate::shell::shell_body::subproc::ShellIO;
+use crate::api::bun_spawn::stdio::{Capture, Stdio};
 
 #[derive(Clone, Default)]
 pub struct IO {
@@ -36,6 +38,16 @@ impl IO {
         size += self.stdout.memory_cost();
         size += self.stderr.memory_cost();
         size
+    }
+
+    /// Spec: IO.zig `to_subproc_stdio`. Maps the state-node IO triple onto
+    /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
+    /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
+    /// path can tee subprocess output back into the JS-side buffers.
+    pub fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
+        stdio[0] = self.stdin.to_subproc_stdio();
+        stdio[1] = self.stdout.to_subproc_stdio(&mut shellio.stdout);
+        stdio[2] = self.stderr.to_subproc_stdio(&mut shellio.stderr);
     }
 }
 
@@ -94,6 +106,14 @@ impl InKind {
             InKind::Ignore => 0,
         }
     }
+
+    /// Spec: IO.zig `InKind.to_subproc_stdio`.
+    pub fn to_subproc_stdio(&self) -> Stdio {
+        match self {
+            InKind::Fd(r) => Stdio::Fd(r.fd()),
+            InKind::Ignore => Stdio::Ignore,
+        }
+    }
 }
 
 impl OutFd {
@@ -127,16 +147,38 @@ impl OutKind {
             _ => None,
         }
     }
-}
 
-// The full body (to_subproc_stdio, memory_cost, enqueue, etc.) is deferred —
-// depends on subproc::Stdio and IOWriter::enqueue. See PORT STATUS below.
-// TODO(blocked_on: subproc::Stdio, IOWriter::enqueue): port to_subproc_stdio /
-// memory_cost / enqueue once those land.
+    /// Spec: IO.zig `OutKind.to_subproc_stdio`. Retains the `IOWriter` Arc on
+    /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
+    /// captured bytes into it after the spawn returns.
+    pub fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
+        match self {
+            OutKind::Fd(val) => {
+                // Spec: `shellio.* = val.writer.dupeRef()`.
+                *shellio = Some(val.writer.clone());
+                if let Some(cap) = val.captured {
+                    Stdio::Capture(Capture { buf: cap })
+                } else {
+                    let fd = val.writer.fd();
+                    if fd != bun_sys::Fd::INVALID {
+                        Stdio::Fd(fd)
+                    } else {
+                        // Windows: fd was moved to libuv → inherit (libuv
+                        // already manages it). On POSIX `IOWriter::fd()` is
+                        // always the live fd, so this branch is unreachable.
+                        Stdio::Inherit
+                    }
+                }
+            }
+            OutKind::Pipe => Stdio::Pipe,
+            OutKind::Ignore => Stdio::Ignore,
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/IO.zig (185 lines)
-//   confidence: medium
-//   blocked_on: subproc::Stdio, IOWriter::enqueue
+//   confidence: high (to_subproc_stdio wired)
+//   blocked_on: -
 // ──────────────────────────────────────────────────────────────────────────

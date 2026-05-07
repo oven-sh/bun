@@ -335,12 +335,13 @@ impl MySQLConnection {
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested (Zig: `this.#secure.?`).
         let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before upgradeToTLS") };
-        let sni = if self.tls_config.server_name.is_null() {
+        let server_name = self.tls_config.server_name();
+        let sni = if server_name.is_null() {
             None
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { core::ffi::CStr::from_ptr(self.tls_config.server_name) })
+            Some(unsafe { core::ffi::CStr::from_ptr(server_name) })
         };
         let ext_size = core::mem::size_of::<Option<*mut JSMySQLConnection>>() as i32;
 
@@ -409,7 +410,7 @@ impl MySQLConnection {
         self.sequence_id = self.sequence_id.wrapping_add(1);
         if handshake_success {
             self.tls_status = TLSStatus::SslOk;
-            if self.tls_config.reject_unauthorized != 0 {
+            if self.tls_config.reject_unauthorized() != 0 {
                 // follow the same rules as postgres
                 // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
                 // only reject the connection if reject_unauthorized == true

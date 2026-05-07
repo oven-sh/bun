@@ -93,9 +93,9 @@ pub use bun_logger::Log as RouteLoaderLog;
 
 // MOVE_DOWN(b0): RouteConfig (was bun_bundler::options::RouteConfig).
 // Ground truth: src/bundler/options.zig `pub const RouteConfig = struct { ... }`.
-// Moved here so T4 router is self-contained; bun_bundler re-exports this
-// (`pub use bun_router::RouteConfig`) to preserve the old path.
-#[derive(Clone, Default)]
+// Defined here so T4 router is self-contained; `bun_bundler::options` re-exports
+// this (`pub use bun_router::RouteConfig`) so the original path keeps resolving.
+#[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     pub dir: Box<[u8]>,
     pub possible_dirs: Box<[Box<[u8]>]>,
@@ -162,9 +162,7 @@ impl RouteConfig {
     }
 
     pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
-        // TODO(b1): bun_string::strings::{trim_left, trim_right} — local shim
-        // until bun_string grows the byte-set trim helpers.
-        use b1_stubs::strings_ext::{trim_left, trim_right};
+        use bun_string::strings::{trim_left, trim_right};
 
         let mut router = Self::zero();
 
@@ -620,8 +618,7 @@ impl Routes {
         pathname_: &'p [u8],
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
-        // TODO(b2-blocked): bun_string::strings::trim_left — using local shim.
-        let pathname = b1_stubs::strings_ext::trim_left(pathname_, b"/");
+        let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
             return self.index.map(|p| p.as_ptr() as *const Route);

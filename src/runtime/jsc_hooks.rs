@@ -1050,6 +1050,28 @@ unsafe fn load_standalone_sourcemap(
     graph.find(path)?.sourcemap.load()
 }
 
+/// `pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()` —
+/// spec sourcemap_jsc/source_provider.zig:24. The body lives here (not in
+/// `bun_sourcemap_jsc`) because `PerThread` names `bun_bundler::OutputFile`;
+/// the low tier holds only the opaque pointer round-tripped through C++.
+///
+/// # Safety
+/// `pt` is the live `*mut bake::production::PerThread` previously attached via
+/// `BakeGlobalObject__attachPerThreadData` (caller checked
+/// `BakeGlobalObject__isBakeGlobalObject` first). Called on the JS thread.
+/// The returned slice borrows `pt.bundled_outputs` and is valid for the bake
+/// build session (outlives the caller's `parse_json` use).
+unsafe fn bake_per_thread_source_map(
+    pt: *mut c_void,
+    source_filename: &[u8],
+) -> Option<*const [u8]> {
+    // SAFETY: per fn contract — `pt` is the unerased `*mut PerThread` C++
+    // stored opaquely; only this crate knows its layout.
+    let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
+    let idx = pt.source_maps.get(source_filename)?;
+    Some(pt.bundled_outputs[idx.0 as usize].value.as_slice() as *const [u8])
+}
+
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
 /// VirtualMachine.zig:3960 (`IPCInstance.handleIPCMessage` `.internal` arm).
 ///
@@ -1218,6 +1240,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
+    bake_per_thread_source_map,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,

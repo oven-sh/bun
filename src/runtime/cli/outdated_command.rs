@@ -256,7 +256,13 @@ impl OutdatedCommand {
 
         let converted_filters: Vec<WorkspaceFilter> = filters
             .iter()
-            .map(|filter| WorkspaceFilter::init(filter, original_cwd, &mut path_buf))
+            .map(|filter| {
+                bun_core::handle_oom(WorkspaceFilter::init(
+                    filter,
+                    original_cwd,
+                    &mut path_buf.0,
+                ))
+            })
             .collect();
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
 
@@ -478,6 +484,7 @@ impl OutdatedCommand {
         let pm_ptr: *mut PackageManager = manager;
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
+        let excludes = manager.options.minimum_release_age_excludes;
 
         let mut version_buf: String = String::new();
 
@@ -536,11 +543,15 @@ impl OutdatedCommand {
 
                 let package_name =
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-                let scope = manager.scope_for_package_name(package_name).clone();
-                let excludes = manager.options.minimum_release_age_excludes.as_deref();
+                let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
+                // SAFETY: `manifests.by_name_allow_expired` only touches
+                // `pm.options` / `pm.get_cache_directory()` / `pm.timestamp_*`,
+                // never `pm.manifests` (Zig invariant — `*PackageManager` is
+                // freely aliased there). The `&mut self` receiver is
+                // `manager.manifests`, disjoint from those reads.
                 let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    pm_ptr,
+                    unsafe { &mut *pm_ptr },
                     &scope,
                     package_name,
                     Some(&mut expired),
@@ -745,11 +756,12 @@ impl OutdatedCommand {
                 let resolution =
                     manager.lockfile.packages.items_resolution()[package_id as usize];
 
-                let scope = manager.scope_for_package_name(package_name).clone();
-                let excludes = manager.options.minimum_release_age_excludes.as_deref();
+                let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
+                // SAFETY: see PORT NOTE above — `by_name_allow_expired` reads
+                // `pm` fields disjoint from `pm.manifests`.
                 let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    pm_ptr,
+                    unsafe { &mut *pm_ptr },
                     &scope,
                     package_name,
                     Some(&mut expired),
@@ -942,6 +954,7 @@ impl OutdatedCommand {
 #[allow(dead_code)]
 type _AssertImports = (
     package_manager::WorkspaceFilter,
+    package_manager::ManifestCacheOptions<'static>,
     bun_install::package_manifest_map::CacheBehavior,
 );
 

@@ -1050,7 +1050,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             {
                                                 // SAFETY: cast returns a live FetchHeaders*.
                                                 let fetch_hdrs = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(HeadersExt::from(
+                                                proxy_headers = Some(<Headers as HeadersExt>::from(
                                                     Some(fetch_headers_ref(fetch_hdrs)),
                                                     HeadersOptions::default(),
                                                 ));
@@ -1059,7 +1059,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             {
                                                 // SAFETY: create_from_js returns a +1-ref NonNull<FetchHeaders>.
                                                 let fetch_hdrs_ref = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(HeadersExt::from(
+                                                proxy_headers = Some(<Headers as HeadersExt>::from(
                                                     Some(fetch_headers_ref(fetch_hdrs_ref)),
                                                     HeadersOptions::default(),
                                                 ));
@@ -1339,7 +1339,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            Some(HeadersExt::from(
+            Some(<Headers as HeadersExt>::from(
                 Some(fetch_headers_ref(headers_ref)),
                 HeadersOptions {
                     body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
@@ -1560,7 +1560,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
-        headers = Some(HeadersExt::from(
+        headers = Some(<Headers as HeadersExt>::from(
             None,
             HeadersOptions {
                 body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),

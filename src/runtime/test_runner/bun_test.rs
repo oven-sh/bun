@@ -1181,7 +1181,14 @@ impl BunTest {
             }
         }
 
-        let mut dcb_ref: Option<RefDataPtr> = None;
+        // Zig: `var dcb_ref: ?*RefData = null;` — a raw observer alias, NOT a
+        // counted handle. The single +1 from `ref()` is owned by
+        // `dcb_data.ref`; `dcb_ref` just remembers the address so the
+        // pending-promise branch can `dupe()` it and the tail can branch on
+        // "wait for done callback". `RefPtr<T>` has no `Drop`, so holding a
+        // second `RefDataPtr` here would over-count and the done-callback path
+        // would never observe `has_one_ref()`.
+        let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
                 // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
@@ -1190,10 +1197,11 @@ impl BunTest {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(&this_strong, cfg_data.clone());
-                    // SAFETY: see above.
-                    unsafe { (*dcb_data).r#ref = Some(r.dupe_ref()) };
-                    dcb_ref = Some(r);
-                    // TODO(port): Zig stored the same pointer twice without bumping; verify DoneCallback owns a counted ref vs. raw alias
+                    // SAFETY: `ref_()` returns a freshly-boxed RefData; `as_ptr` is non-null.
+                    let alias = unsafe { NonNull::new_unchecked(r.as_ptr()) };
+                    // SAFETY: see above. Move the sole +1 into the DoneCallback.
+                    unsafe { (*dcb_data).r#ref = Some(r) };
+                    dcb_ref = Some(alias);
                 }
             } else {
                 debug_assert!(false); // this should be unreachable, we create DoneCallback above
@@ -1210,8 +1218,12 @@ impl BunTest {
                 match unsafe { (*promise).status() } {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
-                        let this_ref: RefDataPtr = if let Some(dcb_ref_value) = &dcb_ref {
-                            dcb_ref_value.dupe_ref()
+                        let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
+                            // SAFETY: `dcb_ref_value` aliases the live RefData
+                            // owned by `dcb_data.r#ref` (set just above; GC
+                            // roots `done_callback` for this frame). Zig:
+                            // `dcb_ref_value.dupe()` — bump 1→2.
+                            unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };

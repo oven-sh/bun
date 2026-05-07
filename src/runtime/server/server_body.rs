@@ -3548,12 +3548,3 @@ unsafe extern "C" {
     fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
     fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
 }
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/server.zig (3855 lines)
-//   confidence: medium
-//   todos:      40
-//   notes:      NewServer comptime type-generator → const-generic struct<SSL,DEBUG>; conditional H3 fields kept as Option (loses void elision); ServePlugins/AnyServer use intrusive refcount + tagged-ptr (Rc placeholder is wrong — Phase B: IntrusiveRc); .classes.ts codegen (js.gc.routeList) stubbed; many uws callback registrations need fn-pointer adapters; deinit() relies on Box::from_raw to drop owned fields (do NOT re-add per-field .deinit())
-// ──────────────────────────────────────────────────────────────────────────

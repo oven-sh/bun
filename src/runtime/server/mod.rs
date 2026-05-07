@@ -1026,8 +1026,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    // `js_gc_route_list_set`, `ptr_to_js`, `on_reload_from_zig` — bodies live
-    // in `server_body.rs` (`impl NewServer { … }`); same crate, separate file.
+    /// `js.gc.routeList.set` — write the codegen'd `WriteBarrier<Unknown>`
+    /// slot on the per-type C++ wrapper so route JS objects stay GC-rooted.
+    pub fn js_gc_route_list_set(server_js: JSValue, global: &JSGlobalObject, route_list: JSValue) {
+        match (SSL, DEBUG) {
+            (false, false) => route_list_cached::http::route_list_set_cached(server_js, global, route_list),
+            (true, false) => route_list_cached::https::route_list_set_cached(server_js, global, route_list),
+            (false, true) => route_list_cached::debug_http::route_list_set_cached(server_js, global, route_list),
+            (true, true) => route_list_cached::debug_https::route_list_set_cached(server_js, global, route_list),
+        }
+    }
+
+    /// Wrap an already-heap-allocated server pointer in its JS object.
+    /// Ownership transfers to the C++ wrapper (freed via `finalize`).
+    pub fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        server_js_create(this.cast(), global, SSL, DEBUG)
+    }
+
+    // `on_reload_from_zig`, JS getter/method bodies — bodies live in
+    // `server_body.rs` (`impl NewServer { … }`); same crate, separate file.
 
     pub fn on_static_request_complete(&mut self) {
         self.pending_requests -= 1;
@@ -1232,9 +1249,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` was Box::into_raw'd in `init()` and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
 
-        // TODO(b2-blocked): notify_inspector_server_stopped() once Debugger
-        // server-agent surface is real.
+        // This should've already been handled in stop_listening; however, when
+        // the JS VM terminates, it hypothetically might not call stop_listening.
+        this_ref.notify_inspector_server_stopped();
 
+        // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
+        // config / on_clienterror / h3_alt_svc / dev_server) is handled by the
+        // Box::from_raw drop below. `plugins` is intrusively-refcounted and
+        // released explicitly here (its `NonNull` field has no `Drop`).
+        if let Some(p) = this_ref.plugins.take() {
+            // SAFETY: counted ref taken in `set_routes`; pairs with init's count=1.
+            unsafe { ServePlugins::deref_(p.as_ptr()) };
+        }
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
@@ -1269,17 +1295,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_str::strings::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        // TODO(b2-blocked): bake::DevServer::init(DevServerInit { … }). The
-        // bake crate's lifecycle is still gated; once it un-gates, populate
-        // from `config.bake` here (server.zig:2086-2098).
-        let dev_server: Option<Box<crate::bake::DevServer::DevServer>> = None;
-
         let server = Box::into_raw(Box::new(Self {
             global_this: global as *const _,
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
             vm: jsc::VirtualMachine::get() as *const _,
-            dev_server,
+            dev_server: None,
             app: None,
             listener: None,
             h3_app: None,
@@ -1301,6 +1322,38 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             on_clienterror: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::new(0),
         }));
+
+        // PORT NOTE: Zig captured `&config.bake.?` then did `.config = config.*`,
+        // so the bake options (and the arena that backs `root`) live in
+        // `(*server).config.bake` for the server's lifetime. Initialise
+        // DevServer AFTER the server box exists so the `Options::arena` borrow
+        // points into the heap-allocated config rather than the caller's
+        // (since-moved) stack slot. `errdefer if (dev_server) |d| d.deinit()`
+        // — `Box<Self>` drop on Err frees the half-built server.
+        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
+        if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
+            let broadcast = unsafe { (*server).config.broadcast_console_log_from_browser_to_server_for_bake };
+            let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
+                arena: &bake_options.arena,
+                root: bake_options.root,
+                // SAFETY: per-thread VM singleton; STATIC lifetime.
+                vm: unsafe { &*jsc::VirtualMachine::get() },
+                framework: core::mem::take(&mut bake_options.framework),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options),
+                broadcast_console_log_from_browser_to_server: broadcast,
+                dump_sources: crate::bake::DevServer::Options::DEFAULT_DUMP_SOURCES,
+                dump_state_on_crash: None,
+            }) {
+                Ok(d) => d,
+                Err(e) => {
+                    // SAFETY: paired with Box::into_raw above.
+                    drop(unsafe { Box::from_raw(server) });
+                    return Err(e);
+                }
+            };
+            // SAFETY: `server` is uniquely owned here.
+            unsafe { (*server).dev_server = Some(dev) };
+        }
 
         if SSL {
             bun_analytics::features::https_server.fetch_add(1, Ordering::Relaxed);

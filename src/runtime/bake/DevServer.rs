@@ -1559,7 +1559,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             },
         );
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
-        scopeguard::defer! { unsafe { (*response).deref() } };
+        scopeguard::defer! { unsafe { StaticRoute::deref_(response) } };
         // SAFETY: `response` is live until `_deref` runs after this returns.
         unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
         return;
@@ -2039,7 +2039,7 @@ impl DevServer {
                     resp.on_aborted(
                         |p: *mut c_void, r: AnyResponse| {
                             // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *(p as *mut DeferredRequest<'static>) }.on_abort(r)
+                            unsafe { &mut *(p as *mut DeferredRequest) }.on_abort(r)
                         },
                         deferred_data_ptr,
                     );

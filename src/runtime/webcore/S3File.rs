@@ -954,7 +954,7 @@ pub fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSVa
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/S3File.zig (665 lines)
-//   confidence: medium
-//   todos:      7
+//   confidence: high
+//   todos:      6
 //   notes:      S3BlobStatTask.global stored as *const (heap-alloc across async callback). BUN__createJSS3File extern still uses C ABI on win-x64.
 // ──────────────────────────────────────────────────────────────────────────

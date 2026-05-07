@@ -1544,9 +1544,11 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                     &mut debugger.http_server_agent,
                     any,
                 );
-                let _ = crate::server::http_server_agent::notify_server_routes_updated(
-                    &mut debugger.http_server_agent,
-                    any,
+                bun_core::handle_oom(
+                    crate::server::http_server_agent::notify_server_routes_updated(
+                        &mut debugger.http_server_agent,
+                        any,
+                    ),
                 );
             }
 

@@ -1593,7 +1593,8 @@ impl FetchTasklet {
     pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
         if let Some(signal) = self.signal {
-            if signal_aborted(signal) {
+            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+            if unsafe { (*signal).aborted() } {
                 return ResumableSinkBackpressure::Done;
             }
         }

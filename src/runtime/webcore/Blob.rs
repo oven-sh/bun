@@ -1367,9 +1367,11 @@ pub fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool
     }
     write!(
         writer,
-        "{}",
-        // TODO(port): Output::pretty_fmt with embedded format args
-        bun_core::fmt::size(size, Default::default())
+        "{} ({}{}{})",
+        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(""),
+        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>"),
+        bun_core::fmt::size(size, Default::default()),
+        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
     )
 }
 
@@ -2570,8 +2572,11 @@ pub fn jsdom_file_construct_(
         if let Some(store_) = &blob.store {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
+                    // Zig: `toUTF8Bytes(allocator)` → owned heap slice adopted by
+                    // PathString. `to_utf8().slice()` would dangle as soon as the
+                    // temporary `ZigStringSlice` drops at end-of-statement.
                     bytes.stored_name =
-                        bun_str::PathString::init(name_value_str.to_utf8().slice());
+                        bun_str::PathString::init_owned(name_value_str.to_owned_slice());
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
                     blob.name = name_value_str.dupe_ref();
@@ -2581,7 +2586,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store = Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_str::PathString::init(name_value_str.to_utf8().slice()),
+                    bun_str::PathString::init_owned(name_value_str.to_owned_slice()),
                 )),
                 ref_count: AtomicU32::new(1),
                 mime_type: bun_http_types::MimeType::NONE,

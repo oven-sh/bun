@@ -628,14 +628,20 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                    manager
+                        .log_mut()
+                        .print(Output::error_writer() as *mut _)
+                        .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                    manager
+                        .log_mut()
+                        .print(Output::error_writer() as *mut _)
+                        .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -735,7 +741,10 @@ pub fn install_with_manager(
     }
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+    manager
+        .log_mut()
+        .print(Output::error_writer() as *mut _)
+        .map_err(|_| bun_core::err!("WriteFailed"))?;
     manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.

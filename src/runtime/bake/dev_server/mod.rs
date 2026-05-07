@@ -306,10 +306,10 @@ pub struct IncrementalResult {
     pub html_routes_soft_affected: Vec<route_bundle::Index>,
     pub html_routes_hard_affected: Vec<route_bundle::Index>,
     pub had_adjusted_edges: bool,
-    pub client_components_added: Vec<incremental_graph::FileIndex>,
-    pub client_components_removed: Vec<incremental_graph::FileIndex>,
+    pub client_components_added: Vec<incremental_graph::ServerFileIndex>,
+    pub client_components_removed: Vec<incremental_graph::ServerFileIndex>,
     pub failures_removed: Vec<SerializedFailure>,
-    pub client_components_affected: Vec<incremental_graph::FileIndex>,
+    pub client_components_affected: Vec<incremental_graph::ServerFileIndex>,
     pub failures_added: Vec<SerializedFailure>,
 }
 impl IncrementalResult {
@@ -1082,7 +1082,7 @@ pub struct DevServer {
     pub barrel_files_with_deferrals: StringArrayHashMap<()>,
     pub barrel_needed_exports: StringArrayHashMap<StringHashMap<()>>,
     pub incremental_result: IncrementalResult,
-    pub route_lookup: ArrayHashMap<incremental_graph::FileIndex, RouteIndexAndRecurseFlag>,
+    pub route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
     pub html_router: HTMLRouter,
     pub assets: Assets,
     pub source_maps: SourceMapStore,

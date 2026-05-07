@@ -160,7 +160,41 @@ impl Default for Framework {
 }
 
 impl Framework {
-    /// `bake.Framework.initTranspiler` (bake.zig:778). Sets up a per-graph
+    /// Project the runtime-side `bake::Framework` into the bundler crate's
+    /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
+    /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
+    /// the value `init_transpiler` arena-allocates and hands to
+    /// `out.options.framework` (spec bake.zig:778 `out.options.framework =
+    /// framework`).
+    pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+        use bun_bundler::bake_types as bt;
+        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        for (k, v) in self.built_in_modules.iter() {
+            let bv = match v {
+                BuiltInModule::Import(p) => BuiltInModule::Import(p.clone()),
+                BuiltInModule::Code(c) => BuiltInModule::Code(c.clone()),
+            };
+            bun_core::handle_oom(built_in_modules.put(k, bv));
+        }
+        let server_components = self.server_components.as_ref().map(|sc| bt::ServerComponents {
+            separate_ssr_graph: sc.separate_ssr_graph,
+            server_runtime_import: sc.server_runtime_import.as_ref().into(),
+            server_register_client_reference: sc.server_register_client_reference.as_ref().into(),
+            server_register_server_reference: sc.server_register_server_reference.as_ref().into(),
+            client_register_server_reference: sc.client_register_server_reference.as_ref().into(),
+        });
+        let react_fast_refresh = self.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
+            import_source: rfr.import_source.as_ref().into(),
+        });
+        bt::Framework::new(
+            built_in_modules,
+            server_components,
+            react_fast_refresh,
+            self.is_built_in_react,
+        )
+    }
+
+    /// `bake.Framework.initTranspiler` (bake.zig:663). Sets up a per-graph
     /// `Transpiler` in place. The full body lives in
     /// `bake_body::Framework::init_transpiler_with_options`; this keystone
     /// version operates on the keystone `BuildConfigSubset` (which omits

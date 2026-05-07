@@ -98,14 +98,32 @@ impl PackageManager {
 
 #[inline]
 pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
-    match this.cache_directory_ {
-        Some(d) => d,
-        None => {
-            let d = ensure_cache_directory(this);
-            this.cache_directory_ = Some(d);
-            d
-        }
+    // SAFETY: `&mut PackageManager` is exclusive over every field the raw
+    // path projects.
+    unsafe { get_cache_directory_raw(this) }
+}
+
+/// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
+/// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
+/// materializes a `&mut PackageManager` covering the whole struct — only the
+/// disjoint `cache_directory_`, `cache_directory_path`, `options.enable`, and
+/// `env` fields are projected, so an outstanding `&mut manifests` derived
+/// from the same provenance root stays valid under Stacked Borrows.
+///
+/// # Safety
+/// `this` must be valid for reads and writes for the call's duration, and the
+/// caller must hold no live borrow that overlaps the fields listed above.
+#[inline]
+pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
+    // SAFETY: caller contract — `cache_directory_` is disjoint from any
+    // borrow the caller holds.
+    if let Some(d) = unsafe { (*this).cache_directory_ } {
+        return d;
     }
+    let d = unsafe { ensure_cache_directory(this) };
+    // SAFETY: as above; single writer.
+    unsafe { (*this).cache_directory_ = Some(d) };
+    d
 }
 
 #[inline]

@@ -181,24 +181,29 @@ pub fn run_task(
     macro_rules! cast_ptr {
         ($ty:ty) => { task.ptr as *mut $ty };
     }
-    /// Shell builtin tasks: recover `&mut Interpreter` via the embedded
-    /// [`ShellTask`]'s back-ref (Zig stored it inline; Rust port keeps it
-    /// on `ShellTask.interp`, populated at `ShellTask::new`).
+    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
+    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
+    /// the per-builtin body runs (Zig: `InnerShellTask.runFromMainThread`).
+    /// The wrapper recovers `&mut Interpreter` from the embedded
+    /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: `t` is a live Box::into_raw'd shell task; `interp` was
-            // set at schedule time and outlives the task.
-            let interp = unsafe { &mut *(*t).task.interp };
-            <$ty>::run_from_main_thread(t, interp);
+            // SAFETY: §Dispatch — `t` is a live Box::into_raw'd shell task;
+            // `interp` was set at schedule time and outlives the task.
+            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
-        // `.task.task.runFromMainThread()` shape (mv/cond_expr wrap an inner
-        // `task: ShellTask`-embedding struct one level deeper).
+        // `.task.task.runFromMainThread()` shape (cond-expr wraps an inner
+        // `task: ShellTask`-embedding struct one level deeper). Not a
+        // `ShellTaskCtx` implementor, so unref + interp-recovery are inlined.
         (nested $ty:ty) => {{
             let t = cast_ptr!($ty);
-            // SAFETY: see above.
-            let interp = unsafe { &mut *(*t).task.task.interp };
-            <$ty>::run_from_main_thread(t, interp);
+            // SAFETY: see above; `task.task` is the embedded ShellTask.
+            unsafe {
+                let st = &raw mut (*t).task.task;
+                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
+                let interp = &mut *(*st).interp;
+                <$ty>::run_from_main_thread(t, interp);
+            }
         }};
     }
 

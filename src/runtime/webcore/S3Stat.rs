@@ -16,7 +16,7 @@ impl S3Stat {
     // bare `constructor(..)`, which can't resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_invalid_arguments("S3Stat is not constructable"))
+        Err(global.throw_invalid_arguments(format_args!("S3Stat is not constructable")))
     }
 
     pub fn init(

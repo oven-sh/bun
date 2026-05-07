@@ -3317,27 +3317,7 @@ impl BlobExt for Blob {
             }
         };
 
-        // PORT NOTE: `Store::init_file` is ``-gated in
-        // `blob/Store.rs`; inline its body here so the file-backed path works
-        // without touching that file.
-        let mime_type = if let PathOrFileDescriptor::Path(ref p) = path {
-            let sliced = p.slice();
-            if sliced.is_empty() {
-                None
-            } else {
-                let ext = strings::trim(bun_paths::extension(sliced), b".");
-                bun_http_types::MimeType::by_extension_no_default(ext)
-            }
-        } else {
-            None
-        };
-        let store = Store::new(Store {
-            data: store::Data::File(store::File::init(path, mime_type)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: AtomicU32::new(1),
-            is_all_ascii: None,
-        });
-        Blob::init_with_store(store, global_this)
+        Blob::init_with_store(bun_core::handle_oom(Store::init_file(path, None)), global_this)
     }
     fn is_all_ascii(&self) -> Option<bool> {
         match self.charset {
@@ -4124,6 +4104,13 @@ pub fn write_file_with_source_destination(
             global_this: ctx,
         }));
 
+        // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
+        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
+        // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
+        // via `dupe()` and `WriteFile::create` does NOT re-bump (see PORT NOTE
+        // in `write_file.rs::create_with_ctx`); the matching deref runs when
+        // `Box::from_raw` drops the embedded `StoreRef` in `then`. Net store
+        // ref balance is identical — no leak.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);

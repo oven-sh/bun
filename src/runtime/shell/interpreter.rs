@@ -2095,6 +2095,30 @@ impl ShellTask {
         // state machines that depend on it remain suspended (matching the
         // pre-WorkPool stub behaviour).
     }
+
+    /// Spec: interpreter.zig `InnerShellTask.runFromMainThread`. Unrefs the
+    /// event-loop keep-alive paired with [`schedule`], then dispatches to
+    /// `C::run_from_main_thread`. The high-tier `runtime::dispatch::run_task`
+    /// `shell_dispatch!` arm calls this so the ref/unref pairing is kept at
+    /// the seam (Zig: `this.ref.unref(this.event_loop)` before
+    /// `runFromMainThread_(ctx)`).
+    ///
+    /// # Safety
+    /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
+    /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
+    /// thread after the worker bounce-back.
+    pub unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
+        log!("ShellTask runFromJS");
+        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        unsafe {
+            let this = (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask;
+            (*this)
+                .keep_alive
+                .unref((*this).event_loop.as_event_loop_ctx());
+            let interp = &mut *(*this).interp;
+            C::run_from_main_thread(ctx, interp);
+        }
+    }
 }
 
 /// Spec: interpreter.zig `runFromThreadPool` — recover `*Ctx` from the

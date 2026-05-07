@@ -10,7 +10,7 @@ use bun_jsc::{
 };
 use bun_logger as logger;
 use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
-use bun_str::{OwnedString, String as BunString, ZigString};
+use bun_str::{OwnedString, String as BunString};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
@@ -1097,16 +1097,19 @@ impl From<bun_alloc::AllocError> for ToJsError {
     }
 }
 
-fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_js_parser::ast::e::String` Zig-side). The YAML parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
-    if str.is_utf16 {
-        let zig = ZigString::init_utf16(str.slice16());
-        let bun_s = BunString::init(zig);
-        jsc::bun_string_jsc::to_js(&bun_s, global)
-    } else {
-        jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
+impl From<bun_js_parser::ToJSError> for ToJsError {
+    fn from(e: bun_js_parser::ToJSError) -> Self {
+        use bun_js_parser::ToJSError as Up;
+        match e {
+            Up::OutOfMemory => ToJsError::OutOfMemory,
+            Up::JSError => ToJsError::JsError,
+            Up::JSTerminated => ToJsError::JsTerminated,
+            // `value_string_to_js` never yields the macro/identifier variants
+            // (those come from the full `data_to_js` walker); map defensively.
+            Up::CannotConvertArgumentTypeToJS
+            | Up::CannotConvertIdentifierToJS
+            | Up::MacroError => ToJsError::JsError,
+        }
     }
 }
 
@@ -1149,8 +1152,7 @@ impl<'a> ParserCtx<'a> {
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
             ExprData::EString(str) => {
-                // TODO(port): move to *_jsc — EString::to_js is a JSC extension trait
-                Ok(estring_to_js(str.get(), self.global)?)
+                Ok(bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?)
             }
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr() as *const c_void;

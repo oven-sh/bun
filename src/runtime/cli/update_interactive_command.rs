@@ -2456,56 +2456,53 @@ fn update_named_catalog(
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
     // PORT NOTE: reshaped — see `update_default_catalog` for the
-    // shallow-copy-vs-in-place rationale.
+    // shallow-copy-vs-in-place + lookup-vs-placement rationale.
     let mut fresh_catalogs = E::Object::default();
-    let existing_catalogs = find_catalog_object(package_json, b"catalogs");
-    let catalogs_obj: &mut E::Object = match existing_catalogs {
-        Some(mut o) => {
-            // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
+    let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
+    {
+        let catalogs_obj: &mut E::Object = match existing_catalogs {
+            Some(mut o) => {
+                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
+                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
+            }
+            None => &mut fresh_catalogs,
+        };
+
+        // Get or create the specific catalog
+        let mut fresh_catalog = E::Object::default();
+        let existing_catalog: Option<js_ast::StoreRef<E::Object>> = catalogs_obj
+            .get(catalog_name)
+            .and_then(|e| e.data.e_object());
+        let catalog_obj: &mut E::Object = match existing_catalog {
+            Some(mut o) => {
+                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
+                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
+            }
+            None => &mut fresh_catalog,
+        };
+
+        // Get original version to preserve prefix if it exists
+        let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
+        if let Some(existing_prop) = catalog_obj.get(package_name) {
+            if let Some(e_str) = existing_prop.data.e_string() {
+                let original_version = e_str.data;
+                version_with_prefix =
+                    Box::leak(preserve_version_prefix(original_version, new_version)?);
+            }
         }
-        None => &mut fresh_catalogs,
-    };
 
-    // Get or create the specific catalog
-    let mut fresh_catalog = E::Object::default();
-    let existing_catalog: Option<js_ast::StoreRef<E::Object>> = catalogs_obj
-        .get(catalog_name)
-        .and_then(|e| e.data.e_object());
-    let catalog_obj: &mut E::Object = match existing_catalog {
-        Some(mut o) => {
-            // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-        }
-        None => &mut fresh_catalog,
-    };
-
-    // Get original version to preserve prefix if it exists
-    let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
-    if let Some(existing_prop) = catalog_obj.get(package_name) {
-        if let Some(e_str) = existing_prop.data.e_string() {
-            let original_version = e_str.data;
-            version_with_prefix =
-                Box::leak(preserve_version_prefix(original_version, new_version)?);
-        }
-    }
-
-    // Update or add the package version
-    let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
-    catalog_obj
-        .put(bump, leak_dup(package_name), new_expr)
-        .map_err(|_| bun_core::err!("OutOfMemory"))?;
-
-    // Update the catalog in catalogs object
-    if existing_catalog.is_none() {
-        catalogs_obj
-            .put(bump, leak_dup(catalog_name), Expr::init(fresh_catalog, Loc::EMPTY))
+        // Update or add the package version
+        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        catalog_obj
+            .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| bun_core::err!("OutOfMemory"))?;
-    }
 
-    if existing_catalogs.is_some() {
-        // Mutated in place; parent already references this object.
-        return Ok(());
+        // Update the catalog in catalogs object
+        if existing_catalog.is_none() {
+            catalogs_obj
+                .put(bump, leak_dup(catalog_name), Expr::init(fresh_catalog, Loc::EMPTY))
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+        }
     }
 
     // Check if we need to update under workspaces.catalogs or root-level catalogs
@@ -2513,8 +2510,16 @@ fn update_named_catalog(
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
             if workspaces_query.expr.as_property(b"catalogs").is_some() {
                 // Update under workspaces.catalogs
+                if source == CatalogSource::Workspaces {
+                    // Mutated in place; placement matches lookup.
+                    return Ok(());
+                }
+                let expr = match existing_catalogs {
+                    Some(o) => Expr { loc: Loc::EMPTY, data: js_expr::Data::EObject(o) },
+                    None => Expr::init(fresh_catalogs, Loc::EMPTY),
+                };
                 ws_obj
-                    .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
+                    .put(bump, b"catalogs", expr)
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 return Ok(());
             }
@@ -2522,6 +2527,10 @@ fn update_named_catalog(
     }
 
     // Otherwise update at root level
+    if source == CatalogSource::Root {
+        // Mutated in place; placement matches lookup.
+        return Ok(());
+    }
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))

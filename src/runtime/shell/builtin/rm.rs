@@ -232,7 +232,7 @@ impl Rm {
                                             ),
                                         )
                                         .to_vec();
-                                        Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
+                                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                                         return Builtin::done(interp, cmd, 1);
                                     }
                                 }
@@ -284,7 +284,7 @@ impl Rm {
                                 ),
                             )
                             .to_vec();
-                            Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
+                            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                             return Builtin::done(interp, cmd, 1);
                         }
                     }
@@ -347,7 +347,7 @@ impl Rm {
                 .stderr
                 .enqueue(child, buf, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
     }
 
@@ -365,7 +365,7 @@ impl Rm {
                 .stderr
                 .enqueue(child, buf, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
     }
 
@@ -450,7 +450,7 @@ impl Rm {
                     .run(interp);
                 return;
             }
-            Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
+            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
         }
 
         let all_out = match &Self::state_mut(interp, cmd).state {
@@ -495,7 +495,7 @@ impl Rm {
         }
         // SAFETY: see above.
         let buf = unsafe { &(*verbose).deleted_entries };
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
         let done = match &mut Self::state_mut(interp, cmd).state {
             RmState::Exec(exec) => {
                 exec.output_done.fetch_add(1, Ordering::SeqCst);

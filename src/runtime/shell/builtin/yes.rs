@@ -102,7 +102,7 @@ impl Yes {
             // `Builtin::write_no_io` is infallible (only `Pipe`/`Ignore`
             // outputs reach this path; `Fd` is `unreachable!`), so the error
             // arm is dead until arraybuf outputs are wired.
-            Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk);
+            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk);
         }
         // Bounce back via the event loop so we don't block the main thread.
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside

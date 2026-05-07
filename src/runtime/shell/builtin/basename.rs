@@ -47,7 +47,7 @@ impl Basename {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Yield::suspended();
         }
-        Builtin::write_no_io(interp, cmd, io_kind, buf);
+        let _ = Builtin::write_no_io(interp, cmd, io_kind, buf);
         Builtin::done(interp, cmd, exit)
     }
 

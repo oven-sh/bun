@@ -578,6 +578,13 @@ impl Interpreter {
             async_commands_executing: 0,
             global_this: core::ptr::null_mut(),
             flags: InterpreterFlags::default(),
+            // PORT NOTE — intentional spec-bug fix: Zig declares
+            // `exit_code: ?ExitCode = 0` (the *non-null* value 0), so its
+            // `asyncCmdDone`'s `exit_code != null` check is always true and
+            // can fire `finish(0)` before the root script has actually
+            // returned. Rust starts at `None` so `async_cmd_done` only
+            // finishes once `on_root_child_done` has recorded the real exit
+            // code. The matching Zig fix is tracked upstream.
             exit_code: None,
             this_jsvalue: crate::jsc::JSValue::ZERO,
             cleanup_state: CleanupState::NeedsFullCleanup,
@@ -597,10 +604,11 @@ impl Interpreter {
             // The interpreter parameter is unused (`_` in spec) so we don't
             // pass it (avoids the obvious self-borrow).
             if let Err(e) = interpreter.root_shell.change_cwd_impl(c, true) {
-                // `interpreter`'s Drop closes `cwd_fd` via deinit_from_exec
-                // semantics: explicitly close here before dropping the box so
-                // we match Zig's `root_io.deref(); root_shell.deinitImpl(...)`.
-                closefd(interpreter.root_shell.cwd_fd);
+                // Spec: `root_io.deref(); root_shell.deinitImpl(false, true);
+                // allocator.destroy(interpreter)`. `deinit_from_exec` performs
+                // exactly that teardown (drops `root_io` Arcs, frees env maps,
+                // closes `cwd_fd`, consumes the box).
+                interpreter.deinit_from_exec();
                 return Err(ShellErr::new_sys(e));
             }
         }
@@ -1823,9 +1831,48 @@ impl ShellExecEnv {
         Ok(())
     }
 
-    // The remaining body (get_home_dir, assign_var, etc.) is preserved in the
-    // gated `interpreter_body` module below — it depends on ResolvePath
-    // join_buf and IOWriter method surface that aren't yet stable.
+    /// Spec: interpreter.zig `ShellExecEnv.assignVar`.
+    ///
+    /// Routes `label = value` into one of the three env maps depending on
+    /// where the assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` →
+    /// shell, `export FOO=1` → exported). NOTE: `EnvMap::insert` `.ref()`s the
+    /// value, so callers should `defer value.deref()` per the Zig contract.
+    pub fn assign_var(
+        &mut self,
+        label: crate::shell::env_str::EnvStr,
+        value: crate::shell::env_str::EnvStr,
+        assign_ctx: AssignCtx,
+    ) {
+        match assign_ctx {
+            AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
+            AssignCtx::Shell => self.shell_env.insert(label, value),
+            AssignCtx::Exported => self.export_env.insert(label, value),
+        }
+    }
+
+    /// Spec: interpreter.zig `ShellExecEnv.getHomedir`.
+    ///
+    /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
+    /// `export_env`. Falls back to `""` (or `/data/local/tmp` on Android) so
+    /// `cd` with no args / `~` expansion never sees a null.
+    pub fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
+        use crate::shell::env_str::EnvStr;
+        let key = if cfg!(windows) {
+            EnvStr::init_slice(b"USERPROFILE")
+        } else {
+            EnvStr::init_slice(b"HOME")
+        };
+        self.shell_env
+            .get(key)
+            .or_else(|| self.export_env.get(key))
+            .unwrap_or_else(|| {
+                EnvStr::init_slice(if bun_core::env::IS_ANDROID {
+                    b"/data/local/tmp"
+                } else {
+                    b""
+                })
+            })
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

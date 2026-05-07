@@ -42,7 +42,7 @@ impl Which {
                     .stdout
                     .enqueue(child, b"\n", safeguard);
             }
-            Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"\n");
+            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"\n");
             return Builtin::done(interp, cmd, 1);
         }
 
@@ -62,7 +62,7 @@ impl Which {
                             format_args!("{}\n", bstr::BStr::new(&resolved)),
                         )
                         .to_vec();
-                        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                     None => {
                         had_not_found = true;
@@ -73,7 +73,7 @@ impl Which {
                             format_args!("{} not found\n", bstr::BStr::new(&arg)),
                         )
                         .to_vec();
-                        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                 }
             }
@@ -126,7 +126,7 @@ impl Which {
                     format_args!("{} not found\n", bstr::BStr::new(&arg)),
                 )
                 .to_vec();
-                Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
             Some(resolved) => {
@@ -150,7 +150,7 @@ impl Which {
                     format_args!("{}\n", bstr::BStr::new(&resolved)),
                 )
                 .to_vec();
-                Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
         }

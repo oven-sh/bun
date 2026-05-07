@@ -55,7 +55,7 @@ impl Cd {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Yield::suspended();
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
         Builtin::done(interp, cmd, 1)
     }
 

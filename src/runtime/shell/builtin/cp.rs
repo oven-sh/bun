@@ -378,9 +378,7 @@ impl OutputTaskVTable for Cp {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             return Some(
                 Builtin::of_mut(interp, cmd)
@@ -388,7 +386,7 @@ impl OutputTaskVTable for Cp {
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
     fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
@@ -406,9 +404,7 @@ impl OutputTaskVTable for Cp {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             let buf = output.slice().to_vec();
             return Some(
@@ -418,7 +414,7 @@ impl OutputTaskVTable for Cp {
             );
         }
         let buf = output.slice().to_vec();
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
     fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {
@@ -461,8 +457,9 @@ impl ShellCpTask {
         src: Vec<u8>,
         tgt: Vec<u8>,
         cwd_path: Vec<u8>,
+        interp: *mut Interpreter,
     ) -> *mut ShellCpTask {
-        Box::into_raw(Box::new(ShellCpTask {
+        let mut task = Box::new(ShellCpTask {
             cmd,
             opts,
             operands,
@@ -475,7 +472,11 @@ impl ShellCpTask {
             verbose_output: Vec::new(),
             err: None,
             task: ShellTask::new(evtloop),
-        }))
+        });
+        // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
+        // dispatch.rs bounce-back) can recover `&mut Interpreter`.
+        task.task.interp = interp;
+        Box::into_raw(task)
     }
 
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose

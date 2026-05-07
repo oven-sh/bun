@@ -253,7 +253,7 @@ impl OutputTaskVTable for Mkdir {
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
 
@@ -287,7 +287,7 @@ impl OutputTaskVTable for Mkdir {
             );
         }
         let buf = output.slice().to_vec();
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
 

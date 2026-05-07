@@ -1027,20 +1027,23 @@ impl Darwin {
     /// lock order one-way: fsevents_loop.mutex → manager.mutex.
     fn add_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
         match fsevents::watch(
-            watcher.path.as_zstr(),
+            // `FSEventsWatcher` borrows this slice for its whole lifetime; the
+            // backing `ZBox` is NUL-terminated for CF's C-string consumer.
+            watcher.path.as_bytes(),
             watcher.recursive,
             Darwin::on_fs_event,
             Darwin::on_fs_event_flush,
             watcher as *mut PathWatcher as *mut c_void,
         ) {
             Ok(fse) => {
-                watcher.platform.fsevents = Some(fse);
+                watcher.platform.fsevents = Some(Box::into_raw(fse));
                 Ok(())
             }
             Err(e) => Err(sys::Error::from_code(
-                match e {
-                    fsevents::Error::FailedToCreateCoreFoudationSourceLoop => E::EINVAL,
-                    _ => E::ENOMEM,
+                if e == bun_core::err!("FailedToCreateCoreFoudationSourceLoop") {
+                    E::EINVAL
+                } else {
+                    E::ENOMEM
                 },
                 Tag::watch,
             )),
@@ -1063,8 +1066,9 @@ impl Darwin {
         // `platform.fsevents` sub-place via the raw pointer; the CF thread's
         // concurrent raw read targets the disjoint `manager` field.
         if let Some(fse) = unsafe { (*watcher).platform.fsevents.take() } {
-            // SAFETY: fse was returned by `FSEvents.watch` and not yet deinit'd.
-            unsafe { fsevents::FSEventsWatcher::deinit(fse) };
+            // SAFETY: fse came from `Box::into_raw` in `add_watch`; reconstitute to
+            // run `FSEventsWatcher::drop` (→ `unregister_watcher`).
+            drop(unsafe { Box::from_raw(fse) });
         }
     }
 
@@ -1078,14 +1082,14 @@ impl Darwin {
     /// `_events_cb` releases it, so `destroy()` cannot run under us. The
     /// `watcher.manager == null` check catches the window where detach has already
     /// unlinked us but hasn't yet called `fse.deinit()`.
-    fn on_fs_event(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
+    fn on_fs_event(ctx: *mut c_void, event: Event, is_file: bool) {
         // SAFETY: ctx is the *mut PathWatcher passed in add_watch above. Keep it raw
         // until `manager.mutex` is held and the `manager.is_none()` bail-out has run:
         // `detach()` on the JS thread may concurrently be between its `unlock()` and
         // `remove_watch()` (blocked on the FSEvents loop mutex we hold), with the
         // watcher already unlinked. Forming `&mut *ctx` here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
-        let watcher_ptr = ctx.unwrap() as *mut PathWatcher;
+        let watcher_ptr = ctx as *mut PathWatcher;
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();
@@ -1104,9 +1108,9 @@ impl Darwin {
         }
     }
 
-    fn on_fs_event_flush(ctx: Option<*mut c_void>) {
+    fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
-        let watcher_ptr = ctx.unwrap() as *mut PathWatcher;
+        let watcher_ptr = ctx as *mut PathWatcher;
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();

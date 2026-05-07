@@ -316,7 +316,7 @@ impl OutputTaskVTable for Ls {
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
     fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
@@ -346,7 +346,7 @@ impl OutputTaskVTable for Ls {
             );
         }
         let buf = output.slice().to_vec();
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
     }
     fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {

@@ -51,7 +51,7 @@ impl Export {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Yield::suspended();
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"");
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"");
         Builtin::done(interp, cmd, 0)
     }
 

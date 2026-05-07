@@ -68,7 +68,7 @@ impl Mv {
                 .stderr
                 .enqueue(child, buf, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
     }
 

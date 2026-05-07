@@ -81,7 +81,7 @@ impl Echo {
         // PORT NOTE: reshaped for borrowck — clone output to drop the borrow
         // on `interp` before calling write_no_io.
         let buf = Self::state_mut(interp, cmd).output.clone();
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)
     }
 

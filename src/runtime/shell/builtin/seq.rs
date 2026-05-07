@@ -165,7 +165,7 @@ impl Seq {
                 .stderr
                 .enqueue(child, msg, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
         Builtin::done(interp, cmd, 1)
     }
 
@@ -204,7 +204,7 @@ impl Seq {
                 .stdout
                 .enqueue(child, &buf, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)
     }
 

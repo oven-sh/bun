@@ -128,7 +128,7 @@ impl Cat {
                 .stderr
                 .enqueue(child, buf, safeguard);
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
     }
 
@@ -154,26 +154,24 @@ impl Cat {
             Branch::Stdin => {
                 // Stdin doesn't need IO (captured/ignored): read it all
                 // synchronously and write straight to stdout.
-                let stdin_needs_io = matches!(
-                    Builtin::of(interp, cmd).stdin,
-                    crate::shell::io::InKind::Fd(_)
-                );
+                let stdin_needs_io = Builtin::of(interp, cmd).stdin.needs_io();
                 if !stdin_needs_io {
                     if let CatState::ExecStdin { in_done, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
                         *in_done = true;
                     }
-                    // TODO(b2-blocked): Builtin::read_stdin_no_io — arraybuf/
-                    // blob stdin sources. For now there's nothing to read.
-                    let buf: &[u8] = b"";
+                    // PORT NOTE: reshaped for borrowck — copy stdin bytes so
+                    // the &mut on `stdout`/`write_no_io` doesn't overlap a
+                    // borrow of `stdin`.
+                    let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
                     if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
                         return Builtin::of_mut(interp, cmd)
                             .stdout
                             .enqueue(child, buf, safeguard);
                     }
-                    Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+                    let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
                     return Builtin::done(interp, cmd, 0);
                 }
                 // TODO(b2-blocked): IOReader::add_reader + start — register
@@ -307,7 +305,7 @@ impl Cat {
             }
             _ => panic!("Invalid state"),
         }
-        Builtin::write_no_io(interp, cmd, IoKind::Stdout, chunk);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, chunk);
         Yield::done()
     }
 

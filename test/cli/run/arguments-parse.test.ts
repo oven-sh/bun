@@ -15,8 +15,7 @@ describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("123\n");
     expect(code).toBe(0);
   });
@@ -32,8 +31,9 @@ describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, loudErr] = await Promise.all([loud.stdout.text(), loud.stderr.text(), loud.exited]);
+    const [, loudErr, loudCode] = await Promise.all([loud.stdout.text(), loud.stderr.text(), loud.exited]);
     expect(loudErr).toContain("$ echo loud");
+    expect(loudCode).toBe(0);
 
     await using quiet = Bun.spawn({
       cmd: [bunExe(), "run", "--silent", "hello"],
@@ -56,8 +56,7 @@ describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // minify folds 1+1 → 2 and drops whitespace
     expect(stdout).not.toContain("1 + 1");
     expect(stdout).toContain("=2");

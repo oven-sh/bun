@@ -129,6 +129,7 @@ pub mod expect {
     // Phase B once the upstream method lands in `bun_jsc`.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+    #[allow(unused_imports)] use bun_jsc::JsError as _; // (kept for matcher re-exports)
     use bun_jsc::console_object::Formatter;
     use bun_jsc::console_object::formatter::ZigFormatter;
 
@@ -291,39 +292,7 @@ pub mod expect {
             length: f64,
             args: &[JSValue],
         ) -> JsResult<JSValue> {
-            // TODO(port): land as inherent `JSValue::bind` in bun_jsc once
-            // the upstream surface catches up. Shimmed here so DoneCallback /
-            // ScopeFunctions compile against the Zig spec unchanged.
-            unsafe extern "C" {
-                // bindings.cpp: Bun__JSValue__bind — [[ZIG_EXPORT(zero_is_throw)]]
-                fn Bun__JSValue__bind(
-                    function: JSValue,
-                    global: *const JSGlobalObject,
-                    bind_this: JSValue,
-                    name: *const bun_str::String,
-                    length: f64,
-                    args: *const JSValue,
-                    args_len: usize,
-                ) -> JSValue;
-            }
-            // SAFETY: `global`/`name` outlive the call; `args` is a contiguous
-            // slice of `JSValue` (repr(transparent) over EncodedJSValue).
-            let result = unsafe {
-                Bun__JSValue__bind(
-                    self,
-                    global,
-                    bind_this,
-                    name,
-                    length,
-                    args.as_ptr(),
-                    args.len(),
-                )
-            };
-            if result == JSValue::ZERO {
-                Err(JsError::Thrown)
-            } else {
-                Ok(result)
-            }
+            JSValue::bind(self, global, bind_this, name, length, args)
         }
     }
 
@@ -331,8 +300,12 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// `global.throw_pretty(fmt, args)` shim — `bun_jsc::JSGlobalObject` only
-    /// exposes `throw(args)` today; pretty-fmt rewriting happens in Phase B.
+    /// Two-argument `throw_*` adapters — Phase-A matcher drafts called
+    /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (Zig's `comptime fmt`
+    /// + `args`). Rust's `Arguments<'_>` already encloses the format string,
+    /// so the leading `&str` is redundant; these shims drop it and forward to
+    /// the bun_jsc inherents (`throw_pretty` runs the `<r>/<d>` → ANSI/strip
+    /// pass at runtime; `throw`/`throw_invalid_arguments` do not).
     pub trait JSGlobalObjectTestExt {
         fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
@@ -340,10 +313,8 @@ pub mod expect {
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
-        fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            // TODO(port): comptime <r>/<d> rewriting — for now forward as-is.
-            let _ = fmt;
-            self.throw(args)
+        fn throw_pretty(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
+            JSGlobalObject::throw_pretty(self, args)
         }
         #[inline]
         fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {

@@ -1022,6 +1022,26 @@ impl JSValue {
             JSC__JSValue__hasOwnPropertyValue(self, global, key)
         })
     }
+    /// `Function.prototype.bind` (Zig: `JSValue.bind`, JSValue.zig:2448 →
+    /// `Bun__JSValue__bind`, bindings.cpp:6305). Creates a bound-function
+    /// object whose `name`/`length` are fixed up to the supplied values; `args`
+    /// are prepended to the eventual call's argument list. C++ is annotated
+    /// `[[ZIG_EXPORT(zero_is_throw)]]`, so `0` ↔ pending exception.
+    #[track_caller]
+    pub fn bind(
+        self,
+        global: &JSGlobalObject,
+        bind_this: JSValue,
+        name: &bun_string::String,
+        length: f64,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        // SAFETY: `global`/`name` outlive the FFI call; `args` is a contiguous
+        // slice of `JSValue` (`repr(transparent)` over `EncodedJSValue`).
+        host_fn::from_js_host_call(global, || unsafe {
+            Bun__JSValue__bind(self, global, bind_this, name, length, args.as_ptr(), args.len())
+        })
+    }
     pub fn get_object(self) -> Option<*mut JSObject> {
         if !self.is_object() { return None; }
         // Cell-tagged JSValues *are* the cell pointer (NotCellMask bits are zero).
@@ -1497,6 +1517,15 @@ unsafe extern "C" {
     fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__hasOwnPropertyValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> bool;
+    fn Bun__JSValue__bind(
+        function: JSValue,
+        global: *const JSGlobalObject,
+        bind_this: JSValue,
+        name: *const bun_string::String,
+        length: f64,
+        args: *const JSValue,
+        args_len: usize,
+    ) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putBunString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
     fn JSC__JSValue__putMayBeIndex(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);

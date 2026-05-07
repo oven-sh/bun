@@ -1152,13 +1152,16 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     // branch (double-deinit). The scopeguard wraps `data` so it's released on every path;
     // the redundant call is dropped.
     let mut data = scopeguard::guard(data, |mut d| d.deinit());
-    // Zig: `JSValue.createBufferFromLength` → `JSBuffer__bufferFromLength` (Node.js `Buffer`).
-    // `alloc::<ArrayBuffer>` routes to `Bun__allocArrayBufferForCopy` → `JSBufferSubclassStructure`,
-    // i.e. a `Buffer` (NOT a plain Uint8Array — `pbkdf2Sync` must return `Buffer`).
-    let (out_arraybuffer, output) =
-        ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global_this, u32::try_from(data.length).unwrap())?;
+    // Zig: `JSValue.createBufferFromLength` → `JSBuffer__bufferFromLength`, which constructs
+    // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
+    // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
+    // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
+    let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length as usize)?;
+    let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
+        return Err(global_this.throw_out_of_memory());
+    };
 
-    if !data.run(output) {
+    if !data.run(output.slice_mut()) {
         // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.
         let err = create_crypto_error(global_this, unsafe { boringssl::c::ERR_get_error() });
         unsafe { boringssl::c::ERR_clear_error() };

@@ -263,14 +263,14 @@ impl BunxCommand {
         subpath_z: &ZStr,
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
+        // Zig: `defer target_package_json.close()` — bun_sys::File is a non-owning
+        // Copy handle (no Drop), so guard the fd explicitly.
+        let _close_pkg_json = bun_sys::CloseOnDrop::new(target_package_json_fd);
         let target_package_json = bun_sys::File { handle: target_package_json_fd };
-        // PORT NOTE: `defer target_package_json.close()` handled by Drop on bun_sys::File.
-        // TODO(port): confirm bun_sys::File implements Drop → close.
 
         // TODO: make this better
-        let package_json_bytes = target_package_json.read_to_end()?;
-
-        let package_json_contents = package_json_bytes.as_slice();
+        let read_result = target_package_json.read_to_end();
+        let package_json_contents = read_result.unwrap()?;
         let source = bun_logger::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
         bun_js_parser::ast::expr::data::Store::create();
@@ -314,7 +314,8 @@ impl BunxCommand {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                 if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
-                    // PORT NOTE: `defer bin_dir.close()` → Drop.
+                    // Zig: `defer bin_dir.close()` — Fd is non-owning Copy; guard it.
+                    let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
                     let mut entry = iterator.next();
                     loop {
@@ -847,7 +848,7 @@ impl BunxCommand {
                         // exclude the original system $PATH so we don't match unrelated
                         // system binaries. Only search local node_modules/.bin directories.
                         if let Some(d) = bun_core::which(
-                            as_core_path_buf(&mut path_buf),
+                            &mut path_buf,
                             if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
                             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                             initial_bin_name,
@@ -856,7 +857,7 @@ impl BunxCommand {
                         }
                     }
                     bun_core::which(
-                        as_core_path_buf(&mut path_buf),
+                        &mut path_buf,
                         bunx_cache_dir,
                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                         absolute_in_cache_dir,
@@ -981,7 +982,7 @@ impl BunxCommand {
                                 let dest_or_cache2: Option<&ZStr> = 'find2: {
                                     if update_request.version.literal.is_empty() {
                                         if let Some(d) = bun_core::which(
-                                            as_core_path_buf(&mut path_buf),
+                                            &mut path_buf,
                                             &local_bin_dirs,
                                             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                                             &package_name_for_bin,
@@ -990,7 +991,7 @@ impl BunxCommand {
                                         }
                                     }
                                     bun_core::which(
-                                        as_core_path_buf(&mut path_buf),
+                                        &mut path_buf,
                                         bunx_cache_dir,
                                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                                         absolute_in_cache_dir,
@@ -1072,9 +1073,9 @@ impl BunxCommand {
                 Ok(f) => f,
                 Err(_) => break 'create_package_json,
             };
-            // TODO(port): Zig used std.fs.Dir.createFileZ; mapped to bun_sys::File::create_at_z.
             let _ = package_json.write_all(b"{}\n");
-            // PORT NOTE: `defer package_json.close()` → Drop.
+            // Zig: `defer package_json.close()` — bun_sys::File has no Drop.
+            let _ = package_json.close();
         }
 
         let install_args: [&[u8]; 4] = [
@@ -1216,7 +1217,7 @@ impl BunxCommand {
         //  1. Try the bin in the global cache
         //     Do not try $PATH because we already checked it above if we should
         if let Some(destination) = bun_core::which(
-            as_core_path_buf(&mut path_buf),
+            &mut path_buf,
             bunx_cache_dir,
             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
             absolute_in_cache_dir,
@@ -1258,7 +1259,7 @@ impl BunxCommand {
                     };
 
                     if let Some(destination) = bun_core::which(
-                        as_core_path_buf(&mut path_buf),
+                        &mut path_buf,
                         bunx_cache_dir,
                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
                         absolute_in_cache_dir,

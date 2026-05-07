@@ -469,7 +469,9 @@ pub extern "C" fn Request__setTimeout(
         return;
     }
 
-    this.set_timeout(seconds.to_int32() as c_uint);
+    // Zig spec: `seconds.to(c_uint)` → `JSValue.toU32` (clamps via JS ToUint32 rules,
+    // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do).
+    this.set_timeout(seconds.to_u32() as c_uint);
 }
 
 #[unsafe(no_mangle)]

@@ -92,10 +92,19 @@ pub struct EntryPointResult {
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
-/// The full `Options<'a>` (with `args: api::TransformOptions`, `env_loader`, etc.)
-/// is gated below — this is the minimal surface dependents type-check against.
+/// Carries the cross-tier subset of Zig `Options` that [`init`] and
+/// `RuntimeHooks::init_runtime_state` need. `transform_options`/`debugger`
+/// live in `bun_options_types` (already a dep of `bun_jsc`), so they thread
+/// through here instead of being dropped at the CLI call-site.
 pub struct InitOptions {
-    pub args: alloc::vec::Vec<alloc::string::String>,
+    /// Spec VirtualMachine.zig:1207 `Options.args` — the CLI's
+    /// `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
+    /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
+    pub transform_options: bun_options_types::schema::api::TransformOptions,
+    /// Spec VirtualMachine.zig:1215 `Options.debugger` —
+    /// `bun.cli.Command.Debugger` (now `bun_options_types::Context::Debugger`).
+    /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
+    pub debugger: bun_options_types::Context::Debugger,
     /// Spec VirtualMachine.zig:1208 `Options.log`. When `Some`, [`init`] adopts
     /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
     /// transpiler's log so macro load errors land in the bundle output).
@@ -125,7 +134,8 @@ pub struct InitOptions {
 impl Default for InitOptions {
     fn default() -> Self {
         Self {
-            args: alloc::vec::Vec::new(),
+            transform_options: Default::default(),
+            debugger: Default::default(),
             log: None,
             env_loader: None,
             graph: None,

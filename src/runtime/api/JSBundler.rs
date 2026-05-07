@@ -653,12 +653,10 @@ pub mod js_bundler {
                             this.jsx.development = dev;
                         }
                     } else {
-                        return Err(global_this.throw_invalid_arguments(
-                            &format!(
-                                "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
-                                bstr::BStr::new(slice.slice())
-                            ),
-                        ));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
+                            bstr::BStr::new(slice.slice())
+                        )));
                     }
                     drop(slice);
                 }
@@ -828,7 +826,7 @@ pub mod js_bundler {
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
-                        return Err(global_this.throw(&format!(
+                        return Err(global_this.throw(format_args!(
                             "{}: failed to open root directory: {}",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(path.slice())
@@ -841,7 +839,7 @@ pub mod js_bundler {
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
-                        return Err(global_this.throw(&format!(
+                        return Err(global_this.throw(format_args!(
                             "{}: failed to get full root directory path: {}",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(path.slice())

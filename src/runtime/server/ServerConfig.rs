@@ -1495,9 +1495,9 @@ impl ServerConfig {
 
             if !strings::is_all_ascii(hostname) {
                 args.base_uri = Box::default();
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.",
-                ));
+                )));
             }
         }
 
@@ -1506,13 +1506,14 @@ impl ServerConfig {
         let base_url = URL::parse(&args.base_uri);
         if base_url.hostname.is_empty() {
             args.base_uri = Box::default();
-            return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
+            return Err(global.throw_invalid_arguments(format_args!("baseURI must have a hostname")));
         }
 
         if !base_url.username.is_empty() || !base_url.password.is_empty() {
             args.base_uri = Box::default();
-            return Err(global
-                .throw_invalid_arguments("baseURI can't have a username or password"));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "baseURI can't have a username or password",
+            )));
         }
 
         // PORT NOTE: deferred assertion from top of fn

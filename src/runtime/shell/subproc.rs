@@ -835,9 +835,13 @@ impl Writable {
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result(result);
 
+        // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
+        // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
+        // non-Copy payloads.
+        let mut stdio = stdio;
         #[cfg(windows)]
         {
-            match stdio {
+            match &mut stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if matches!(result, StdioResult::Buffer(_)) {
                         let pipe = FileSink::create_with_pipe(event_loop, result.buffer());
@@ -859,7 +863,21 @@ impl Writable {
                     return Ok(Writable::Inherit);
                 }
 
-                Stdio::Blob(blob) => {
+                Stdio::Blob(_) => {
+                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
+                    // destructure-moved out. Take ownership via ManuallyDrop +
+                    // ptr::read; the wrapper suppresses the Stdio destructor so
+                    // the blob is moved exactly once.
+                    let old = core::mem::ManuallyDrop::new(core::mem::replace(
+                        &mut stdio,
+                        Stdio::Ignore,
+                    ));
+                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
+                    // prevents its Drop from running, so this is the sole move.
+                    let blob = match &*old {
+                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                        _ => unreachable!(),
+                    };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         event_loop,
                         subprocess,
@@ -872,11 +890,11 @@ impl Writable {
                         event_loop,
                         subprocess,
                         result,
-                        JscSubprocess::Source::ArrayBuffer(array_buffer),
+                        JscSubprocess::Source::ArrayBuffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(fd));
+                    return Ok(Writable::Fd(*fd));
                 }
                 Stdio::Dup2(dup2) => {
                     return Ok(Writable::Fd(dup2.to.to_fd()));
@@ -894,9 +912,6 @@ impl Writable {
         }
         #[cfg(not(windows))]
         {
-            // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out
-            // via match. Dispatch on `&mut` and `mem::take` Default-able payloads.
-            let mut stdio = stdio;
             match &mut stdio {
                 Stdio::Dup2(_) => {
                     // The shell never uses this

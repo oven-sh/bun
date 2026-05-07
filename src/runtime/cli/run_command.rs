@@ -816,7 +816,7 @@ impl RunCommand {
     /// runtime flags from the embedded graph before entering `Run::start`.
     pub(crate) fn boot_standalone(
         ctx: &mut ContextData,
-        entry_path: &[u8],
+        entry_path: Box<[u8]>,
         graph: &mut bun_standalone_graph::Graph,
     ) -> Result<(), bun_core::Error> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
@@ -938,24 +938,27 @@ impl RunCommand {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Run {
+    /// `Command.Context` (a `*ContextData` newtype in Zig). The CLI's
+    /// `ContextData` is parse-once / process-lifetime; `boot()` writes the raw
+    /// pointer here so [`Run::start`] can read profiler / preconnect /
+    /// hot-reload flags under the API lock without re-threading every field.
+    ctx: *mut ContextData,
     vm: *mut VirtualMachine,
-    /// Owned copy of the entry-point path (Zig: `[]u8` from
-    /// `ctx.allocator.dupe`). `vm.main` is a backref into this buffer, so it
-    /// must outlive the VM — process-lifetime here since `start()` ends in
-    /// `global_exit`.
-    entry_path: Box<[u8]>,
-    /// Snapshot of `ctx.runtime_options.eval.eval_and_print`. The full
-    /// `Command::Context` is not stored: its remaining `start()` consumers
-    /// (cpu/heap profiler, redis/sql preconnect) read VM-side fields that
-    /// `boot()` already copied over.
-    eval_and_print: bool,
+    /// Heap bytes (from `boot`'s `Box::into_raw`, matching Zig's
+    /// `allocator.dupe` + never-free) or a borrow into the standalone graph's
+    /// `entryPoint().name` (from `boot_standalone`). Either way the bytes live
+    /// for the process — `Run::start` never returns — so a raw `*const [u8]`
+    /// matches Zig's `entry_path: string` exactly without forcing a `'static`
+    /// borrow or a `MaybeUninit` static for `Box<[u8]>`.
+    entry_path: *const [u8],
 }
 
 // Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
-// `MaybeUninit` because `Box<[u8]>` has no `const` initializer; the only read
-// is via the `hold_api_lock` trampoline after `boot`/`boot_standalone` writes
-// it, so the uninit window is never observed.
-static mut RUN: ::core::mem::MaybeUninit<Run> = ::core::mem::MaybeUninit::uninit();
+static mut RUN: Run = Run {
+    ctx: ::core::ptr::null_mut(),
+    vm: ::core::ptr::null_mut(),
+    entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),
+};
 
 // PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
 // unhandled-rejection callback while `Run::start` holds `&mut self` (via the

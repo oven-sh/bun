@@ -1174,29 +1174,48 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
 /// When clonefile cannot be used, this task is started once per file.
 pub struct CpSingleTask<const IS_SHELL: bool> {
     pub cp_task: *mut NewAsyncCpTask<IS_SHELL>,
-    // PORT NOTE: Zig `bun.OSPathSliceZ` is a sentinel-terminated slice (fat
-    // pointer). The Rust `OSPathSliceZ` alias is a DST (`ZStr`/`WStr`), so the
-    // owning struct stores `&'static` borrows into the `Box::leak`'d `path_buf`
-    // allocated in `_cp_async_directory`; `destroy()` reconstitutes and frees
-    // that allocation from `src.as_ptr()`.
-    pub src: &'static OSPathSliceZ,  // points into owned path_buf
-    pub dest: &'static OSPathSliceZ, // points into owned path_buf
+    /// Single owned allocation laid out as `<src>\0<dest>\0`. Zig stores two
+    /// `bun.OSPathSliceZ` (sentinel slices) into a single `default_allocator`
+    /// buffer; here ownership is encoded directly as `Box<[OSPathChar]>` and
+    /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
+    path_buf: Box<[OSPathChar]>,
+    src_len: usize,
+    dest_len: usize,
     pub task: WorkPoolTask,
 }
 
 impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
+    /// `path_buf` layout: `[src @ ..src_len][0][dest @ ..dest_len][0]`.
     pub fn create(
         parent: *mut NewAsyncCpTask<IS_SHELL>,
-        src: &'static OSPathSliceZ,
-        dest: &'static OSPathSliceZ,
+        path_buf: Box<[OSPathChar]>,
+        src_len: usize,
+        dest_len: usize,
     ) {
-        let task = Box::new(CpSingleTask {
+        debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
+        debug_assert_eq!(path_buf[src_len], 0);
+        debug_assert_eq!(path_buf[src_len + 1 + dest_len], 0);
+        let task = Box::into_raw(Box::new(CpSingleTask {
             cp_task: parent,
-            src,
-            dest,
+            path_buf,
+            src_len,
+            dest_len,
             task: work_pool_task(Self::work_pool_callback),
-        });
-        WorkPool::schedule(&mut Box::leak(task).task);
+        }));
+        // SAFETY: `task` is a fresh Box allocation handed off to the work pool;
+        // reclaimed in `destroy()` after `work_pool_callback` runs.
+        WorkPool::schedule(unsafe { &mut (*task).task });
+    }
+
+    #[inline]
+    fn src(&self) -> &OSPathSliceZ {
+        // SAFETY: `create()` invariant — `path_buf[src_len] == 0`.
+        unsafe { OSPathSliceZ::from_raw(self.path_buf.as_ptr(), self.src_len) }
+    }
+    #[inline]
+    fn dest(&self) -> &OSPathSliceZ {
+        // SAFETY: `create()` invariant — `path_buf[src_len + 1 + dest_len] == 0`.
+        unsafe { OSPathSliceZ::from_raw(self.path_buf.as_ptr().add(self.src_len + 1), self.dest_len) }
     }
 
     fn work_pool_callback(task: *mut WorkPoolTask) {

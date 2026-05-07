@@ -469,12 +469,10 @@ fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)
 }
-} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/net/BlockList.zig (256 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      JsClass m_ctx payload w/ intrusive atomic refcount; jsc.conv callback ABI + JSC_BORROW global field need Phase B attention; sockaddr union field access (.sin/.sin6) assumed from sibling SocketAddress port
+//   confidence: high
+//   notes:      JsClass m_ctx payload w/ intrusive atomic refcount; jsc.conv callback ABI on Windows-x64 still needs `#[bun_jsc::host_call]` typedef; sockaddr union field access (.sin/.sin6) per sibling SocketAddress port
 // ──────────────────────────────────────────────────────────────────────────

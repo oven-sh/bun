@@ -1515,17 +1515,21 @@ where
         {
             let js_string = message_value.to_js_string(global)?;
             // SAFETY: to_js_string returns a non-null *mut JSString on Ok
-            let view = unsafe { &*js_string }.view(global);
+            let js_string = unsafe { &*js_string };
+            let view = js_string.view(global);
             let slice = view.to_slice();
-            let _keep = jsc::EnsureStillAlive(message_value);
-
+            // Spec keeps `js_string` alive (server.zig:748), not `message_value`:
+            // when the input was not already a JSString, `to_js_string` allocates
+            // a fresh GC cell that is *not* reachable from `message_value`, so a
+            // GC during `publish_with_options` could otherwise reclaim the bytes
+            // `slice` borrows.
             let buffer = slice.slice();
-            return Ok(JSValue::js_number(f64::from(
-                // if 0, return 0
-                // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer, uws_sys::Opcode::Text, compress) as i32)
-                    * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32),
-            )));
+            let result = (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer, uws_sys::Opcode::Text, compress) as i32)
+                * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32);
+            js_string.ensure_still_alive();
+            // if 0, return 0
+            // else return number of bytes sent
+            return Ok(JSValue::js_number(f64::from(result)));
         }
     }
 

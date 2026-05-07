@@ -628,10 +628,13 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         let task = Box::new(Self {
             promise: JSPromiseStrong::init(global_object),
             args: task_args,
-            // SAFETY: all-zero is a valid Maybe<R>; written before read
-            result: unsafe { core::mem::zeroed() },
+            // Sentinel — overwritten by `uv_callback` (or the early-return arms
+            // below) before any read on the JS thread. `Maybe<R>` is
+            // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
+            // `R`; never construct an all-zero `Result` value.
+            result: Maybe::Err(sys::Error::default()),
             global_object: global_object as *const _,
-            // SAFETY: all-zero is a valid uv::fs_t (libuv POD)
+            // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
             req: unsafe { core::mem::zeroed() },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),

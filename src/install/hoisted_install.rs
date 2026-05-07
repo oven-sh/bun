@@ -308,9 +308,8 @@ pub fn install_hoisted_packages(
                     tree_id: 0,
                 },
                 // SAFETY: same `mgr_ptr` BACKREF note as `manager` above —
-                // `&Progress` aliases the `&mut PackageManager` in `manager`;
-                // Phase B retypes one of them to a raw ptr.
-                progress: unsafe { &(*mgr_ptr).progress },
+                // `*mut Progress` aliases the `&mut PackageManager` in `manager`.
+                progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
                 summary: &mut summary,

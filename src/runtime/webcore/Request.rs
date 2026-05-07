@@ -1154,13 +1154,8 @@ impl Request {
         this_value: JSValue,
     ) -> JsResult<Request> {
         let mut success = false;
-        // PERF(port): Zig routes through `vm.initRequestBodyValue` (HiveAllocator
-        // pool). The hook now exists (`VirtualMachine::init_request_body_value`),
-        // but `Request.body` is still `Box<BodyValue>` — switching the field to
-        // `HiveRef` is a cross-file refactor tracked alongside server/mod.rs.
-        let _ = global_this.bun_vm();
-        let body: Box<BodyValue> = Box::new(BodyValue::Null);
-        let body_ptr: *const BodyValue = &*body;
+        // SAFETY: bun_vm() yields the live per-thread VM singleton.
+        let body = body::hive_alloc(unsafe { &mut *global_this.bun_vm() }, BodyValue::Null);
         let mut req = Request {
             url: BunString::empty(),
             headers: None,
@@ -1174,24 +1169,27 @@ impl Request {
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         };
-        // Zig `defer { if (!success) ...; if (req.#body != body) ... }`
-        // PORT NOTE: reshaped for borrowck — scopeguard cannot capture &mut req while body
-        // of fn uses it. Cleanup is performed at each early-return site via the closure below.
-        // TODO(port): errdefer — verify all error paths invoke cleanup; Phase B may wrap
-        // `req` in a guard struct whose Drop runs finalize_without_deinit unless disarmed.
-        let cleanup = |req: &mut Request, body_ptr: *const BodyValue, success: bool| {
+        // Zig `defer { if (!success) { req.finalizeWithoutDeinit(); _ = req.#body.unref(); }
+        //               if (req.#body != body) { _ = body.unref(); } }`
+        // PORT NOTE: reshaped for borrowck — scopeguard cannot capture `&mut req` while the
+        // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
+        let cleanup = |req: &mut Request, body: NonNull<BodyHiveRef>, success: bool| {
             if !success {
                 req.finalize_without_deinit();
-                // _ = req.#body.unref() → Box drop when req drops
+                // SAFETY: `req.body` is the +1 ref this fn allocated above.
+                unsafe { (*req.body.as_ptr()).unref() };
             }
-            if !core::ptr::eq(&*req.body as *const BodyValue, body_ptr) {
-                // _ = body.unref() → original Box already moved into req or replaced; no-op.
+            if req.body != body {
+                // SAFETY: `body` was allocated with ref_count=1 at fn entry; if
+                // `req.body` was repointed (not currently done by any path here),
+                // release the original.
+                unsafe { (*body.as_ptr()).unref() };
             }
         };
 
         macro_rules! bail {
             ($e:expr) => {{
-                cleanup(&mut req, body_ptr, success);
+                cleanup(&mut req, body, success);
                 return $e;
             }};
         }

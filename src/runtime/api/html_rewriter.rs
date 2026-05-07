@@ -867,11 +867,14 @@ impl BufferOutputSink {
             });
         }
 
-        // sync error occurs
-        if !sink_error.is_empty() {
-            sink_error.ensure_still_alive();
-            sink_error.unprotect();
-            return Ok(sink_error);
+        // sync error occurs — read via `sink_error_ptr` (same provenance as
+        // the writers; see PORT NOTE above).
+        // SAFETY: sink_error_ptr points at the live `sink_error` stack local.
+        let captured = unsafe { *sink_error_ptr };
+        if !captured.is_empty() {
+            captured.ensure_still_alive();
+            captured.unprotect();
+            return Ok(captured);
         }
 
         response_js_value.ensure_still_alive();

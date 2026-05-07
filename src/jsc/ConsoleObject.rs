@@ -1516,7 +1516,7 @@ pub fn format2(
     Ok(())
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct CustomFormattedObject {
     function: JSValue,
     this: JSValue,
@@ -1929,7 +1929,7 @@ pub mod formatter {
     }
 
     /// Zig: `union(Tag)`. Only `CustomFormattedObject` carries a payload.
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum TagPayload {
         StringPossiblyFormatted,
         String,

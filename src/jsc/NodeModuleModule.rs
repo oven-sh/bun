@@ -4,7 +4,7 @@ use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,
     StringJsc, VirtualMachineRef as VirtualMachine,
 };
-use bun_string::{strings, String as BunString};
+use bun_string::{strings, OwnedString, String as BunString};
 
 // `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
 // Mirrored as a transparent `u8` because the schema enum is *open* in Zig
@@ -65,10 +65,10 @@ fn find_path(
         'found: {
             let mut iter = paths.iterator(global)?;
             while let Some(path) = iter.next()? {
-                let cur_path = BunString::from_js(path, global)?;
-                // `defer cur_path.deref()` — handled by Drop on bun_string::String
+                // Zig: `defer cur_path.deref()` — `OwnedString` releases the +1 from `fromJS`.
+                let cur_path = OwnedString::new(BunString::from_js(path, global)?);
 
-                if let Some(found) = find_path_inner(&request_bun_str, &cur_path, global) {
+                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global) {
                     break 'found Some(found);
                 }
             }
@@ -76,7 +76,7 @@ fn find_path(
             break 'found None;
         }
     } else {
-        find_path_inner(&request_bun_str, &BunString::static_(b""), global)
+        find_path_inner(request_bun_str, BunString::static_(b""), global)
     };
 
     if let Some(str) = found.as_mut() {
@@ -87,22 +87,20 @@ fn find_path(
 }
 
 fn find_path_inner(
-    request: &BunString,
-    cur_path: &BunString,
+    request: BunString,
+    cur_path: BunString,
     global: &JSGlobalObject,
 ) -> Option<BunString> {
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
     let mut errorable: ErrorableString = unsafe { core::mem::zeroed() };
-    // PORT NOTE: `bun_string::String::ref_()` only bumps the WTF refcount in
-    // place; clone via `clone_utf8` of the borrowed bytes to pass by value.
-    let request_dup = BunString::clone_utf8(request.to_utf8().slice());
-    let cur_path_dup = BunString::clone_utf8(cur_path.to_utf8().slice());
+    // `bun_string::String` is `Copy` — passing by value here mirrors Zig's
+    // by-value struct copy with no refcount change.
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         &mut errorable,
         global,
-        request_dup,
-        cur_path_dup,
+        request,
+        cur_path,
         None,
         false,
         true,
@@ -110,7 +108,7 @@ fn find_path_inner(
         Ok(()) => {}
         Err(JsError::Thrown) => {
             // TODO sus — Zig clears the pending exception here.
-            let _ = global.try_take_exception();
+            global.clear_exception();
             return None;
         }
         Err(_) => return None,

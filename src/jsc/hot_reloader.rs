@@ -898,12 +898,10 @@ where
                                 // SAFETY: hot-reload runs single-threaded on the JS thread;
                                 // no other live `&mut EntriesOption` for this key here.
                                 if let Some(existing) = rfs.entries.get(file_path) {
-                                    let existing =
-                                        existing as *mut Fs::EntriesOption as *mut core::ffi::c_void;
                                     self.put_tombstone(file_path, existing);
-                                    entries_option = Some(existing as *mut Fs::EntriesOption);
+                                    entries_option = Some(existing);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
-                                    entries_option = Some(existing as *mut Fs::EntriesOption);
+                                    entries_option = Some(existing);
                                 }
 
                                 if event.op.contains(WatchOp::WRITE) {
@@ -995,12 +993,10 @@ where
 
                         if affected_len > 0 && !IS_KQUEUE {
                             if let Some(existing) = rfs.entries.get(file_path) {
-                                let existing =
-                                    existing as *mut Fs::EntriesOption as *mut core::ffi::c_void;
                                 self.put_tombstone(file_path, existing);
-                                entries_option = Some(existing as *mut Fs::EntriesOption);
+                                entries_option = Some(existing);
                             } else if let Some(existing) = self.get_tombstone(file_path) {
-                                entries_option = Some(existing as *mut Fs::EntriesOption);
+                                entries_option = Some(existing);
                             }
                         }
 

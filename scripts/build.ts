@@ -180,6 +180,9 @@ async function main(): Promise<void> {
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.env),
+      // cargo's compile output (now part of the ninja graph via emitRust) can
+      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
+      maxBuffer: 1024 * 1024 * 1024,
     });
     if (ninja.error) {
       process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);

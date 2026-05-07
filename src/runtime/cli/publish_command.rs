@@ -60,6 +60,16 @@ fn json_get_string_cloned<'b>(
     }
 }
 
+/// `strings.indexOfAnyT(bun.OSPathChar, _, "/\\")` — `OSPathChar` is `u16` on
+/// Windows, `u8` elsewhere; the literal needs widening.
+#[inline]
+fn sep_chars() -> &'static [OSPathChar] {
+    #[cfg(windows)]
+    { const SEPS: [u16; 2] = [b'/' as u16, b'\\' as u16]; &SEPS }
+    #[cfg(not(windows))]
+    { b"/\\" }
+}
+
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};
 use crate::run_command::RunCommand as Run;

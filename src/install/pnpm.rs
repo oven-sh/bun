@@ -15,6 +15,7 @@ use crate::dependency::{self, Dependency};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
+use crate::lockfile_real::package::PackageListExt as _;
 use crate::npm::{self, Negatable};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};
@@ -178,7 +179,7 @@ impl From<MigratePnpmLockfileError> for bun_core::Error {
 
 #[inline]
 fn expr_tag_name(data: &ExprData) -> &'static str {
-    js_ast::ast::expr::Tag::from(data).into()
+    data.tag().into()
 }
 
 #[inline]

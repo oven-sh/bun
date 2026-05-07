@@ -399,8 +399,14 @@ pub static mut Bun__Node__CAStore: BunCAStore = BunCAStore::Bundled;
 pub static mut Bun__Node__UseSystemCA: bool = false;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
+// MOVE_DOWN(b0): `loadConfig` / `loadConfigPath` / `loadConfigWithCmdArgs` and
+// their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
+// call them without a tier-6 dependency. Re-export here so existing
+// `crate::cli::arguments::load_config*` callers are unaffected.
+pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+#[allow(dead_code)]
+fn _moved_to_bun_bunfig_arguments(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
     if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {

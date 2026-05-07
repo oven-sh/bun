@@ -170,15 +170,57 @@ impl DevServer {
         }
     }
 
-    /// Recover `&mut VirtualMachine` from the JSC_BORROW `vm` field.
-    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    /// `&mut VirtualMachine` via the global singleton — `self.vm: &'a` cannot be
-    /// cast to `&mut` (UB lint). The VM is process-unique on the JS thread, so
+    /// Recover `&VirtualMachine` from the JSC_BORROW `vm` field.
+    /// SAFETY: vm is valid for DevServer's entire lifetime (DevServer.zig:315).
+    #[inline]
+    pub(crate) fn vm(&self) -> &VirtualMachine {
+        unsafe { &*self.vm }
+    }
+
+    /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
+    /// `*const`. The VM is process-unique on the JS thread, so
     /// `VirtualMachine::get()` returns the same instance with write provenance.
+    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(self.vm, unsafe { &*VirtualMachine::get() }));
+        debug_assert!(::core::ptr::eq(self.vm, VirtualMachine::get()));
         unsafe { &mut *VirtualMachine::get() }
+    }
+
+    // ── transpiler accessors ───────────────────────────────────────────────
+    // The three transpilers are `MaybeUninit` until `init()` writes them via
+    // `Framework::init_transpiler`. Every access after `init()` returns goes
+    // through these helpers; the SAFETY contract is that `init()` is the only
+    // constructor and it always populates all three before returning `Ok`.
+    #[inline]
+    pub fn server_transpiler(&self) -> &Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.server_transpiler.assume_init_ref() }
+    }
+    #[inline]
+    pub fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.server_transpiler.assume_init_mut() }
+    }
+    #[inline]
+    pub fn client_transpiler(&self) -> &Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.client_transpiler.assume_init_ref() }
+    }
+    #[inline]
+    pub fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.client_transpiler.assume_init_mut() }
+    }
+    #[inline]
+    pub fn ssr_transpiler(&self) -> &Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.ssr_transpiler.assume_init_ref() }
+    }
+    #[inline]
+    pub fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+        // SAFETY: written in `init()` before any access.
+        unsafe { self.ssr_transpiler.assume_init_mut() }
     }
 }
 pub use crate::bake::dev_server::packed_map::PackedMap;

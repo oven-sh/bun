@@ -22,6 +22,12 @@ pub use bv2_impl::{
     JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
+// Flatten the impl-body module into this file's namespace so external callers
+// (`bun_runtime::cli::*`, `linker_context::*`) reference items as
+// `bundle_v2::Foo` rather than naming the implementation submodule.
+pub use bv2_impl::{
+    CrossChunkImport, DependenciesScanner, DependenciesScannerResult,
+};
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
 

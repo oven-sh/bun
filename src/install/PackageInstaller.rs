@@ -1176,16 +1176,16 @@ impl<'a> PackageInstaller<'a> {
 
         let mut installer = PackageInstall {
             progress: if self.manager.options.log_level.show_progress() {
-                Some(self.progress)
+                Some(self.progress as *const Progress as *mut Progress)
             } else {
                 None
             },
-            cache_dir: Dir::invalid(), // assigned below
+            cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
             destination_dir_subpath,
             destination_dir_subpath_buf: &mut self.destination_dir_subpath_buf,
             // PORT NOTE: zig `allocator: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
-            patch: patch_patch.map(|p| PackageInstall::Patch {
+            patch: patch_patch.map(|p| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
                 path: p,
             }),
@@ -1204,24 +1204,29 @@ impl<'a> PackageInstaller<'a> {
 
         match resolution.tag {
             resolution::Tag::Npm => {
-                installer.cache_dir_subpath = self.manager.cached_npm_package_folder_name(
+                installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
+                    self.manager,
                     pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
                     resolution.value.npm.version,
                     patch_contents_hash,
                 );
-                installer.cache_dir = self.manager.get_cache_directory();
+                installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Git => {
-                installer.cache_dir_subpath = self
-                    .manager
-                    .cached_git_folder_name(&resolution.value.git, patch_contents_hash);
-                installer.cache_dir = self.manager.get_cache_directory();
+                installer.cache_dir_subpath = package_manager::cached_git_folder_name(
+                    self.manager,
+                    &resolution.value.git,
+                    patch_contents_hash,
+                );
+                installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Github => {
-                installer.cache_dir_subpath = self
-                    .manager
-                    .cached_github_folder_name(&resolution.value.github, patch_contents_hash);
-                installer.cache_dir = self.manager.get_cache_directory();
+                installer.cache_dir_subpath = package_manager::cached_github_folder_name(
+                    self.manager,
+                    &resolution.value.github,
+                    patch_contents_hash,
+                );
+                installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Folder => {
                 let folder = resolution

@@ -32,8 +32,10 @@ impl Value {
     }
 }
 
-// TODO(port): Zig used `IdentityContext(PackageNameHash)` (key is already a hash) with load factor 80.
-// `bun_collections::HashMap` needs an identity hasher here; Phase B should wire one.
+// Zig used `IdentityContext(PackageNameHash)` (key is already a hash) with load factor 80.
+// `bun_collections::HashMap` aliases std HashMap, which has no `BuildHasher` for
+// `IdentityContext` yet — re-hashing the u64 is correctness-neutral, only a perf
+// difference. Matches the precedent in `npm.rs`.
 type ManifestHashMap = HashMap<PackageNameHash, Value>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,7 +67,7 @@ impl PackageManifestMap {
         name_hash: PackageNameHash,
         manifest: &npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
-        // TODO(port): `manifest.*` in Zig is a struct copy; verify `PackageManifest: Clone`.
+        // Zig: `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
         self.hash_map
             .insert(name_hash, Value::Manifest(manifest.clone()));
         Ok(())

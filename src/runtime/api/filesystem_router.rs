@@ -70,7 +70,7 @@ static RESOLVER_DIR_INFO_VTABLE: Router::DirInfoVTable = Router::DirInfoVTable {
         // `dir_info_ref` below; the resolver's BSSMap singleton outlives the walk.
         let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
         di.get_entries_const()
-            .map(|e| e as *const Fs::DirEntry as *const bun_sys::fs::DirEntry)
+            .map(|e| Fs::DirEntry::as_sys_seam(e) as *const bun_sys::fs::DirEntry)
     },
 };
 

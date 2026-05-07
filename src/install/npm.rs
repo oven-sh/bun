@@ -336,8 +336,8 @@ pub mod registry {
 
             // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
             // `[]const u8`; here `url` borrows the owned `registry_url` buffer
-            // for the duration of parsing. The final href is stored as
-            // `OwnedURL` (owned `Box<[u8]>`) on `Scope` — no `Box::leak`.
+            // for the duration of parsing. The final href is moved into
+            // `Scope.url: OwnedURL` (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";

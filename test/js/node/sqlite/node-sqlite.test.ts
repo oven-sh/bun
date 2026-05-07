@@ -991,6 +991,32 @@ describe("row-shape structure caching", () => {
     db.close();
   });
 
+  test("all() reads the column count after step() re-prepares the statement", () => {
+    // The count variant of the rename case: DROP COLUMN between
+    // prepare() and .all() makes the first sqlite3_step()
+    // transparently re-prepare `SELECT *` with *fewer* columns.
+    // A pre-step column_count() would be stale; ensureRowStructure()
+    // rebuilds m_columnOffsets with the fresh (smaller) count, so
+    // looping to the stale count would index that Vector OOB and
+    // putDirectOffset() into a bogus slot. all() must read the
+    // count per row, same as get() / iterate().
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a, b, c); INSERT INTO t VALUES (1,2,3),(4,5,6)");
+    const stmt = db.prepare("SELECT * FROM t ORDER BY a");
+    db.exec("ALTER TABLE t DROP COLUMN c");
+    expect(stmt.all()).toEqual([
+      { a: 1, b: 2 },
+      { a: 4, b: 5 },
+    ]);
+    // Growing the count between calls must also work.
+    db.exec("ALTER TABLE t ADD COLUMN d INTEGER DEFAULT 9");
+    expect(stmt.all()).toEqual([
+      { a: 1, b: 2, d: 9 },
+      { a: 4, b: 5, d: 9 },
+    ]);
+    db.close();
+  });
+
   test("index-string column names go through indexed storage", () => {
     // `SELECT 1 AS "0"` produces a column whose name is a canonical
     // array-index string. Structure::addPropertyTransition and

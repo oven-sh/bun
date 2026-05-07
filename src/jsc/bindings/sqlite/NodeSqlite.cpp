@@ -666,7 +666,12 @@ static JSValue rowToObjectCached(JSGlobalObject* globalObject, ThrowScope& scope
     }
     JSObject* row = JSC::constructEmptyObject(vm, structure);
     const auto& offsets = owner->columnOffsets();
-    for (int i = 0; i < numCols; ++i) {
+    // ensureRowStructure() reads sqlite3_column_count() afresh; all
+    // callers pass a post-step numCols, so these agree. The min()
+    // is a belt-and-suspenders bound so any future caller that
+    // passes a stale count can't walk past the offsets vector.
+    int limit = std::min(numCols, static_cast<int>(offsets.size()));
+    for (int i = 0; i < limit; ++i) {
         JSValue v = columnToJS(globalObject, scope, stmt, i, useBigInts);
         RETURN_IF_EXCEPTION(scope, {});
         int8_t off = offsets[static_cast<size_t>(i)];
@@ -2385,9 +2390,17 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
 
     JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
-    int numCols = sqlite3_column_count(self->statement());
     int r;
     while ((r = sqlite3_step(self->statement())) == SQLITE_ROW) {
+        // Read the column count AFTER step(): sqlite3_prepare_v2's
+        // transparent SQLITE_SCHEMA re-prepare (e.g. SELECT * after
+        // ALTER TABLE … DROP COLUMN) can change it on the first
+        // step, and ensureRowStructure() rebuilds m_columnOffsets
+        // with the fresh count — a stale numCols would then index
+        // that Vector out-of-bounds and putDirectOffset() into a
+        // bogus slot. get() and the iterator already capture
+        // post-step; this matches them.
+        int numCols = sqlite3_column_count(self->statement());
         JSValue row = self->returnArrays()
             ? rowToArray(globalObject, scope, self->statement(), numCols, self->useBigInts())
             : rowToObjectCached(globalObject, scope, self, numCols, self->useBigInts());
@@ -3221,11 +3234,14 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreAll, (JSGlobalObject * globalObject, CallFram
     sqlite3_stmt* s = stmt->statement();
     JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
-    int numCols = sqlite3_column_count(s);
     uint32_t idx = 0;
     int r;
     while ((r = sqlite3_step(s)) == SQLITE_ROW) {
         CHECK_UDF_EXCEPTION(scope, self->database());
+        // Capture post-step — a cached statement may be transparently
+        // re-prepared on SQLITE_SCHEMA, changing the column count
+        // (see jsStatementSyncAll for the full rationale).
+        int numCols = sqlite3_column_count(s);
         JSValue row = stmt->returnArrays()
             ? rowToArray(globalObject, scope, s, numCols, stmt->useBigInts())
             : rowToObjectCached(globalObject, scope, stmt, numCols, stmt->useBigInts());

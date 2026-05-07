@@ -137,10 +137,11 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_str::String]) -> JsR
 }
 
 // `bun_tcc_sys` is an un-gated workspace crate (B-2) and is now a direct dep of
-// `bun_runtime`, so import it unconditionally. The `feature = "tinycc"` flag
-// (wired by build.rs in Phase C) only governs *runtime availability* via the
-// early-return guards in the host-fns below — type resolution for
-// `TCC::{Config, ConfigErr, OutputFormat, State}` must succeed regardless.
+// `bun_runtime`, so import it unconditionally. `Environment::ENABLE_TINYCC`
+// (the build-options const, mirroring Zig's `Environment.enable_tinycc`) only
+// governs *runtime availability* via the early-return guards in the host-fns
+// below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
+// must succeed regardless.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);
@@ -1082,8 +1083,7 @@ impl FFI {
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        #[cfg(not(feature = "tinycc"))]
-        {
+        if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
@@ -1370,8 +1370,7 @@ impl FFI {
         interface: JSValue,
         js_callback: JSValue,
     ) -> JsResult<JSValue> {
-        #[cfg(not(feature = "tinycc"))]
-        {
+        if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi callback() is not available in this build (TinyCC is disabled)"
             )));
@@ -1542,8 +1541,7 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 
 impl FFI {
     pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
-        #[cfg(not(feature = "tinycc"))]
-        {
+        if !bun_core::Environment::ENABLE_TINYCC {
             let _ = global.throw(format_args!(
                 "bun:ffi dlopen() is not available in this build (TinyCC is disabled)"
             ));
@@ -1725,8 +1723,7 @@ impl FFI {
     }
 
     pub fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
-        #[cfg(not(feature = "tinycc"))]
-        {
+        if !bun_core::Environment::ENABLE_TINYCC {
             let _ = global.throw(format_args!(
                 "bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)"
             ));

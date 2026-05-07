@@ -288,6 +288,19 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub route: server_config::RouteDeclaration,
 }
 
+impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
+    fn drop(&mut self) {
+        // Spec server.zig:deinit — `if (this.plugins) |p| p.deref()`. The
+        // remaining owned fields (config, base_url, h3_alt_svc, dev_server,
+        // user_routes, all_closed_promise, on_clienterror) drop automatically.
+        if let Some(p) = self.plugins.take() {
+            // SAFETY: `plugins` carries the `Box::into_raw` provenance from
+            // `ServePlugins::init`; this releases the server's counted ref.
+            unsafe { ServePlugins::deref_(p.as_ptr()) };
+        }
+    }
+}
+
 // PORT NOTE: Zig `UserRoute.deinit()` only freed `self.route`; RouteDeclaration
 // drops automatically, so an explicit `impl Drop` would double-free.
 

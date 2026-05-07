@@ -1137,19 +1137,27 @@ impl VirtualMachine {
         // idempotent.
         if let Some(config) = self.cpu_profiler_config.take() {
             // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
-            let _ = crate::bun_cpu_profiler::stop_and_write_profile(
+            if let Err(e) = crate::bun_cpu_profiler::stop_and_write_profile(
                 unsafe { &mut *self.jsc_vm },
                 &config,
-            );
+            ) {
+                bun_core::Output::err(
+                    bun_core::Error::from(e),
+                    "Failed to write CPU profile",
+                    (),
+                );
+            }
         }
         // Write heap profile if profiling was enabled - do this after CPU
         // profile but before shutdown.
         if let Some(config) = self.heap_profiler_config.take() {
             // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
-            let _ = crate::bun_heap_profiler::generate_and_write_profile(
+            if let Err(e) = crate::bun_heap_profiler::generate_and_write_profile(
                 unsafe { &mut *self.jsc_vm },
                 config,
-            );
+            ) {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
         }
 
         let vm = self as *mut VirtualMachine;
@@ -1383,6 +1391,14 @@ pub struct RuntimeHooks {
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` — spec
+    /// VirtualMachine.zig:975. `WebWorker` lives in this crate but the
+    /// `web_worker` module is above `virtual_machine` in the dep graph
+    /// (forward use) AND the body re-enters `bun_runtime` for the worker
+    /// thread's `event_loop().auto_tick()`, so [`global_exit`] reaches it
+    /// through this slot. Prevents detached worker threads from racing the
+    /// freed resolver BSSMap singletons during `transpiler.deinit()`.
+    pub terminate_all_workers_and_wait: unsafe fn(timeout_ms: u64),
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
     /// VirtualMachine.zig:815. Same impl as `cron_clear_all_teardown` but
     /// the `.reload` mode preserves the next-fire schedule across the new
@@ -1611,9 +1627,14 @@ impl VirtualMachine {
         // place (mirrors Zig's `allocator.create` + struct-init). The
         // allocation lives for the thread lifetime (never freed on the main
         // thread; worker `destroy()` frees it explicitly).
-        // TODO(port): zeroing is not strictly init-safe for every field
-        // (e.g. `std::time::Instant`); Phase B should switch to
-        // `MaybeUninit` + `addr_of_mut!` per-field writes.
+        //
+        // PORT NOTE (validity): the zeroed bytes are NOT a valid
+        // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
+        // fn(...)` and (debug) `debug_thread_id: ThreadId` have no all-zero
+        // repr. We therefore never materialize `&mut VirtualMachine` until all
+        // such fields have been `ptr::write`n via `addr_of_mut!`; every other
+        // field is zero-valid (`Option`/`Vec`/integers/raw-ptr/atomic-mutex)
+        // so the zero-fill stands in for the Zig struct-init defaults.
         let layout = core::alloc::Layout::new::<VirtualMachine>();
         // SAFETY: `layout` is non-zero-sized; `alloc_zeroed` returns either a
         // valid aligned ptr or null (handled by `handle_alloc_error`).
@@ -1629,8 +1650,6 @@ impl VirtualMachine {
             // SAFETY: written once during main-thread init.
             unsafe { MAIN_THREAD_VM = Some(vm) };
         }
-        // SAFETY: `vm` is a fresh unique allocation on this thread.
-        let vm_ref = unsafe { &mut *vm };
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
         // stable storage and init in place. Spec VirtualMachine.zig:1238-1239:
@@ -1646,48 +1665,58 @@ impl VirtualMachine {
         );
         let console = Box::into_raw(console_box) as *mut crate::console_object::ConsoleObject;
 
-        vm_ref.global = core::ptr::null_mut();
-        vm_ref.console = console;
-        // SAFETY: `log` is a fresh leaked Box; outlives the VM.
-        vm_ref.log = NonNull::new(log);
-        vm_ref.main = b"";
-        vm_ref.main_hash = 0;
-        vm_ref.main_resolved_path = bun_string::String::empty();
-        vm_ref.hide_bun_stackframes = true;
-        vm_ref.is_main_thread = opts.is_main_thread;
-        vm_ref.on_unhandled_rejection = VirtualMachine::default_on_unhandled_rejection;
-        vm_ref.origin_timer = std::time::Instant::now();
-        vm_ref.origin_timestamp = get_origin_timestamp();
-        vm_ref.smol = opts.smol;
-        vm_ref.standalone_module_graph = opts.graph;
-        vm_ref.initial_script_execution_context_identifier = opts
+        let context_id = opts
             .context_id
             .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
-        #[cfg(debug_assertions)]
-        {
-            vm_ref.debug_thread_id = std::thread::current().id();
+
+        // SAFETY: `vm` is a fresh unique zeroed allocation on this thread. All
+        // writes go through `addr_of_mut!` so no `&mut VirtualMachine` is
+        // formed while non-zero-valid fields are still zero. Every target is
+        // either zero-valid (no Drop on the overwritten bytes) or written via
+        // `ptr::write` (no Drop of the uninit bytes).
+        unsafe {
+            use core::ptr::addr_of_mut;
+            addr_of_mut!((*vm).global).write(core::ptr::null_mut());
+            addr_of_mut!((*vm).console).write(console);
+            // `log` is a fresh leaked Box; outlives the VM.
+            addr_of_mut!((*vm).log).write(NonNull::new(log));
+            addr_of_mut!((*vm).main).write(b"");
+            addr_of_mut!((*vm).main_hash).write(0);
+            addr_of_mut!((*vm).main_resolved_path).write(bun_string::String::empty());
+            addr_of_mut!((*vm).hide_bun_stackframes).write(true);
+            addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
+            addr_of_mut!((*vm).on_unhandled_rejection)
+                .write(VirtualMachine::default_on_unhandled_rejection);
+            addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
+            addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            addr_of_mut!((*vm).smol).write(opts.smol);
+            addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
+            addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
+            #[cfg(debug_assertions)]
+            addr_of_mut!((*vm).debug_thread_id).write(std::thread::current().id());
+            // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
+            // canonical value so the invariant is explicit.
+            addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
+            addr_of_mut!((*vm).ref_strings_mutex).write(bun_threading::Mutex::new());
+
+            addr_of_mut!((*vm).transpiler_store)
+                .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
+
+            // Event-loop wiring (self-pointers).
+            addr_of_mut!((*vm).regular_event_loop).write(EventLoop::default());
+            let regular = addr_of_mut!((*vm).regular_event_loop);
+            (*regular).virtual_machine = NonNull::new(vm);
+            let _ = (*regular).tasks.ensure_unused_capacity(64);
+            addr_of_mut!((*vm).event_loop).write(regular);
+
+            // `source_mappings.map` is a sibling-field backref onto
+            // `saved_source_map_table` (spec VirtualMachine.zig:1273).
+            addr_of_mut!((*vm).saved_source_map_table)
+                .write(crate::saved_source_map::HashTable::default());
+            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
+            (*addr_of_mut!((*vm).source_mappings)).map =
+                addr_of_mut!((*vm).saved_source_map_table);
         }
-
-        vm_ref.transpiler_store =
-            crate::runtime_transpiler_store::RuntimeTranspilerStore::init();
-
-        // Event-loop wiring (self-pointers).
-        vm_ref.regular_event_loop = EventLoop::default();
-        vm_ref.regular_event_loop.virtual_machine = NonNull::new(vm);
-        let _ = vm_ref.regular_event_loop.tasks.ensure_unused_capacity(64);
-        vm_ref.event_loop = &mut vm_ref.regular_event_loop;
-
-        // `source_mappings.map` is a sibling-field backref onto
-        // `saved_source_map_table` (spec VirtualMachine.zig:1273).
-        vm_ref.saved_source_map_table = crate::saved_source_map::HashTable::default();
-        vm_ref.source_mappings = SavedSourceMap::default();
-        vm_ref.source_mappings.map = &mut vm_ref.saved_source_map_table;
-
-        // Capture inputs and end `vm_ref`'s last use BEFORE the hook/FFI
-        // below: both re-enter Rust via the thread-local raw `vm` stored
-        // above — a parent provenance of `vm_ref` — so any access during the
-        // call invalidates `vm_ref`'s Unique tag under Stacked Borrows.
-        let context_id = vm_ref.initial_script_execution_context_identifier;
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
         // PORT NOTE (init order): spec VirtualMachine.zig:1241/1259 builds

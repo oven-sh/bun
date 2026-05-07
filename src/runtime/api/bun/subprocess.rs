@@ -541,7 +541,7 @@ impl Subprocess<'_> {
                     // Mirror Zig: copy the pipe pointer out, reassign `out.*`, then
                     // mutate/deref the pipe. In Rust, move the Rc<PipeReader> out of
                     // `*out` first so reassigning doesn't drop it while still borrowed.
-                    let Readable::Pipe(mut pipe) =
+                    let Readable::Pipe(pipe) =
                         core::mem::replace(out, Readable::Ignore)
                     else {
                         unreachable!()
@@ -557,8 +557,8 @@ impl Subprocess<'_> {
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by mem::replace above).
-                    // PORT NOTE: Zig's `pipe.deref()` is `drop(pipe)` (Rc strong release).
-                    drop(pipe);
+                    // RefPtr has no Drop — release the ref this Readable held.
+                    pipe.deref();
                 }
             }
         }

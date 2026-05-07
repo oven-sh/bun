@@ -118,4 +118,33 @@ WebCore::HTTPHeaderIdentifiers& JSVMClientData::httpHeaderIdentifiers()
     return *m_httpHeaderIdentifiers;
 }
 
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(
+    JSC::VM& vm,
+    JSVMClientData& clientData,
+    std::unique_ptr<JSC::GCClient::IsoSubspace>& clientSlot,
+    std::unique_ptr<JSC::IsoSubspace>& serverSlot,
+    const JSC::HeapCellType& heapCellType,
+    size_t cellSize,
+    uint8_t numberOfLowerTierPreciseCells,
+    bool hasOutputConstraints)
+{
+    auto& heapData = clientData.heapData();
+    Locker locker { heapData.lock() };
+
+    JSC::IsoSubspace* space = serverSlot.get();
+    if (!space) {
+        // Matches ISO_SUBSPACE_INIT as used by the former inline body: every
+        // subspace created through subspaceForImpl<T> was already named "T"
+        // because the macro stringified the template parameter, not the type.
+        serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, vm.heap, heapCellType, cellSize, numberOfLowerTierPreciseCells);
+        space = serverSlot.get();
+
+        if (hasOutputConstraints)
+            heapData.outputConstraintSpaces().append(space);
+    }
+
+    clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space);
+    return clientSlot.get();
+}
+
 } // namespace WebCore

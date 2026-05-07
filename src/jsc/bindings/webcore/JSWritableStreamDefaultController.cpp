@@ -170,10 +170,8 @@ JSC::GCClient::IsoSubspace* JSWritableStreamDefaultController::subspaceForImpl(J
 {
     return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForWritableStreamDefaultController; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForWritableStreamDefaultController; });
 }
 
 }

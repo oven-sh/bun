@@ -93,10 +93,8 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
         return nullptr;
     return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSVerify.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSVerify = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSVerify; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSVerify; });
 }
 
 // JSVerifyPrototype implementation

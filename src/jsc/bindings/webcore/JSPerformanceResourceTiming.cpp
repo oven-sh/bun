@@ -521,7 +521,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceResourceTimingPrototypeFunction_toJSON, (J
 
 JSC::GCClient::IsoSubspace* JSPerformanceResourceTiming::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceResourceTiming, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceResourceTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceResourceTiming = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForPerformanceResourceTiming.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceResourceTiming = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceResourceTiming, UseCustomHeapCellType::No>(vm, [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForPerformanceResourceTiming; }, [](auto& spaces) -> auto& { return spaces.m_subspaceForPerformanceResourceTiming; });
 }
 
 void JSPerformanceResourceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

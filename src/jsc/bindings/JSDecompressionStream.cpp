@@ -92,10 +92,8 @@ JSC::GCClient::IsoSubspace* JSDecompressionStream::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSDecompressionStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDecompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDecompressionStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDecompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDecompressionStream = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForDecompressionStream; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForDecompressionStream; });
 }
 
 JSDecompressionStream::JSDecompressionStream(Structure* structure, JSDOMGlobalObject& globalObject)

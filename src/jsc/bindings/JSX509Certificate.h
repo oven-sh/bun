@@ -120,10 +120,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSX509Certificate, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSX509Certificate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSX509Certificate = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSX509Certificate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSX509Certificate = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSX509Certificate; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSX509Certificate; });
     }
 
     static JSValue computeSubject(ncrypto::X509View view, JSGlobalObject*, bool legacy);

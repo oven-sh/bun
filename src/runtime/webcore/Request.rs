@@ -769,7 +769,7 @@ impl Request {
                 )
                 .map_err(js_err)?;
 
-            match &mut *self.body {
+            match self.body_value_mut() {
                 BodyValue::Blob(blob) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
@@ -778,7 +778,7 @@ impl Request {
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    let size = self.body.size();
+                    let size = self.body_value().size();
                     if size == 0 {
                         // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
                         // Phase B should pass a real global or make initEmpty not need one.
@@ -837,7 +837,7 @@ impl Request {
         const MIME_OTHER_VALUE: &[u8] = b"application/octet-stream";
         const MIME_TEXT_VALUE: &[u8] = b"text/plain;charset=utf-8";
 
-        match &*self.body {
+        match self.body_value() {
             BodyValue::Blob(blob) => {
                 // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
                 let ct = unsafe { &*blob.content_type };

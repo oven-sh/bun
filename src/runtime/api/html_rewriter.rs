@@ -456,16 +456,11 @@ impl HTMLRewriterLoader {
             }
             Writable::Pending(pending) => {
                 // PORT NOTE: Zig calls `pending.applyBackpressure(allocator,
-                // &this.output, pending, bytes)` — that fn does not exist in
+                // &this.output, pending, bytes)` — that decl does not exist in
                 // the Zig source (dead code; HTMLRewriterLoader.sink() is never
-                // referenced so Zig never compiles this arm). The intent,
-                // given the FIFO check at the top of this fn, is to buffer
-                // `bytes` locally and mark the pending write as having
-                // consumed them.
-                if self.backpressure.write(bytes).is_err() {
-                    self.fail(bun_sys::Error::oom());
-                    return;
-                }
+                // referenced so Zig never compiles this arm). Mirror the call
+                // shape exactly; do NOT also push into `self.backpressure`
+                // here — that would double-buffer relative to the spec.
                 // SAFETY: `pending` points at a heap WritablePending owned by
                 // the destination sink; valid for the duration of this call.
                 unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
@@ -478,7 +473,12 @@ impl HTMLRewriterLoader {
                     None,
                 );
             }
-            Writable::Done => {}
+            Writable::Done => {
+                // PORT NOTE: Zig switch omits `.done` (dead code never
+                // compiled there); route it through `done()` like the other
+                // *AndDone arms rather than silently swallowing it.
+                self.done();
+            }
         }
     }
 

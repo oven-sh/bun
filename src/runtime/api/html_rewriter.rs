@@ -844,7 +844,7 @@ impl BufferOutputSink {
         // derived from `*sink` is live across that callback.
         let buffering_result: Result<(), bun_core::Error> = unsafe {
             let bufferer: *mut webcore::body::ValueBufferer =
-                match (*sink).body_value_bufferer { Some(ref mut b) => b, None => core::hint::unreachable_unchecked() };
+                (*sink).body_value_bufferer.as_mut().unwrap();
             (*bufferer).run(value, owned_readable_stream)
         };
         if let Err(buffering_error) = buffering_result {

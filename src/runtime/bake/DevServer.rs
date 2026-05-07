@@ -2418,9 +2418,17 @@ impl DevServer {
             styles: match framework_bundle.cached_css_file_array.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    // SAFETY: see PORT NOTE on `self_ptr` above; `generate_css_js_array`
-                    // reads `client_graph`/`router` and writes nothing in `route_bundles`.
-                    let js = unsafe { &mut *self_ptr }.generate_css_js_array(route_bundle)?;
+                    // SAFETY: `generate_css_js_array` reads `client_graph` /
+                    // `router` and the `&RouteBundle`; it never reallocates
+                    // `route_bundles`. The `&mut *this` whole-struct reborrow
+                    // here is the *only* one in this fn — no other `&`/`&mut`
+                    // derived from `*this` is live across it (`router_type` /
+                    // `keys` / `route` were all consumed in earlier arms).
+                    let js = unsafe {
+                        (*this).generate_css_js_array(
+                            &(*this).route_bundles[route_bundle_index.get() as usize],
+                        )
+                    }?;
                     framework_bundle.cached_css_file_array = jsc::StrongOptional::create(js, global);
                     break 'arr js;
                 }
@@ -2501,12 +2509,18 @@ impl DevServer {
             .get()
             .expect("did not initialize server code");
 
-        let args = self.compute_arguments_for_framework_request(
-            route_bundle_index,
-            framework_bundle,
-            params_js_value,
-            true,
-        )?;
+        // SAFETY: `self` is live; `framework_bundle` points into
+        // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
+        // PORT NOTE on `compute_arguments_for_framework_request`.
+        let args = unsafe {
+            Self::compute_arguments_for_framework_request(
+                self,
+                route_bundle_index,
+                framework_bundle,
+                params_js_value,
+                true,
+            )
+        }?;
 
         self.server.as_ref().unwrap().on_saved_request(
             req,
@@ -6643,15 +6657,18 @@ fn new_route_params_for_bundle_promise(
     }
     let params_js_value = params.to_js(global);
 
-    // SAFETY: `compute_arguments_for_framework_request` does not mutate
-    // `route_bundles` (only reads `router`/graphs and writes JSC-side caches
-    // on `framework_bundle`, which we already hold by `&mut`).
-    let args = unsafe { &mut *dev_ptr }.compute_arguments_for_framework_request(
-        route_bundle_index,
-        framework_bundle,
-        params_js_value,
-        false,
-    )?;
+    // SAFETY: `dev_ptr` is live; `framework_bundle` points into
+    // `(*dev_ptr).route_bundles[route_bundle_index].data`. Raw-ptr receiver —
+    // see PORT NOTE on `compute_arguments_for_framework_request`.
+    let args = unsafe {
+        DevServer::compute_arguments_for_framework_request(
+            dev_ptr,
+            route_bundle_index,
+            framework_bundle,
+            params_js_value,
+            false,
+        )
+    }?;
 
     create_dev_server_framework_request_args_object(
         global,

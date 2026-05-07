@@ -1953,18 +1953,18 @@ pub fn parse_into_binary_lockfile(
 
             let mut res = match Resolution::from_text_lockfile(res_str, &mut string_buf) {
                 Ok(r) => r,
-                Err(e) if e == bun_core::err!("OutOfMemory") => return Err(ParseError::OutOfMemory),
-                Err(e) if e == bun_core::err!("UnexpectedResolution") => {
+                Err(crate::resolution::FromTextLockfileError::OutOfMemory) => {
+                    return Err(ParseError::OutOfMemory);
+                }
+                Err(crate::resolution::FromTextLockfileError::UnexpectedResolution) => {
                     log.add_error_fmt(source, res_info.loc, format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)))?;
                     return Err(ParseError::UnexpectedResolution);
                 }
-                Err(e) if e == bun_core::err!("InvalidSemver") => {
+                Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
                     log.add_error_fmt(source, res_info.loc, format_args!("Invalid package version: {}", bstr::BStr::new(res_str)))?;
                     return Err(ParseError::InvalidSemver);
                 }
-                Err(_) => unreachable!(),
             };
-            // TODO(port): Resolution::from_text_lockfile error type — switch to local enum match in Phase B
 
             if res.tag == ResolutionTag::Npm {
                 if i >= pkg_info.len() {

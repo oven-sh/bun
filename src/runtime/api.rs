@@ -33,110 +33,13 @@ pub use crate::node;
 pub use crate::crypto;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Zig: `pub const BuildMessage = @import("../jsc/BuildMessage.zig").BuildMessage;`
-// The full implementations are JSC-codegen-backed and live in `bun_jsc`
-// (BuildMessage.rs / ResolveMessage.rs). That crate is broken under concurrent
-// B-2 work, and re-exporting from it here would also create a dependency cycle
-// (bun_jsc → bun_runtime → bun_jsc). Until the cycle is resolved, define the
-// minimal struct shape locally so dependents (`bun_jsc`, `bun_js_parser_jsc`)
-// can name the type.
-// TODO(b2-blocked): bun_jsc::build_message — reconcile defs once bun_jsc is green.
-#[repr(C)]
-pub struct BuildMessage {
-    pub msg: bun_logger::Msg,
-    pub logged: bool,
-}
-impl BuildMessage {
-    /// Spec `BuildMessage.create` (BuildMessage.zig:46) — clone `msg` into a
-    /// fresh heap-allocated `BuildMessage` and wrap it in its JSC cell.
-    /// `JsClass::to_js` (macro-emitted below) boxes `self` and calls the
-    /// C++-side `BuildMessage__create(global, ptr)`; the resulting `m_ctx` is
-    /// freed by `BuildMessageClass__finalize` on lazy sweep.
-    pub fn create(
-        global: &bun_jsc::JSGlobalObject,
-        msg: bun_logger::Msg,
-    ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        use bun_jsc::JsClass;
-        let build_error = BuildMessage {
-            msg: msg.clone()?,
-            logged: false,
-        };
-        Ok(build_error.to_js(global))
-    }
-}
-#[repr(C)]
-pub struct ResolveMessage {
-    pub msg: bun_logger::Msg,
-    pub referrer: Option<bun_logger::fs::Path>,
-    pub logged: bool,
-}
-
-// `jsc.Codegen.JS{Build,Resolve}Message` — hand-expansion of what the
-// `#[bun_jsc::JsClass]` derive would emit. Symbol names match
-// generate-classes.ts (`${typeName}__fromJS` / `__fromJSDirect` /
-// `__create` / `__getConstructor`). Kept local (rather than re-exported from
-// `bun_jsc`) to avoid the bun_jsc → bun_runtime → bun_jsc dep cycle noted
-// above; the C++ side links by symbol name regardless of which crate declares
-// the extern.
-macro_rules! impl_js_class_codegen {
-    ($ty:ident) => {
-        const _: () = {
-            use bun_jsc::{JSGlobalObject, JSValue};
-            // `*mut $ty` is opaque to C++ (linked by symbol name only); the
-            // pointee's Rust layout is irrelevant to the FFI boundary, but
-            // `bun_logger::Msg` lacks `#[repr(C)]` so rustc lints anyway.
-            #[allow(improper_ctypes)]
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            unsafe extern "sysv64" {
-                #[link_name = concat!(stringify!($ty), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut $ty;
-                #[link_name = concat!(stringify!($ty), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut $ty;
-                #[link_name = concat!(stringify!($ty), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
-                #[link_name = concat!(stringify!($ty), "__getConstructor")]
-                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-            }
-            #[allow(improper_ctypes)]
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            unsafe extern "C" {
-                #[link_name = concat!(stringify!($ty), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut $ty;
-                #[link_name = concat!(stringify!($ty), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut $ty;
-                #[link_name = concat!(stringify!($ty), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
-                #[link_name = concat!(stringify!($ty), "__getConstructor")]
-                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-            }
-
-            impl bun_jsc::JsClass for $ty {
-                fn from_js(value: JSValue) -> Option<*mut Self> {
-                    // SAFETY: pure FFI downcast; returns null on type mismatch.
-                    let p = unsafe { __from_js(value) };
-                    if p.is_null() { None } else { Some(p) }
-                }
-                fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-                    // SAFETY: exact-structure FFI downcast; null on miss.
-                    let p = unsafe { __from_js_direct(value) };
-                    if p.is_null() { None } else { Some(p) }
-                }
-                fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                    let ptr = Box::into_raw(Box::new(self));
-                    // SAFETY: `global` is live; ownership of `ptr` transfers to the
-                    // C++ wrapper (freed via `${typeName}Class__finalize`).
-                    unsafe { __create(global.as_ptr(), ptr) }
-                }
-                fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                    // SAFETY: `global` is live; codegen extern returns the cached ctor.
-                    unsafe { __get_constructor(global.as_ptr()) }
-                }
-            }
-        };
-    };
-}
-impl_js_class_codegen!(BuildMessage);
-impl_js_class_codegen!(ResolveMessage);
+// Zig: `pub const {Build,Resolve}Message = @import("../jsc/{Build,Resolve}Message.zig").…;`
+// Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
+// the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
+// depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
+// Exactly one Rust type backs each C++ `m_ctx` pointer.
+pub use bun_jsc::BuildMessage;
+pub use bun_jsc::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/cron_parser.rs"]
@@ -197,9 +100,6 @@ pub mod standalone_graph_jsc;
 #[path = "api/bun/process.rs"]
 pub mod bun_process;
 
-// ── JSC-heavy siblings: Phase-A drafts preserved on disk, body-gated. ──
-// TODO(b2-blocked): bun_jsc method surface — un-gate bodies once bun_jsc dep is green.
-
 // posix_spawn(2) wrappers + Stdio enum. `bun_sys::posix` surface is now wide
 // enough for the `bun_spawn` half; libc-backed `PosixSpawn*` wrappers are
 // cfg-gated to macOS inside the file. `stdio` submod stays re-gated within.
@@ -207,28 +107,23 @@ pub mod bun_process;
 pub mod bun_spawn;
 
 // JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
-
 #[path = "api/bun/subprocess.rs"]
 pub mod bun_subprocess;
 
 // Bun.spawn() / Bun.spawnSync() host fns. Entirely JSC (~75 jsc refs).
-
 #[path = "api/bun/js_bun_spawn_bindings.rs"]
 pub mod js_bun_spawn_bindings;
 
 // Bun.Terminal — PTY/ConPTY. JsRef lifecycle + BufferedReader/StreamingWriter
 // generic owner wiring (~120 jsc refs).
-
 #[path = "api/bun/Terminal.rs"]
 pub mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
-
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
 // SSL siblings — gated (boringssl_sys bindgen surface).
-
 #[path = "api/bun/SSLContextCache.rs"]
 pub mod bun_ssl_context_cache;
 
@@ -254,47 +149,17 @@ pub mod bun {
     pub use process::StdioKind as SubprocessStdioKind;
 
     pub mod terminal {
-        use core::ffi::{c_int, c_void};
         /// Re-export the full struct now that `bun_terminal_body` is un-gated;
         /// downstream callers (`Subprocess.terminal`, spawn bindings) hold the
         /// concrete type directly — no opaque-ZST cast layer.
         pub use crate::api::bun_terminal_body::Terminal;
-        /// `Terminal.PtyResult` — pure FFI handles, no JSC.
-        pub struct PtyResult {
-            pub master_fd: bun_sys::Fd,
-            pub slave_fd: bun_sys::Fd,
-            pub read_fd: bun_sys::Fd,
-            pub write_fd: bun_sys::Fd,
-            #[cfg(windows)]
-            pub hpcon: *mut c_void,
-        }
-        /// Mirrors libc `winsize` / Win32 `COORD`-ish layout used by ioctl(TIOCSWINSZ).
-        #[repr(C)]
-        #[derive(Clone, Copy, Default)]
-        pub struct Winsize {
-            pub ws_row: u16,
-            pub ws_col: u16,
-            pub ws_xpixel: u16,
-            pub ws_ypixel: u16,
-        }
-        #[cfg(unix)]
-        pub type OpenPtyFn = unsafe extern "C" fn(
-            *mut c_int,
-            *mut c_int,
-            *mut core::ffi::c_char,
-            *const c_void,
-            *const Winsize,
-        ) -> c_int;
-        #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-        pub enum CreatePtyError {
-            #[error("openpty failed")]
-            OpenPty(bun_sys::Error),
-            #[error("dup failed")]
-            Dup(bun_sys::Error),
-            #[cfg(windows)]
-            #[error("CreatePseudoConsole failed")]
-            CreatePseudoConsole(bun_sys::Error),
-        }
+        // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
+        // pure FFI handles with no JSC. Canonical defs live in
+        // `api/bun/Terminal.rs`; re-exported here so callers can name them via
+        // `api::Terminal::*` exactly as in the Zig (`Terminal.PtyResult` etc.).
+        pub use crate::api::bun_terminal_body::{
+            CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
+        };
     }
     pub use terminal::Terminal;
 
@@ -325,7 +190,6 @@ pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::js_bundler::BuildArtifact;
 pub use crate::api::js_bundler::JSBundler;
 pub use crate::api::js_bundler::OutputKind;
-impl_js_class_codegen!(BuildArtifact);
 pub use crate::api::html_rewriter as HTMLRewriter;
 pub use crate::api::filesystem_router::FileSystemRouter;
 pub use crate::api::filesystem_router::MatchedRoute;

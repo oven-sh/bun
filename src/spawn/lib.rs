@@ -17,7 +17,7 @@
 
 #![allow(dead_code)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_sys::Fd;

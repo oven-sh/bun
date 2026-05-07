@@ -399,13 +399,12 @@ fn update_package_json_and_install_with_manager_with_updates(
     // Concurrent network requests are faster than doing one and then waiting until the next batch
     let mut new_package_json_source: Vec<u8> =
         package_json_writer.ctx.written_without_trailing_zero().to_vec();
-    current_package_json.source.contents = Cow::Borrowed(
-        // SAFETY: `new_package_json_source` outlives `current_package_json` (the cache
-        // entry's `contents` is overwritten again below if re-serialised, and is
-        // never read past this function); Zig stored a duped slice with the same
-        // lifetime relationship.
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&new_package_json_source[..]) },
-    );
+    // Zig: `manager.allocator.dupe(u8, …)` — heap-owned, never freed (process-lifetime).
+    // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, and
+    // `new_package_json_source` is reassigned below on the add/update/link path, so we
+    // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
+    // alloc+copy vs Zig's single dupe — profile in Phase B.
+    current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =

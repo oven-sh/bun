@@ -70,6 +70,9 @@ pub use __phase_a_body::{
     BrowserMapPathKind, Dirname, RootPathPair,
 };
 pub use __phase_a_body::options;
+pub use __phase_a_body::StandaloneModuleGraph;
+/// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
+pub use ::bun_install_types::resolver_hooks as install_types;
 
 /// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in

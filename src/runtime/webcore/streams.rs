@@ -546,7 +546,7 @@ impl Writable {
         // SAFETY: promise is a valid GC-rooted JSPromise (protected by caller)
         let promise = unsafe { &mut *promise };
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _guard = jsc::Protected::adopt(promise.to_js());
+        let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         match result {
             Writable::Err(err) => {
                 let _ = promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)));

@@ -1104,8 +1104,13 @@ impl<C: SourceContext> NewSource<C> {
         self.this_jsvalue = call_frame.this();
         let mut list = self.drain();
         if list.len > 0 {
-            return jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array)
-                .to_js(global_this);
+            // Ownership of the buffer transfers to JSC: `to_js` installs
+            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
+            // `BabyList::Drop` so the same allocation isn't freed twice (once
+            // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
+            let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
+            core::mem::forget(list);
+            return ab.to_js(global_this);
         }
         Ok(JSValue::UNDEFINED)
     }

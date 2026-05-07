@@ -1147,12 +1147,13 @@ macro_rules! impl_static_hasher {
             #[inline]
             fn final_(&mut self, out: &mut Self::Digest) { <$ty>::r#final(self, out) }
             #[inline]
-            fn hash(input: &[u8], out: &mut Self::Digest, _engine: Option<*mut boring_ssl::ENGINE>) {
-                // PORT NOTE: `bun_sha_hmac::sha::evp::*::hash` takes
-                // `Option<&mut ffi::ENGINE>` where `ffi::ENGINE` is a
-                // crate-private opaque; pass `None` until the engine plumbing
-                // is unified on `bun_boringssl_sys::ENGINE`.
-                <$ty>::hash(input, out, None)
+            fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<*mut boring_ssl::ENGINE>) {
+                // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
+                // so the VM-owned engine pointer threads through without a cast.
+                // SAFETY: `engine` is the live, process-lifetime BoringSSL ENGINE
+                // owned by `RareData` (or `None` in the no-engine arm); `as_mut()`
+                // yields the `Option<&mut ENGINE>` shape `<$ty>::hash` expects.
+                <$ty>::hash(input, out, engine.and_then(|p| unsafe { p.as_mut() }))
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {

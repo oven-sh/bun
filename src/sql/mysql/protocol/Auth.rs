@@ -74,16 +74,16 @@ pub mod caching_sha2_password {
 
         // SHA256(password)
         // TODO(port): see note in mysql_native_password::scramble re: ENGINE*.
-        SHA256::hash(password, &mut digest1, None);
+        SHA256::hash(password, &mut digest1, core::ptr::null_mut());
 
         // SHA256(SHA256(password))
-        SHA256::hash(&digest1, &mut digest2, None);
+        SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut());
 
         // SHA256(SHA256(SHA256(password)) + nonce)
         let mut combined = vec![0u8; nonce.len() + digest2.len()];
         combined[0..nonce.len()].copy_from_slice(nonce);
         combined[nonce.len()..].copy_from_slice(&digest2);
-        SHA256::hash(&combined, &mut digest3, None);
+        SHA256::hash(&combined, &mut digest3, core::ptr::null_mut());
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit
 
         // XOR(SHA256(password), digest3)

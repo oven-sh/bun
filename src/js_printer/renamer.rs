@@ -1,4 +1,5 @@
 use core::cmp::Ordering;
+use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -38,13 +39,22 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
 ];
 
 pub struct NoOpRenamer<'a> {
-    pub symbols: symbol::Map,
+    // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
+    // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
+    // frees it). The Rust `symbol::Map` is `Vec<Vec<Symbol>>` (owning), so the
+    // bundler's `renameSymbolsInChunk` builds a *borrowed* view over
+    // `LinkerGraph.symbols` and the renamer must not free it on drop —
+    // otherwise dropping `Chunk.renamer` double-frees the graph's symbol
+    // storage and the subsequent `BundleV2` drop reads `Vec<Symbol>` headers
+    // out of poisoned memory (ASAN use-after-poison). `ManuallyDrop` matches
+    // the Zig ownership: the renamer never owns `symbols`.
+    pub symbols: ManuallyDrop<symbol::Map>,
     pub source: &'a logger::Source,
 }
 
 impl<'a> NoOpRenamer<'a> {
     pub fn init(symbols: symbol::Map, source: &'a logger::Source) -> NoOpRenamer<'a> {
-        NoOpRenamer { symbols, source }
+        NoOpRenamer { symbols: ManuallyDrop::new(symbols), source }
     }
 
     #[inline]
@@ -201,7 +211,9 @@ pub struct MinifyRenamer {
     pub reserved_names: StringHashMap<u32>,
     pub slots: SymbolSlotList,
     pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    pub symbols: symbol::Map,
+    // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
+    // `MinifyRenamer.deinit` (renamer.zig:156) never frees `symbols`.
+    pub symbols: ManuallyDrop<symbol::Map>,
     /// Backs `TinyString::String` slot-name allocations (Zig: `this.allocator`).
     pub arena: Bump,
 }
@@ -226,7 +238,7 @@ impl MinifyRenamer {
         }
 
         Ok(Box::new(MinifyRenamer {
-            symbols,
+            symbols: ManuallyDrop::new(symbols),
             reserved_names,
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
@@ -605,7 +617,9 @@ impl SlotAndCount {
 }
 
 pub struct NumberRenamer {
-    pub symbols: symbol::Map,
+    // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
+    // `NumberRenamer.deinit` (renamer.zig:462) never frees `symbols`.
+    pub symbols: ManuallyDrop<symbol::Map>,
     pub names: Box<[Vec<NameStr>]>,
     // PERF(port): Zig had separate allocator/temp_allocator; global mimalloc now
     pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
@@ -682,7 +696,7 @@ impl NumberRenamer {
         // PORT NOTE: Zig @memset(sliceAsBytes(names), 0) — Vec::default() is already zeroed.
 
         Ok(Box::new(NumberRenamer {
-            symbols,
+            symbols: ManuallyDrop::new(symbols),
             names,
             number_scope_pool,
             root,

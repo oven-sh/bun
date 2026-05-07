@@ -665,7 +665,7 @@ impl ZigString {
     pub fn deinit_global(&self) {
         // SAFETY: slice() returns memory owned by global mimalloc when is_globally_allocated.
         // `mi_free` is size-agnostic (mimalloc tracks allocation metadata).
-        unsafe { bun_alloc::mimalloc::mi_free(self.slice().as_ptr() as *mut c_void) };
+        unsafe { bun_alloc::mimalloc::mi_free(self.slice().as_ptr().cast_mut().cast::<c_void>()) };
     }
 
     #[inline]
@@ -797,7 +797,7 @@ impl ZigString {
         self.assert_global();
         if self.len > BunString::max_length() {
             // SAFETY: byte_slice() memory was globally allocated by mimalloc.
-            unsafe { bun_alloc::mimalloc::mi_free(self.byte_slice().as_ptr() as *mut c_void) };
+            unsafe { bun_alloc::mimalloc::mi_free(self.byte_slice().as_ptr().cast_mut().cast::<c_void>()) };
             // TODO(port): propagate?
             let _ = global
                 .err(
@@ -828,7 +828,7 @@ impl ZigString {
     ) -> JSValue {
         if self.len > BunString::max_length() {
             // SAFETY: invoking caller-provided destructor on the buffer.
-            unsafe { callback(ctx, self.byte_slice().as_ptr() as *mut c_void, self.len) };
+            unsafe { callback(ctx, self.byte_slice().as_ptr().cast_mut().cast::<c_void>(), self.len) };
             // TODO(port): propagate?
             let _ = global
                 .err(
@@ -1117,7 +1117,7 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
 pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { slice::from_raw_parts(ptr, len) };
-    let untagged = ZigString::init(s).slice().as_ptr() as *mut c_void;
+    let untagged = ZigString::init(s).slice().as_ptr().cast_mut().cast::<c_void>();
     #[cfg(debug_assertions)]
     // SAFETY: read-only heap-region probe.
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });

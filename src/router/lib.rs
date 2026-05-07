@@ -2123,7 +2123,7 @@ mod tests {
             // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo`
             // produced by `dir_info_ref` below; the resolver guarantees it
             // outlives the router walk.
-            let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
+            let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
             di.get_entries_const().map(|e| e as *const Fs::DirEntry)
         },
     };

@@ -605,7 +605,7 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     let Ok(()) = response.encode(&mut encoder) else { return 0 };
     let boxed = output.into_boxed_slice();
     let len = boxed.len();
-    let ptr = Box::into_raw(boxed) as *mut u8;
+    let ptr = Box::into_raw(boxed).cast::<u8>();
     // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
     // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
     unsafe {
@@ -690,7 +690,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
             },
             // SAFETY: OUTPUT_FILES[0] was written on both branches above; len=1 so the
             // whole array is init, and casting *const MaybeUninit<T> → *const T is sound.
-            files: core::slice::from_raw_parts(OUTPUT_FILES.as_ptr() as *const api::OutputFile, 1),
+            files: core::slice::from_raw_parts(OUTPUT_FILES.as_ptr().cast::<api::OutputFile>(), 1),
             errors: log.to_api(&arena).expect("unreachable").msgs,
         });
 
@@ -708,7 +708,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
 
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed) as *mut u8;
+        let ptr = Box::into_raw(boxed).cast::<u8>();
         // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
         // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
         core::mem::transmute::<[u32; 2], u64>([
@@ -788,7 +788,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         scan_result.encode(&mut encoder).expect("unreachable");
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed) as *mut u8;
+        let ptr = Box::into_raw(boxed).cast::<u8>();
         // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
         // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
         unsafe {
@@ -808,7 +808,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         scan_result.encode(&mut encoder).expect("unreachable");
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed) as *mut u8;
+        let ptr = Box::into_raw(boxed).cast::<u8>();
         // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
         // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
         unsafe {

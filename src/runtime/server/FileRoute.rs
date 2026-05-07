@@ -62,14 +62,14 @@ impl<'a> Default for InitOptions<'a> {
 unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
     // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
     // scratch state on the C++ side, hence the const→mut cast.
-    unsafe { (*(owner as *mut FetchHeaders)).count(header_count, buf_len) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).count(header_count, buf_len) }
 }
 unsafe fn fh_fast_has(owner: *const (), name: bun_http::headers::HeaderName) -> bool {
     // SAFETY: see `fh_count`. `bun_http::headers::HeaderName` re-exports
     // `bun_http_types::Method::HeaderName`, which is `#[repr(u8)]` with
     // discriminants identical to `bun_jsc::HTTPHeaderName` (both mirror
     // WebCore's `HTTPHeaderNames.in`); `fast_has_` takes the raw `u8`.
-    unsafe { (*(owner as *mut FetchHeaders)).fast_has_(name as u8) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).fast_has_(name as u8) }
 }
 unsafe fn fh_copy_to(
     owner: *const (),
@@ -79,7 +79,7 @@ unsafe fn fh_copy_to(
 ) {
     // SAFETY: see `fh_count`. `bun_http_types::ETag::StringPointer` and
     // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
-    unsafe { (*(owner as *mut FetchHeaders)).copy_to(names.cast(), values.cast(), buf) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names.cast(), values.cast(), buf) }
 }
 
 static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =

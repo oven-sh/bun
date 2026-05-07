@@ -122,7 +122,7 @@ fn get_zone_runtime(name: &str) -> &'static Zone {
     owned.push(0);
     // The Vec's heap buffer address is stable across the move into the map
     // (only the {ptr,len,cap} header moves), and the entry is never removed.
-    let raw = owned.as_ptr() as *const c_char;
+    let raw = owned.as_ptr().cast::<c_char>();
     // SAFETY: `raw` points into a NUL-terminated buffer that is moved into the
     // 'static `ZONES` map immediately below and never freed — valid for process
     // lifetime per `Zone::init` contract.

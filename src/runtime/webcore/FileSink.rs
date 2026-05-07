@@ -689,7 +689,7 @@ impl FileSink {
         if p.is_null() { return None; }
         // SAFETY: `global_object()` returns an erased `*mut JSGlobalObject` for
         // the Js arm; non-null implies a live global owned by the VM.
-        Some(unsafe { &*(p as *const JSGlobalObject) })
+        Some(unsafe { &*p.cast::<JSGlobalObject>() })
     }
 
     /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the

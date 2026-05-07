@@ -134,7 +134,7 @@ pub struct ProcessHandle<'a> {
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), Error> {
         // SAFETY: state is a backref into the `State` on `run`'s stack; lives for the whole loop.
-        let state = unsafe { &mut *(self.state as *mut State) };
+        let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
         // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
@@ -246,7 +246,7 @@ unsafe fn process_handle_on_process_exit(
     this.process.as_mut().unwrap().status = status;
     this.end_time = Instant::now().into();
     // SAFETY: state backref; see start()
-    let state = unsafe { &mut *(this.state as *mut State) };
+    let state = unsafe { &mut *this.state.cast_mut() };
     let _ = state.process_exit(this);
 }
 

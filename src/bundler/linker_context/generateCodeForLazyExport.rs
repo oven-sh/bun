@@ -65,7 +65,7 @@ pub fn generate_code_for_lazy_export(
     #[cfg(feature = "css")]
     // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
     let maybe_css_ast: Option<&BundlerStyleSheet> =
-        all_css_asts[source_index as usize].map(|p| unsafe { &*(p as *const BundlerStyleSheet) });
+        all_css_asts[source_index as usize].map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() });
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
     if unsafe { (&*parts).len() } < 1 {
@@ -238,7 +238,7 @@ pub fn generate_code_for_lazy_export(
                                         // SAFETY: type-erased `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
                                         let Some(other_file) =
                                             self.all_css_asts[import_record.source_index.get() as usize]
-                                                .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
+                                                .map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() })
                                         else {
                                             bun_core::handle_oom(self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],

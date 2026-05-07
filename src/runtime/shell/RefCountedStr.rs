@@ -16,7 +16,7 @@ impl RefCountedStr {
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         let len = u32::try_from(slice.len()).expect("int cast");
-        let ptr = Box::into_raw(slice) as *const u8;
+        let ptr = Box::into_raw(slice).cast::<u8>().cast_const();
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
         Box::into_raw(Box::new(RefCountedStr {
             refcount: Cell::new(1),

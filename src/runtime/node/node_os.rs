@@ -428,7 +428,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut ncpu: c_uint = 0;
     let mut ncpu_len: usize = core::mem::size_of::<c_uint>();
     // TODO(port): std.posix.sysctlbynameZ → bun_sys::posix::sysctlbyname
-    bun_sys::posix::sysctlbyname(c"hw.ncpu", &mut ncpu as *mut _ as *mut c_void, &mut ncpu_len, core::ptr::null_mut(), 0)
+    bun_sys::posix::sysctlbyname(c"hw.ncpu", core::ptr::from_mut(&mut ncpu).cast::<c_void>(), &mut ncpu_len, core::ptr::null_mut(), 0)
         .map_err(|_| OsError::Any)?;
     if ncpu == 0 {
         return Err(OsError::Any);
@@ -436,7 +436,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     let mut model_buf = [0u8; 512];
     let mut model_len: usize = model_buf.len();
-    let model = if bun_sys::posix::sysctlbyname(c"hw.model", model_buf.as_mut_ptr() as *mut c_void, &mut model_len, core::ptr::null_mut(), 0).is_ok() {
+    let model = if bun_sys::posix::sysctlbyname(c"hw.model", model_buf.as_mut_ptr().cast::<c_void>(), &mut model_len, core::ptr::null_mut(), 0).is_ok() {
         ZigString::init(bun_str::slice_to_nul(&model_buf)).with_encoding().to_js(global_this)
     } else {
         ZigString::static_("unknown").with_encoding().to_js(global_this)
@@ -444,12 +444,12 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     let mut speed_mhz: c_uint = 0;
     let mut speed_len: usize = core::mem::size_of::<c_uint>();
-    let _ = bun_sys::posix::sysctlbyname(c"hw.clockrate", &mut speed_mhz as *mut _ as *mut c_void, &mut speed_len, core::ptr::null_mut(), 0);
+    let _ = bun_sys::posix::sysctlbyname(c"hw.clockrate", core::ptr::from_mut(&mut speed_mhz).cast::<c_void>(), &mut speed_len, core::ptr::null_mut(), 0);
 
     const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
     let mut times_buf: Vec<c_long> = vec![0; ncpu as usize * CPU_STATES];
     let mut times_len: usize = times_buf.len() * core::mem::size_of::<c_long>();
-    bun_sys::posix::sysctlbyname(c"kern.cp_times", times_buf.as_mut_ptr() as *mut c_void, &mut times_len, core::ptr::null_mut(), 0)
+    bun_sys::posix::sysctlbyname(c"kern.cp_times", times_buf.as_mut_ptr().cast::<c_void>(), &mut times_len, core::ptr::null_mut(), 0)
         .map_err(|_| OsError::Any)?;
 
     // SAFETY: pure FFI getter
@@ -516,8 +516,8 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut len: usize = model_name_buf.len();
     // Try brand_string first and if it fails try hw.model
     // SAFETY: valid buffers
-    if !(unsafe { c::sysctlbyname(c"machdep.cpu.brand_string".as_ptr(), model_name_buf.as_mut_ptr() as *mut c_void, &mut len, core::ptr::null_mut(), 0) } == 0
-        || unsafe { c::sysctlbyname(c"hw.model".as_ptr(), model_name_buf.as_mut_ptr() as *mut c_void, &mut len, core::ptr::null_mut(), 0) } == 0)
+    if !(unsafe { c::sysctlbyname(c"machdep.cpu.brand_string".as_ptr(), model_name_buf.as_mut_ptr().cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) } == 0
+        || unsafe { c::sysctlbyname(c"hw.model".as_ptr(), model_name_buf.as_mut_ptr().cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) } == 0)
     {
         return Err(OsError::Any);
     }
@@ -530,7 +530,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut speed: u64 = 0;
     len = core::mem::size_of::<u64>();
     // SAFETY: valid buffers
-    let _ = unsafe { c::sysctlbyname(c"hw.cpufrequency".as_ptr(), &mut speed as *mut u64 as *mut c_void, &mut len, core::ptr::null_mut(), 0) };
+    let _ = unsafe { c::sysctlbyname(c"hw.cpufrequency".as_ptr(), core::ptr::from_mut::<u64>(&mut speed).cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) };
     if speed == 0 {
         // Suggested by Node implementation:
         // If sysctl hw.cputype == CPU_TYPE_ARM64, the correct value is unavailable
@@ -782,7 +782,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut avg: c::struct_loadavg = unsafe { core::mem::zeroed() };
         let mut size: usize = core::mem::size_of::<c::struct_loadavg>();
 
-        if bun_sys::posix::sysctlbyname(c"vm.loadavg", &mut avg as *mut _ as *mut c_void, &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctlbyname(c"vm.loadavg", core::ptr::from_mut(&mut avg).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
             break 'loadavg [0.0, 0.0, 0.0];
         }
 
@@ -1031,7 +1031,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                 let addr_data: &[u8] = {
                     // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check
-                    let dl = unsafe { &*(ll_addr as *const c::sockaddr_dl) };
+                    let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
                     &dl.sdl_data[dl.sdl_nlen as usize..]
                 };
                 if addr_data.len() < 6 {
@@ -1257,7 +1257,7 @@ pub fn release() -> BunString {
         if unsafe {
             c::sysctlbyname(
                 c"kern.osrelease".as_ptr(),
-                name_buffer.as_mut_ptr() as *mut c_void,
+                name_buffer.as_mut_ptr().cast::<c_void>(),
                 &mut size,
                 core::ptr::null_mut(),
                 0,
@@ -1369,7 +1369,7 @@ pub fn totalmem() -> u64 {
         let mut memory_: [c_ulonglong; 32] = [0; 32];
         let mut size: usize = memory_.len();
 
-        if bun_sys::posix::sysctlbyname(c"hw.memsize", memory_.as_mut_ptr() as *mut c_void, &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctlbyname(c"hw.memsize", memory_.as_mut_ptr().cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
             return 0;
         }
 
@@ -1390,7 +1390,7 @@ pub fn totalmem() -> u64 {
     {
         let mut physmem: u64 = 0;
         let mut size: usize = core::mem::size_of::<u64>();
-        if bun_sys::posix::sysctlbyname(c"hw.physmem", &mut physmem as *mut u64 as *mut c_void, &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctlbyname(c"hw.physmem", core::ptr::from_mut::<u64>(&mut physmem).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
             return 0;
         }
         return physmem;
@@ -1426,7 +1426,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         let mut boot_time: bun_sys::posix::timeval = unsafe { core::mem::zeroed() };
         let mut size: usize = core::mem::size_of::<bun_sys::posix::timeval>();
 
-        if bun_sys::posix::sysctlbyname(c"kern.boottime", &mut boot_time as *mut _ as *mut c_void, &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctlbyname(c"kern.boottime", core::ptr::from_mut(&mut boot_time).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
             return Ok(0.0);
         }
 
@@ -1490,7 +1490,7 @@ pub fn version() -> JsResult<BunString> {
         if unsafe {
             c::sysctlbyname(
                 c"kern.version".as_ptr(),
-                name_buffer.as_mut_ptr() as *mut c_void,
+                name_buffer.as_mut_ptr().cast::<c_void>(),
                 &mut size,
                 core::ptr::null_mut(),
                 0,

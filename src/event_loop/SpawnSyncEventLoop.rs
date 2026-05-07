@@ -383,7 +383,7 @@ impl SpawnSyncEventLoop {
             // (next line), which the callback never reads — so the raw tag at `did_timeout`'s
             // bytes survives under Stacked Borrows.
             // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
-            unsafe { (*t.as_ptr()).data = (self as *mut Self).cast() };
+            unsafe { (*t.as_ptr()).data = (core::ptr::from_mut(self)).cast() };
         }
         // SAFETY: uws_loop is valid and exclusively owned.
         unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };

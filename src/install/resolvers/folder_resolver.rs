@@ -414,10 +414,10 @@ pub fn get_or_put(
         // SAFETY: abs/rel point into `joined` (or a threadlocal buffer) which is mutable here.
         // PORT NOTE: @constCast — rel is always backed by mutable storage.
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(abs.as_ptr() as *mut u8, abs.len())
+            core::slice::from_raw_parts_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
         });
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
+            core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut().cast::<u8>(), rel.len())
         });
     }
     let abs_hash = hash(abs.as_bytes());

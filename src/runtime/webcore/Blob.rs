@@ -2473,7 +2473,7 @@ impl BlobExt for Blob {
                 // `into_raw` is the explicit ownership-transfer-to-FFI API; the
                 // matching free lives on the C++ side.
                 let len = external.len();
-                let ptr = Box::into_raw(external.into_boxed_slice()) as *const u16;
+                let ptr = Box::into_raw(external.into_boxed_slice()).cast::<u16>().cast_const();
                 return Ok(zig_string_to_external_u16(ptr, len, global));
             }
 
@@ -5370,7 +5370,7 @@ pub extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
     // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
     let data = unsafe { (*blob).shared_view() };
     if data.is_empty() { return core::ptr::null_mut(); }
-    data.as_ptr() as *mut c_void
+    data.as_ptr().cast_mut().cast::<c_void>()
 }
 
 #[unsafe(no_mangle)]
@@ -6077,7 +6077,7 @@ impl Internal {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = Box::into_raw(out.into_boxed_slice()) as *const u16;
+            let out_ptr = Box::into_raw(out.into_boxed_slice()).cast::<u16>().cast_const();
             let return_value = jsc::zig_string::to_external_u16(out_ptr, out_len, global_this);
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
@@ -6356,7 +6356,7 @@ pub trait FileOpener: Sized {
 
             self.set_open_callback(callback);
             let loop_ = self.loop_();
-            let self_ptr = self as *mut Self;
+            let self_ptr = core::ptr::from_mut(self);
             let req = self.req();
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.

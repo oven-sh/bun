@@ -604,7 +604,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         task.tracker.did_schedule(global_object);
 
         let loop_ = uv::Loop::get();
-        task.req.data = (task as *mut Self).cast::<c_void>();
+        task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
         // PORT NOTE: Zig's `comptime switch (FunctionEnum)` monomorphises this
         // to a single arm. Rust resolves the match at compile time too (`F` is
@@ -728,7 +728,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
+        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result }.int());
@@ -744,7 +744,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *((*req).data as *mut Self) };
+        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
@@ -755,7 +755,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-        let _deinit = scopeguard::guard(self as *mut Self, |p| unsafe { Self::destroy(p) });
+        let _deinit = scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         let global_object = unsafe { &*self.global_object };
         let success = matches!(self.result, Ok(_));
@@ -1446,7 +1446,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             panic!("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
         }
         // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-        let global_object: &JSGlobalObject = unsafe { &*(go_ptr as *const JSGlobalObject) };
+        let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
         let success = matches!(*self.result.get_mut(), Ok(_));
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
@@ -5851,7 +5851,7 @@ impl NodeFS {
                 // remove the trailing slash
                 if buf.last() == Some(&b'\\') {
                     // SAFETY: req.path is mutable
-                    unsafe { *(ptr as *mut u8).add(buf.len() - 1) = 0; }
+                    unsafe { *ptr.cast::<u8>().add(buf.len() - 1) = 0; }
                     buf = &buf[..buf.len() - 1];
                 }
             }

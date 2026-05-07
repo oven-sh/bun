@@ -371,7 +371,7 @@ pub extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void
     match vm.worker {
         // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
         // owned by C++ while `vm` lives.
-        Some(worker) => unsafe { (*(worker as *mut WebWorker)).cpp_worker },
+        Some(worker) => unsafe { (*worker.cast::<WebWorker>()).cpp_worker },
         None => core::ptr::null_mut(),
     }
 }
@@ -1289,7 +1289,7 @@ impl WebWorker {
 extern "C" fn opaque_spin_trampoline(ctx: *mut c_void) {
     // SAFETY: ctx is `*const WebWorker` passed from thread_main via
     // holdAPILock. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
-    let this = unsafe { &*(ctx as *const WebWorker) };
+    let this = unsafe { &*ctx.cast::<WebWorker>() };
     this.spin();
 }
 

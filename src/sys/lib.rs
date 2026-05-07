@@ -354,13 +354,13 @@ pub mod dir_iterator {
                 let p = self.buf.0.as_ptr();
                 // SAFETY: kernel guarantees a complete record fits in [base..end_index).
                 let d_ino = unsafe {
-                    core::ptr::read_unaligned(p.add(base) as *const u64)
+                    core::ptr::read_unaligned(p.add(base).cast::<u64>())
                 };
                 let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
                 } as usize;
                 let namlen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 18) as *const u16)
+                    core::ptr::read_unaligned(p.add(base + 18).cast::<u16>())
                 } as usize;
                 let d_type = unsafe { *p.add(base + 20) };
                 self.index = base + reclen;
@@ -415,13 +415,13 @@ pub mod dir_iterator {
                 //   u16 d_namlen; u16 pad1; char d_name[];
                 let base = self.index;
                 let p = self.buf.0.as_ptr();
-                let fileno = unsafe { core::ptr::read_unaligned(p.add(base) as *const u64) };
+                let fileno = unsafe { core::ptr::read_unaligned(p.add(base).cast::<u64>()) };
                 let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
                 } as usize;
                 let d_type = unsafe { *p.add(base + 18) };
                 let namlen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 20) as *const u16)
+                    core::ptr::read_unaligned(p.add(base + 20).cast::<u16>())
                 } as usize;
                 self.index = base + reclen;
 
@@ -496,7 +496,7 @@ pub mod dir_iterator {
                             let len_bytes = (f.len() * 2) as u16;
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
-                            filter_us.Buffer = f.as_ptr() as *mut u16;
+                            filter_us.Buffer = f.as_ptr().cast_mut().cast::<u16>();
                             &mut filter_us
                         }
                         None => core::ptr::null_mut(),
@@ -554,13 +554,13 @@ pub mod dir_iterator {
                 // (NAME_OFFSET = 64 bytes) is fully within the buffer per the
                 // NtQueryDirectoryFile contract on STATUS_SUCCESS.
                 let next_off = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset) as *const u32)
+                    core::ptr::read_unaligned(p.add(entry_offset).cast::<u32>())
                 } as usize;
                 let file_attrs = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset + 56) as *const u32)
+                    core::ptr::read_unaligned(p.add(entry_offset + 56).cast::<u32>())
                 };
                 let name_len_bytes = unsafe {
-                    core::ptr::read_unaligned(p.add(entry_offset + 60) as *const u32)
+                    core::ptr::read_unaligned(p.add(entry_offset + 60).cast::<u32>())
                 } as usize;
                 self.index = if next_off != 0 {
                     entry_offset + next_off
@@ -579,7 +579,7 @@ pub mod dir_iterator {
                 // SAFETY: name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp.
                 let dir_info_name = unsafe {
                     core::slice::from_raw_parts(
-                        p.add(name_byte_offset) as *const u16,
+                        p.add(name_byte_offset).cast::<u16>(),
                         name_len_u16,
                     )
                 };
@@ -2300,7 +2300,7 @@ mod windows_impl {
             w::ntdll::NtSetInformationFile(
                 fd.cast(),
                 &mut io,
-                (&mut eof) as *mut _ as *mut core::ffi::c_void,
+                core::ptr::from_mut(&mut eof).cast::<core::ffi::c_void>(),
                 core::mem::size_of::<bun_windows_sys::FILE_END_OF_FILE_INFORMATION>() as u32,
                 w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
             )
@@ -2539,7 +2539,7 @@ mod windows_impl {
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
-        let rc = unsafe { uv::uv_fs_utime(core::ptr::null_mut(), &mut req, path.as_ptr() as *const _, a, m, None) };
+        let rc = unsafe { uv::uv_fs_utime(core::ptr::null_mut(), &mut req, path.as_ptr().cast::<_>(), a, m, None) };
         if let Some(err) = Error::from_uv_rc(rc, Tag::utimes) { return Err(err.with_path(path.as_bytes())); }
         Ok(())
     }
@@ -2547,7 +2547,7 @@ mod windows_impl {
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
-        let rc = unsafe { uv::uv_fs_lutime(core::ptr::null_mut(), &mut req, path.as_ptr() as *const _, a, m, None) };
+        let rc = unsafe { uv::uv_fs_lutime(core::ptr::null_mut(), &mut req, path.as_ptr().cast::<_>(), a, m, None) };
         if let Some(err) = Error::from_uv_rc(rc, Tag::lutimes) { return Err(err.with_path(path.as_bytes())); }
         Ok(())
     }
@@ -2644,7 +2644,7 @@ mod windows_impl {
         // sys.zig:2243-2244 — windows: winsock `recv` with `adjusted_len =
         // @min(buf.len, max_count)` so the `usize → i32` cast can't wrap.
         let len = buf.len().min(MAX_COUNT) as i32;
-        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr() as *mut _, len, flags) };
+        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd));
         }
@@ -2654,7 +2654,7 @@ mod windows_impl {
         // sys.zig:2294 — windows: winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(MAX_COUNT) as i32;
-        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr() as *const _, len, flags) };
+        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd));
         }
@@ -4125,7 +4125,7 @@ pub fn open_dir_at_windows_nt_path(
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr() as *mut u16,
+        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
     };
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
@@ -4195,7 +4195,7 @@ pub fn open_file_at_windows_nt_path(
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
-        Buffer: p.as_ptr() as *mut u16,
+        Buffer: p.as_ptr().cast_mut().cast::<u16>(),
     };
     let has_nt_prefix = p.len() >= 4
         && p[0] == b'\\' as u16 && p[1] == b'?' as u16
@@ -4484,7 +4484,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         let mut nt_name = w::UNICODE_STRING {
             Length: path_len_bytes,
             MaximumLength: path_len_bytes,
-            Buffer: path.as_ptr() as *mut u16,
+            Buffer: path.as_ptr().cast_mut().cast::<u16>(),
         };
         let attr = w::OBJECT_ATTRIBUTES {
             Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
@@ -4629,7 +4629,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     #[cfg(target_os = "linux")]
     while linux::RWFFlagSupport::is_maybe_supported() {
-        let iov = [libc::iovec { iov_base: buf.as_ptr() as *mut _, iov_len: buf.len() }];
+        let iov = [libc::iovec { iov_base: buf.as_ptr().cast_mut().cast::<_>(), iov_len: buf.len() }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
         if rc < 0 {
@@ -6073,7 +6073,7 @@ unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     -> core::result::Result<(), bun_core::Error>
 {
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &*(w as *const SysQuietWriterAdapter) };
+    let this = unsafe { &*w.cast::<SysQuietWriterAdapter>() };
     let _ = fd_write_all_quiet(this.fd, bytes);
     Ok(())
 }

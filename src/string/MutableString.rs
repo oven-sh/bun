@@ -445,7 +445,7 @@ impl MutableString {
             unsafe { core::mem::zeroed() };
         for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
             let s = &self.list[r.0..r.1];
-            *b = libc::iovec { iov_base: s.as_ptr() as *mut _, iov_len: s.len() };
+            *b = libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() };
         }
         buffers
     }

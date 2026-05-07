@@ -159,7 +159,7 @@ pub fn nameinfo_to_js_response(
 
     if !this.node.is_null() {
         // SAFETY: node is a non-null NUL-terminated C string from c-ares.
-        let node_slice = unsafe { CStr::from_ptr(this.node as *const c_char) }.to_bytes();
+        let node_slice = unsafe { CStr::from_ptr(this.node.cast()) }.to_bytes();
         array.put_index(global_this, 0, utf8_to_js(global_this, node_slice)?)?;
     } else {
         array.put_index(global_this, 0, JSValue::UNDEFINED)?;
@@ -167,7 +167,7 @@ pub fn nameinfo_to_js_response(
 
     if !this.service.is_null() {
         // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-        let service_slice = unsafe { CStr::from_ptr(this.service as *const c_char) }.to_bytes();
+        let service_slice = unsafe { CStr::from_ptr(this.service.cast()) }.to_bytes();
         array.put_index(global_this, 1, utf8_to_js(global_this, service_slice)?)?;
     } else {
         array.put_index(global_this, 1, JSValue::UNDEFINED)?;
@@ -309,7 +309,7 @@ pub fn srv_reply_to_js(
     obj.put(global_this, b"port", JSValue::js_number(this.port as f64));
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { CStr::from_ptr(this.host as *const c_char) }.to_bytes();
+    let host = unsafe { CStr::from_ptr(this.host.cast()) }.to_bytes();
     obj.put(global_this, b"name", utf8_to_js(global_this, host)?);
 
     Ok(obj)
@@ -353,7 +353,7 @@ pub fn mx_reply_to_js(
     obj.put(global_this, b"priority", JSValue::js_number(this.priority as f64));
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { CStr::from_ptr(this.host as *const c_char) }.to_bytes();
+    let host = unsafe { CStr::from_ptr(this.host.cast()) }.to_bytes();
     obj.put(global_this, b"exchange", utf8_to_js(global_this, host)?);
 
     Ok(obj)
@@ -474,19 +474,19 @@ pub fn naptr_reply_to_js(
     obj.put(global_this, b"order", JSValue::js_number(this.order as f64));
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
-    let flags = unsafe { CStr::from_ptr(this.flags as *const c_char) }.to_bytes();
+    let flags = unsafe { CStr::from_ptr(this.flags.cast()) }.to_bytes();
     obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
 
     // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-    let service = unsafe { CStr::from_ptr(this.service as *const c_char) }.to_bytes();
+    let service = unsafe { CStr::from_ptr(this.service.cast()) }.to_bytes();
     obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
 
     // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
-    let regexp = unsafe { CStr::from_ptr(this.regexp as *const c_char) }.to_bytes();
+    let regexp = unsafe { CStr::from_ptr(this.regexp.cast()) }.to_bytes();
     obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
-    let replacement = unsafe { CStr::from_ptr(this.replacement as *const c_char) }.to_bytes();
+    let replacement = unsafe { CStr::from_ptr(this.replacement.cast()) }.to_bytes();
     obj.put(global_this, b"replacement", utf8_to_js(global_this, replacement)?);
 
     Ok(obj)
@@ -515,11 +515,11 @@ pub fn soa_reply_to_js(
     obj.put(global_this, b"minttl", JSValue::js_number(this.minttl as f64));
 
     // SAFETY: nsname is a non-null NUL-terminated C string from c-ares.
-    let nsname = unsafe { CStr::from_ptr(this.nsname as *const c_char) }.to_bytes();
+    let nsname = unsafe { CStr::from_ptr(this.nsname.cast()) }.to_bytes();
     obj.put(global_this, b"nsname", utf8_to_js(global_this, nsname)?);
 
     // SAFETY: hostmaster is a non-null NUL-terminated C string from c-ares.
-    let hostmaster = unsafe { CStr::from_ptr(this.hostmaster as *const c_char) }.to_bytes();
+    let hostmaster = unsafe { CStr::from_ptr(this.hostmaster.cast()) }.to_bytes();
     obj.put(global_this, b"hostmaster", utf8_to_js(global_this, hostmaster)?);
 
     Ok(obj)

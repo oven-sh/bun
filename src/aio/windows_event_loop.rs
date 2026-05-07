@@ -457,7 +457,7 @@ impl Store {
         // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
         // from the event loop's after-tick hook with no other `&mut Store` borrow live,
         // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { &mut *(ctx as *mut Store) };
+        let this = unsafe { &mut *ctx.cast::<Store>() };
         this.process_deferred_frees();
     }
 }
@@ -522,7 +522,7 @@ impl Closer {
     extern "C" fn on_close(req: *mut uv::fs_t) {
         // SAFETY: req points to Closer.io_request (set in `close` above).
         let closer: *mut Closer = unsafe {
-            (req as *mut u8)
+            req.cast::<u8>()
                 .sub(core::mem::offset_of!(Closer, io_request))
                 .cast::<Closer>()
         };

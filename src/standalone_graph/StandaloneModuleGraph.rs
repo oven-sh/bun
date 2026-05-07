@@ -1852,7 +1852,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -1874,7 +1874,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -1896,7 +1896,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 

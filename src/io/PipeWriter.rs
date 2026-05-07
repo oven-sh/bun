@@ -1186,7 +1186,7 @@ pub trait BaseWindowsPipeWriter {
         self.set_parent_ptr(parent);
         if !self.is_done() {
             if let Some(pipe) = self.source() {
-                pipe.set_data(self as *mut Self as *mut c_void);
+                pipe.set_data(core::ptr::from_mut(self).cast::<c_void>());
             }
         }
     }
@@ -1206,7 +1206,7 @@ pub trait BaseWindowsPipeWriter {
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let source = Source::SyncFile(Source::open_file(fd));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1216,7 +1216,7 @@ pub trait BaseWindowsPipeWriter {
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let source = Source::File(Source::open_file(fd));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1242,7 +1242,7 @@ pub trait BaseWindowsPipeWriter {
         // TODO(port): Zig branch `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
         // dropped — Phase B handles via the MovableFd overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1453,7 +1453,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *(parent_ptr as *mut Self) };
+        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
 
         if was_canceled {
             // Canceled write - clear pending state
@@ -1496,7 +1496,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 debug_assert!(file.can_start());
 
                 self.pending_payload_size = buffer_len;
-                file.fs.set_data(self as *mut Self as *mut c_void);
+                file.fs.set_data(core::ptr::from_mut(self).cast::<c_void>());
                 file.prepare();
                 self.write_buffer = uv::uv_buf_t::init(buffer);
 
@@ -1505,7 +1505,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                     unsafe { Parent::loop_(self.parent()) },
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    core::ptr::from_ref(&self.write_buffer),
                     1,
                     -1,
                     Self::on_fs_write_complete,
@@ -1895,7 +1895,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *(parent_ptr as *mut Self) };
+        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
 
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
@@ -1961,7 +1961,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 // StreamingWriter ensures current_payload blocks concurrent writes
                 debug_assert!(file.can_start());
 
-                file.fs.set_data(self as *mut Self as *mut c_void);
+                file.fs.set_data(core::ptr::from_mut(self).cast::<c_void>());
                 file.prepare();
                 self.write_buffer = uv::uv_buf_t::init(bytes);
 
@@ -1970,7 +1970,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                     unsafe { Parent::loop_(self.parent()) },
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    core::ptr::from_ref(&self.write_buffer),
                     1,
                     -1,
                     Self::on_fs_write_complete,

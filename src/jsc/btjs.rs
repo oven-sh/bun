@@ -768,7 +768,7 @@ pub extern "C" fn dumpBtjsTrace() -> *const c_char {
     }
     #[cfg(not(debug_assertions))]
     {
-        b"btjs is disabled in release builds\0".as_ptr() as *const c_char
+        b"btjs is disabled in release builds\0".as_ptr().cast::<c_char>()
     }
 }
 
@@ -790,7 +790,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
                 return b"<oom>\0".as_ptr().cast::<c_char>();
             }
             // leak intentionally — caller is lldb and never frees
-            return Box::into_raw(result_writer.into_boxed_slice()) as *const c_char;
+            return Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const();
         }
     };
 
@@ -835,7 +835,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // add null terminator
     result_writer.push(0);
     // leak intentionally — caller is lldb and never frees
-    Box::into_raw(result_writer.into_boxed_slice()) as *const c_char
+    Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const()
 }
 
 #[cfg(debug_assertions)]

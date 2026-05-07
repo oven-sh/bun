@@ -657,7 +657,7 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            self.io_request.data = (self as *mut Self).cast::<c_void>();
+            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             let posix_path = match sys::to_posix_path(path) {
                 Ok(p) => p,
                 Err(_) => {
@@ -705,7 +705,7 @@ mod windows_impl {
         pub extern "C" fn on_open(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request
             let this: &mut WriteFileWindows = unsafe {
-                &mut *(req as *mut u8)
+                &mut *req.cast::<u8>()
                     .sub(offset_of!(WriteFileWindows, io_request))
                     .cast::<WriteFileWindows>()
             };
@@ -800,7 +800,7 @@ mod windows_impl {
                         crate::node::fs::async_::CompletionFn,
                     >(Self::on_mkdirp_complete_concurrent)
                 },
-                completion_ctx: (self as *mut Self).cast::<c_void>(),
+                completion_ctx: (core::ptr::from_mut(self)).cast::<c_void>(),
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path)
@@ -847,7 +847,7 @@ mod windows_impl {
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request
             let this: &mut WriteFileWindows = unsafe {
-                &mut *(req as *mut u8)
+                &mut *req.cast::<u8>()
                     .sub(offset_of!(WriteFileWindows, io_request))
                     .cast::<WriteFileWindows>()
             };
@@ -939,7 +939,7 @@ mod windows_impl {
                 return Err(self.on_finish());
             }
 
-            self.uv_bufs[0].base = remain.as_ptr() as *mut u8;
+            self.uv_bufs[0].base = remain.as_ptr().cast_mut().cast::<u8>();
             self.uv_bufs[0].len = remain.len() as u32;
 
             // SAFETY: self.io_request is a valid uv_fs_t embedded in this Box-allocated struct;
@@ -958,7 +958,7 @@ mod windows_impl {
                     Some(Self::on_write_complete),
                 )
             };
-            self.io_request.data = (self as *mut Self).cast::<c_void>();
+            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             if rc.int() == 0 {
                 // EINPROGRESS
                 return Ok(());
@@ -999,7 +999,7 @@ mod windows_impl {
             unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
             // SAFETY: self was allocated via Self::new (Box::into_raw); reclaim and drop here.
             // self must not be used after this line.
-            unsafe { drop(Box::from_raw(self as *mut Self)) };
+            unsafe { drop(Box::from_raw(core::ptr::from_mut(self))) };
         }
 
         pub fn create<C>(

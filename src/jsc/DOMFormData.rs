@@ -153,7 +153,7 @@ impl DOMFormData {
                     // SAFETY: when is_blob != 0, value_ptr points to a webcore
                     // Blob (`bun_runtime::webcore::Blob`) valid for the callback
                     // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
-                    blob: unsafe { &*(value_ptr as *const B) },
+                    blob: unsafe { &*value_ptr.cast::<B>() },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {

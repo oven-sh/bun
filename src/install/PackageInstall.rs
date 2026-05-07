@@ -440,7 +440,7 @@ impl HardLinkWindowsInstallTask {
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
         let self_: *mut Self = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(Self, task))
                 .cast::<Self>()
         };

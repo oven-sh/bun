@@ -797,7 +797,7 @@ fn from_bytes_typed_array<Elem: Copy>(
         value: Value {
             typed_array: TypedArray {
                 head_ptr: if !bytes.is_empty() { bytes.as_ptr().cast_mut() } else { core::ptr::null_mut() },
-                ptr: if !elements.is_empty() { elements.as_ptr() as *mut u8 } else { core::ptr::null_mut() },
+                ptr: if !elements.is_empty() { elements.as_ptr().cast_mut().cast::<u8>() } else { core::ptr::null_mut() },
                 len: elements.len() as u32,
                 byte_len: bytes.len() as u32,
                 type_: js_typed_array_type,

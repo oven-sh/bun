@@ -1620,7 +1620,7 @@ pub mod closer {
             // SAFETY: req points to Closer.io_request (set in `close` above);
             // recover the parent via offset_of (Zig: @fieldParentPtr).
             let closer: *mut Closer = unsafe {
-                (req as *mut u8)
+                req.cast::<u8>()
                     .sub(core::mem::offset_of!(Closer, io_request))
                     .cast::<Closer>()
             };

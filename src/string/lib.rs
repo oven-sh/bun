@@ -213,7 +213,7 @@ impl String {
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
         if bytes.len() >= Self::max_length() {
-            callback(ctx, bytes.as_ptr() as *mut c_void, bytes.len() as u32);
+            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len() as u32);
             return Self::DEAD;
         }
         // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback

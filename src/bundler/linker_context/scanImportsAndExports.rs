@@ -1434,7 +1434,7 @@ mod __css_validation {
                 // may alias `css_ast` if a file composes from itself (both `&`).
                 let Some(other_css_ast) =
                     col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
-                        &*(p as *const BundlerStyleSheet)
+                        &*p.cast::<BundlerStyleSheet>()
                     })
                 else {
                     continue;
@@ -1627,7 +1627,7 @@ mod __css_validation {
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
                                     .map(|p| unsafe {
-                                        &*(p as *const BundlerStyleSheet)
+                                        &*p.cast::<BundlerStyleSheet>()
                                     })
                                 else {
                                     continue;

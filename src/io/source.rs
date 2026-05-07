@@ -94,7 +94,7 @@ impl File {
     /// Get the File struct from an fs_t pointer using field offset.
     pub unsafe fn from_fs(fs: *mut uv::fs_t) -> *mut File {
         // SAFETY: fs points to File.fs; recover the parent via offset_of.
-        unsafe { (fs as *mut u8).sub(offset_of!(File, fs)).cast::<File>() }
+        unsafe { fs.cast::<u8>().sub(offset_of!(File, fs)).cast::<File>() }
     }
 
     /// Returns true if ready to start a new operation.
@@ -168,7 +168,7 @@ impl File {
         // and reads/frees bytes outside the `fs` field. `&mut self.fs` would
         // narrow provenance to the field under SB/TB and make that UB.
         unsafe {
-            let fs_ptr = (self as *mut File).cast::<uv::fs_t>();
+            let fs_ptr = core::ptr::from_mut::<File>(self).cast::<uv::fs_t>();
             uv::uv_fs_close(
                 uv::Loop::get(),
                 fs_ptr,

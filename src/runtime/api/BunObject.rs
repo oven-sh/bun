@@ -1772,7 +1772,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         jsc::array_buffer::make_typed_array_with_bytes_no_copy(
             global_this,
             jsc::TypedArrayType::TypeUint8,
-            map.as_ptr() as *mut c_void,
+            map.as_ptr().cast_mut().cast::<c_void>(),
             map.len(),
             Some(munmap_dealloc),
             map.len() as *mut c_void,

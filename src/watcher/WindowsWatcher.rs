@@ -155,7 +155,7 @@ impl EventIterator {
         // so each cast targets a properly-aligned record header.
         let buf_ptr = unsafe { (*self.watcher).buf.as_ptr() };
         let info: &w::FILE_NOTIFY_INFORMATION =
-            unsafe { &*(buf_ptr.add(self.offset) as *const w::FILE_NOTIFY_INFORMATION) };
+            unsafe { &*(buf_ptr.add(self.offset).cast::<w::FILE_NOTIFY_INFORMATION>()) };
         // SAFETY: the variable-length filename begins at the FileName field of the record.
         let name_ptr: *mut u16 =
             unsafe { buf_ptr.add(self.offset + name_offset).cast::<u16>() as *mut u16 };
@@ -206,7 +206,7 @@ impl WindowsWatcher {
         let mut nt_name = w::UNICODE_STRING {
             Length: path_len_bytes,
             MaximumLength: path_len_bytes,
-            Buffer: wpath.as_ptr() as *mut u16,
+            Buffer: wpath.as_ptr().cast_mut().cast::<u16>(),
         };
         let mut attr = w::OBJECT_ATTRIBUTES {
             Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,

@@ -773,7 +773,7 @@ unsafe fn json_vtable_parse(
 ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
     // SAFETY: `JsonCache.ptr` is minted by `Json::as_resolver_cache` from a
     // `&mut Json`; the bundler guarantees the `Json` outlives every call.
-    let bump: &Bump = unsafe { &(*(cache as *const Json)).bump };
+    let bump: &Bump = unsafe { &(*cache.cast::<Json>()).bump };
     let mut temp_log = logger::Log::init();
     // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(...)`
     let result = match func(source, &mut temp_log, bump) {

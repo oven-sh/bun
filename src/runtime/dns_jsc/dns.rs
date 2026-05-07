@@ -426,8 +426,8 @@ pub mod lib_uv_backend {
                 this.vm().uv_loop(),
                 (*request).backend.as_libc_uv_mut(),
                 Some(on_raw_libuv_complete),
-                host.as_ptr() as *const c_char,
-                port_z.as_ptr() as *const c_char,
+                host.as_ptr().cast::<c_char>(),
+                port_z.as_ptr().cast::<c_char>(),
                 hints.as_ref().map(|h| h as *const _).unwrap_or(ptr::null()),
             );
             if rc.int() < 0 {
@@ -2385,7 +2385,7 @@ pub mod internal {
 
             let mut addrinfo: *mut wsa::addrinfo = ptr::null_mut();
             let err = wsa::getaddrinfo(
-                (*req).key.host.as_ref().map(|h| h.as_ptr() as *const c_char).unwrap_or(ptr::null()),
+                (*req).key.host.as_ref().map(|h| h.as_ptr().cast::<c_char>()).unwrap_or(ptr::null()),
                 service,
                 &wsa_hints,
                 &mut addrinfo,
@@ -3106,7 +3106,7 @@ impl UvDnsPoll {
     pub fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe {
-            (poll as *mut u8).sub(offset_of!(UvDnsPoll, poll)).cast::<UvDnsPoll>()
+            poll.cast::<u8>().sub(offset_of!(UvDnsPoll, poll)).cast::<UvDnsPoll>()
         }
     }
 }

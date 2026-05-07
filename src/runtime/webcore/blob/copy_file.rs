@@ -984,13 +984,13 @@ impl ReadWriteLoop {
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
         // we've finished writing all the previous chunks.
-        this.io_request.data = this as *mut _ as *mut c_void;
+        this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
         let rc = libuv::uv_fs_read(
             loop_,
             &mut this.io_request,
             self.source_fd.uv(),
-            &mut self.uv_buf as *mut _,
+            core::ptr::from_mut(&mut self.uv_buf),
             1,
             -1,
             Some(on_read),
@@ -1038,12 +1038,12 @@ impl ReadWriteLoop {
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *(req as *mut u8)
+        &mut *req.cast::<u8>()
             .sub(offset_of!(CopyFileWindows, io_request))
             .cast::<CopyFileWindows>()
     };
     // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
-    debug_assert!(unsafe { (*req).data } == this as *mut _ as *mut c_void);
+    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let source_fd = this.read_write_loop.source_fd;
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1080,12 +1080,12 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
         event_loop.virtual_machine.event_loop_handle.unwrap(),
         &mut this.io_request,
         destination_fd.uv(),
-        &mut this.read_write_loop.uv_buf as *mut _,
+        core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
         1,
         -1,
         Some(on_write),
     );
-    this.io_request.data = this as *mut _ as *mut c_void;
+    this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
     if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
         this.err = Some(err);
@@ -1098,12 +1098,12 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *(req as *mut u8)
+        &mut *req.cast::<u8>()
             .sub(offset_of!(CopyFileWindows, io_request))
             .cast::<CopyFileWindows>()
     };
     // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
-    debug_assert!(unsafe { (*req).data } == this as *mut _ as *mut c_void);
+    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1133,7 +1133,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         // Re-use the fs request.
         // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
         unsafe { (*req).deinit() };
-        this.io_request.data = this as *mut _ as *mut c_void;
+        this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
@@ -1141,7 +1141,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             this.event_loop.virtual_machine.event_loop_handle.unwrap(),
             &mut this.io_request,
             destination_fd.uv(),
-            &mut this.read_write_loop.uv_buf as *mut _,
+            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
             -1,
             Some(on_write),
@@ -1416,7 +1416,7 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
         let loop_ = self.event_loop.virtual_machine.event_loop_handle.unwrap();
-        self.io_request.data = self as *mut _ as *mut c_void;
+        self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
         let rc = libuv::uv_fs_copyfile(
             loop_,
@@ -1455,7 +1455,7 @@ impl<'a> CopyFileWindows<'a> {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
         // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(self as *mut Self) };
+        unsafe { Self::destroy(core::ptr::from_mut(self)) };
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
 
@@ -1485,7 +1485,7 @@ impl<'a> CopyFileWindows<'a> {
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
-                self.io_request.data = self as *mut _ as *mut c_void;
+                self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
                 let rc = libuv::uv_fs_chmod(
                     loop_,
@@ -1527,7 +1527,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(self as *mut Self) };
+        unsafe { Self::destroy(core::ptr::from_mut(self)) };
         let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
 
@@ -1576,7 +1576,7 @@ impl<'a> CopyFileWindows<'a> {
         node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
             // TODO(port): callback ABI — Zig casts &onMkdirpCompleteConcurrent to a generic completion fn ptr
             completion: on_mkdirp_complete_concurrent as *const c_void,
-            completion_ctx: self as *mut _ as *mut c_void,
+            completion_ctx: core::ptr::from_mut(self).cast::<c_void>(),
             path: bun_paths::dirname(destination.pathlike.path().slice())
                 // this shouldn't happen
                 .unwrap_or(destination.pathlike.path().slice())
@@ -1603,12 +1603,12 @@ impl<'a> CopyFileWindows<'a> {
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *(req as *mut u8)
+        &mut *req.cast::<u8>()
             .sub(offset_of!(CopyFileWindows, io_request))
             .cast::<CopyFileWindows>()
     };
     // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
-    debug_assert!(unsafe { (*req).data } == this as *mut _ as *mut c_void);
+    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();
@@ -1658,12 +1658,12 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *(req as *mut u8)
+        &mut *req.cast::<u8>()
             .sub(offset_of!(CopyFileWindows, io_request))
             .cast::<CopyFileWindows>()
     };
     // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
-    debug_assert!(unsafe { (*req).data } == this as *mut _ as *mut c_void);
+    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();

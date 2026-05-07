@@ -165,7 +165,7 @@ fn read_frequency() -> u64 {
             unsafe {
                 let _ = sysctlbyname(
                     NAME.as_ptr(),
-                    (&mut hz) as *mut u64 as *mut c_void,
+                    core::ptr::from_mut::<u64>(&mut hz).cast::<c_void>(),
                     &mut hz_len,
                     core::ptr::null(),
                     0,

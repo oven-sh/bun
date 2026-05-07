@@ -1456,7 +1456,7 @@ pub mod upgrade_js_bindings {
             let mut nt_name = w::UNICODE_STRING {
                 Length: path_len_bytes,
                 MaximumLength: path_len_bytes,
-                Buffer: path.as_ptr() as *mut u16,
+                Buffer: path.as_ptr().cast_mut().cast::<u16>(),
             };
 
             let mut attr = w::OBJECT_ATTRIBUTES {

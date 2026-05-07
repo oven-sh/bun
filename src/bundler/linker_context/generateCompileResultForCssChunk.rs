@@ -54,7 +54,7 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
     // so no mutable reference is materialized here.
     let bv2: &crate::BundleV2 = unsafe {
-        &*(c_ptr as *const u8)
+        &*c_ptr.cast::<u8>()
             .sub(offset_of!(crate::BundleV2, linker))
             .cast::<crate::BundleV2>()
     };

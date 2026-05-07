@@ -1657,7 +1657,7 @@ pub fn spawn_process_windows(
     // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
     let cwd = unsafe { bun_str::ZStr::from_raw(cwd_buf.as_ptr(), options.cwd.len()) };
 
-    uv_process_options.cwd = cwd.as_ptr() as *const c_char;
+    uv_process_options.cwd = cwd.as_ptr().cast::<c_char>();
 
     let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
     let mut failed = false;

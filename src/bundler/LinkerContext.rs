@@ -66,9 +66,9 @@ pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkV
         fmt: |context, chunk, part_range, writer| {
             // SAFETY: erased pointers were constructed by `bundle_generate_chunk_action`
             // below from live `&LinkerContext` / `&Chunk` / `&PartRange`.
-            let ctx = unsafe { &*(context as *const LinkerContext) };
-            let chunk = unsafe { &*(chunk as *const Chunk) };
-            let pr = unsafe { &*(part_range as *const PartRange) };
+            let ctx = unsafe { &*context.cast::<LinkerContext>() };
+            let chunk = unsafe { &*chunk.cast::<Chunk>() };
+            let pr = unsafe { &*part_range.cast::<PartRange>() };
             // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
             // the lifetime of the link step that constructed this Action.
             let parse_graph = unsafe { &*ctx.parse_graph };
@@ -784,7 +784,7 @@ impl<'a> LinkerContext<'a> {
         // (shared), so a `&` is sufficient and avoids aliasing.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            (ctx.c as *const LinkerContext).cast::<u8>()
+            ctx.c.cast_const().cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
@@ -808,7 +808,7 @@ impl<'a> LinkerContext<'a> {
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            (ctx.c as *const LinkerContext).cast::<u8>()
+            ctx.c.cast_const().cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
@@ -1153,7 +1153,7 @@ impl SourceMapDataTask {
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
         let bundle: *const BundleV2 = unsafe {
-            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.allocator` points at `worker.heap` (init by `Worker::create`).
@@ -1180,7 +1180,7 @@ impl SourceMapDataTask {
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
         let bundle: *const BundleV2 = unsafe {
-            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 

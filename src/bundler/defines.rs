@@ -89,7 +89,7 @@ pub static ENV_DEFINE_STRING_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_d
 
 unsafe fn env_string_store_contains(owner: *mut (), key: &[u8]) -> bool {
     // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
-    unsafe { &*(owner as *const UserDefinesArray) }.contains_key(key)
+    unsafe { &*owner.cast::<UserDefinesArray>() }.contains_key(key)
 }
 unsafe fn env_string_store_put_string(
     owner: *mut (),
@@ -138,7 +138,7 @@ pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dot
 };
 
 unsafe fn env_json_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    unsafe { &*(owner as *const RawDefines) }.contains_key(key)
+    unsafe { &*owner.cast::<RawDefines>() }.contains_key(key)
 }
 unsafe fn env_json_store_put_raw(
     owner: *mut (),

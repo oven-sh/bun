@@ -704,7 +704,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             Self::KIND,
             if SSL { self.secure } else { None },
             socket_path,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
             false, // dont allow half-open sockets
         )?;
         client.allow_retry = false;
@@ -787,7 +787,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(ctx) = sock.ext::<*mut c_void>() {
                     // SAFETY: ext slot stores the ActiveSocket tagged-pointer word.
                     unsafe {
-                        *ctx = ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr();
+                        *ctx = ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr();
                     }
                 }
                 client.allow_retry = true;
@@ -844,7 +844,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if SSL { self.secure } else { None },
             hostname,
             port as c_int,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
             false,
         )?;
         client.allow_retry = false;

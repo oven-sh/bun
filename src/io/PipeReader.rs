@@ -1186,7 +1186,7 @@ impl WindowsBufferedReader {
         self.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             if let Some(source) = &self.source {
-                source.set_data(self as *mut _ as *mut c_void);
+                source.set_data(core::ptr::from_mut(self).cast::<c_void>());
             }
         }
     }
@@ -1295,7 +1295,7 @@ impl WindowsBufferedReader {
         self.source
             .as_ref()
             .unwrap()
-            .set_data(self as *mut _ as *mut c_void);
+            .set_data(core::ptr::from_mut(self).cast::<c_void>());
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
         self.start_reading()
@@ -1316,7 +1316,7 @@ impl WindowsBufferedReader {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };
-        source.set_data(self as *mut _ as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         self.source = Some(source);
         self.start_with_current_pipe()
     }
@@ -1348,7 +1348,7 @@ impl WindowsBufferedReader {
         // `set_data`/`start_with_current_pipe`. libuv invokes this from the
         // event loop with no other Rust borrow of the reader live, so this is
         // the sole `&mut` to the allocation (single-owner).
-        let this = unsafe { &mut *((*handle).data as *mut WindowsBufferedReader) };
+        let this = unsafe { &mut *(*handle).data.cast::<WindowsBufferedReader>() };
         let result = this.get_read_buffer_with_stable_memory_address(suggested_size);
         // SAFETY: buf is a valid out-pointer from libuv.
         unsafe {
@@ -1366,7 +1366,7 @@ impl WindowsBufferedReader {
         // was set to `*mut Self` in `set_data`. Invoked from the event loop
         // with no other Rust borrow of the reader live (single-owner).
         let stream = handle as *mut uv::uv_stream_t;
-        let this = unsafe { &mut *((*stream).data as *mut WindowsBufferedReader) };
+        let this = unsafe { &mut *(*stream).data.cast::<WindowsBufferedReader>() };
 
         let nread_int = nread.int();
 
@@ -1447,7 +1447,7 @@ impl WindowsBufferedReader {
         // point in the non-null path, so this is the sole live `&mut` to the
         // reader (single-owner).
         let this: &mut WindowsBufferedReader =
-            unsafe { &mut *(parent_ptr as *mut WindowsBufferedReader) };
+            unsafe { &mut *parent_ptr.cast::<WindowsBufferedReader>() };
 
         // Mark no longer in flight
         this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1513,7 +1513,7 @@ impl WindowsBufferedReader {
                         if let Source::File(file_ptr) = source {
                             // Can only start if file is in deinitialized state
                             if file_ptr.can_start() {
-                                source.set_data(this as *mut _ as *mut c_void);
+                                source.set_data(core::ptr::from_mut(this).cast::<c_void>());
                                 file_ptr.prepare();
                                 let buf =
                                     this.get_read_buffer_with_stable_memory_address(64 * 1024);
@@ -1571,12 +1571,12 @@ impl WindowsBufferedReader {
             Source::File(file) => {
                 // If already reading, just set data and unpause
                 if !file.can_start() {
-                    source.set_data(self as *mut _ as *mut c_void);
+                    source.set_data(core::ptr::from_mut(self).cast::<c_void>());
                     return sys::Result::Ok(());
                 }
 
                 // Start new read - set data before prepare
-                source.set_data(self as *mut _ as *mut c_void);
+                source.set_data(core::ptr::from_mut(self).cast::<c_void>());
                 file.prepare();
                 let buf = self.get_read_buffer_with_stable_memory_address(64 * 1024);
                 file.iov = uv::uv_buf_t::init(buf);

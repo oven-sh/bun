@@ -452,14 +452,14 @@ pub fn set_thread_name(name: &ZStr) {
     {
         // SAFETY: macOS pthread_setname_np takes the current thread implicitly.
         unsafe {
-            let _ = libc::pthread_setname_np(name.as_ptr() as *const c_char);
+            let _ = libc::pthread_setname_np(name.as_ptr().cast::<c_char>());
         }
     }
     #[cfg(target_os = "freebsd")]
     {
         // SAFETY: FreeBSD signature is (pthread_t, const char*).
         unsafe {
-            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr() as *const c_char);
+            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr().cast::<c_char>());
         }
     }
     #[cfg(windows)]

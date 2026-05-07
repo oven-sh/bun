@@ -1579,7 +1579,7 @@ impl SendQueue {
         log!("configureServer");
         // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller.
         unsafe {
-            (*ipc_pipe).data = (self as *mut SendQueue).cast();
+            (*ipc_pipe).data = core::ptr::from_mut(self).cast();
             (*ipc_pipe).unref();
         }
         self.socket = SocketUnion::Open(ipc_pipe);
@@ -1589,7 +1589,7 @@ impl SendQueue {
             _ => unreachable!(),
         };
         // SAFETY: pipe is the live uv handle just stored in self.socket.
-        unsafe { (*pipe).data = (self as *mut SendQueue).cast() };
+        unsafe { (*pipe).data = core::ptr::from_mut(self).cast() };
 
         // SAFETY: pipe is the live uv handle just stored in self.socket.
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };

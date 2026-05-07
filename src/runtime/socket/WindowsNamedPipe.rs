@@ -593,7 +593,7 @@ impl WindowsNamedPipe {
             return init_result;
         }
 
-        self.connect_req.data = self as *mut _ as *mut c_void;
+        self.connect_req.data = core::ptr::from_mut(self).cast::<c_void>();
         let result = self.pipe.as_mut().unwrap().connect(
             &mut self.connect_req,
             path,

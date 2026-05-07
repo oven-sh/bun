@@ -1044,7 +1044,7 @@ impl<'a> ReadFileUV<'a> {
             }
         }
 
-        Self::finalize(self as *mut Self);
+        Self::finalize(core::ptr::from_mut(self));
     }
 
     pub fn on_file_open(&mut self, opened_fd: Fd) {
@@ -1055,7 +1055,7 @@ impl<'a> ReadFileUV<'a> {
         }
 
         self.req.deinit();
-        self.req.data = self as *mut Self as *mut c_void;
+        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
 
         if let Some(errno) = libuv::uv_fs_fstat(
             self.loop_,
@@ -1072,13 +1072,13 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
 
-        self.req.data = self as *mut Self as *mut c_void;
+        self.req.data = core::ptr::from_mut(self).cast::<c_void>();
     }
 
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
         // SAFETY: req.data was set to *mut Self in on_file_open().
-        let this: &mut ReadFileUV = unsafe { &mut *((*req).data as *mut ReadFileUV) };
+        let this: &mut ReadFileUV = unsafe { &mut *(*req).data.cast::<ReadFileUV>() };
 
         if let Some(errno) = unsafe { (*req).result.err_enum() } {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
@@ -1218,7 +1218,7 @@ impl<'a> ReadFileUV<'a> {
                 i64::try_from(self.offset + self.read_off).expect("int cast"),
                 Some(Self::on_read),
             );
-            self.req.data = self as *mut Self as *mut c_void;
+            self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
                 self.system_error =
@@ -1238,7 +1238,7 @@ impl<'a> ReadFileUV<'a> {
 
     pub extern "C" fn on_read(req: *mut libuv::fs_t) {
         // SAFETY: req.data was set to *mut Self in queue_read().
-        let this: &mut ReadFileUV = unsafe { &mut *((*req).data as *mut ReadFileUV) };
+        let this: &mut ReadFileUV = unsafe { &mut *(*req).data.cast::<ReadFileUV>() };
 
         let result = unsafe { (*req).result };
 

@@ -1637,7 +1637,7 @@ impl StackLine {
                     // SAFETY: load commands follow the mach header in memory
                     buffer: unsafe {
                         core::slice::from_raw_parts(
-                            (header as *const u8).add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
+                            header.cast::<u8>().add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
                             header_ref.sizeofcmds as usize,
                         )
                     },

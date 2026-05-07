@@ -83,7 +83,7 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
             uws::InternalSocket::Pipe(p) => {
                 // SAFETY: `Pipe` carries a non-null `*mut WindowsNamedPipe`
                 // (type-erased in `bun_uws`); set by `WindowsNamedPipeContext`.
-                unsafe { (*(p as *mut super::windows_named_pipe::WindowsNamedPipe)).resume_stream() }
+                unsafe { (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).resume_stream() }
             }
             _ => false,
         }
@@ -99,7 +99,7 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
             #[cfg(windows)]
             uws::InternalSocket::Pipe(p) => {
                 // SAFETY: see `resume_stream` above.
-                unsafe { (*(p as *mut super::windows_named_pipe::WindowsNamedPipe)).pause_stream() }
+                unsafe { (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).pause_stream() }
             }
             _ => false,
         }
@@ -202,7 +202,7 @@ extern "C" fn select_alpn_callback(
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open).
-    let this: &TLSSocket = unsafe { &*(this_ptr as *const TLSSocket) };
+    let this: &TLSSocket = unsafe { &*this_ptr.cast::<TLSSocket>() };
     if let Some(protos) = &this.protos {
         if protos.is_empty() {
             return boringssl_sys::SSL_TLSEXT_ERR_NOACK;

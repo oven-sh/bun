@@ -605,7 +605,7 @@ impl<'a> JSBundleCompletionTask<'a> {
                         bun_runtime::node::fs::WriteFileArgs {
                             data: bun_runtime::node::fs::WriteFileData::Buffer {
                                 buffer: bun_runtime::node::ArrayBuffer {
-                                    ptr: sourcemap_bytes.as_ptr() as *mut u8,
+                                    ptr: sourcemap_bytes.as_ptr().cast_mut().cast::<u8>(),
                                     len: sourcemap_bytes.len() as u32,
                                     byte_len: sourcemap_bytes.len() as u32,
                                 },

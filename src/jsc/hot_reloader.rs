@@ -157,7 +157,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `install_bun_watcher`; the cast recovers the concrete type.
         !matches!(
-            unsafe { &*(self.bun_watcher as *const ImportWatcher) },
+            unsafe { &*self.bun_watcher.cast::<ImportWatcher>() },
             ImportWatcher::None
         )
     }

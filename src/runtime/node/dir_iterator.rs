@@ -152,7 +152,7 @@ mod platform {
                 }
                 // SAFETY: self.index < self.end_index <= buf.len(); buf holds packed dirent records
                 let darwin_entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent)
+                    &*(self.buf.as_ptr().add(self.index).cast::<libc::dirent>())
                 };
                 let next_index = self.index + darwin_entry.d_reclen as usize;
                 self.index = next_index;
@@ -160,7 +160,7 @@ mod platform {
                 // SAFETY: dirent.d_name is a [*]u8 of length d_namlen within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        darwin_entry.d_name.as_ptr() as *const u8,
+                        darwin_entry.d_name.as_ptr().cast::<u8>(),
                         darwin_entry.d_namlen as usize,
                     )
                 };
@@ -212,7 +212,7 @@ mod platform {
                     let rc = unsafe {
                         libc::getdents(
                             self.dir.native(),
-                            self.buf.as_mut_ptr() as *mut libc::c_char,
+                            self.buf.as_mut_ptr().cast::<libc::c_char>(),
                             self.buf.len(),
                         )
                     };
@@ -233,14 +233,14 @@ mod platform {
                 }
                 // SAFETY: index within filled buf; packed dirent
                 let entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent)
+                    &*(self.buf.as_ptr().add(self.index).cast::<libc::dirent>())
                 };
                 self.index += entry.d_reclen as usize;
 
                 // SAFETY: name is d_namlen bytes within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        entry.d_name.as_ptr() as *const u8,
+                        entry.d_name.as_ptr().cast::<u8>(),
                         entry.d_namlen as usize,
                     )
                 };
@@ -629,7 +629,7 @@ mod platform {
                 // FileName is u16-aligned (NextEntryOffset/record is 8-byte aligned).
                 let dir_info_name = unsafe {
                     core::slice::from_raw_parts(
-                        p.add(name_byte_offset) as *const u16,
+                        p.add(name_byte_offset).cast::<u16>(),
                         name_len_u16,
                     )
                 };
@@ -724,7 +724,7 @@ mod platform {
                     self.end_index = bufused;
                 }
                 // SAFETY: index within filled buf
-                let entry = unsafe { &*(self.buf.as_ptr().add(self.index) as *const w::dirent_t) };
+                let entry = unsafe { &*(self.buf.as_ptr().add(self.index).cast::<w::dirent_t>()) };
                 let entry_size = size_of::<w::dirent_t>();
                 let name_index = self.index + entry_size;
                 let name = &self.buf[name_index..name_index + entry.d_namlen as usize];

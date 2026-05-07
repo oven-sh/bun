@@ -275,7 +275,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     pub fn adopt_pipe(&mut self, _vm: &mut VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
         if let Err(e) = pipe
             .read_start(
-                self as *mut Self,
+                core::ptr::from_mut(self),
                 WindowsHandlers::<Owner>::on_alloc,
                 WindowsHandlers::<Owner>::on_error,
                 WindowsHandlers::<Owner>::on_read,
@@ -369,7 +369,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             .write(
                 pipe.as_stream(),
                 &self.backend.write_buf,
-                self as *mut Self,
+                core::ptr::from_mut(self),
                 WindowsHandlers::<Owner>::on_write,
             )
             .unwrap_result()

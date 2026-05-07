@@ -2382,7 +2382,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
                     // size-agnostic, so a trimmed (shorter) stored slice is fine.
                     // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
                     // (the only non-static-buffer source above) and not yet freed.
-                    unsafe { mimalloc::mi_free(existing_slice.as_ptr() as *mut core::ffi::c_void) };
+                    unsafe { mimalloc::mi_free(existing_slice.as_ptr().cast_mut().cast::<core::ffi::c_void>()) };
                 }
                 self.key_list_overflow[idx] = slice;
             } else {

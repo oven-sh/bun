@@ -438,7 +438,7 @@ pub fn getcwd_z(buf: &mut PathBuffer) -> Result<&ZStr> {
     #[cfg(not(windows))]
     {
         // SAFETY: getcwd writes into buf and returns either buf.ptr or null.
-        let rc: *mut c_char = unsafe { libc::getcwd(buf.as_mut_ptr() as *mut c_char, MAX_PATH_BYTES) };
+        let rc: *mut c_char = unsafe { libc::getcwd(buf.as_mut_ptr().cast::<c_char>(), MAX_PATH_BYTES) };
         if !rc.is_null() {
             // SAFETY: getcwd NUL-terminates on success.
             let len = unsafe { libc::strlen(rc) };
@@ -831,7 +831,7 @@ fn statx_impl(fd: Fd, path: Option<*const c_char>, flags: u32, mask: u32) -> Res
         let rc = unsafe {
             syscall::statx(
                 i32::try_from(fd.cast()).expect("int cast"),
-                path.unwrap_or(b"\0".as_ptr() as *const c_char),
+                path.unwrap_or(b"\0".as_ptr().cast::<c_char>()),
                 flags,
                 mask,
                 &mut buf,
@@ -1311,7 +1311,7 @@ fn open_dir_at_windows_nt_path(
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
-        Buffer: path.as_ptr() as *mut u16,
+        Buffer: path.as_ptr().cast_mut().cast::<u16>(),
     };
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
@@ -1521,7 +1521,7 @@ pub fn open_file_at_windows_nt_path(
     let mut nt_name = windows::UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
-        Buffer: path.as_ptr() as *mut u16,
+        Buffer: path.as_ptr().cast_mut().cast::<u16>(),
     };
     let mut attr = windows::OBJECT_ATTRIBUTES {
         Length: mem::size_of::<windows::OBJECT_ATTRIBUTES>() as u32,
@@ -2007,7 +2007,7 @@ pub fn writev(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: FFI call with valid fd and iovec array of `buffers.len()` entries.
-        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr() as *const posix::iovec_const, i32::try_from(buffers.len()).expect("int cast")) };
+        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr().cast::<posix::iovec_const>(), i32::try_from(buffers.len()).expect("int cast")) };
         if cfg!(debug_assertions) {
             log!("writev({}, {}) = {}", fd, veclen(buffers), rc);
         }
@@ -2019,7 +2019,7 @@ pub fn writev(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
     #[cfg(not(target_os = "macos"))]
     loop {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr() as *const posix::iovec_const, buffers.len() as _) };
+        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr().cast::<posix::iovec_const>(), buffers.len() as _) };
         if cfg!(debug_assertions) {
             log!("writev({}, {}) = {}", fd, veclen(buffers), rc);
         }
@@ -2486,7 +2486,7 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
             windows::ntdll::NtSetInformationFile(
                 fd.cast(),
                 &mut io_status_block,
-                (&mut eof_info) as *mut _ as *mut c_void,
+                core::ptr::from_mut(&mut eof_info).cast::<c_void>(),
                 mem::size_of::<w::FILE_END_OF_FILE_INFORMATION>() as u32,
                 w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
             )
@@ -3000,7 +3000,7 @@ pub fn unlinkat_with_flags(dirfd: Fd, to: impl AsRef<[u8]>, flags: c_uint) -> Re
         loop {
             if let Some(err) = Result::<()>::errno_sys_fp(
                 // SAFETY: FFI call; arguments are valid for the duration of the call.
-                unsafe { syscall::unlinkat(dirfd.cast(), to.as_ptr() as *const c_char, flags) },
+                unsafe { syscall::unlinkat(dirfd.cast(), to.as_ptr().cast::<c_char>(), flags) },
                 Tag::unlink,
                 dirfd,
                 to,
@@ -3030,7 +3030,7 @@ pub fn unlinkat(dirfd: Fd, to: impl AsRef<[u8]>) -> Result<()> {
         loop {
             if let Some(err) = Result::<()>::errno_sys_fp(
                 // SAFETY: FFI call; arguments are valid for the duration of the call.
-                unsafe { syscall::unlinkat(dirfd.cast(), to.as_ptr() as *const c_char, 0) },
+                unsafe { syscall::unlinkat(dirfd.cast(), to.as_ptr().cast::<c_char>(), 0) },
                 Tag::unlink,
                 dirfd,
                 to,
@@ -3211,7 +3211,7 @@ pub fn setsockopt(fd: Fd, level: c_int, optname: u32, value: i32) -> Result<i32>
                 fd.cast(),
                 level,
                 optname,
-                (&value) as *const i32 as *const c_void,
+                core::ptr::from_ref::<i32>(&value).cast::<c_void>(),
                 mem::size_of::<i32>() as _,
             )
         };
@@ -3347,8 +3347,8 @@ pub fn socketpair_impl(domain: SocketpairT, socktype: SocketpairT, protocol: Soc
                     let so_sendbuf: c_int = 1024 * 128;
                     // SAFETY: FFI call; arguments are valid for the duration of the call.
                     unsafe {
-                        let _ = libc::setsockopt(fds_i[1], posix::SOL_SOCKET, posix::SO_RCVBUF, (&so_recvbuf) as *const c_int as *const c_void, mem::size_of::<c_int>() as _);
-                        let _ = libc::setsockopt(fds_i[0], posix::SOL_SOCKET, posix::SO_SNDBUF, (&so_sendbuf) as *const c_int as *const c_void, mem::size_of::<c_int>() as _);
+                        let _ = libc::setsockopt(fds_i[1], posix::SOL_SOCKET, posix::SO_RCVBUF, core::ptr::from_ref::<c_int>(&so_recvbuf).cast::<c_void>(), mem::size_of::<c_int>() as _);
+                        let _ = libc::setsockopt(fds_i[0], posix::SOL_SOCKET, posix::SO_SNDBUF, core::ptr::from_ref::<c_int>(&so_sendbuf).cast::<c_void>(), mem::size_of::<c_int>() as _);
                     }
                 } else {
                     for i in 0..2 {
@@ -3393,7 +3393,7 @@ pub fn socketpair_impl(domain: SocketpairT, socktype: SocketpairT, protocol: Soc
 pub fn munmap(memory: &[u8]) -> Result<()> {
     if let Some(err) = Result::<()>::errno_sys(
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        unsafe { syscall::munmap(memory.as_ptr() as *mut c_void, memory.len()) },
+        unsafe { syscall::munmap(memory.as_ptr().cast_mut().cast::<c_void>(), memory.len()) },
         Tag::munmap,
     ) {
         return err;
@@ -3840,7 +3840,7 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
         let mut nt_name = w::UNICODE_STRING {
             Length: path_len_bytes,
             MaximumLength: path_len_bytes,
-            Buffer: path.as_ptr() as *mut u16,
+            Buffer: path.as_ptr().cast_mut().cast::<u16>(),
         };
         let attr = w::OBJECT_ATTRIBUTES {
             Length: mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
@@ -3937,7 +3937,7 @@ pub fn is_executable_file_os_path(path: bun_paths::OSPathSliceZ<'_>) -> bool {
     #[cfg(unix)]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        return unsafe { is_executable_file(path.as_ptr() as *const c_char) };
+        return unsafe { is_executable_file(path.as_ptr().cast::<c_char>()) };
     }
 
     #[cfg(windows)]
@@ -4121,7 +4121,7 @@ pub fn link(src: &ZStr, dest: &ZStr) -> Result<()> {
     #[cfg(not(windows))]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        let ret = unsafe { libc::link(src.as_ptr() as *const c_char, dest.as_ptr() as *const c_char) };
+        let ret = unsafe { libc::link(src.as_ptr().cast::<c_char>(), dest.as_ptr().cast::<c_char>()) };
         if let Some(err) = Result::<()>::errno_sys_pd(ret, Tag::link, src, dest) {
             log!("link({}, {}) = {}", bstr::BStr::new(src.as_bytes()), bstr::BStr::new(dest.as_bytes()), <&str>::from(err.get_errno()));
             return err;
@@ -4157,7 +4157,7 @@ pub fn linkat(src: Fd, src_path: &[u8], dest: Fd, dest_path: &[u8]) -> Result<()
 #[cfg(unix)]
 pub fn linkat_z(src: Fd, src_path: &ZStr, dest: Fd, dest_path: &ZStr) -> Result<()> {
     // SAFETY: FFI call; arguments are valid for the duration of the call.
-    let ret = unsafe { libc::linkat(src.cast(), src_path.as_ptr() as *const c_char, dest.cast(), dest_path.as_ptr() as *const c_char, 0) };
+    let ret = unsafe { libc::linkat(src.cast(), src_path.as_ptr().cast::<c_char>(), dest.cast(), dest_path.as_ptr().cast::<c_char>(), 0) };
     if let Some(err) = Result::<()>::errno_sys_p(ret, Tag::link, src_path) {
         log!("linkat({}, {}, {}, {}) = {}", src, bstr::BStr::new(src_path.as_bytes()), dest, bstr::BStr::new(dest_path.as_bytes()), <&str>::from(err.get_errno()));
         return err;
@@ -4179,9 +4179,9 @@ pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Result<()> {
             unsafe {
                 syscall::linkat(
                     tmpfd.cast(),
-                    b"\0".as_ptr() as *const c_char,
+                    b"\0".as_ptr().cast::<c_char>(),
                     dirfd.cast(),
-                    name.as_ptr() as *const c_char,
+                    name.as_ptr().cast::<c_char>(),
                     posix::AT_EMPTY_PATH,
                 )
             }
@@ -4195,7 +4195,7 @@ pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Result<()> {
             use std::io::Write;
             let mut cursor = &mut procfs_buf[..];
             write!(cursor, "/proc/self/fd/{}\0", tmpfd.cast()).expect("unreachable");
-            let path = procfs_buf.as_ptr() as *const c_char;
+            let path = procfs_buf.as_ptr().cast::<c_char>();
 
             // SAFETY: FFI call; arguments are valid for the duration of the call.
             unsafe {
@@ -4203,7 +4203,7 @@ pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Result<()> {
                     posix::AT_FDCWD,
                     path,
                     dirfd.cast(),
-                    name.as_ptr() as *const c_char,
+                    name.as_ptr().cast::<c_char>(),
                     posix::AT_SYMLINK_FOLLOW,
                 )
             }
@@ -4390,7 +4390,7 @@ pub fn self_process_memory_usage() -> Option<usize> {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: c_int) -> *const c_char {
     match SystemErrno::init(err) {
-        Some(e) => <&'static str>::from(e).as_ptr() as *const c_char,
+        Some(e) => <&'static str>::from(e).as_ptr().cast::<c_char>(),
         None => core::ptr::null(),
     }
 }
@@ -4606,7 +4606,7 @@ pub fn get_self_exe_shared_lib_paths() -> core::result::Result<Vec<Box<ZStr>>, b
             0
         }
         // SAFETY: callback signature matches dl_iterate_phdr's contract; `data` outlives the call.
-        unsafe { posix::dl_iterate_phdr(Some(callback), (&mut paths) as *mut _ as *mut c_void) };
+        unsafe { posix::dl_iterate_phdr(Some(callback), core::ptr::from_mut(&mut paths).cast::<c_void>()) };
         return Ok(paths);
     }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "watchos", target_os = "tvos"))]
@@ -4660,12 +4660,12 @@ pub fn dlopen(filename: &ZStr, flags: c_int) -> Option<*mut c_void> {
     {
         let _ = flags;
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        return Option::from(unsafe { windows::LoadLibraryA(filename.as_ptr() as *const c_char) });
+        return Option::from(unsafe { windows::LoadLibraryA(filename.as_ptr().cast::<c_char>()) });
     }
     #[cfg(not(windows))]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        let p = unsafe { libc::dlopen(filename.as_ptr() as *const c_char, flags) };
+        let p = unsafe { libc::dlopen(filename.as_ptr().cast::<c_char>(), flags) };
         if p.is_null() { None } else { Some(p) }
     }
 }
@@ -4674,12 +4674,12 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
     #[cfg(windows)]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        return Option::from(unsafe { windows::GetProcAddressA(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr() as *const c_char) });
+        return Option::from(unsafe { windows::GetProcAddressA(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr().cast::<c_char>()) });
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        let p = unsafe { libc::dlsym(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr() as *const c_char) };
+        let p = unsafe { libc::dlsym(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr().cast::<c_char>()) };
         if p.is_null() { None } else { Some(p) }
     }
 }

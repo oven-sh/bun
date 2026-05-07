@@ -266,7 +266,7 @@ pub fn platform_iovec_create(input: &[u8]) -> PlatformIOVec {
     // TODO: remove this constCast by making the input mutable
     PlatformIOVec {
         len: input.len() as _,
-        base: input.as_ptr() as *mut u8,
+        base: input.as_ptr().cast_mut().cast::<u8>(),
     }
 }
 
@@ -274,7 +274,7 @@ pub fn platform_iovec_const_create(input: &[u8]) -> PlatformIOVecConst {
     // TODO: remove this constCast by adding uv_buf_t_const
     PlatformIOVecConst {
         len: input.len() as _,
-        base: input.as_ptr() as *mut u8,
+        base: input.as_ptr().cast_mut().cast::<u8>(),
     }
 }
 
@@ -366,7 +366,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
         }
         // SAFETY: node points to Storage.node (offset 0 because #[repr(C)])
         unsafe {
-            let s = (node as *mut u8)
+            let s = node.cast::<u8>()
                 .sub(core::mem::offset_of!(Storage<T>, node))
                 .cast::<Storage<T>>();
             drop(Box::from_raw(s));
@@ -905,7 +905,7 @@ pub fn getenv_z(key: &bun_str::ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
     {
         // SAFETY: getenv returns null or a NUL-terminated string with static lifetime
-        let pointer = unsafe { libc::getenv(key.as_ptr() as *const c_char) };
+        let pointer = unsafe { libc::getenv(key.as_ptr().cast::<c_char>()) };
         if pointer.is_null() {
             return None;
         }
@@ -1357,7 +1357,7 @@ pub fn reload_process<const MAY_RETURN: bool>(clear_terminal: bool) {
         let mut dupe_argv: Vec<*const c_char> = Vec::with_capacity(argv().len() + 1);
         for src in argv() {
             let z = bun_str::ZStr::from_bytes(src.as_bytes());
-            dupe_argv.push(Box::leak(z).as_ptr() as *const c_char);
+            dupe_argv.push(Box::leak(z).as_ptr().cast::<c_char>());
         }
         dupe_argv.push(core::ptr::null());
 
@@ -1369,13 +1369,13 @@ pub fn reload_process<const MAY_RETURN: bool>(clear_terminal: bool) {
             } else {
                 let s = unsafe { span(*src) };
                 let z = bun_str::ZStr::from_bytes(s);
-                environ.push(Box::leak(z).as_ptr() as *const c_char);
+                environ.push(Box::leak(z).as_ptr().cast::<c_char>());
             }
         }
         environ.push(core::ptr::null());
 
         // we must clone selfExePath in case the argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr() as *const c_char;
+        let exec_path = self_exe_path().expect("unreachable").as_ptr().cast::<c_char>();
         let newargv = dupe_argv.as_ptr();
         let envp = environ.as_ptr();
 
@@ -1966,7 +1966,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
         if self.value == LazyBoolValue::Unknown {
             // SAFETY: self points to Parent.<field> at FIELD_OFFSET
             let parent = unsafe {
-                &mut *((self as *mut Self as *mut u8).sub(FIELD_OFFSET).cast::<Parent>())
+                &mut *(core::ptr::from_mut(self).cast::<u8>().sub(FIELD_OFFSET).cast::<Parent>())
             };
             self.value = if (self.getter)(parent) {
                 LazyBoolValue::Yes
@@ -2954,7 +2954,7 @@ impl<R: Copy> Once<R> {
         if !self.done.load(Ordering::Acquire) {
             // SAFETY: exclusive under mutex
             unsafe {
-                (self.payload.as_ptr() as *mut R).write(f());
+                (self.payload.as_ptr().cast_mut().cast::<R>()).write(f());
             }
             self.done.store(true, Ordering::Release);
         }

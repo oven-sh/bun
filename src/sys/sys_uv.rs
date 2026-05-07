@@ -550,7 +550,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             // SAFETY: PlatformIOVecConst and PlatformIOVec are both uv_buf_t on Windows.
             unsafe {
                 core::slice::from_raw_parts(
-                    chunk_bufs.as_ptr() as *const PlatformIOVec,
+                    chunk_bufs.as_ptr().cast::<PlatformIOVec>(),
                     chunk_bufs.len(),
                 )
             },
@@ -668,7 +668,7 @@ pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t. Reconcile in Phase B.
     // SAFETY: PlatformIOVec and PlatformIOVecConst have identical repr on Windows.
     let const_bufs = unsafe {
-        core::slice::from_raw_parts(bufs.as_ptr() as *const PlatformIOVecConst, bufs.len())
+        core::slice::from_raw_parts(bufs.as_ptr().cast::<PlatformIOVecConst>(), bufs.len())
     };
     pwritev(fd, const_bufs, -1)
 }

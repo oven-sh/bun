@@ -859,7 +859,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -868,7 +868,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -877,7 +877,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -886,7 +886,7 @@ impl FilePoll {
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -959,7 +959,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Writable => Kevent {
@@ -967,7 +967,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Process => Kevent {
@@ -975,7 +975,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Machport => {
@@ -1141,7 +1141,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1150,7 +1150,7 @@ impl FilePoll {
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1159,7 +1159,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1168,7 +1168,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1183,7 +1183,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 };
@@ -1243,7 +1243,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::DELETE,
                 },
                 Flags::Writable => Kevent {
@@ -1251,7 +1251,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::DELETE,
                 },
                 Flags::Process => Kevent {
@@ -1259,7 +1259,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::DELETE,
                 },
                 Flags::Machport => {
@@ -1278,7 +1278,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
+                    udata: Pollable::init(self).ptr() as usize,
                     flags: EV::DELETE,
                 };
                 nchanges = 2;
@@ -1759,7 +1759,7 @@ impl KEventWaker {
         debug_assert!(kq > -1);
         let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
         // SAFETY: FFI call; buf outlives the machport.
-        let machport = unsafe { io_darwin_create_machport(kq, machport_buf.as_mut_ptr() as *mut c_void, 1024) };
+        let machport = unsafe { io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024) };
         if machport == 0 {
             return Err(bun_core::err!("MachportCreationFailed"));
         }

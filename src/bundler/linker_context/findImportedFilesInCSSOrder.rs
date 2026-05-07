@@ -170,7 +170,7 @@ pub fn find_imported_files_in_css_order<'a>(
             // (type-erased to `*mut c_void`); valid for the link step.
             let Some(repr): Option<&BundlerStyleSheet> = self.css_asts
                 [source_index.get() as usize]
-                .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
+                .map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() })
             else {
                 return; // Sanity check
             };

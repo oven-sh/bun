@@ -225,11 +225,10 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.default_arena = Arena.init();
     bun.http.default_allocator = bun.http.default_arena.allocator();
 
-    if (bun.getenvZ("BUN_CONFIG_HTTP_IDLE_TIMEOUT")) |raw| {
-        if (std.fmt.parseInt(c_uint, raw, 10)) |secs| {
-            bun.http.idle_timeout_seconds = secs;
-        } else |_| {}
-    }
+    bun.http.idle_timeout_seconds = @intCast(@min(
+        bun.env_var.BUN_CONFIG_HTTP_IDLE_TIMEOUT.get(),
+        std.math.maxInt(c_uint),
+    ));
 
     const loop = bun.jsc.MiniEventLoop.initGlobal(null, null);
 

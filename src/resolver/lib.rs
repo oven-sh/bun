@@ -9277,8 +9277,8 @@ impl<'a> Resolver<'a> {
                         // without this, every intermediate config in an extends chain leaks on
                         // each dirInfoUncached() call, which is especially bad under HMR where
                         // bustDirCache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config came from PackageJSON::new (Box::into_raw)
-                        drop(unsafe { Box::from_raw(parent_config_ptr) });
+                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (Box::into_raw)
+                        TSConfigJSON::destroy(unsafe { Box::from_raw(parent_config_ptr) });
                     }
                     // SAFETY: `merged_config` is a leaked Box (Box::into_raw) interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(unsafe { core::ptr::NonNull::new_unchecked(merged_config) });

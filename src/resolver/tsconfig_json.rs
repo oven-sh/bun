@@ -391,11 +391,29 @@ pub static IMPORTS_NOT_USED_AS_VALUE_LIST: phf::Map<&'static [u8], ImportsNotUse
     b"remove" => ImportsNotUsedAsValue::Remove,
 };
 
+// Zig: `Output.scoped(.alloc, .visibleIf(hasDecl(T, "log_allocations")))` — hidden by
+// default, enabled via `BUN_DEBUG_alloc=1`. Tests count `new(TSConfigJSON)` /
+// `destroy(TSConfigJSON)` lines to assert the extends-chain merge frees intermediates.
+bun_core::declare_scope!(alloc, hidden);
+
 impl TSConfigJSON {
-    // Zig: `pub const new = bun.TrivialNew(@This());`
+    // Zig: `pub const new = bun.TrivialNew(@This());` → `bun.new` logs under `.alloc`.
     #[inline]
     pub fn new(v: Self) -> Box<Self> {
-        Box::new(v)
+        let boxed = Box::new(v);
+        if cfg!(debug_assertions) {
+            bun_core::scoped_log!(alloc, "new(TSConfigJSON) = {:p}", boxed.as_ref());
+        }
+        boxed
+    }
+
+    // Zig: `bun.destroy(this)` — logs under `.alloc` then frees.
+    #[inline]
+    pub fn destroy(boxed: Box<Self>) {
+        if cfg!(debug_assertions) {
+            bun_core::scoped_log!(alloc, "destroy(TSConfigJSON) = {:p}", boxed.as_ref());
+        }
+        drop(boxed);
     }
 
     pub fn has_base_url(&self) -> bool {

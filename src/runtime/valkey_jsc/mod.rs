@@ -61,15 +61,15 @@ pub mod valkey_command {
 pub use valkey_command as ValkeyCommand;
 
 // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────
-// The `.classes.ts` generator emits the
-// `RedisClient__{fromJS,fromJSDirect,create,getConstructor}` externs (and safe
-// wrappers) into `crate::generated_classes::RedisClient` against an opaque
-// pointee. Route through those instead of redeclaring the externs here — a
-// second `extern "C"` block with a different pointee trips
-// `clashing_extern_declarations`. The opaque `RedisClient` and `JSValkeyClient`
-// name the same `m_ctx` heap allocation on the C++ side, so the pointer cast
-// is identity.
-use crate::generated_classes::RedisClient as CodegenRedisClient;
+// `generate-classes.ts` emits the `RedisClient__{fromJS,fromJSDirect,create,
+// getConstructor}` externs plus safe wrappers as **free functions** in
+// `crate::generated_classes::js_RedisClient` (one `js_<Name>` submodule per
+// class). The codegen's `RedisClient` *type* re-export resolves back to
+// `JSValkeyClient` itself (via `valkey::RedisClient`), so the wrapper pointee
+// is already `*mut JSValkeyClient` — no cast required. Route through the
+// submodule instead of redeclaring the externs here; a second `extern "C"`
+// block would trip `clashing_extern_declarations`.
+use crate::generated_classes::js_RedisClient;
 
 impl JSValkeyClient {
     /// Wrap an already-heap-allocated client pointer in its JS object.
@@ -77,25 +77,24 @@ impl JSValkeyClient {
     #[inline]
     pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
         // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and is
-        // hereby owned by the JS wrapper. Cast through the codegen's opaque
-        // `RedisClient` newtype — it's the same `m_ctx` pointer.
-        CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
+        // hereby owned by the JS wrapper.
+        js_RedisClient::to_js(ptr, global)
     }
 }
 
 impl crate::jsc::JsClass for JSValkeyClient {
     fn from_js(value: JSValue) -> Option<*mut Self> {
-        CodegenRedisClient::from_js(value).map(|p| p.as_ptr().cast::<Self>())
+        js_RedisClient::from_js(value).map(|p| p.as_ptr())
     }
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        CodegenRedisClient::from_js_direct(value).map(|p| p.as_ptr().cast::<Self>())
+        js_RedisClient::from_js_direct(value).map(|p| p.as_ptr())
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // Ownership transfers to the C++ wrapper (freed via finalize).
         let ptr = Box::into_raw(Box::new(self));
-        CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
+        js_RedisClient::to_js(ptr, global)
     }
     fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        CodegenRedisClient::get_constructor(global)
+        js_RedisClient::get_constructor(global)
     }
 }

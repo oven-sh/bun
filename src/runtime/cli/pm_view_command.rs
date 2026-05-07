@@ -406,21 +406,21 @@ pub fn view(
         dep_count = deps.data.e_object().unwrap().properties.len as usize;
     }
 
-    Output::prettyln(format_args!(
+    prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
         BStr::new(pkg_name),
         BStr::new(pkg_version),
         BStr::new(license),
         dep_count,
         versions_len,
-    ));
+    );
 
     // Get description and homepage from the top-level package manifest, not the version-specific one
     if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
-        Output::prettyln(format_args!("{}", BStr::new(desc)));
+        prettyln!("{}", BStr::new(desc));
     }
     if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        Output::prettyln(format_args!("<blue>{}<r>", BStr::new(hp)));
+        prettyln!("<blue>{}<r>", BStr::new(hp));
     }
 
     if let Some(mut iter) = json.get_array(b"keywords") {
@@ -437,7 +437,7 @@ pub fn view(
             }
         }
         if !keywords.list.is_empty() {
-            Output::prettyln(format_args!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice())));
+            prettyln!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice()));
         }
     }
 
@@ -446,7 +446,7 @@ pub fn view(
         let deps_e_obj = deps.data.e_object().unwrap();
         let dependencies = deps_e_obj.properties.slice();
         if !dependencies.is_empty() {
-            Output::prettyln(format_args!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len()));
+            prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
         }
 
         for prop in dependencies {
@@ -455,11 +455,11 @@ pub fn view(
             }
             let Some(dep_name) = prop.key.as_ref().unwrap().as_string(&bump) else { continue };
             let Some(dep_version) = prop.value.as_ref().unwrap().as_string(&bump) else { continue };
-            Output::prettyln(format_args!(
+            prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
                 BStr::new(dep_name),
                 BStr::new(dep_version),
-            ));
+            );
         }
     }
 

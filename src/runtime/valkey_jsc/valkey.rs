@@ -19,6 +19,14 @@ use super::valkey_command_body::{Args, Command};
 
 pub use super::valkey_context as ValkeyContext;
 
+/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
+/// `generate-classes.ts` resolves the native backing struct to
+/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
+/// `RedisClient::method(…)` thunks against it. The actual host type is
+/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
+/// spelling here so the generated `pub use` and prototype thunks resolve.
+pub use super::js_valkey_body::JSValkeyClient as RedisClient;
+
 // TODO(port): narrow error set — Zig `bun.JSTerminated!T` is `error{ Terminated }!T`.
 // Using JsResult<T> (Thrown | OutOfMemory | Terminated) in Phase A.
 type JsTerminated<T> = bun_jsc::JsResult<T>;

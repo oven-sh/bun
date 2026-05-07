@@ -398,10 +398,6 @@ impl FileSystem {
 
                 // Touch the EntryStore singleton so it's initialized.
                 let _ = entry_store_backing();
-
-                // Install the cross-crate vtable so `bun_sys::fs` accessors
-                // resolve to this crate's concrete types (CYCLEBREAK §Dispatch).
-                install_sys_fs_vtable();
             }
 
             Ok((*(&raw mut INSTANCE)).as_mut_ptr())

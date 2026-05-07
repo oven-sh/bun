@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::String as BunString;
+use bun_str::{OwnedString, String as BunString};
 
 bun_output::declare_scope!(S3Stat, visible);
 

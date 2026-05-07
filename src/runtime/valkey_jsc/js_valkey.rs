@@ -485,12 +485,17 @@ impl JSValkeyClient {
     // Factory function to create a new Valkey client from JS
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
     // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
-    // wires the constructor via the hand-rolled `JsClass` impl in mod.rs.
+    // wires the constructor via `RedisClientImpl::constructor` (see
+    // generated_classes.rs), which passes the freshly-allocated wrapper cell
+    // as `js_this`. `callframe.this()` is *not* the wrapper here — using it
+    // would mis-target the cached `subscriptionCallbackMap` slot in
+    // `SubscriptionCtx::init`.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
+        js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        Self::create(global_object, callframe.arguments(), callframe.this())
+        Self::create(global_object, callframe.arguments(), js_this)
     }
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
@@ -513,10 +518,13 @@ impl JSValkeyClient {
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(global_object)?
         } else {
-            // TODO(b2-blocked): `vm.transpiler.env.get(b"REDIS_URL")` /
-            // `VALKEY_URL` — `Transpiler::env` is type-erased in Phase A.
-            let _ = vm_ref;
-            BunString::static_(b"valkey://localhost:6379")
+            // SAFETY: `vm.transpiler.env` is set during VM init and points at the
+            // process-lifetime `bun_dotenv::Loader`; never null on the JS thread.
+            let env = unsafe { &*vm_ref.transpiler.env };
+            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
+                Some(url) => BunString::borrow_utf8(url),
+                None => BunString::static_(b"valkey://localhost:6379"),
+            }
         };
         // `defer url_str.deref();` — bun_str::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];

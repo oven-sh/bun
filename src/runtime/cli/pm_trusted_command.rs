@@ -571,9 +571,8 @@ impl TrustCommand {
             };
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
-        let names = package_names_to_add.keys_mut();
         #[cfg(debug_assertions)]
-        debug_assert!(!names.is_empty());
+        debug_assert!(!package_names_to_add.keys().is_empty());
 
         // could be null if these are the first packages to be trusted
         // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
@@ -610,9 +609,12 @@ impl TrustCommand {
             }
         }
 
-        PackageJSONEditor::edit_trusted_dependencies(&mut package_json, names)?;
+        PackageJSONEditor::edit_trusted_dependencies(
+            &mut package_json,
+            package_names_to_add.keys_mut(),
+        )?;
 
-        for name in names.iter() {
+        for name in package_names_to_add.keys() {
             // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
             unsafe {
                 (*pm_raw)

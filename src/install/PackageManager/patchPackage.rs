@@ -728,14 +728,16 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let mut package = Package::default();
             // SAFETY: see `log` above.
             let log = unsafe { &mut *manager.log };
-            // PORT NOTE: borrowck — `parse_with_json` borrows both `lockfile`
-            // and `manager` mutably; `manager.lockfile` is the same allocation,
-            // so split the borrow via raw pointer (Zig passed both freely).
-            let lockfile: *mut Lockfile = &mut *manager.lockfile;
-            // SAFETY: `manager.lockfile` is a `Box<Lockfile>` owned by
-            // `manager`; `parse_with_json` does not deallocate it. The two
-            // &mut do not alias the same fields concurrently in the Zig spec.
-            unsafe { &mut *lockfile }.parse_with_json_via(&mut package, manager, log, &package_json_source, json, &mut resolver, Features::FOLDER)?;
+            // PORT NOTE: borrowck — `parse_with_json` needs `&mut Lockfile` and
+            // `&mut PackageManager` simultaneously, but the lockfile here is
+            // `manager.lockfile`. Temporarily move the Box out so the two
+            // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
+            // (it takes the lockfile as its own parameter). Restore before
+            // propagating any error so `manager` is never left half-torn.
+            let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
+            let parse_result = package.parse_with_json::<()>(&mut lockfile, manager, log, &package_json_source, json, &mut resolver, Features::FOLDER);
+            manager.lockfile = lockfile;
+            parse_result?;
             let lockfile: &Lockfile = &manager.lockfile;
             let strbuf = lockfile.buffers.string_bytes.as_slice();
 
@@ -1263,45 +1265,13 @@ impl PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }
-        if cfg!(windows) && strings::contains(argument, b"node_modules\\") {
+        // PORT NOTE: spec asymmetry — Zig (patchPackage.zig:1028) uses `hasPrefix`
+        // for the Windows-backslash arm but `contains` for the posix arm above.
+        // Match the spec exactly; if this is a Zig bug, fix both sides separately.
+        if cfg!(windows) && strings::has_prefix(argument, b"node_modules\\") {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion
-    }
-}
-
-// PORT NOTE: borrowck — `Package::parse_with_json` takes `&mut Lockfile` and
-// `&mut PackageManager` separately. When the lockfile is `manager.lockfile`,
-// Rust's borrow checker rejects splitting that borrow at the call site even
-// though the method body never re-reads `pm.lockfile`. Provide a thin wrapper
-// on `Lockfile` (the receiver) that takes `manager` whole; callers that own a
-// distinct lockfile use the original method directly.
-trait ParseWithJsonVia {
-    fn parse_with_json_via<R: crate::lockfile_real::package::ResolverContext>(
-        &mut self,
-        package: &mut Package,
-        pm: &mut PackageManager,
-        log: &mut logger::Log,
-        source: &logger::Source,
-        json: bun_logger::js_ast::Expr,
-        resolver: &mut R,
-        features: Features,
-    ) -> Result<(), bun_core::Error>;
-}
-
-impl ParseWithJsonVia for Lockfile {
-    #[inline]
-    fn parse_with_json_via<R: crate::lockfile_real::package::ResolverContext>(
-        &mut self,
-        package: &mut Package,
-        pm: &mut PackageManager,
-        log: &mut logger::Log,
-        source: &logger::Source,
-        json: bun_logger::js_ast::Expr,
-        resolver: &mut R,
-        features: Features,
-    ) -> Result<(), bun_core::Error> {
-        package.parse_with_json::<R>(self, pm, log, source, json, resolver, features)
     }
 }
 

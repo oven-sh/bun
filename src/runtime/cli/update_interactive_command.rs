@@ -2253,23 +2253,50 @@ impl UpdateInteractiveCommand {
     }
 }
 
+fn dep_type_priority(dep_type: &[u8]) -> u8 {
+    if strings::eql_comptime(dep_type, b"dependencies") {
+        return 0;
+    }
+    if strings::eql_comptime(dep_type, b"devDependencies") {
+        return 1;
+    }
+    if strings::eql_comptime(dep_type, b"peerDependencies") {
+        return 2;
+    }
+    if strings::eql_comptime(dep_type, b"optionalDependencies") {
+        return 3;
+    }
+    4
+}
+
+/// Leak a freshly-allocated byte buffer to obtain a `'static` slice for
+/// storage in `E::EString.data` (the AST `Str` alias is `&'static [u8]` until
+/// Phase B threads `'bump`). Mirrors Zig's `allocator.dupe(u8, ...)` against
+/// the leaked-singleton `manager.allocator`. See PackageJSONEditor.rs.
+#[inline]
+fn leak_dup(bytes: &[u8]) -> &'static [u8] {
+    Box::leak(Box::<[u8]>::from(bytes))
+}
+
 /// Edit catalog definitions in package.json
 pub fn edit_catalog_definitions(
-    manager: &mut PackageManager,
+    _manager: &mut PackageManager,
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> Result<(), bun_core::Error> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    bun_js_parser::ast::expr::Disabler::disable();
-    let _reenable = scopeguard::guard((), |_| bun_js_parser::ast::expr::Disabler::enable());
-
-    let _ = manager; // allocator removed in Rust port
+    // PORT NOTE: `Expr.Disabler` is a debug-only guard around the T4
+    // `bun_js_parser` Store; the lower-tier `bun_logger::js_ast` `Expr` used
+    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
+    // toggling the parser-tier disabler is a no-op for these allocations.
+    let bump = Bump::new();
 
     for update in updates.iter() {
         if let Some(catalog_name) = &update.catalog_name {
             update_named_catalog(
+                &bump,
                 current_package_json,
                 catalog_name,
                 &update.package_name,
@@ -2277,6 +2304,7 @@ pub fn edit_catalog_definitions(
             )?;
         } else {
             update_default_catalog(
+                &bump,
                 current_package_json,
                 &update.package_name,
                 &update.new_version,
@@ -2287,28 +2315,149 @@ pub fn edit_catalog_definitions(
 }
 
 fn update_default_catalog(
+    bump: &Bump,
     package_json: &mut Expr,
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    let _ = (package_json, package_name, new_version);
-    // Real body needs `Expr::allocate(&Bump, …)` and `E::Object::put(&Bump, …)`
-    // — the AST allocator handle isn't plumbed through here yet (Zig used the
-    // global Store). Body preserved in update_interactive_command.zig.
-    todo!("blocked_on: bun_js_parser::Expr::allocate Bump plumbing")
+    // Get or create the catalog object
+    // First check if catalog is under workspaces.catalog
+    let mut catalog_obj: E::Object = 'brk: {
+        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
+            if workspaces_query.expr.is_object() {
+                if let Some(catalog_query) = workspaces_query.expr.as_property(b"catalog") {
+                    if let Some(o) = catalog_query.expr.data.e_object() {
+                        break 'brk o.shallow_clone();
+                    }
+                }
+            }
+        }
+        // Fallback to root-level catalog
+        if let Some(catalog_query) = package_json.as_property(b"catalog") {
+            if let Some(o) = catalog_query.expr.data.e_object() {
+                break 'brk o.shallow_clone();
+            }
+        }
+        E::Object::default()
+    };
+
+    // Get original version to preserve prefix if it exists
+    let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
+    if let Some(existing_prop) = catalog_obj.get(package_name) {
+        if let Some(e_str) = existing_prop.data.e_string() {
+            let original_version = e_str.data;
+            version_with_prefix =
+                Box::leak(preserve_version_prefix(original_version, new_version)?);
+        }
+    }
+
+    // Update or add the package version
+    let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+    catalog_obj
+        .put(bump, leak_dup(package_name), new_expr)
+        .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+    // Check if we need to update under workspaces.catalog or root-level catalog
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
+        if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
+            if workspaces_query.expr.as_property(b"catalog").is_some() {
+                // Update under workspaces.catalog
+                ws_obj
+                    .put(bump, b"catalog", Expr::init(catalog_obj, Loc::EMPTY))
+                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                return Ok(());
+            }
+        }
+    }
+
+    // Otherwise update at root level
+    if let Some(root_obj) = package_json.data.e_object_mut() {
+        root_obj
+            .put(bump, b"catalog", Expr::init(catalog_obj, Loc::EMPTY))
+            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+    }
+    Ok(())
 }
 
 fn update_named_catalog(
+    bump: &Bump,
     package_json: &mut Expr,
     catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    let _ = (package_json, catalog_name, package_name, new_version);
-    // Real body needs `Expr::allocate(&Bump, …)` and `E::Object::put(&Bump, …)`
-    // — the AST allocator handle isn't plumbed through here yet (Zig used the
-    // global Store). Body preserved in update_interactive_command.zig.
-    todo!("blocked_on: bun_js_parser::Expr::allocate Bump plumbing")
+    // Get or create the catalogs object
+    // First check if catalogs is under workspaces.catalogs (newer structure)
+    let mut catalogs_obj: E::Object = 'brk: {
+        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
+            if workspaces_query.expr.is_object() {
+                if let Some(catalogs_query) = workspaces_query.expr.as_property(b"catalogs") {
+                    if let Some(o) = catalogs_query.expr.data.e_object() {
+                        break 'brk o.shallow_clone();
+                    }
+                }
+            }
+        }
+        // Fallback to root-level catalogs
+        if let Some(catalogs_query) = package_json.as_property(b"catalogs") {
+            if let Some(o) = catalogs_query.expr.data.e_object() {
+                break 'brk o.shallow_clone();
+            }
+        }
+        E::Object::default()
+    };
+
+    // Get or create the specific catalog
+    let mut catalog_obj: E::Object = 'brk: {
+        if let Some(catalog_query) = catalogs_obj.get(catalog_name) {
+            if let Some(o) = catalog_query.data.e_object() {
+                break 'brk o.shallow_clone();
+            }
+        }
+        E::Object::default()
+    };
+
+    // Get original version to preserve prefix if it exists
+    let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
+    if let Some(existing_prop) = catalog_obj.get(package_name) {
+        if let Some(e_str) = existing_prop.data.e_string() {
+            let original_version = e_str.data;
+            version_with_prefix =
+                Box::leak(preserve_version_prefix(original_version, new_version)?);
+        }
+    }
+
+    // Update or add the package version
+    let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+    catalog_obj
+        .put(bump, leak_dup(package_name), new_expr)
+        .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+    // Update the catalog in catalogs object
+    catalogs_obj
+        .put(bump, leak_dup(catalog_name), Expr::init(catalog_obj, Loc::EMPTY))
+        .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+    // Check if we need to update under workspaces.catalogs or root-level catalogs
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
+        if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
+            if workspaces_query.expr.as_property(b"catalogs").is_some() {
+                // Update under workspaces.catalogs
+                ws_obj
+                    .put(bump, b"catalogs", Expr::init(catalogs_obj, Loc::EMPTY))
+                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                return Ok(());
+            }
+        }
+    }
+
+    // Otherwise update at root level
+    if let Some(root_obj) = package_json.data.e_object_mut() {
+        root_obj
+            .put(bump, b"catalogs", Expr::init(catalogs_obj, Loc::EMPTY))
+            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+    }
+    Ok(())
 }
 
 fn preserve_version_prefix(

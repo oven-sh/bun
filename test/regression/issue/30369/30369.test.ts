@@ -163,9 +163,13 @@ describe("#30369 — wasm ES module integration", () => {
       "index.js": `
         try {
           await import("./bad.wasm");
-          console.log("UNEXPECTED_OK");
+          console.log(JSON.stringify({ threw: false }));
         } catch (e) {
-          console.log("THREW");
+          console.log(JSON.stringify({
+            threw: true,
+            name: e?.name ?? "",
+            message: String(e?.message ?? ""),
+          }));
         }
       `,
     });
@@ -182,7 +186,13 @@ describe("#30369 — wasm ES module integration", () => {
       proc.exited,
     ]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("THREW");
+    const parsed = JSON.parse(stdout);
+    expect(parsed.threw).toBe(true);
+    // The Zig side raises "Invalid wasm file ... (missing magic header)"
+    // before JSC ever gets bytes. Assert on that stable phrase so the
+    // test only passes for real wasm load failures, not unrelated
+    // errors (network, permissions, etc.).
+    expect(parsed.message).toMatch(/magic header/i);
     expect(exitCode).toBe(0);
   });
 });

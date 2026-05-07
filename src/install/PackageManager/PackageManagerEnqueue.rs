@@ -38,16 +38,6 @@ use crate::package_manager_real::{
 };
 use crate::package_manager_task as Task;
 
-// PORT NOTE: until the stub/real type-unification (reconciler-6) lands, several
-// pool slots (`Task::package_manager`, `ExtractTarball::package_manager`,
-// `PatchTask::new_*`) are typed against `crate::PackageManager` (the lib.rs
-// stub singleton), not `package_manager_real::PackageManager`. Both refer to
-// the same install-phase global state in Zig; route through the singleton.
-#[inline]
-fn pm_stub() -> *const crate::PackageManager {
-    crate::PackageManager::get() as *const _
-}
-
 // PORT NOTE: Zig accesses `PackageManager.verbose_install` (a `pub var`); the
 // Rust port stores it as a process-global. The associated fn lives on the real
 // `PackageManager` impl; pull it into scope as a free name so the comptime-ish
@@ -368,7 +358,7 @@ pub fn enqueue_parse_npm_package(
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
         task.write(Task::Task {
-            package_manager: pm_stub(),
+            package_manager: this as *const PackageManager,
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
             request: crate::package_manager_task::Request {
@@ -1668,10 +1658,12 @@ fn init_extract_task(
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task<'static> {
     let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
+    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
+    // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
-        *task = Task::Task {
-            package_manager: pm_stub(),
+        task.write(Task::Task {
+            package_manager: this as *const PackageManager,
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
@@ -1691,7 +1683,7 @@ fn init_extract_task(
             id: (*network_task).task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        };
+        });
         task
     }
 }
@@ -1730,10 +1722,12 @@ fn enqueue_git_clone(
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool
+    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
+    // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
-        *task = Task::Task {
-            package_manager: pm_stub(),
+        task.write(Task::Task {
+            package_manager: this as *const PackageManager,
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitClone,
             request: crate::package_manager_task::Request {
@@ -1803,10 +1797,12 @@ pub fn enqueue_git_checkout(
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool
+    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
+    // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
-        *task = Task::Task {
-            package_manager: pm_stub(),
+        task.write(Task::Task {
+            package_manager: this as *const PackageManager,
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitCheckout,
             request: crate::package_manager_task::Request {

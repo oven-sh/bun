@@ -789,8 +789,10 @@ pub fn is_regular_file(mode: Mode) -> bool {
 #[cfg(windows)] pub type SocketT = usize;
 pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 
-/// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns the static
-/// upper-case errno name (e.g. `"ENOENT"`) or null for an unrecognised code.
+/// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns a
+/// NUL-terminated upper-case errno name (e.g. `"ENOENT"`) or null for an
+/// unrecognised code. The pointer is thread-local and valid until the next
+/// call on the same thread; both C++ callers consume it immediately.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
     // `SystemErrno::init` has a per-target signature: i64 on Linux, i32 on
@@ -798,10 +800,28 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
     // Feed it the widest signed int and let each impl narrow.
     #[cfg(target_os = "linux")] let code = err as i64;
     #[cfg(not(target_os = "linux"))] let code = err;
-    match SystemErrno::init(code) {
-        Some(e) => <&'static str>::from(e).as_ptr().cast::<core::ffi::c_char>(),
-        None => core::ptr::null(),
+    let Some(e) = SystemErrno::init(code) else {
+        return core::ptr::null();
+    };
+    // strum's `IntoStaticStr` yields a `&str` without a NUL terminator, but the
+    // Zig contract is `?[*:0]const u8` and C++ callers pass it to `fprintf` /
+    // `String::fromLatin1`. Copy into a small thread-local buffer and append
+    // the NUL ourselves.
+    let name = <&'static str>::from(e).as_bytes();
+    thread_local! {
+        static BUF: core::cell::UnsafeCell<[u8; 32]> = const { core::cell::UnsafeCell::new([0; 32]) };
     }
+    BUF.with(|buf| {
+        let ptr = buf.get();
+        let len = name.len().min(31);
+        // SAFETY: `ptr` is this thread's private 32-byte buffer; no other
+        // reference to it exists while we write `len + 1 <= 32` bytes.
+        unsafe {
+            (*ptr)[..len].copy_from_slice(&name[..len]);
+            (*ptr)[len] = 0;
+        }
+        ptr.cast::<core::ffi::c_char>()
+    })
 }
 
 /// Small "fire and forget" wrapper around unlink for C usage that handles

@@ -1875,7 +1875,16 @@ impl<'a> PackageInstall<'a> {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
                     task: WorkPoolTask { callback: UninstallTask::run, node: ThreadPoolNode::default() },
                 }));
-                PackageManager::get().increment_pending_tasks(1);
+                let pm = crate::package_manager::get();
+                // SAFETY: `uninstall_before_install` runs on the install main thread.
+                // Raw-pointer field projection avoids forming `&mut PackageManager`
+                // (the caller `PackageInstaller` already holds one); `total_tasks` is
+                // main-thread-only state, `pending_tasks` is atomic. Mirrors
+                // `increment_pending_tasks`.
+                unsafe {
+                    *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
+                    (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
+                }
                 // SAFETY: task is a valid heap allocation; .task is the intrusive node.
                 PackageManager::get()
                     .thread_pool

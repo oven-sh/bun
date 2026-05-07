@@ -470,35 +470,21 @@ pub mod bake_types {
     /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
     pub type HmrRuntimeSide = Side;
 
-    /// Runtime-registered loader for the HMR preamble bytes. The codegen'd
-    /// `bake.client.js`/`bake.server.js` live in the T6 `bun_runtime` crate
-    /// (it owns `runtime_embed_file!`/`include_bytes!` of the build outputs);
-    /// `bun_bundler` cannot depend on it, so the runtime registers the real
-    /// loader at process init and the linker reads through this hook.
-    static HMR_RUNTIME_LOADER: std::sync::OnceLock<fn(Side) -> HmrRuntime> =
-        std::sync::OnceLock::new();
-
-    /// Called once by `bun_runtime::bake` at startup to wire the real
-    /// `getHmrRuntime` (the one that embeds codegen output). Idempotent.
-    pub fn set_hmr_runtime_loader(loader: fn(Side) -> HmrRuntime) {
-        let _ = HMR_RUNTIME_LOADER.set(loader);
+    unsafe extern "Rust" {
+        /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. The codegen'd
+        /// `bake.client.js`/`bake.server.js` live in the T6 `bun_runtime` crate
+        /// (it owns `runtime_embed_file!`/`include_bytes!` of the build
+        /// outputs); `bun_bundler` cannot depend on it, so the body is defined
+        /// `#[no_mangle]` in `bun_runtime::bake` and resolved at link time.
+        fn __bun_bake_get_hmr_runtime(side: Side) -> HmrRuntime;
     }
 
     /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. MOVE_DOWN bake→bundler.
     /// Embed bytes are produced by codegen (`bake.client.js` / `bake.server.js`).
-    /// The bundler crate cannot embed those directly (they belong to T6), so
-    /// this consults `HMR_RUNTIME_LOADER` and panics if the runtime never
-    /// registered one — catches mis-layering at the first HMR chunk instead of
-    /// silently splicing a stub preamble into output.
     #[inline]
     pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-        match HMR_RUNTIME_LOADER.get() {
-            Some(loader) => loader(side),
-            None => panic!(
-                "bake_types::get_hmr_runtime: HMR runtime loader not registered \
-                 (call bun_bundler::bake_types::set_hmr_runtime_loader at startup)",
-            ),
-        }
+        // SAFETY: link-time-resolved Rust-ABI fn; returns `'static` embed bytes.
+        unsafe { __bun_bake_get_hmr_runtime(side) }
     }
 
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.

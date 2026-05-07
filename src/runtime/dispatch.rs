@@ -10,10 +10,11 @@
 //!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants; src/jsc/Task.zig).
 //!      Registered into `bun_jsc::RUN_TASK_HOOK` / `TICK_QUEUE_HOOK`.
 //!   2. [`run_file_poll`] — `bun_aio::FilePoll::Owner` (~13 variants;
-//!      src/aio/posix_event_loop.zig `FilePoll.onUpdate`). Registered into
-//!      `bun_aio::posix_event_loop::ON_POLL_DISPATCH`.
-//!   3. [`install_dispatch_hooks`] — one-shot init wiring both. Called from
-//!      `main.rs` before the first event-loop tick.
+//!      src/aio/posix_event_loop.zig `FilePoll.onUpdate`).
+//!
+//! Low-tier crates declare these as `extern "Rust"`; this crate defines them
+//! `#[no_mangle]` so the linker resolves the call directly — no runtime
+//! registration, no `AtomicPtr`, no init-order hazard.
 //!
 //! **Adding a variant** (do all three):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_aio::poll_tag`);
@@ -26,17 +27,14 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
-use core::sync::atomic::Ordering;
-
 use bun_event_loop::{task_tag, Task, TaskTag};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 
-use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag, ON_POLL_DISPATCH};
+use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
 
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec, FIRE_TIMER,
-    JS_TIMER_EPOCH,
+    EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
 };
 
 use bun_jsc::event_loop::{EventLoop, JsTerminated};
@@ -634,14 +632,16 @@ pub fn tick_queue_with_count(
 // FilePoll dispatch (src/aio/posix_event_loop.zig `FilePoll.onUpdate` switch)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for `bun_aio::FilePoll::on_update`. Registered into
-/// [`ON_POLL_DISPATCH`]; the low-tier `FilePoll` calls through that hook so it
-/// never names `Subprocess` / `FileSink` / `DNSResolver` / etc.
+/// Hot-path dispatcher for `bun_aio::FilePoll::on_update`. Declared
+/// `extern "Rust"` in `bun_aio::posix_event_loop`; the low-tier `FilePoll`
+/// calls this directly (link-time resolved) so it never names `Subprocess` /
+/// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
 /// `poll` must point at a live [`FilePoll`] for the duration of the call
 /// (guaranteed by `FilePoll::on_update`, the only caller).
-pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
     let poll_ref = unsafe { &mut *poll };
     let owner = poll_ref.owner;
@@ -751,17 +751,18 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Hook installation
+// `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `RUN_IMMEDIATE_HOOK` body — cast the low-tier erased `*mut ()` to the real
-/// `crate::timer::ImmediateObject` and run the task (PORTING.md §Dispatch:
-/// low tier stores `*mut ()`, high tier owns the cast).
+/// `__bun_run_immediate_task` body — cast the low-tier erased `*mut ()` to the
+/// real `crate::timer::ImmediateObject` and run the task (low tier stores
+/// `*mut ()`, high tier owns the cast).
 ///
 /// # Safety
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
-unsafe fn run_immediate_task_hook(
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
@@ -775,14 +776,15 @@ unsafe fn run_immediate_task_hook(
     }
 }
 
-/// `RUN_WTF_TIMER_HOOK` body — cast the low-tier erased `*mut ()` to the real
+/// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
 /// `crate::timer::WTFTimer` and fire it (spec event_loop.zig:302-306
 /// `imminent_gc_timer.swap(null).?.run(vm)`).
 ///
 /// # Safety
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
-unsafe fn run_wtf_timer_hook(
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_run_wtf_timer(
     timer: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -799,21 +801,19 @@ unsafe fn run_wtf_timer_hook(
 // EventLoopTimer dispatch (src/event_loop/EventLoopTimer.zig `fire` switch)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `FIRE_TIMER` body — the tag→`@fieldParentPtr` match for
+/// `__bun_fire_timer` body — the tag→`@fieldParentPtr` match for
 /// [`EventLoopTimer::fire`]. Spec EventLoopTimer.zig:170-223.
 ///
 /// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
-/// [`crate::timer::All::get_timeout`] (WTFTimer side-effect). Without this hook
-/// registered, the low-tier `fire()` transmutes a null fn-ptr in release
-/// builds (debug-asserts in debug) — i.e. `setTimeout`/`setInterval` callbacks
-/// never fire.
+/// [`crate::timer::All::get_timeout`] (WTFTimer side-effect).
 ///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
 /// `now` is the snapshot taken by `All::next`; `vm` is the erased
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
-unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
     use core::mem::offset_of;
     use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
@@ -987,16 +987,16 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
     }
 }
 
-/// `JS_TIMER_EPOCH` body — the tag→`@fieldParentPtr` read for
+/// `__bun_js_timer_epoch` body — the tag→`@fieldParentPtr` read for
 /// [`EventLoopTimer::js_timer_epoch`]. Spec EventLoopTimer.zig
 /// `jsTimerInternalsFlags` (returns `internals.flags.epoch` for the three
 /// JS-timer container types, else null). Sits on the heap-compare hot path
-/// (`EventLoopTimer::less` → `TimerHeap` meld), so without this hook
-/// equal-deadline JS timers lose their stable insertion order.
+/// (`EventLoopTimer::less` → `TimerHeap` meld).
 ///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
-unsafe fn js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
     use core::mem::offset_of;
     use crate::timer::{AbortSignalTimeout, ImmediateObject, TimeoutObject};
     // SAFETY: tag invariant — when `tag` matches, `t` is the `event_loop_timer`
@@ -1024,51 +1024,32 @@ unsafe fn js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Op
     }
 }
 
-/// Wire the high-tier dispatchers into the low-tier hooks. Called once from
-/// `main.rs` before the first event-loop tick.
-pub fn install_dispatch_hooks() {
-    // FilePoll::on_update → run_file_poll (real — `bun_aio` is a dep).
-    ON_POLL_DISPATCH.store(
-        run_file_poll as unsafe fn(*mut FilePoll, i64) as *mut (),
-        Ordering::Release,
-    );
-
-    // EventLoop::tick_immediate_tasks → ImmediateObject::run_immediate_task.
-    bun_jsc::event_loop::set_run_immediate_hook(run_immediate_task_hook);
-
-    // EventLoop::run_imminent_gc_timer → WTFTimer::run.
-    bun_jsc::event_loop::set_run_wtf_timer_hook(run_wtf_timer_hook);
-
-    // EventLoopTimer::fire → fire_timer (tag→@fieldParentPtr match).
-    FIRE_TIMER.store(
-        fire_timer as unsafe fn(*mut EventLoopTimer, *const ElTimespec, *mut ()) as *mut (),
-        Ordering::Release,
-    );
-
-    // EventLoopTimer::less → js_timer_epoch (heap-compare stable-order hook).
-    JS_TIMER_EPOCH.store(
-        js_timer_epoch as unsafe fn(EventLoopTimerTag, *const EventLoopTimer) -> Option<u32>
-            as *mut (),
-        Ordering::Release,
-    );
-
-    // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
-    bun_jsc::task::set_run_task_hook(tick_queue_with_count);
-    bun_jsc::event_loop::set_tick_queue_hook(tick_queue_hook_adapter);
-}
-
-/// `TICK_QUEUE_HOOK` body — adapt the upstream `fn(*mut VM, &mut u32)` shape
-/// to [`tick_queue_with_count`]. The hook passes only `vm`; recover the
-/// per-thread `EventLoop` from it (Zig: `vm.eventLoop()`).
-fn tick_queue_hook_adapter(
+/// `__bun_tick_queue_with_count` body — adapt the upstream `fn(*mut VM,
+/// &mut u32)` shape to [`tick_queue_with_count`]. Declared `extern "Rust"` in
+/// `bun_jsc::event_loop`; recovers the per-thread `EventLoop` from `vm` (Zig:
+/// `vm.eventLoop()`).
+#[unsafe(no_mangle)]
+pub fn __bun_tick_queue_with_count(
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
-    // SAFETY: hook contract — `vm` is the live per-thread VM; `event_loop()`
-    // returns the owned `EventLoop` field. No other `&mut` to either is held
-    // across this call (the only caller is `EventLoop::tick`).
+    // SAFETY: `vm` is the live per-thread VM; `event_loop()` returns the owned
+    // `EventLoop` field. No other `&mut` to either is held across this call
+    // (the only caller is `EventLoop::tick`).
     let (el, vm_ref) = unsafe { (&mut *(*vm).event_loop(), &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)
+}
+
+/// `__bun_run_tasks` body — declared `extern "Rust"` in `bun_jsc::task`.
+/// Same body as [`tick_queue_with_count`]; separate symbol because the caller
+/// already holds `&mut EventLoop` + `&mut VirtualMachine` separately.
+#[unsafe(no_mangle)]
+pub fn __bun_run_tasks(
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    counter: &mut u32,
+) -> Result<(), JsTerminated> {
+    tick_queue_with_count(el, vm, counter)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

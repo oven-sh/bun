@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 use core::fmt;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::HiveArray;
 use bun_core::Output;
@@ -134,18 +134,20 @@ impl EventLoopCtx {
     }
 }
 
-/// Hook returning the global event-loop context for the given allocator type
-/// (replaces `VirtualMachine::get()` / `MiniEventLoop::global()`). Set by
-/// `bun_runtime::init()`. Signature: `fn(AllocatorType) -> EventLoopCtx`.
-pub static GET_VM_CTX_HOOK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+unsafe extern "Rust" {
+    /// Returns the global event-loop context for the given allocator type
+    /// (replaces `VirtualMachine::get()` / `MiniEventLoop::global()`).
+    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks` (link-time resolved;
+    /// Zig had no crate split here and called the VM/Mini globals directly).
+    fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
+}
 
 #[inline]
 pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
-    let hook = GET_VM_CTX_HOOK.load(Ordering::Relaxed);
-    debug_assert!(!hook.is_null(), "aio::GET_VM_CTX_HOOK not registered");
-    // SAFETY: hook stores `fn(AllocatorType) -> EventLoopCtx` written once at init.
-    let f: fn(AllocatorType) -> EventLoopCtx = unsafe { core::mem::transmute(hook) };
-    f(kind)
+    // SAFETY: link-time-resolved Rust-ABI fn; `kind` selects between the
+    // process-global JS VM and Mini loop, both initialised before any
+    // `KeepAlive`/`FilePoll` caller reaches this.
+    unsafe { __bun_get_vm_ctx(kind) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -366,10 +368,12 @@ impl Owner {
     }
 }
 
-/// Hot-path dispatch hook for `FilePoll::on_update`. Set by
-/// `bun_runtime::dispatch` at init. Signature: `unsafe fn(*mut FilePoll, i64)`.
-/// Runtime owns the per-tag `match` (direct calls per arm — LLVM inlines like Zig).
-pub static ON_POLL_DISPATCH: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+unsafe extern "Rust" {
+    /// Hot-path dispatch for `FilePoll::on_update`. Defined `#[no_mangle]` in
+    /// `bun_runtime::dispatch` (link-time resolved). Runtime owns the per-tag
+    /// `match` (direct calls per arm — LLVM inlines like Zig).
+    fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64);
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -436,7 +440,7 @@ impl FilePoll {
     // PORT NOTE: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer
     // semantics). The Rust signatures drop the loop parameter entirely: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `ON_POLL_DISPATCH` handlers conjure via
+    // that downstream `__bun_run_file_poll` handlers conjure via
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -545,20 +549,11 @@ impl FilePoll {
         debug_assert!(!self.owner.is_null());
 
         // Hot-path hoisted-match: the per-tag `switch` lives in
-        // `bun_runtime::dispatch::on_poll` (move-in pass) so this T3 crate
-        // names no variant types. // PERF(port): was inline switch.
-        let hook = ON_POLL_DISPATCH.load(Ordering::Relaxed);
-        if hook.is_null() {
-            syslog!(
-                concat!("onUpdate ", kqueue_or_epoll!(), " (fd: {}) disconnected? (tag={})"),
-                self.fd,
-                self.owner.tag()
-            );
-            return;
-        }
-        // SAFETY: hook stores `unsafe fn(*mut FilePoll, i64)` written once at init.
-        let f: unsafe fn(*mut FilePoll, i64) = unsafe { core::mem::transmute(hook) };
-        unsafe { f(self, size_or_offset) };
+        // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
+        // this T3 crate names no variant types. // PERF(port): was inline switch.
+        // SAFETY: `self` is a live FilePoll for the duration of the call
+        // (guaranteed by the uws loop callback contract).
+        unsafe { __bun_run_file_poll(self, size_or_offset) };
     }
 
     #[inline]
@@ -1619,7 +1614,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     }
 
     // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `ON_POLL_DISPATCH`) re-enters the loop and conjures
+    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
     // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
     // protected `&mut Loop` spanning that call would be SB-UB. Read the index and
     // event via raw `(*loop_)` place access only (event is POD), then hand the

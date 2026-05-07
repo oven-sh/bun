@@ -148,8 +148,11 @@ pub struct TestRunner<'a> {
 
     pub test_options: &'a TestOptions,
 
-    /// Used for --test-name-pattern to reduce allocations
-    pub filter_regex: Option<&'a RegularExpression>,
+    /// Used for --test-name-pattern to reduce allocations.
+    /// Raw `*mut` because `RegularExpression::matches` mutates its internal
+    /// cursor through C++ — storing `&'a RegularExpression` and casting back to
+    /// `*mut` at the use site would launder shared provenance into a write (UB).
+    pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
     pub summary: Summary,

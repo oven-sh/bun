@@ -433,15 +433,10 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        // SAFETY: Zig holds `*RegularExpression` (mutably). The Rust runner
-                        // currently exposes it as `&RegularExpression`; `matches` only writes
-                        // its internal cursor and is single-threaded here, so cast away const.
-                        // TODO(port): change `TestRunner::filter_regex` to a mutable handle.
-                        #[allow(invalid_reference_casting)]
-                        let filter_regex_mut = unsafe {
-                            &mut *(filter_regex as *const bun_jsc::RegularExpression as *mut bun_jsc::RegularExpression)
-                        };
-                        matches_filter = filter_regex_mut.matches(str);
+                        // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
+                        // `TestRunner` for the process lifetime; single-threaded here so the
+                        // exclusive borrow is unaliased.
+                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }

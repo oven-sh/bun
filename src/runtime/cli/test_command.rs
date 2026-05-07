@@ -1820,12 +1820,14 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // SAFETY: `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::Context); cast back. Process-lifetime allocation.
+                // `test_filter_regex` is an erased `*mut RegularExpression` (see
+                // options_types::Context); cast back to a typed `NonNull` —
+                // kept raw so `matches()` can write through it without
+                // laundering shared-ref provenance.
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| unsafe { &*(p.as_ptr() as *const jsc::RegularExpression) }),
+                    .map(|p| p.cast::<jsc::RegularExpression>()),
                 snapshots: Snapshots {
                     update_snapshots: ctx.test_options.update_snapshots,
                     total: 0,

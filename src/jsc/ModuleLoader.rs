@@ -257,25 +257,17 @@ pub struct LoaderHooks {
     ) -> *mut c_void,
 }
 
-static LOADER_HOOKS: core::sync::atomic::AtomicPtr<LoaderHooks> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_runtime` at startup. `hooks` must be `'static`.
-pub fn set_loader_hooks(hooks: &'static LoaderHooks) {
-    // SAFETY: `AtomicPtr` requires `*mut T` for storage, but the pointer is
-    // only ever loaded back as `&'static LoaderHooks` (see `loader_hooks()`)
-    // and never written through — provenance from `&'static` is preserved.
-    LOADER_HOOKS.store(
-        (hooks as *const LoaderHooks).cast_mut(),
-        core::sync::atomic::Ordering::Release,
-    );
+unsafe extern "Rust" {
+    /// The single `&'static` instance, defined `#[no_mangle]` in
+    /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
+    /// init-order hazard.
+    static __BUN_LOADER_HOOKS: LoaderHooks;
 }
 
 #[inline]
 fn loader_hooks() -> Option<&'static LoaderHooks> {
-    let p = LOADER_HOOKS.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: `p` was stored from a `&'static LoaderHooks` (or is null).
-    unsafe { p.as_ref() }
+    // SAFETY: link-time-resolved `&'static` Rust-ABI static. Always `Some`.
+    Some(unsafe { &__BUN_LOADER_HOOKS })
 }
 
 /// `ModuleLoader.transpileSourceCode(...)` — thin shim over the §Dispatch

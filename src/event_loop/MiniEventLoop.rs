@@ -41,16 +41,22 @@ pub type PlatformEventLoop = UwsLoop;
 #[cfg(windows)]
 pub type PlatformEventLoop = bun_sys::windows::libuv::Loop;
 
-// ─── Upward hooks (CYCLEBREAK.md §Debug-hook / vtable) ──────────────────────
-/// `unsafe fn(fd: Fd, is_atty: bool, mode: Mode) -> *mut ()`
-/// — constructs a `webcore::blob::Store` for stdout/stderr. Registered by
-/// `bun_runtime::init()`. Return value is an erased `*mut blob::Store` with
-/// intrusive refcount; this crate only stores/forwards it.
-pub static STDIO_BLOB_STORE_CTOR: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// `unsafe fn() -> *mut ()` — returns the thread's `*mut jsc::VirtualMachine`.
-/// Backs `JsKind::get_vm()`. Registered by `bun_runtime::init()`.
-pub static JS_VM_GET: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+// ─── Upward link-time externs (LAYERING) ────────────────────────────────────
+// Zig has no crate split here — `MiniEventLoop` reached `Blob.Store` /
+// `VirtualMachine.get()` directly. The bodies live in `bun_runtime` (which
+// owns `webcore::Blob` / `jsc::VirtualMachine`) as `#[no_mangle]` Rust-ABI
+// fns; the linker resolves them. No `AtomicPtr`, no init-order hazard.
+unsafe extern "Rust" {
+    /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin (Zig
+    /// rare_data.zig:551 inline `Blob.Store` ctor). Return value is an erased
+    /// `*mut blob::Store` with intrusive refcount = 2; this crate only
+    /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
+    pub fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
+    /// Returns the thread's `*mut jsc::VirtualMachine` (Zig:
+    /// `jsc.VirtualMachine.get()`). Backs `JsKind::get_vm()`. Defined in
+    /// `bun_runtime::jsc_hooks`.
+    fn __bun_js_vm_get() -> *mut ();
+}
 // ────────────────────────────────────────────────────────────────────────────
 
 const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
@@ -109,7 +115,7 @@ pub struct MiniEventLoop<'a> {
     pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
     // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
-    // `STDIO_BLOB_STORE_CTOR` hook; intrusive-refcounted on the runtime side.
+    // `__bun_stdio_blob_store_new`; intrusive-refcounted on the runtime side.
     // TODO(port): Blob.Store uses intrusive ref_count (constructed with ref_count=2);
     // LIFETIMES.tsv classifies as Arc but IntrusiveArc<BlobStore> may be required for FFI compat.
     pub stdout_store: Option<NonNull<()>>,
@@ -469,20 +475,14 @@ impl<'a> MiniEventLoop<'a> {
                 mode = stat.st_mode as Mode;
             }
 
-            // TODO(port): Zig builds Blob.Store with intrusive `ref_count = 2` and
-            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`. Phase B must
-            // reconcile with BlobStore's actual Rust refcount strategy.
-            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
-            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
-            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
-            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
-                unsafe { core::mem::transmute(ctor) };
+            // Zig builds Blob.Store with intrusive `ref_count = 2` and
+            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`.
             // SAFETY: STDERR_DESCRIPTOR_TYPE is plain data written once at
             // startup (Output::Source::set) before the event loop runs.
             let is_atty =
                 unsafe { Output::STDERR_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
-            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
-            let store = unsafe { ctor(fd, is_atty, mode) };
+            // SAFETY: link-time extern; allocates a fresh Store.
+            let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
             self.stderr_store = NonNull::new(store);
         }
         self.stderr_store.unwrap().as_ptr()
@@ -498,17 +498,12 @@ impl<'a> MiniEventLoop<'a> {
                 mode = stat.st_mode as Mode;
             }
 
-            let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
-            debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
-            // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
-            let ctor: unsafe fn(Fd, bool, Mode) -> *mut () =
-                unsafe { core::mem::transmute(ctor) };
             // SAFETY: STDOUT_DESCRIPTOR_TYPE is plain data written once at
             // startup (Output::Source::set) before the event loop runs.
             let is_atty =
                 unsafe { Output::STDOUT_DESCRIPTOR_TYPE == Output::OutputStreamDescriptor::Terminal };
-            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
-            let store = unsafe { ctor(fd, is_atty, mode) };
+            // SAFETY: link-time extern; allocates a fresh Store.
+            let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
             self.stdout_store = NonNull::new(store);
         }
         self.stdout_store.unwrap().as_ptr()
@@ -757,11 +752,9 @@ impl EventLoopKindT for JsKind {
     type Loop = *mut ();
     type Ref = *mut ();
     fn get_vm() -> Self::Ref {
-        let hook = JS_VM_GET.load(Ordering::Relaxed);
-        debug_assert!(!hook.is_null(), "JS_VM_GET not registered by bun_runtime::init()");
-        // SAFETY: hook signature documented on `JS_VM_GET`.
-        let f: unsafe fn() -> *mut () = unsafe { core::mem::transmute(hook) };
-        unsafe { f() }
+        // SAFETY: link-time extern; returns the per-thread VM (Zig:
+        // `jsc.VirtualMachine.get()`). Caller must be on the JS thread.
+        unsafe { __bun_js_vm_get() }
     }
 }
 

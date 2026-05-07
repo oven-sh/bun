@@ -102,15 +102,14 @@ pub fn write_output_files_to_disk(
     };
 
     // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
-    // together into `code()`/`code_standalone()`. Rust borrowck cannot prove
-    // these disjoint; the callee only reads other chunks by index. Match Zig's
-    // aliasing semantics via raw pointers.
-    let chunks_ptr: *mut Chunk = chunks.as_mut_ptr();
+    // together into `code()`/`code_standalone()`. The callee now takes
+    // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
+    // shared; the only per-chunk mutation is the `intermediate_output`
+    // take/restore done via `chunks[i]`.
     let chunks_len = chunks.len();
 
     for chunk_index_in_chunks_list in 0..chunks_len {
-        // SAFETY: see PORT NOTE above; no concurrent mutation, indices in-bounds.
-        let chunk: &mut Chunk = unsafe { &mut *chunks_ptr.add(chunk_index_in_chunks_list) };
+        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
         // In standalone mode, only write HTML chunks to disk.
         // Insert placeholder output files for non-HTML chunks to keep indices aligned.
         if standalone_chunk_contents.is_some() && !matches!(chunk.content, Content::Html) {
@@ -174,13 +173,11 @@ pub fn write_output_files_to_disk(
                 &resolver_opts.public_path
             };
 
-        // PORT NOTE: see aliasing note above — take intermediate_output by value
-        // so `&mut self`, `&mut Chunk`, and `&mut [Chunk]` are disjoint borrows.
-        let mut intermediate_output = core::mem::take(&mut chunk.intermediate_output);
-        // SAFETY: chunks_ptr/chunks_len describe the original slice; lifetime
-        // bounded by this function.
-        let chunks_alias: &mut [Chunk] =
-            unsafe { core::slice::from_raw_parts_mut(chunks_ptr, chunks_len) };
+        // PORT NOTE: take `intermediate_output` by value so its `&mut self` is
+        // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
+        let mut intermediate_output =
+            core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
+        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
         // SAFETY: parse_graph set during init; outlives this call.
         let parse_graph = unsafe { &*c.parse_graph };
 
@@ -191,7 +188,7 @@ pub fn write_output_files_to_disk(
                 &c.graph,
                 public_path,
                 chunk,
-                chunks_alias,
+                chunks,
                 Some(&mut display_size),
                 false,
                 false,
@@ -209,7 +206,7 @@ pub fn write_output_files_to_disk(
                 &c.graph,
                 public_path,
                 chunk,
-                chunks_alias,
+                chunks,
                 Some(&mut display_size),
                 resolver_opts.compile
                     && !chunk.flags.contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
@@ -221,7 +218,8 @@ pub fn write_output_files_to_disk(
                 )),
             }
         };
-        chunk.intermediate_output = intermediate_output;
+        chunks[chunk_index_in_chunks_list].intermediate_output = intermediate_output;
+        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
 
         let mut source_map_output_file: Option<OutputFile> = None;
 

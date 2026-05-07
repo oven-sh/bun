@@ -239,74 +239,27 @@ impl From<JsTerminated> for bun_core::Error {
 // dispatcher both `&mut EventLoop` and `&mut VirtualMachine` would alias
 // (PORTING.md §Forbidden). The hook receives a single `*mut VirtualMachine`
 // and reborrows `event_loop` from it on the high-tier side.
-pub type TickQueueFn = fn(*mut VirtualMachine, &mut u32) -> Result<(), JsTerminated>;
-
-static TICK_QUEUE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_runtime` at startup to install the real task dispatcher.
-pub fn set_tick_queue_hook(f: TickQueueFn) {
-    TICK_QUEUE_HOOK.store(f as *mut (), Ordering::Release);
+unsafe extern "Rust" {
+    /// `bun_runtime::dispatch::tick_queue_with_count` — the real per-task
+    /// match loop (Zig `tickQueueWithCount`). Link-time resolved.
+    fn __bun_tick_queue_with_count(
+        vm: *mut VirtualMachine,
+        counter: &mut u32,
+    ) -> Result<(), JsTerminated>;
+    /// `ImmediateObject::runImmediateTask` — `task` is an erased
+    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
+    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
+    fn __bun_run_immediate_task(task: *mut (), vm: *mut VirtualMachine) -> bool;
+    /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
+    /// Defined in `bun_runtime::dispatch`. Link-time resolved.
+    fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
 }
 
 #[inline]
-fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
-    let p = TICK_QUEUE_HOOK.load(Ordering::Acquire);
-    if p.is_null() {
-        // No high-tier dispatcher registered yet — leave queued tasks in place
-        // so they can run once the hook is installed. Draining here would
-        // silently drop every Task (state-destroying no-op); be loud instead so
-        // a missing `set_tick_queue_hook` registration surfaces immediately.
-        let pending = el.tasks.readable_length();
-        debug_assert_eq!(
-            pending, 0,
-            "TICK_QUEUE_HOOK not installed but {pending} task(s) queued — \
-             bun_runtime must call set_tick_queue_hook() at startup",
-        );
-        let _ = pending;
-        return Ok(());
-    }
-    // SAFETY: `p` was stored from a `TickQueueFn` (same layout).
-    let f: TickQueueFn = unsafe { core::mem::transmute::<*mut (), TickQueueFn>(p) };
-    f(vm, counter)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `ImmediateObject::runImmediateTask` dispatch — the real `ImmediateObject`
-// lives in `bun_runtime::api::Timer` (cycle), so this tier stores the queued
-// task as `*mut ()` (PORTING.md §Dispatch). The high tier installs the
-// per-task body at startup; `tick_immediate_tasks` below performs the swap +
-// drain regardless so `auto_tick` reads `has_pending_immediate` correctly even
-// when no hook is installed (unit tests).
-// ──────────────────────────────────────────────────────────────────────────
-/// `fn(*mut (), *mut VirtualMachine) -> bool` — `task` is an erased
-/// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-/// threw (mirrors `runImmediateTask`'s return).
-pub type RunImmediateFn = unsafe fn(*mut (), *mut VirtualMachine) -> bool;
-
-static RUN_IMMEDIATE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_runtime` at startup to install the real `runImmediateTask` body.
-pub fn set_run_immediate_hook(f: RunImmediateFn) {
-    RUN_IMMEDIATE_HOOK.store(f as *mut (), Ordering::Release);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `WTFTimer::run` dispatch — the real `WTFTimer` lives in
-// `bun_runtime::api::Timer` (cycle), so this tier stores the slot as
-// `AtomicPtr<()>` (PORTING.md §Dispatch). The high tier installs the body at
-// startup; `run_imminent_gc_timer` below only swaps the slot when a hook is
-// present so an imminent-GC timer is never consumed without being fired
-// (spec event_loop.zig:302-306).
-// ──────────────────────────────────────────────────────────────────────────
-/// `fn(*mut (), *mut VirtualMachine)` — `timer` is an erased
-/// `*mut bun_runtime::timer::WTFTimer`; mirrors `WTFTimer::run(vm)`.
-pub type RunWtfTimerFn = unsafe fn(*mut (), *mut VirtualMachine);
-
-static RUN_WTF_TIMER_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_runtime` at startup to install the real `WTFTimer::run` body.
-pub fn set_run_wtf_timer_hook(f: RunWtfTimerFn) {
-    RUN_WTF_TIMER_HOOK.store(f as *mut (), Ordering::Release);
+fn tick_queue_with_count(_el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
+    // SAFETY: `vm` is the live per-thread VM (caller contract); the high-tier
+    // body reborrows `event_loop` from it.
+    unsafe { __bun_tick_queue_with_count(vm, counter) }
 }
 
 /// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit`].
@@ -529,24 +482,12 @@ impl EventLoop {
     pub fn run_imminent_gc_timer(&mut self) {
         // Spec event_loop.zig:302-306: `if (swap()) |timer| timer.run(vm)`.
         // The real `WTFTimer` lives in `bun_runtime` (cycle), so the body
-        // dispatches through [`RUN_WTF_TIMER_HOOK`]. Load the hook FIRST and
-        // bail without swapping when it's null — otherwise the swap would
-        // consume the scheduled timer and silently drop it (state-destroying
-        // no-op).
-        let hook = RUN_WTF_TIMER_HOOK.load(Ordering::Acquire);
-        if hook.is_null() {
-            // No high-tier dispatcher registered yet — leave `imminent_gc_timer`
-            // in place so it can fire once the hook is installed.
-            return;
-        }
+        // dispatches through `__bun_run_wtf_timer` (link-time extern).
         let ptr = self.imminent_gc_timer.swap(core::ptr::null_mut(), Ordering::SeqCst);
         if !ptr.is_null() {
-            // SAFETY: `hook` was stored from a `RunWtfTimerFn` (same layout).
-            let f: RunWtfTimerFn =
-                unsafe { core::mem::transmute::<*mut (), RunWtfTimerFn>(hook) };
             // SAFETY: `ptr` was published by `WTFTimer::update` and remains
             // valid until `run` removes it; `vm()` is the live owning VM.
-            unsafe { f(ptr, self.vm()) };
+            unsafe { __bun_run_wtf_timer(ptr, self.vm()) };
         }
     }
 
@@ -775,30 +716,12 @@ impl EventLoop {
 
         self.immediate_tasks = core::mem::take(&mut self.next_immediate_tasks);
 
-        let hook = RUN_IMMEDIATE_HOOK.load(Ordering::Acquire);
         let mut exception_thrown = false;
-        if !hook.is_null() {
-            // SAFETY: `hook` was stored from a `RunImmediateFn` (same layout).
-            let f: RunImmediateFn =
-                unsafe { core::mem::transmute::<*mut (), RunImmediateFn>(hook) };
-            for task in to_run_now.iter() {
-                // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-                // until `runImmediateTask` consumes them; `virtual_machine` is the
-                // live owning VM per caller contract.
-                exception_thrown = unsafe { f(*task, virtual_machine) };
-            }
-        } else {
-            // No high-tier hook → tasks would be dropped without running and
-            // the `parent.ref_()` taken at enqueue time would leak. This is
-            // only sound when nothing was queued (unit tests); be loud
-            // otherwise so a missing `set_run_immediate_hook` registration
-            // surfaces immediately rather than as a silent setImmediate no-op.
-            debug_assert!(
-                to_run_now.is_empty(),
-                "RUN_IMMEDIATE_HOOK not installed but {} immediate task(s) queued — \
-                 bun_runtime must call set_run_immediate_hook() at startup",
-                to_run_now.len(),
-            );
+        for task in to_run_now.iter() {
+            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
+            // until `runImmediateTask` consumes them; `virtual_machine` is the
+            // live owning VM per caller contract.
+            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 
         // make sure microtasks are drained if the last task had an exception

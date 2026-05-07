@@ -1220,7 +1220,8 @@ mod vm_loader_vtable {
 pub use vm_loader_vtable::VM_LOADER_VTABLE;
 
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
-pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
+#[unsafe(no_mangle)]
+pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
     deinit_runtime_state,
     generate_entry_point,
@@ -4670,7 +4671,8 @@ unsafe fn resolve_hook(
 }
 
 /// The static `LoaderHooks` instance handed to `bun_jsc`.
-pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
+#[unsafe(no_mangle)]
+pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
     get_hardcoded_module: get_hardcoded_module_hook,
@@ -4684,17 +4686,16 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
 // Hook installation
 // ════════════════════════════════════════════════════════════════════════════
 
-// PORT NOTE: the event-loop per-task hook bodies (`RUN_IMMEDIATE_HOOK` /
-// `RUN_WTF_TIMER_HOOK`) live in [`crate::dispatch`] alongside the other
-// §Dispatch hot-path hooks (`RUN_TASK_HOOK` / `ON_POLL_DISPATCH`) and are
-// wired from [`crate::dispatch::install_dispatch_hooks`], not here.
+// PORT NOTE: the event-loop per-task bodies (`__bun_run_immediate_task` /
+// `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
+// §Dispatch hot-path bodies (`__bun_run_tasks` / `__bun_run_file_poll`).
 
-/// `bun_aio::GET_VM_CTX_HOOK` body — recover the global event-loop context
+/// `bun_aio::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Zig had no crate split here: callers reached
-/// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Registered in
-/// [`install_jsc_hooks`] so `KeepAlive`/`FilePoll` (and the link-time
-/// `__bun_js_event_loop_put_file_poll` shim) can resolve the JS arm.
-fn get_vm_ctx_hook(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
+/// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Declared
+/// `extern "Rust"` in `bun_aio::posix_event_loop`; link-time resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
     match kind {
         bun_aio::AllocatorType::Js => {
             bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(
@@ -4711,33 +4712,13 @@ fn get_vm_ctx_hook(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
     }
 }
 
-/// `bun_event_loop::JS_VM_GET` body — erased `VirtualMachine::get()` for
+/// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
 /// `AbstractVM::JsKind`'s `get_vm()`. Zig: `jsc.VirtualMachine.get()` inline.
-unsafe fn js_vm_get_hook() -> *mut () {
+/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
+/// resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_js_vm_get() -> *mut () {
     bun_jsc::virtual_machine::VirtualMachine::get().cast()
-}
-
-/// Wire the high-tier `RuntimeHooks` / `LoaderHooks` into `bun_jsc`. Called
-/// once from `main.rs` immediately after [`crate::dispatch::install_dispatch_hooks`]
-/// (and before the first `VirtualMachine::init`).
-pub fn install_jsc_hooks() {
-    use core::sync::atomic::Ordering;
-    bun_jsc::virtual_machine::set_runtime_hooks(&RUNTIME_HOOKS_INSTANCE);
-    bun_jsc::module_loader::set_loader_hooks(&LOADER_HOOKS_INSTANCE);
-    bun_sql_jsc::jsc::set_sql_runtime_hooks(&crate::hw_exports::sql_hooks::INSTANCE);
-
-    // Low-tier upward hooks (cycle-break vtable slots): these have real impls
-    // here in tier-6 and are documented as "registered by bun_runtime::init()"
-    // at the static — this *is* that init. Ordered before any `VirtualMachine::
-    // init` so the first FilePoll/KeepAlive tick sees a non-null hook.
-    bun_aio::posix_event_loop::GET_VM_CTX_HOOK.store(
-        get_vm_ctx_hook as fn(bun_aio::AllocatorType) -> bun_aio::EventLoopCtx as *mut (),
-        Ordering::Release,
-    );
-    bun_event_loop::MiniEventLoop::JS_VM_GET.store(
-        js_vm_get_hook as unsafe fn() -> *mut () as *mut (),
-        Ordering::Release,
-    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

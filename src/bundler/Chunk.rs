@@ -385,8 +385,11 @@ impl IntermediateOutput {
         parse_graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
-        chunk: &mut Chunk,
-        chunks: &mut [Chunk],
+        // PORT NOTE: Zig passed `*Chunk` / `[]Chunk` (freely aliased — `chunk`
+        // is `&chunks[i]`). The body only reads both, so take `&` to avoid
+        // overlapping `&mut Chunk` + `&mut [Chunk]` UB at every call site.
+        chunk: &Chunk,
+        chunks: &[Chunk],
         // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
         // `Option<&mut usize>` so call sites that ported either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
@@ -433,8 +436,9 @@ impl IntermediateOutput {
         parse_graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
-        chunk: &mut Chunk,
-        chunks: &mut [Chunk],
+        // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
+        chunk: &Chunk,
+        chunks: &[Chunk],
         // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
         // `Option<&mut usize>` so call sites that ported either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
@@ -477,8 +481,9 @@ impl IntermediateOutput {
         graph: &Graph,
         linker_graph: &LinkerGraph,
         import_prefix: &[u8],
-        chunk: &mut Chunk,
-        chunks: &mut [Chunk],
+        // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
+        chunk: &Chunk,
+        chunks: &[Chunk],
         display_size: Option<&mut usize>,
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,

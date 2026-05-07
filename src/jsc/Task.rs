@@ -39,41 +39,29 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // fallback drains without dispatching (unit-test / tool builds with no
 // runtime tier linked).
 
-/// Signature of the high-tier dispatcher: drain `el.tasks`, run each, drain
-/// microtasks per item, bump `*counter`. See `bun_runtime::dispatch::run_tasks`
-/// (and the gated Phase-A draft below) for the real body.
-pub type RunTasksFn =
-    fn(&mut EventLoop, &mut VirtualMachine, &mut u32) -> Result<(), JsTerminated>;
-
-/// Installed by `bun_runtime` at startup. `null` ⇒ no high-tier dispatcher.
-pub static RUN_TASK_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Install the real task dispatcher. Called once from `bun_runtime` init.
-pub fn set_run_task_hook(f: RunTasksFn) {
-    RUN_TASK_HOOK.store(f as *mut (), Ordering::Release);
+unsafe extern "Rust" {
+    /// High-tier dispatcher: drain `el.tasks`, run each, drain microtasks per
+    /// item, bump `*counter`. Defined `#[no_mangle]` in
+    /// `bun_runtime::dispatch::tick_queue_with_count`. Link-time resolved.
+    fn __bun_run_tasks(
+        el: &mut EventLoop,
+        vm: &mut VirtualMachine,
+        counter: &mut u32,
+    ) -> Result<(), JsTerminated>;
 }
 
-/// Dispatch via the hook (cold fallback when unset). Exposed for
-/// `event_loop::tick_queue_with_count`; that fn currently uses its own
-/// `TICK_QUEUE_HOOK` — Phase B unifies the two onto this one.
+/// Dispatch via the link-time extern. Exposed for callers that hold
+/// `&mut EventLoop` + `&mut VirtualMachine` separately.
 // PERF(port): was inline switch — direct calls per arm in
-// `bun_runtime::dispatch::run_tasks`; the `null` fallback is unit-test-only.
+// `bun_runtime::dispatch::run_tasks`.
 #[inline]
 pub fn run_tasks(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
-    let p = RUN_TASK_HOOK.load(Ordering::Acquire);
-    if p.is_null() {
-        while el.tasks.read_item().is_some() {
-            *counter += 1;
-        }
-        return Ok(());
-    }
-    // SAFETY: `p` was stored from a `RunTasksFn` (same layout).
-    let f: RunTasksFn = unsafe { core::mem::transmute::<*mut (), RunTasksFn>(p) };
-    f(el, vm, counter)
+    // SAFETY: `el`/`vm` are the live per-thread loop+VM (caller contract).
+    unsafe { __bun_run_tasks(el, vm, counter) }
 }
 
 /// Shared helper for the high-tier match arms that bubble `JsError` out of a

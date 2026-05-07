@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
@@ -17,25 +16,28 @@ pub use bun_io::heap::IntrusiveField;
 
 const NS_PER_MS: i64 = 1_000_000;
 
-// ─── Hot-dispatch hooks (CYCLEBREAK.md §Hot dispatch list) ──────────────────
+// ─── Hot-dispatch (link-time) ───────────────────────────────────────────────
 // `EventLoopTimer` is per-tick hot. Low tier (this crate) keeps `Tag` + the
-// intrusive heap node; the `match tag { … container_of … }` dispatch moves to
-// `bun_runtime::dispatch::fire_timer`. Because the heap comparator (`less`)
-// and `fire()` are invoked from tier-≤3 code, they call through fn-ptr hooks
-// that `bun_runtime::init()` registers at startup.
+// intrusive heap node; the `match tag { … container_of … }` dispatch lives in
+// `bun_runtime::dispatch` because it names ~20 high-tier container types.
 //
-// PERF(port): was inline switch — `JS_TIMER_EPOCH` sits on the heap-compare
-// path. Phase B should denormalize `epoch` into `EventLoopTimer` to drop the
-// indirect call if profiling shows it matters.
-
-/// `unsafe fn(*mut EventLoopTimer, *const timespec, vm: *mut ())`
-/// — runtime owns the tag→variant `match`; `vm` is an erased `*mut VirtualMachine`.
-pub static FIRE_TIMER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// `unsafe fn(tag: Tag, *const EventLoopTimer) -> Option<u32>`
-/// — returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
-/// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
-pub static JS_TIMER_EPOCH: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+// LAYERING: Zig has no crate split here — `EventLoopTimer.fire` calls each
+// container directly. Rather than a runtime-registered fn-ptr (init-order
+// hazard), the bodies are declared `extern "Rust"` and defined `#[no_mangle]`
+// in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
+//
+// PERF(port): was inline switch — `__bun_js_timer_epoch` sits on the
+// heap-compare path. Phase B should denormalize `epoch` into `EventLoopTimer`
+// to drop the cross-crate call if profiling shows it matters.
+unsafe extern "Rust" {
+    /// Runtime owns the tag→variant `match`; `vm` is an erased
+    /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
+    fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ());
+    /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
+    /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
+    /// Defined in `bun_runtime::dispatch`.
+    fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
+}
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct EventLoopTimer {
@@ -126,21 +128,14 @@ impl EventLoopTimer {
     ///
     /// PORT NOTE (b0): Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
     /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
-    /// runtime types). The container_of dispatch now lives in
-    /// `bun_runtime::dispatch::js_timer_epoch`; this crate calls it through
-    /// the `JS_TIMER_EPOCH` hook. Returns `None` if the hook is unset (no JS
-    /// runtime — e.g. MiniEventLoop) or for non-JS timer tags.
+    /// runtime types). The container_of dispatch lives in
+    /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
+    /// Returns `None` for non-JS timer tags.
     #[inline]
     pub fn js_timer_epoch(&self) -> Option<u32> {
-        let hook = JS_TIMER_EPOCH.load(Ordering::Relaxed);
-        if hook.is_null() {
-            return None;
-        }
-        // SAFETY: hook was registered by `bun_runtime::init()` with the
-        // documented signature; `self` is a live timer.
-        let f: unsafe fn(Tag, *const EventLoopTimer) -> Option<u32> =
-            unsafe { core::mem::transmute(hook) };
-        unsafe { f(self.tag, self) }
+        // SAFETY: `self` is a live timer; the extern impl reads `tag` and
+        // recovers the container via `offset_of`.
+        unsafe { __bun_js_timer_epoch(self.tag, self) }
     }
 
     fn ns(&self) -> u64 {
@@ -151,17 +146,14 @@ impl EventLoopTimer {
     ///
     /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
     /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
-    /// PostgresSQLConnection, …). Per CYCLEBREAK §Hot-dispatch, that match
-    /// moves to `bun_runtime::dispatch::fire_timer`; this crate calls it
-    /// through the `FIRE_TIMER` hook. `vm` is the erased `*mut VirtualMachine`.
+    /// PostgresSQLConnection, …). That match lives in
+    /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
+    /// the erased `*mut VirtualMachine`.
     pub fn fire(&mut self, now: &timespec, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
-        let hook = FIRE_TIMER.load(Ordering::Relaxed);
-        debug_assert!(!hook.is_null(), "FIRE_TIMER not registered by bun_runtime::init()");
-        // SAFETY: hook signature documented on `FIRE_TIMER`; runtime registers it
-        // before any timer can be armed.
-        let f: unsafe fn(*mut EventLoopTimer, *const timespec, *mut ()) =
-            unsafe { core::mem::transmute(hook) };
-        unsafe { f(self, now, vm) };
+        // SAFETY: `self` is a live timer just popped from `All.timers`; `now` is
+        // the snapshot taken by `All::next`; `vm` is the per-thread VM. The
+        // handler may free the container — caller must not touch `self` after.
+        unsafe { __bun_fire_timer(self, now, vm) };
     }
 }
 

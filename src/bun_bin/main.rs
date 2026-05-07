@@ -92,11 +92,10 @@ fn main() {
     // TODO(phase-c): `ParentDeathWatchdog::install()` lives in `bun_spawn`;
     // wire once that crate is in the dep graph.
 
-    // 6. §Dispatch — wire high-tier hot-path (Task/FilePoll) and cold-path
-    //    (RuntimeHooks/LoaderHooks) vtables into the low-tier crates BEFORE
-    //    any `VirtualMachine::init` / event-loop tick.
-    bun_runtime::dispatch::install_dispatch_hooks();
-    bun_runtime::jsc_hooks::install_jsc_hooks();
+    // 6. §Dispatch — high-tier hot-path (Task/FilePoll/Timer) and cold-path
+    //    (RuntimeHooks/LoaderHooks) bodies are link-time `extern "Rust"`
+    //    `#[no_mangle]` symbols in `bun_runtime::{dispatch,jsc_hooks}`; no
+    //    runtime registration needed.
 
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();

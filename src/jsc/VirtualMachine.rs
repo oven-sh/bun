@@ -1601,27 +1601,20 @@ impl VirtualMachine {
     }
 }
 
-static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Called by `bun_runtime` at startup to install the real hook table.
-/// `hooks` must have `'static` lifetime (typically `&'static RUNTIME_HOOKS_IMPL`).
-pub fn set_runtime_hooks(hooks: &'static RuntimeHooks) {
-    // SAFETY: `AtomicPtr` only stores `*mut T`, but this pointer is never
-    // written through — `runtime_hooks()` only ever materializes `&'static
-    // RuntimeHooks` via `as_ref()`. The `cast_mut()` is an API-shape coercion,
-    // not a mutability grant.
-    RUNTIME_HOOKS.store(
-        core::ptr::from_ref(hooks).cast_mut(),
-        core::sync::atomic::Ordering::Release,
-    );
+unsafe extern "Rust" {
+    /// The single `&'static` instance, defined `#[no_mangle]` in
+    /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
+    /// init-order hazard. Zig had no crate split here; `VirtualMachine`
+    /// reached `Timer::All` / `ServerEntryPoint` / etc. directly.
+    static __BUN_RUNTIME_HOOKS: RuntimeHooks;
 }
 
 #[inline]
 pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
-    let p = RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: `p` was stored from a `&'static RuntimeHooks` (or is null).
-    unsafe { p.as_ref() }
+    // SAFETY: link-time-resolved `&'static` Rust-ABI static. Always `Some` —
+    // kept as `Option` so existing call sites (`if let Some(hooks)`) compile
+    // unchanged; the branch folds away.
+    Some(unsafe { &__BUN_RUNTIME_HOOKS })
 }
 
 // TODO(port): move to jsc_sys

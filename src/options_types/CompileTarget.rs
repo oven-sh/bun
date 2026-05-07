@@ -13,34 +13,26 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
 use bun_string::{strings, MutableString, ZStr};
 use bun_sys::Fd;
-use core::ptr::null_mut;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
-/// Cold-path vtable for the synchronous HTTP GET used by
-/// `CompileTarget::download_to_path`. Breaks the T3→T5 `bun_http` back-edge
-/// (GENUINE per CYCLEBREAK). High tier (`bun_runtime::init`) writes a static
-/// instance into `HTTP_SYNC_DOWNLOAD_VTABLE` at startup.
-// PERF(port): was inline switch — direct bun_http::AsyncHTTP calls. Cold path
-// (cross-compile binary download); the indirect call is fine.
-pub struct HttpSyncDownloadVTable {
+// LAYERING: `bun_options_types` (T3) cannot name `bun_http` (T5) directly.
+// Zig (`CompileTarget.zig`) called `bun.http.AsyncHTTP` inline. The bodies
+// live in `bun_runtime::cli` as `#[no_mangle]` Rust-ABI fns, declared here as
+// `extern "Rust"` and resolved at link time. PERF(port): cold path
+// (cross-compile binary download); the cross-crate call is fine.
+unsafe extern "Rust" {
     /// `bun_http::HTTPThread::init(&Default::default())` — idempotent.
-    pub init_thread: unsafe fn(),
+    fn __bun_http_sync_download_init_thread();
     /// Synchronous GET. Writes the body into `out` and returns the HTTP status
     /// code. `progress_node` is an erased `*mut bun_core::progress::Node` (the
     /// callee assigns it to `client.progress_node`).
-    pub get_sync: for<'a> unsafe fn(
+    fn __bun_http_sync_download_get<'a>(
         url: bun_url::URL<'a>,
         http_proxy: Option<bun_url::URL<'a>>,
         reject_unauthorized: bool,
         progress_node: *mut (), // SAFETY: erased *mut bun_core::Progress::Node
         out: *mut MutableString,
-    ) -> Result<u16, bun_core::Error>,
+    ) -> Result<u16, bun_core::Error>;
 }
-
-/// Registered by `bun_runtime::init()`. Null until then — `download_to_path`
-/// debug-asserts non-null.
-pub static HTTP_SYNC_DOWNLOAD_VTABLE: AtomicPtr<HttpSyncDownloadVTable> =
-    AtomicPtr::new(null_mut());
 
 /// Used for `bun build --compile`
 #[derive(Clone, Copy)]
@@ -293,16 +285,9 @@ impl CompileTarget {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // GENUINE(b0): bun_http::{HTTPThread, AsyncHTTP} routed through
-        // HttpSyncDownloadVTable (cold-path manual vtable). High tier supplies
-        // the impl; see HTTP_SYNC_DOWNLOAD_VTABLE.
-        let http_vt = HTTP_SYNC_DOWNLOAD_VTABLE.load(Ordering::Acquire);
-        debug_assert!(
-            !http_vt.is_null(),
-            "HTTP_SYNC_DOWNLOAD_VTABLE not registered by bun_runtime::init()"
-        );
-        // SAFETY: registered once at startup, &'static thereafter.
-        let http_vt: &HttpSyncDownloadVTable = unsafe { &*http_vt };
-        unsafe { (http_vt.init_thread)() };
+        // link-time externs (high tier supplies the impl).
+        // SAFETY: idempotent; safe to call from any thread.
+        unsafe { __bun_http_sync_download_init_thread() };
         let mut refresher = bun_core::Progress::Progress::default();
 
         {
@@ -332,7 +317,7 @@ impl CompileTarget {
                 let progress = refresher.start(b"Downloading", 0);
 
                 let status_code = unsafe {
-                    (http_vt.get_sync)(
+                    __bun_http_sync_download_get(
                         url,
                         http_proxy,
                         reject_unauthorized,
@@ -399,7 +384,7 @@ impl CompileTarget {
                     // `.{hex(hash|nano)}-{hex(counter)}.tmp\0`.
                     let mut tmpname_buf = [0u8; 1024];
                     let tempdir_name: &ZStr = {
-                        use core::sync::atomic::AtomicU32;
+                        use core::sync::atomic::{AtomicU32, Ordering};
                         static TMPNAME_ID: AtomicU32 = AtomicU32::new(0);
                         let hash = bun_core::fast_random();
                         let hex_value: u64 = (u128::from(hash)

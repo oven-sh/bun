@@ -10,7 +10,7 @@ use bun_aio::{self as Async};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::{Mutex, Output};
-use bun_event_loop::MiniEventLoop::STDIO_BLOB_STORE_CTOR;
+use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_paths::MAX_PATH_BYTES;
 use bun_string::{self as strings};
@@ -37,7 +37,7 @@ use super::uuid::UUID;
 //     (ptr, close-fn) so `close_all_watchers_for_isolation` works without
 //     naming the watcher types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `bun_event_loop::STDIO_BLOB_STORE_CTOR` (same hook MiniEventLoop uses).
+//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
 //   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
 //     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
@@ -223,7 +223,7 @@ pub struct RareData {
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
-    /// side). Constructed via `STDIO_BLOB_STORE_CTOR`; high tier casts back.
+    /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
     /// re-stat (Zig read `store.data.file.mode`).
     pub stderr_store: Option<NonNull<c_void>>,
@@ -906,17 +906,15 @@ impl RareData {
 // stderr / stdout / stdin
 //
 // Low tier owns the fstat + lazy-init flow; the actual `webcore::blob::Store`
-// allocation goes through `bun_event_loop::STDIO_BLOB_STORE_CTOR` (registered
-// by `bun_runtime::init()`). Zig built `Blob.Store` inline; here that ctor is
-// the cold-path hook so `RareData` doesn't name `bun_runtime::webcore`.
+// allocation goes through `__bun_stdio_blob_store_new` (link-time extern
+// defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl RareData {
-    fn stdio_ctor() -> unsafe fn(Fd, bool, Mode) -> *mut c_void {
-        let ctor = STDIO_BLOB_STORE_CTOR.load(Ordering::Relaxed);
-        debug_assert!(!ctor.is_null(), "STDIO_BLOB_STORE_CTOR not registered");
-        // SAFETY: hook signature documented on `STDIO_BLOB_STORE_CTOR`.
-        unsafe { core::mem::transmute::<*mut (), unsafe fn(Fd, bool, Mode) -> *mut c_void>(ctor) }
+    #[inline]
+    unsafe fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
+        // SAFETY: link-time extern; allocates a fresh Store.
+        unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode).cast() }
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
@@ -929,8 +927,8 @@ impl RareData {
                 Err(_) => 0,
             };
             let is_atty = Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
-            let store = unsafe { Self::stdio_ctor()(fd, is_atty, mode) };
+            // SAFETY: link-time extern; allocates a fresh Store.
+            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
             self.stderr_store = NonNull::new(store);
             self.stderr_mode = mode;
         }
@@ -947,8 +945,8 @@ impl RareData {
                 Err(_) => 0,
             };
             let is_atty = Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
-            let store = unsafe { Self::stdio_ctor()(fd, is_atty, mode) };
+            // SAFETY: link-time extern; allocates a fresh Store.
+            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
             self.stdout_store = NonNull::new(store);
             self.stdout_mode = mode;
         }
@@ -967,8 +965,8 @@ impl RareData {
             // Zig: `if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false`
             // — on Windows an invalid stdin handle must short-circuit to false.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
-            // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
-            let store = unsafe { Self::stdio_ctor()(fd, is_atty, mode) };
+            // SAFETY: link-time extern; allocates a fresh Store.
+            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
             self.stdin_store = NonNull::new(store);
             self.stdin_mode = mode;
         }

@@ -412,15 +412,14 @@ pub fn generate(
 
     // Get final output with all chunk references resolved.
     // PORT NOTE: Zig passes `&chunks[0]` as the dummy chunk and `chunks` as the
-    // full slice (aliased). Rust forbids aliased &mut, so use a fresh dummy
-    // chunk — `code()` does not read it for the metafile path.
-    let mut dummy_chunk = Chunk::default();
+    // full slice (aliased). `code()` takes both as `&` now, so pass `&chunks[0]`
+    // directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
         parse_graph,
         &c.graph,
         b"", // no import prefix for metafile
-        &mut dummy_chunk,
+        &chunks[0],
         chunks,
         None,  // no display size
         false, // not force absolute path

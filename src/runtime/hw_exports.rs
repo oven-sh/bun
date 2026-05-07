@@ -164,7 +164,7 @@ pub extern "C" fn Bun__closeChildIPC(global: *mut JSGlobalObject) {
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
 // layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
 // crate registers a `&'static` instance from [`crate::jsc_hooks::
-// install_jsc_hooks`]. Every fn-pointer signature is type-checked at the
+// `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is type-checked at the
 // struct-literal below.
 //
 // Opaque-pointer protocol for `SSLConfig`: `ssl_config_from_js` returns a
@@ -271,7 +271,9 @@ pub(crate) mod sql_hooks {
         }
     }
 
-    pub(crate) static INSTANCE: SqlRuntimeHooks = SqlRuntimeHooks {
+    /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
+    #[unsafe(no_mangle)]
+    pub static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
         timer_heap,
         timer_insert,

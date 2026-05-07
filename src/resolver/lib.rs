@@ -381,14 +381,12 @@ pub mod fs {
 
         /// Zig: `f.top_level_dir = slice` (PackageManager.zig:776). `dir` must be
         /// `'static` (interned in `DirnameStore` or a process-lifetime buffer
-        /// like `cwd_buf`). Takes `&self` because callers hold `&'static
+        /// like `cwd_buf`). Takes `&mut self` — callers hold `&'static mut
         /// FileSystem` from `instance()`; only called during single-threaded
-        /// CLI init so the interior write is unaliased.
+        /// CLI init.
         #[inline]
-        pub fn set_top_level_dir(&self, dir: &'static [u8]) {
-            // SAFETY: single-threaded CLI init only (PackageManager.zig:776);
-            // `self` is the process-static singleton.
-            unsafe { (*(self as *const Self as *mut Self)).top_level_dir = dir; }
+        pub fn set_top_level_dir(&mut self, dir: &'static [u8]) {
+            self.top_level_dir = dir;
         }
 
         /// Zig: `topLevelDirWithoutTrailingSlash` (fs.zig).

@@ -309,28 +309,17 @@ pub struct SqlRuntimeHooks {
     pub blob_shared_view: unsafe fn(*const c_void, out_len: *mut usize) -> *const u8,
 }
 
-static SQL_RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<SqlRuntimeHooks> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Called once from `bun_runtime::jsc_hooks::install_jsc_hooks()` before the
-/// first `VirtualMachine::init`.
-pub fn set_sql_runtime_hooks(hooks: &'static SqlRuntimeHooks) {
-    SQL_RUNTIME_HOOKS.store(
-        hooks as *const SqlRuntimeHooks as *mut SqlRuntimeHooks,
-        core::sync::atomic::Ordering::Release,
-    );
+unsafe extern "Rust" {
+    /// The single `&'static` instance, defined `#[no_mangle]` in
+    /// `bun_runtime::hw_exports::sql_hooks`. Link-time resolved — no
+    /// `AtomicPtr`, no init-order hazard.
+    static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks;
 }
 
 #[inline]
 fn hooks() -> &'static SqlRuntimeHooks {
-    let p = SQL_RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
-    debug_assert!(
-        !p.is_null(),
-        "SqlRuntimeHooks not registered — bun_runtime::install_jsc_hooks() must run before any SQL connection"
-    );
-    // SAFETY: registered once at startup with a `&'static` instance; never
-    // cleared, never mutated after publication.
-    unsafe { &*p }
+    // SAFETY: link-time-resolved `&'static` Rust-ABI static.
+    unsafe { &__BUN_SQL_RUNTIME_HOOKS }
 }
 
 /// Per-VM SQL state — the concrete crate::mysql::MySQLContext /

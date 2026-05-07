@@ -387,6 +387,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding();
     let global_this = ctx;
     let arguments = callframe.arguments_old::<2>();
+    eprintln!("[DBGFETCH] ctx={:p} cf={:p} count={} a0=0x{:x} a1=0x{:x}",
+        ctx as *const _, callframe as *const _, callframe.arguments_count(),
+        arguments.ptr[0].0, arguments.ptr[1].0);
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
     // outlives this call frame.
@@ -493,6 +496,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let options_object: Option<JSValue> = 'brk: {
         if let Some(options) = args.next_eat() {
             let options: JSValue = options;
+            eprintln!("[DBGFETCH] options=0x{:x} a0=0x{:x} a1=0x{:x} len={}", options.0, arguments.ptr[0].0, arguments.ptr[1].0, arguments.len);
             if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
                 break 'brk Some(options);
             }

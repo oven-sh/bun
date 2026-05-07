@@ -1182,7 +1182,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         statements: PreparedStatementsMap::default(),
         prepared_statement_id: 0,
         pending_activity_count: AtomicU32::new(0),
-        js_value: crate::jsc::JsRef::init_weak(JSValue::UNDEFINED),
+        js_value: crate::jsc::JsRef::empty(),
         backend_parameters: StringMap::init(true),
         backend_key_data: protocol::BackendKeyData::default(),
         database,

@@ -2067,7 +2067,7 @@ impl Package<u64> {
                 resolver.set_new_name(
                     Repository::create_dependency_name_from_version_literal(
                         &repo,
-                        string_builder.lockfile,
+                        lockfile,
                         resolver.dep_id(),
                     ),
                 );

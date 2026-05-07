@@ -5375,15 +5375,6 @@ pub use _jsc_gated::write_format_for_size;
 // callers in BunObject/ReadableStream/Archive/server resolve.
 // ──────────────────────────────────────────────────────────────────────────
 
-// FFI: S3-backed Blob → JS wrapper. Declared locally because `webcore::s3_file`
-// is not yet a wired module; the C++ symbol is already linked.
-unsafe extern "C" {
-    fn BUN__createJSS3FileUnsafely(
-        global: *const JSGlobalObject,
-        blob: *mut core::ffi::c_void,
-    ) -> JSValue;
-}
-
 impl Blob {
     /// Construct a Blob viewing an existing `Store`. Accepts both `Box<Store>`
     /// (from `Store::new` / `Store::init*`) and `StoreRef` (cloned refs) —
@@ -5488,9 +5479,7 @@ impl Blob {
         if self.is_s3() {
             // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
             // C++ side wraps it in a JSS3File without taking a second ref.
-            return unsafe {
-                BUN__createJSS3FileUnsafely(global_object, self as *mut Blob as *mut core::ffi::c_void)
-            };
+            return crate::webcore::s3_file::to_js_unchecked(global_object, self as *mut Blob);
         }
 
         // codegen stub takes an erased `*mut ()`; cast through the heap pointer.

@@ -580,7 +580,7 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(result)
     }
 
-    pub fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_buffered_amount(&mut self, _global: &JSGlobalObject) -> JSValue {
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || self.flags.contains(Flags::SOCKET_CLOSED)
         {
@@ -592,34 +592,24 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(0)
     }
 
-    pub fn js_ref(
-        &mut self,
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn js_ref(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
             self.poll_ref.r#ref(bun_vm_mut(global_object));
         }
-        Ok(JSValue::UNDEFINED)
+        JSValue::UNDEFINED
     }
 
-    pub fn js_unref(
-        &mut self,
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn js_unref(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
             self.poll_ref.unref(bun_vm_mut(global_object));
         }
-        Ok(JSValue::UNDEFINED)
+        JSValue::UNDEFINED
     }
 }
 
 fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) -> JsResult<()> {
     if !state.is_response_pending() {
-        return global_object
-            .err_http_headers_sent("Stream is already ended")
-            .throw();
+        return err_throw(global_object, ErrorCode::ERR_HTTP_HEADERS_SENT, "Stream is already ended");
     }
     Ok(())
 }

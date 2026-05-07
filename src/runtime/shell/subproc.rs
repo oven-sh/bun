@@ -510,19 +510,28 @@ impl ShellSubprocess {
 
         // SAFETY: cmd_parent backref is valid for the lifetime of the spawn call.
         let cmd_parent = unsafe { &mut *spawn_args.cmd_parent };
-        // PORT NOTE: Zig pushed a NULL terminator onto the C-string argv array.
-        // The Rust port stores `args: Vec<Vec<u8>>`, so a contiguous
-        // `*const *const c_char` view has to be built separately. That
-        // belongs in `Cmd` once subprocess spawning is wired in the NodeId
-        // port.
-        // TODO(port): build `[*:null]const [*:0]const u8` argv from cmd_parent.args.
+        // Build the `[*:null]?[*:0]const u8` argv view for spawnProcess. Zig's
+        // `Cmd.args` is `ArrayList(?[*:0]const u8)` so it just appends `null`;
+        // the Rust port stores `Vec<Vec<u8>>`, so materialise a contiguous
+        // pointer array here. Each entry must be NUL-terminated — Expansion
+        // produces them that way (mirrors Zig's `[:0]const u8`), but assert in
+        // debug and patch defensively in release.
+        let mut argv: Vec<*const c_char> = Vec::with_capacity(cmd_parent.args.len() + 1);
+        for arg in &mut cmd_parent.args {
+            if arg.last() != Some(&0) {
+                debug_assert!(false, "Cmd.args entry missing NUL terminator");
+                arg.push(0);
+            }
+            argv.push(arg.as_ptr() as *const c_char);
+        }
+        argv.push(core::ptr::null());
 
         spawn_args.env_array.push(core::ptr::null());
 
         let spawn_result = match bun_process::spawn_process(
             &spawn_options,
-            cmd_parent.args.as_ptr() as *const *const c_char,
-            spawn_args.env_array.as_ptr() as *const *const c_char,
+            argv.as_ptr(),
+            spawn_args.env_array.as_ptr(),
         ) {
             Err(err) => {
                 drop(spawn_options);
@@ -552,50 +561,62 @@ impl ShellSubprocess {
         let spawn_stdout = spawn_result.stdout.take();
         let spawn_stderr = spawn_result.stderr.take();
 
-        let subprocess: *mut Subprocess = Box::into_raw(Box::new(Subprocess {
-            event_loop,
-            process: spawn_result.to_process(event_loop, IS_SYNC),
-            stdin: match Writable::init(
-                stdio0,
-                event_loop,
-                core::ptr::null_mut(), // filled below; see TODO
-                spawn_stdin,
-            ) {
-                Ok(w) => w,
-                Err(WritableInitError::UnexpectedCreatingStdin) => {
-                    panic!("unexpected error while creating stdin");
-                }
-            },
-            stdout: Readable::init(
-                OutKind::Stdout,
-                stdio1,
-                shellio.stdout.clone(),
-                event_loop,
-                core::ptr::null_mut(),
-                spawn_stdout,
-                DEFAULT_MAX_BUFFER_SIZE,
-                true,
-            ),
-            stderr: Readable::init(
-                OutKind::Stderr,
-                stdio2,
-                shellio.stderr.clone(),
-                event_loop,
-                core::ptr::null_mut(),
-                spawn_stderr,
-                DEFAULT_MAX_BUFFER_SIZE,
-                true,
-            ),
-            flags: if IS_SYNC { Flags::IS_SYNC } else { Flags::empty() },
-            cmd_parent: spawn_args.cmd_parent,
-            closed: EnumSet::empty(),
-        }));
-        // TODO(port): Zig passes `subprocess` into Writable/Readable::init while
-        // constructing the struct (self-referential). Rust cannot express this in a
-        // single struct literal — Phase B should split allocation from field init
-        // (Box::new_uninit) so the raw `*mut Subprocess` is available before the
-        // stdin/stdout/stderr constructors run.
+        // Two-phase init: allocate the Subprocess slot first so the stable
+        // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
+        // (they store it on StaticPipeWriter / PipeReader as a backref). Zig
+        // does `allocator.create()` then assigns the struct literal in place.
+        let mut slot = Box::<Subprocess>::new_uninit();
+        let subprocess: *mut Subprocess = slot.as_mut_ptr();
         *out_subproc = subprocess;
+
+        let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
+            Ok(w) => w,
+            Err(WritableInitError::UnexpectedCreatingStdin) => {
+                panic!("unexpected error while creating stdin");
+            }
+        };
+        let stdout = Readable::init(
+            OutKind::Stdout,
+            stdio1,
+            shellio.stdout.clone(),
+            event_loop,
+            subprocess,
+            spawn_stdout,
+            DEFAULT_MAX_BUFFER_SIZE,
+            true,
+        );
+        let stderr = Readable::init(
+            OutKind::Stderr,
+            stdio2,
+            shellio.stderr.clone(),
+            event_loop,
+            subprocess,
+            spawn_stderr,
+            DEFAULT_MAX_BUFFER_SIZE,
+            true,
+        );
+
+        // SAFETY: `subprocess` points to uninitialised memory of the right
+        // size/align (Box::new_uninit). `ptr::write` populates it without
+        // dropping garbage.
+        unsafe {
+            subprocess.write(Subprocess {
+                event_loop,
+                process: spawn_result.to_process(event_loop, IS_SYNC),
+                stdin,
+                stdout,
+                stderr,
+                flags: if IS_SYNC { Flags::IS_SYNC } else { Flags::empty() },
+                cmd_parent: spawn_args.cmd_parent,
+                closed: EnumSet::empty(),
+            });
+        }
+        // Ownership of the now-initialised Box is released as a raw pointer
+        // (freed via `Box::from_raw` in `abort_after_failed_start` / Cmd
+        // teardown). `MaybeUninit<T>` and `T` share layout, so the cast is
+        // sound.
+        // SAFETY: fully initialised by the `write` above.
+        let _ = Box::into_raw(unsafe { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
         subproc.proc().set_exit_handler(subprocess as *mut (), &SHELL_EXIT_VTABLE);

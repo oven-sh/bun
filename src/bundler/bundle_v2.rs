@@ -453,19 +453,34 @@ pub mod bake_types {
     /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
     pub type HmrRuntimeSide = Side;
 
+    /// Runtime-registered loader for the HMR preamble bytes. The codegen'd
+    /// `bake.client.js`/`bake.server.js` live in the T6 `bun_runtime` crate
+    /// (it owns `runtime_embed_file!`/`include_bytes!` of the build outputs);
+    /// `bun_bundler` cannot depend on it, so the runtime registers the real
+    /// loader at process init and the linker reads through this hook.
+    static HMR_RUNTIME_LOADER: std::sync::OnceLock<fn(Side) -> HmrRuntime> =
+        std::sync::OnceLock::new();
+
+    /// Called once by `bun_runtime::bake` at startup to wire the real
+    /// `getHmrRuntime` (the one that embeds codegen output). Idempotent.
+    pub fn set_hmr_runtime_loader(loader: fn(Side) -> HmrRuntime) {
+        let _ = HMR_RUNTIME_LOADER.set(loader);
+    }
+
     /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. MOVE_DOWN bake→bundler.
-    /// Embed bytes are produced by codegen (`bake.client.js` / `bake.server.js`);
-    /// in dev builds those came from `runtimeEmbedFile` (lazy disk read), which is
-    /// a tier-6 hook — the static fallback here uses `include_bytes!` so the
-    /// linker has a real preamble even before runtime registers a loader.
+    /// Embed bytes are produced by codegen (`bake.client.js` / `bake.server.js`).
+    /// The bundler crate cannot embed those directly (they belong to T6), so
+    /// this consults `HMR_RUNTIME_LOADER` and panics if the runtime never
+    /// registered one — catches mis-layering at the first HMR chunk instead of
+    /// silently splicing a stub preamble into output.
     #[inline]
     pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-        // PORT NOTE: `OUT_DIR` codegen for `bake.client.js` / `bake.server.js`
-        // is not wired in the Rust build yet. Embed empty preambles; the runtime
-        // (T6) registers a loader at init that supersedes this.
-        match side {
-            Side::Client => HmrRuntime::init(b"// bake.client.js (placeholder)\n"),
-            Side::Server => HmrRuntime::init(b"// bake.server.js (placeholder)\n"),
+        match HMR_RUNTIME_LOADER.get() {
+            Some(loader) => loader(side),
+            None => panic!(
+                "bake_types::get_hmr_runtime: HMR runtime loader not registered \
+                 (call bun_bundler::bake_types::set_hmr_runtime_loader at startup)",
+            ),
         }
     }
 
@@ -5530,7 +5545,8 @@ impl<'a> BundleV2<'a> {
         let dev_server_is_none = self.dev_server.is_none();
         for (key, value) in resolve_queue.iter() {
             let value: *mut ParseTask = *value;
-            // SAFETY: ParseTask was Box::leak'd in resolve_import_records
+            // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
+            // the arena outlives this loop.
             let value = unsafe { &mut *value };
             let loader = value.loader.unwrap_or_else(|| value.path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File));
             let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && dev_server_is_none;
@@ -5602,8 +5618,11 @@ impl<'a> BundleV2<'a> {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                // SAFETY: ParseTask was Box::leak'd; reconstitute and drop
-                drop(unsafe { Box::from_raw(value) });
+                // ParseTask is arena-allocated; the slab itself is reclaimed on
+                // arena reset, but its heap-owned fields (path/jsx clones) need
+                // their destructors run now (Zig: `value.deinit()`).
+                // SAFETY: `value` is a live arena slot; not used after this.
+                unsafe { core::ptr::drop_in_place(value) };
             }
         }
         diff

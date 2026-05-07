@@ -672,7 +672,10 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        let macro_remappings = if vm.macro_mode || !vm.has_any_macro_remappings || is_node_override
+        // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
+        let macro_remappings = if unsafe { (*vm).macro_mode }
+            || !unsafe { (*vm).has_any_macro_remappings }
+            || is_node_override
         {
             MacroRemap::default()
         } else {
@@ -690,9 +693,11 @@ impl TranspilerJob {
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
-        let is_main = vm.main.len() == path.text.len()
-            && vm.main_hash == hash
-            && strings::eql_long(vm.main, path.text, false);
+        // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
+        let (vm_main, vm_main_hash) = unsafe { ((*vm).main, (*vm).main_hash) };
+        let is_main = vm_main.len() == path.text.len()
+            && vm_main_hash == hash
+            && strings::eql_long(vm_main, path.text, false);
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -718,8 +723,8 @@ impl TranspilerJob {
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
-            set_breakpoint_on_first_line: vm
-                .debugger
+            // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` PORT NOTE above.
+            set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
                 .as_ref()
                 .map(|d| d.set_breakpoint_on_first_line)
                 .unwrap_or(false)
@@ -730,7 +735,9 @@ impl TranspilerJob {
             } else {
                 None
             },
-            remove_cjs_module_wrapper: is_main && vm.module_loader.eval_source.is_some(),
+            // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` PORT NOTE above.
+            remove_cjs_module_wrapper: is_main
+                && unsafe { (*vm).module_loader.eval_source.is_some() },
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
@@ -765,10 +772,14 @@ impl TranspilerJob {
             }
         }
 
+        // SAFETY: leaf scalar field read; see `vm` PORT NOTE above. Inlined
+        // `VirtualMachine::is_watcher_enabled` to avoid forming `&VirtualMachine`.
+        let is_watcher_enabled = !unsafe { (*vm).bun_watcher }.is_null();
+
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
         else {
-            if vm.is_watcher_enabled() && input_file_fd.is_valid() {
+            if is_watcher_enabled && input_file_fd.is_valid() {
                 if !is_node_override
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
@@ -792,7 +803,7 @@ impl TranspilerJob {
             return;
         };
 
-        if vm.is_watcher_enabled() && input_file_fd.is_valid() {
+        if is_watcher_enabled && input_file_fd.is_valid() {
             if !is_node_override
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
@@ -812,8 +823,17 @@ impl TranspilerJob {
             }
         }
 
+        // SAFETY: leaf scalar field read; see `vm` PORT NOTE above. Inlined
+        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
+        // `&VirtualMachine`.
+        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false);
+
         if let Some(entry) = cache.entry.as_mut() {
-            let _ = vm.source_mappings.put_mappings(
+            // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
+            // `SavedSourceMap` takes its own internal mutex.
+            let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
                 &parse_result.source,
                 MutableString { list: core::mem::take(&mut entry.sourcemap).into_vec() },
             );
@@ -822,7 +842,7 @@ impl TranspilerJob {
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
 
-            let module_info: *mut c_void = if vm.use_isolation_source_provider_cache()
+            let module_info: *mut c_void = if use_isolation_source_provider_cache
                 && entry.metadata.module_type != ModuleType::Cjs
                 && !entry.esm_record.is_empty()
             {

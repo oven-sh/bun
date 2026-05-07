@@ -508,8 +508,7 @@ impl ShellSubprocess {
             spawn_options.no_sigpipe = no_sigpipe;
         }
 
-        // SAFETY: cmd_parent backref is valid for the lifetime of the spawn call.
-        let cmd_parent = unsafe { &mut *spawn_args.cmd_parent };
+        let cmd_parent = &mut *spawn_args.cmd_parent;
         // Build the `[*:null]?[*:0]const u8` argv view for spawnProcess. Zig's
         // `Cmd.args` is `ArrayList(?[*:0]const u8)` so it just appends `null`;
         // the Rust port stores `Vec<Vec<u8>>`, so materialise a contiguous
@@ -1954,10 +1953,16 @@ impl PipeReader {
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
-                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes `&mut [u8]`
-                // and adopts the allocation; leak the Box so it isn't double-freed.
-                let leaked: &mut [u8] = Box::leak(core::mem::take(bytes));
-                MarkedArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array)
+                // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
+                // by the JSC ArrayBuffer destructor). Transfer ownership via
+                // `Box::into_raw` — this is an FFI hand-off, not a leak.
+                let owned = core::mem::take(bytes);
+                let len = owned.len();
+                let ptr = Box::into_raw(owned) as *mut u8;
+                // SAFETY: `ptr`/`len` come from `Box::into_raw` of the slice
+                // just taken; ownership moves into the MarkedArrayBuffer.
+                let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,
@@ -2159,7 +2164,7 @@ impl From<&PipeReaderState> for &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/subproc.zig (1475 lines)
-//   confidence: low
-//   todos:      37
-//   notes:      LIFETIMES.tsv mandates Arc<PipeReader>/Arc<IOWriter> but Zig uses intrusive RefCount + @fieldParentPtr; spawn struct-literal is self-referential (needs Box::new_uninit split); several Zig paths reference nonexistent fields (lazy-compiled dead code) — flagged inline.
+//   confidence: medium
+//   todos:      18
+//   notes:      Arc<PipeReader>/Arc<IOWriter> used for intrusive-refcount types; spawn does two-phase Box::new_uninit init so backrefs are valid; ShellErr unified via crate::shell re-export; several Zig paths reference nonexistent fields (lazy-compiled dead code) — flagged inline.
 // ──────────────────────────────────────────────────────────────────────────

@@ -191,17 +191,10 @@ where
     }
     #[inline]
     fn set_signal(&mut self, sig: *mut AbortSignal) {
-        // PORT NOTE: RequestContext.signal stores `Option<Arc<AbortSignal>>` but
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque.
-        // `Arc::from_raw` requires the pointer to have come from `Arc::into_raw`
-        // (with Arc's own header), which is NOT the case here. Until the field
-        // type is migrated to a raw `*mut AbortSignal`, store via `Arc::new`
-        // wrapping a zero-sized handle would lose the ref. The interim shape
-        // is to leave `signal` `None` and hold the ref on the Request object
-        // instead (which already does so via `signal.ref()`).
-        // TODO(port): change RequestContext.signal to `Option<NonNull<AbortSignal>>`.
-        let _ = sig;
-        self.signal = None;
+        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
+        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
+        // and pairs the unref in RequestContext cleanup (`shim::signal_unref`).
+        self.signal = NonNull::new(sig);
     }
     #[inline]
     fn set_request_weakref(&mut self, req: *mut Request) {
@@ -802,17 +795,8 @@ impl AnyRoute {
         }
 
         if argument.is_object() {
-            if let Some(_dir_js) = argument.get(global, b"dir")? {
-                // TODO(port): blocked_on bun_jsc::JSValue::get_optional::<ZigString::Slice>
-                // — need typed getter that returns ZigString::Slice for the
-                // StringRefList::track() call below.
-                let _ = init_ctx;
-                return Err(global.throw_invalid_arguments(
-                    format_args!("framework router config not yet ported"),
-                ));
-                {
-                let alloc = &mut init_ctx.js_string_allocations;
-                let relative_root = alloc.track(dir);
+            if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
+                let relative_root = init_ctx.js_string_allocations.track(dir);
 
                 let style: FrameworkRouter::Style = if let Some(style_js) = argument.get(global, b"style")? {
                     FrameworkRouter::Style::from_js(style_js, global)?
@@ -822,9 +806,9 @@ impl AnyRoute {
                 // errdefer style.deinit() — Style impls Drop; `?` drops it on the error path
 
                 if !strings::ends_with(path, b"/*") {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(
                         format_args!("To mount a directory, make sure the path ends in `/*`"),
-                    );
+                    ));
                 }
 
                 init_ctx.framework_router_list.push(bake::FileSystemRouterType {
@@ -832,7 +816,7 @@ impl AnyRoute {
                     style,
                     // trim the /*
                     prefix: std::borrow::Cow::Owned(
-                        if path.len() == 2 { b"/" as &[u8] } else { &path[0..path.len() - 2] }.to_vec(),
+                        if path.len() == 2 { b"/" as &[u8] } else { &path[..path.len() - 2] }.to_vec(),
                     ),
                     // TODO: customizable framework option.
                     entry_client: Some(std::borrow::Cow::Borrowed(b"bun-framework-react/client.tsx")),
@@ -849,17 +833,16 @@ impl AnyRoute {
                     allow_layouts: true,
                 });
 
-                // TODO(port): @typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type — use the index newtype's MAX
+                // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's MAX.
                 let limit = FrameworkRouter::TypeIndex::MAX as usize;
                 if init_ctx.framework_router_list.len() > limit {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(
                         format_args!("Too many framework routers. Maximum is {}.", limit),
-                    );
+                    ));
                 }
                 return Ok(Some(AnyRoute::FrameworkRouter(FrameworkRouter::TypeIndex::init(
                     u8::try_from(init_ctx.framework_router_list.len() - 1).unwrap(),
                 ))));
-                }
             }
         }
 

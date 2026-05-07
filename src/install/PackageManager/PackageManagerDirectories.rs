@@ -407,7 +407,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
     version: Semver::Version,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    let scope = scope_for_package_name(this, name);
+    let scope = this.scope_for_package_name(name);
 
     if scope.name.is_empty() && !this.options.did_override_default_scope {
         let include_version_number = true;
@@ -1037,15 +1037,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let file = tmpfile.file();
     {
-        // PORT NOTE: `Printer.options` is typed against the column-vec
-        // `PackageManagerOptionsStub` (see lockfile.rs:1562). `Yarn::print`
-        // never reads `options`, so a default stub is semantically equivalent
-        // to passing `this.options` here. Unifies once `Options` and
-        // `PackageManagerOptionsStub` collapse (reconciler-6).
-        let options_stub = crate::PackageManagerOptionsStub::default();
         let mut printer = crate::lockfile_real::Printer {
             lockfile: &this.lockfile,
-            options: &options_stub,
+            options: &this.options,
             successfully_installed: None,
             // PORT NOTE: Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
             // never reads `updates`, but pass an empty slice to match the spec
@@ -1059,15 +1053,6 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
         file.write_all(&buf).map_err(Error::from)?;
     }
-    {
-        #[cfg(unix)]
-        {
-            let _ = sys::fchmod(
-                tmpfile.fd,
-                // chmod 666,
-                0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-            );
-        }
 
     #[cfg(unix)]
     {
@@ -1080,17 +1065,6 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
     Ok(())
-}
-
-/// `bun_io::Write` adapter for `bun_sys::File` — port of Zig
-/// `std.fs.File.writerStreaming(&buf).interface`. `bun_sys` doesn't depend on
-/// `bun_io`, so the impl lives here next to its sole caller.
-struct FileSink(File);
-impl bun_io::Write for FileSink {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        self.0.write_all(buf).map_err(Error::from)
-    }
 }
 
 // ────────────────────────────── formatters ────────────────────────────────────
@@ -1148,20 +1122,6 @@ fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // thread-local cell outlives all callers and only one `&mut` is taken at a
     // time per call site (Zig also reused this buffer non-reentrantly).
     unsafe { &mut (*super::cached_package_folder_name_buf()).0[..] }
-}
-
-/// Port of `Options.scopeForPackageName` — duplicated here because the
-/// canonical `impl PackageManager` body in `PackageManagerResolution.rs`
-/// targets the stub `crate::PackageManager`, not `package_manager_real::
-/// PackageManager` (the type of `this` in this module).
-fn scope_for_package_name<'a>(this: &'a PackageManager, name: &[u8]) -> &'a Npm::registry::Scope {
-    if name.is_empty() || name[0] != b'@' {
-        return &this.options.scope;
-    }
-    this.options
-        .registries
-        .get(&Npm::registry::Scope::hash(Npm::registry::Scope::get_name(name)))
-        .unwrap_or(&this.options.scope)
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

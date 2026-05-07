@@ -1,20 +1,37 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 
 use core::fmt;
-use std::io::Write as _;
+use core::fmt::Write as _;
+use std::borrow::Cow;
+use std::io::Write as IoWrite;
 
 use bstr::BStr;
 
+use bun_alloc::Arena as Bump;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
-use bun_install::dependency::Behavior;
-use bun_install::package_manager::WorkspaceFilter;
-use bun_install::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};
-use bun_js_parser::ast::{Expr, E};
-use bun_js_printer as js_printer;
+use bun_install::dependency::{self, Behavior};
+use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::package_manager::{
+    self, install_with_manager, populate_manifest_cache, LogLevel, ManifestCacheOptions,
+    ManifestLoad, Subcommand, WorkspaceFilter, ROOT_PACKAGE_JSON_PATH,
+};
+use bun_install::{
+    resolution, CommandLineArguments, DependencyID, GetJsonOptions, GetJsonResult, PackageID,
+    PackageManager, WorkspacePackageJsonCacheEntry, INVALID_PACKAGE_ID,
+};
+use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
 use bun_logger as logger;
+// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_logger::js_ast`
+// types, NOT `bun_js_parser::ast`. `WorkspacePackageJsonCacheEntry.root` is the
+// logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
+// helpers below must operate on that type. The earlier draft imported
+// `bun_js_parser::ast::Expr`, which is a distinct struct and would not unify
+// with `MapEntry.root`.
+use bun_logger::js_ast::{self, expr as js_expr, Expr, E};
+use bun_logger::Loc;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 use bun_str::strings;

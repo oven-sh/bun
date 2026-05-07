@@ -5438,11 +5438,9 @@ impl<'a> BundleV2<'a> {
                             import_record.path.text = path.text;
                             import_record.path.namespace = b"file";
                             // SAFETY: `alloc_str` returns into the bundler arena which
-                            // outlives this `ImportRecord`. Erase the `&self` lifetime so
-                            // the borrow on `self.allocator()` does not extend to `'static`
-                            // (Phase-A arena-erasure convention; see also line ~5047).
+                            // outlives this `ImportRecord`. See `interned_slice` contract.
                             import_record.path.pretty = unsafe {
-                                core::mem::transmute::<&[u8], &'static [u8]>(
+                                interned_slice(
                                     self.allocator()
                                         .alloc_str(&format!(
                                             "{}/{:016x}{}",
@@ -5734,9 +5732,9 @@ impl<'a> BundleV2<'a> {
 
         // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
         // outlives this AST. `E::EString.data` is `&'static [u8]` per the Phase-A
-        // arena-erasure convention (see `js_parser/ast/E.rs:Str`).
+        // arena-erasure convention. See `interned_slice` contract.
         let unique_key: &'static [u8] = unsafe {
-            core::mem::transmute::<&[u8], &'static [u8]>(
+            interned_slice(
                 self.allocator()
                     .alloc_str(&format!(
                         "{:x}H{:08}",
@@ -6826,7 +6824,7 @@ pub use Logger::Loc;
 //   source:     src/bundler/bundle_v2.zig (4509 lines)
 //   confidence: low
 //   todos:      30
-//   notes:      Heavy borrowck reshaping needed (overlapping &mut self.graph/transpiler); enqueueEntryPoints split into 3 fns (see PORT NOTE); ParseTask ownership uses Box::leak/from_raw; ssr_transpiler aliases transpiler in init (illegal in Rust); init() should arena-allocate self
+//   notes:      Heavy borrowck reshaping needed (overlapping &mut self.graph/transpiler); enqueueEntryPoints split into 3 fns (see PORT NOTE); ParseTask/Resolve/Load/ThreadPool/chunks now arena-allocated via `arena_create`/`alloc_slice_fill_iter` (no more global-heap leaks); ssr_transpiler aliases transpiler in init (illegal in Rust); init() should arena-allocate self
 // ──────────────────────────────────────────────────────────────────────────
 
 

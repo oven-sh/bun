@@ -326,7 +326,7 @@ pub const Command = struct {
     /// `ContextData.create` body — kept here because it calls `Arguments.parse`
     /// and reaches into Windows watcher hooks. Aliased onto `ContextData` in
     /// `options_types/Context.zig`.
-    pub fn createContextData(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
+    pub fn createContextData(allocator: std.mem.Allocator, log: *logger.Log, command: Command.Tag) anyerror!Context {
         Cli.cmd = command;
         context_data = .{
             .args = std.mem.zeroes(api.TransformOptions),
@@ -336,7 +336,7 @@ pub const Command = struct {
         };
         global_cli_ctx = &context_data;
 
-        if (comptime Command.Tag.uses_global_options.get(command)) {
+        if (Command.Tag.uses_global_options.get(command)) {
             global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
         }
 
@@ -856,18 +856,18 @@ pub const Command = struct {
 
     pub const Tag = @import("../options_types/CommandTag.zig").Tag;
 
-    pub fn tagParams(comptime cmd: Tag) []const Arguments.ParamType {
-        return comptime &switch (cmd) {
-            .AutoCommand => Arguments.auto_params,
-            .RunCommand, .RunAsNodeCommand => Arguments.run_params,
-            .BuildCommand => Arguments.build_params,
-            .TestCommand => Arguments.test_params,
-            .BunxCommand => Arguments.run_params,
-            else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
+    pub fn tagParams(cmd: Tag) []const Arguments.ParamType {
+        return switch (cmd) {
+            .AutoCommand => &Arguments.auto_params,
+            .RunCommand, .RunAsNodeCommand => &Arguments.run_params,
+            .BuildCommand => &Arguments.build_params,
+            .TestCommand => &Arguments.test_params,
+            .BunxCommand => &Arguments.run_params,
+            else => &Arguments.default_params,
         };
     }
 
-    pub fn tagPrintHelp(comptime cmd: Tag, show_all_flags: bool) void {
+    pub fn tagPrintHelp(cmd: Tag, show_all_flags: bool) void {
         switch (cmd) {
 
             // the output of --help uses the following syntax highlighting
@@ -1039,7 +1039,7 @@ pub const Command = struct {
                 Output.flush();
             },
             Command.Tag.HelpCommand => {
-                HelpCommand.printWithReason(.explicit);
+                HelpCommand.printWithReason(.explicit, show_all_flags);
             },
             Command.Tag.UpgradeCommand => {
                 const intro_text =
@@ -1115,6 +1115,7 @@ pub const Command = struct {
                     .UpdateInteractiveCommand => .update,
                     .PublishCommand => .publish,
                     .AuditCommand => .audit,
+                    else => unreachable,
                 });
             },
             .InfoCommand => {

@@ -177,7 +177,7 @@ pub const Bunfig = struct {
             }
         }
 
-        pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
+        pub fn parse(this: *Parser, cmd: Command.Tag) !void {
             bun.analytics.Features.bunfig += 1;
 
             const json = this.json;
@@ -224,7 +224,7 @@ pub const Bunfig = struct {
                 try this.loadEnvConfig(env_expr);
             }
 
-            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+            if (cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("serve")) |expr| {
                     if (expr.get("port")) |port| {
                         try this.expect(port, .e_number);
@@ -245,14 +245,14 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+            if (cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("smol")) |expr| {
                     try this.expect(expr, .e_boolean);
                     this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                 }
             }
 
-            if (comptime cmd == .TestCommand) {
+            if (cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
                         this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
@@ -509,7 +509,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+            if (cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(api.BunInstall);
@@ -1021,14 +1021,14 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
+                if (cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
                     }
                 }
 
-                if (comptime cmd == .BuildCommand) {
+                if (cmd == .BuildCommand) {
                     if (_bun.get("logLevel")) |expr2| {
                         try this.loadLogLevel(expr2);
                     }
@@ -1251,7 +1251,7 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
         const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(source, ctx.log, allocator, true) catch |err| {

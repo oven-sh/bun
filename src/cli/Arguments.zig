@@ -255,19 +255,41 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+/// Catch-all params for commands without their own flag set.
+/// Matches the `else` branch of `Command.tagParams`.
+pub const default_params = base_params_ ++ runtime_params_ ++ transpiler_params_;
+
+/// Precomputed `ParamSet` tables so `parse` can pick the right clap params
+/// at runtime instead of monomorphizing the whole function per `Command.Tag`.
+const auto_param_set = clap.ParamSet.init(&auto_params);
+const run_param_set = clap.ParamSet.init(&run_params);
+const build_param_set = clap.ParamSet.init(&build_params);
+const test_param_set = clap.ParamSet.init(&test_params);
+const default_param_set = clap.ParamSet.init(&default_params);
+
+fn paramSetFor(cmd: Command.Tag) *const clap.ParamSet {
+    return switch (cmd) {
+        .AutoCommand => &auto_param_set,
+        .RunCommand, .RunAsNodeCommand, .BunxCommand => &run_param_set,
+        .BuildCommand => &build_param_set,
+        .TestCommand => &test_param_set,
+        else => &default_param_set,
+    };
+}
+
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, cmd: Command.Tag) !void {
     if (ctx.has_loaded_global_config) return;
 
     ctx.has_loaded_global_config = true;
 
     var config_buf: bun.PathBuffer = undefined;
     if (getHomeConfigPath(&config_buf)) |path| {
-        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+        try loadBunfig(allocator, true, path, ctx, cmd);
     }
 }
 
-pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    if (comptime cmd.readGlobalConfig()) {
+pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, cmd: Command.Tag) !void {
+    if (cmd.readGlobalConfig()) {
         loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
             if (auto_loaded) return;
 
@@ -282,7 +304,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
 }
 
-fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
@@ -322,7 +344,7 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
 
     return null;
 }
-pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
+pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, cmd: Command.Tag) OOM!void {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if (user_config_path_ == null) {
@@ -334,12 +356,12 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     }
 
     var config_buf: bun.PathBuffer = undefined;
-    if (comptime cmd.readGlobalConfig()) {
+    if (cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {
             ctx.has_loaded_global_config = true;
 
             if (getHomeConfigPath(&config_buf)) |path| {
-                loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                loadConfigPath(allocator, true, path, ctx, cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }
@@ -393,7 +415,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         config_path = config_buf[0..config_path_.len :0];
     }
 
-    loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
+    loadConfigPath(allocator, auto_loaded, config_path, ctx, cmd) catch |err| {
         if (ctx.log.hasAny()) {
             ctx.log.print(Output.errorWriter()) catch {};
         }
@@ -404,19 +426,19 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
 }
 
 pub fn loadConfigWithCmdArgs(
-    comptime cmd: Command.Tag,
+    cmd: Command.Tag,
     allocator: std.mem.Allocator,
-    args: clap.Args(clap.Help, cmd.params()),
+    args: *const clap.RuntimeArgs,
     ctx: Command.Context,
 ) OOM!void {
-    return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
+    return try loadConfig(allocator, args.option("--config"), ctx, cmd);
 }
 
-pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, cmd: Command.Tag) !Api.TransformOptions {
     var diag = clap.Diagnostic{};
-    const params_to_parse = comptime cmd.params();
+    const param_set = paramSetFor(cmd);
 
-    var args = clap.parse(clap.Help, params_to_parse, .{
+    var args = clap.runtime.parse(param_set, .{
         .diagnostic = &diag,
         .allocator = allocator,
         .stop_after_positional_at = switch (cmd) {
@@ -695,8 +717,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     ctx.args.absolute_working_dir = cwd;
     ctx.positionals = args.positionals();
 
-    if (comptime Command.Tag.loads_config.get(cmd)) {
-        try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
+    if (Command.Tag.loads_config.get(cmd)) {
+        try loadConfigWithCmdArgs(cmd, allocator, &args, ctx);
     }
 
     var opts: Api.TransformOptions = ctx.args;
@@ -715,10 +737,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.
-    const loader_tuple = if (cmd != .RunAsNodeCommand)
+    const loader_tuple: LoaderColonList = if (cmd != .RunAsNodeCommand)
         try LoaderColonList.resolve(allocator, args.options("--loader"))
     else
-        .{ .keys = &[_]u8{}, .values = &[_]Api.Loader{} };
+        .{ .keys = &.{}, .values = &.{} };
 
     if (loader_tuple.keys.len > 0) {
         opts.loaders = .{
@@ -821,7 +843,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.option("--port")) |port_str| {
-            if (comptime cmd == .RunAsNodeCommand) {
+            if (cmd == .RunAsNodeCommand) {
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str;
                 ctx.runtime_options.eval.eval_and_print = true;
@@ -1170,7 +1192,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         const TargetMatcher = strings.ExactSizeMatcher(8);
         if (args.option("--target")) |_target| brk: {
-            if (comptime cmd == .BuildCommand) {
+            if (cmd == .BuildCommand) {
                 if (args.flag("--compile")) {
                     if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
                         ctx.bundler_options.compile_target = CLI.Cli.CompileTarget.from(_target[3..]);
@@ -1544,7 +1566,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     if (opts.entry_points.len == 0) {
         var entry_points = ctx.positionals;
 
-        switch (comptime cmd) {
+        switch (cmd) {
             .BuildCommand => {
                 if (entry_points.len > 0 and (strings.eqlComptime(
                     entry_points[0],

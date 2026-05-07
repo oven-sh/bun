@@ -2,6 +2,9 @@ pub const args = @import("./args.zig");
 
 pub const ComptimeClap = @import("./comptime.zig").ComptimeClap;
 pub const StreamingClap = @import("./streaming.zig").StreamingClap;
+pub const runtime = @import("./runtime.zig");
+pub const ParamSet = runtime.ParamSet;
+pub const RuntimeArgs = runtime.RuntimeArgs;
 
 /// The names a ::Param can have.
 pub const Names = struct {

@@ -10,7 +10,7 @@
 // configurable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT` so this test can run in a
 // few seconds rather than the 5-minute default.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import * as net from "node:net";
 

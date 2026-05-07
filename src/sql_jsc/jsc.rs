@@ -1060,34 +1060,34 @@ pub fn marked_argument_buffer_run<Ctx>(
     }
 }
 
-/// Opaque handle to bun_runtime::api::SSLContextCache (owned by RuntimeState).
-/// Reached via [VirtualMachineSqlExt::ssl_ctx_cache]; backed by
-/// Bun__RareData__sslCtxCache / Bun__SSLContextCache__getOrCreateOpts in
-/// src/runtime/hw_exports.rs.
+/// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
+/// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
+/// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
 #[repr(C)]
-pub struct SslCtxCache { _opaque: core::cell::UnsafeCell<[u8; 0]> }
+pub struct SslCtxCache {
+    _opaque: core::cell::UnsafeCell<[u8; 0]>,
+    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
 impl SslCtxCache {
     pub fn get_or_create_opts(
         &mut self,
         opts: bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<*mut bun_uws::SslCtx> {
-        // SAFETY: self is &runtime_state().ssl_ctx_cache; opts passed by
-        // value; err is a valid out-param.
+        // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
+        // are caller stack locals.
         let p = unsafe {
-            Bun__SSLContextCache__getOrCreateOpts(
-                self._opaque.get() as *mut c_void,
-                &opts as *const _,
-                err as *mut bun_uws::create_bun_socket_error_t as *mut c_int,
-            )
+            (hooks().ssl_ctx_get_or_create)(self._opaque.get() as *mut c_void, &opts, err)
         };
         if p.is_null() { None } else { Some(p) }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// extern "C" — JSC bindings (src/jsc/bindings/bindings.cpp) used by the
-// extension traits / local types above.
+// extern "C" — **C++** JSC bindings (src/jsc/bindings/bindings.cpp) used by
+// the extension traits above. No Rust-defined symbols are declared here; all
+// `bun_runtime` cross-calls go through [`SqlRuntimeHooks`] so the compiler
+// type-checks both sides at the registration site.
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     // JSValue
@@ -1106,22 +1106,4 @@ unsafe extern "C" {
 
     // MarkedArgumentBuffer
     fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));
-
-    // ── bun_runtime/hw_exports.rs (forward-dep; RuntimeState owns the
-    // backing storage). VirtualMachine / EventLoop / RareData themselves are
-    // imported directly from bun_jsc above; only the higher-tier state
-    // (sql_rare, timer heap, ssl_ctx_cache, SSLConfig parser) crosses the
-    // C ABI here.
-    fn Bun__VM__rareData(vm: *mut VirtualMachine) -> *mut RareData;
-    fn Bun__VM__timer(vm: *mut VirtualMachine) -> *mut TimerHeap;
-    fn Bun__Timer__All__insert(this: *mut TimerHeap, timer: *mut EventLoopTimer);
-    fn Bun__Timer__All__remove(this: *mut TimerHeap, timer: *mut EventLoopTimer);
-    fn Bun__RareData__sslCtxCache(vm: *mut c_void) -> *mut SslCtxCache;
-    fn Bun__SSLContextCache__getOrCreateOpts(
-        this: *mut c_void,
-        opts: *const bun_uws::us_bun_socket_context_options_t,
-        err: *mut c_int,
-    ) -> *mut bun_uws::SslCtx;
-    fn Bun__SSLConfig__fromJS(global: *mut JSGlobalObject, value: JSValue, out: *mut c_void) -> bool;
-    fn Bun__SSLConfig__asUSocketsClient(this: *const c_void, out: *mut bun_uws::us_bun_socket_context_options_t);
 }

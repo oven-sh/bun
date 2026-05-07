@@ -1123,17 +1123,22 @@ impl<'a> PackageInstaller<'a> {
         macro_rules! string_buf { () => { unsafe { &*string_buf_ptr } }; }
 
         let alias = self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize].name;
+        // PORT NOTE: `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
+        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes (Zig
+        // slices don't enforce noalias). Derive BOTH from a single `*mut PathBuffer`
+        // so neither `&mut` invalidates the other under stacked-borrows.
+        let subpath_buf_ptr: *mut PathBuffer = &mut self.destination_dir_subpath_buf;
         let destination_dir_subpath: &mut ZStr = {
             let alias_slice = alias.slice(string_buf!());
-            self.destination_dir_subpath_buf[..alias_slice.len()].copy_from_slice(alias_slice);
-            self.destination_dir_subpath_buf[alias_slice.len()] = 0;
-            // SAFETY: buf[alias_slice.len()] == 0 written above
-            unsafe {
-                ZStr::from_raw_mut(
-                    self.destination_dir_subpath_buf.as_mut_ptr(),
-                    alias_slice.len(),
-                )
-            }
+            // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
+            // the lifetime of this fn body.
+            let buf = unsafe { &mut *subpath_buf_ptr };
+            buf[..alias_slice.len()].copy_from_slice(alias_slice);
+            buf[alias_slice.len()] = 0;
+            // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from
+            // `subpath_buf_ptr` so it shares provenance with `destination_dir_subpath_buf`
+            // below.
+            unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
         };
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -1226,7 +1231,6 @@ impl<'a> PackageInstaller<'a> {
         // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
         let node_modules_ptr: *const NodeModulesFolder = &self.node_modules;
         let lockfile_ptr: *const Lockfile = &*self.lockfile;
-        let subpath_buf_ptr: *mut PathBuffer = &mut self.destination_dir_subpath_buf;
         let mut installer = PackageInstall {
             progress: if self.manager.options.log_level.show_progress() {
                 Some(progress!(self))
@@ -1633,9 +1637,9 @@ impl<'a> PackageInstaller<'a> {
                             if d.is_empty() { self.node_modules.path.as_slice() } else { d }
                         };
 
-                        installer.cache_dir = match bun_sys::open_dir(
-                            self.root_node_modules_folder,
+                        installer.cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
+                            bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
                         ) {
                             Ok(d) => d,
                             Err(err) => {

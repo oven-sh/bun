@@ -498,7 +498,7 @@ fn send_audit_request(
     write!(
         &mut url_str,
         "{}/-/npm/v1/security/advisories/bulk",
-        BStr::new(strings::without_trailing_slash(&pm.options.scope.url.href))
+        BStr::new(strings::without_trailing_slash(pm.options.scope.url.href()))
     )
     .expect("unreachable");
     // PORT NOTE: leak to satisfy `URL<'static>` (Zig had no lifetimes).

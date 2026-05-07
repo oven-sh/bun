@@ -818,7 +818,7 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(registry.url.href),
+            bstr::BStr::new(registry.url.href()),
         ));
 
         // dry-run stops here
@@ -852,7 +852,7 @@ impl PublishCommand {
         write!(
             &mut print_buf,
             "{}/{}",
-            bstr::BStr::new(strings::without_trailing_slash(registry.url.href)),
+            bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
             bun_fmt::dependency_url(&ctx.package_name),
         ).map_err(|_| AllocError)?;
         // PORT NOTE: `URL::parse` borrows; clone-and-leak so the URL outlives
@@ -1323,7 +1323,7 @@ impl PublishCommand {
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(
-                            strings::without_prefix(&registry.url.href, b"https://"),
+                            strings::without_prefix(registry.url.href(), b"https://"),
                         )),
                         bstr::BStr::new(package_name),
                         pack::fmt_tarball_filename(package_name, package_version, pack::TarballNameStyle::Raw),
@@ -1700,7 +1700,7 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.count(b"Connection", b"keep-alive");
-            headers.count(b"Host", &registry.url.host);
+            headers.count(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();
@@ -1751,7 +1751,7 @@ impl PublishCommand {
             print_buf.clear();
 
             headers.append(b"Connection", b"keep-alive");
-            headers.append(b"Host", &registry.url.host);
+            headers.append(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();

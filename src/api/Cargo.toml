@@ -20,6 +20,7 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_collections.workspace = true
 bun_install_types.workspace = true
+bun_options_types.workspace = true
 bun_string.workspace = true
 bun_url.workspace = true
 

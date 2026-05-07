@@ -775,6 +775,33 @@ impl Expr {
             _ => None,
         }
     }
+    /// Zig: `Expr.getString(allocator, name)` — `get(name)` then `asString`.
+    /// Moved down from `bun_js_parser::Expr` so install/CLI callers operating
+    /// on the T2 JSON `Expr` (e.g. `bun pack` reading `publishConfig`) don't
+    /// take a T4 dep just for this combinator.
+    pub fn get_string<'b>(
+        &self,
+        bump: &'b Bump,
+        name: &[u8],
+    ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
+        if let Some(q) = self.as_property(name) {
+            if let Some(s) = q.expr.as_string(bump) {
+                return Ok(Some((s, q.expr.loc)));
+            }
+        }
+        Ok(None)
+    }
+    /// Zig: `Expr.getStringCloned(allocator, name)`.
+    pub fn get_string_cloned<'b>(
+        &self,
+        bump: &'b Bump,
+        name: &[u8],
+    ) -> Result<Option<&'b [u8]>, AllocError> {
+        match self.as_property(name) {
+            Some(q) => q.expr.as_string_cloned(bump),
+            None => Ok(None),
+        }
+    }
     #[inline]
     pub fn is_array(&self) -> bool {
         matches!(self.data, expr::Data::EArray(_))

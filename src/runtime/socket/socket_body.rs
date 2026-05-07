@@ -31,29 +31,6 @@ use crate::socket::SSLConfig;
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
 
-// ── Local shims (Phase D) ────────────────────────────────────────────────
-// `throw_not_enough_arguments` is unreachable as an inherent method.
-trait JSGlobalObjectSocketExt {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsError;
-}
-impl JSGlobalObjectSocketExt for JSGlobalObject {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
-
 // `uws::NewSocketHandler::from_duplex` (uws_sys/socket.zig:308) not yet
 // surfaced in `bun_uws` — shim it locally over the type-erased
 // `InternalSocket::UpgradedDuplex(*mut c_void)` variant.
@@ -201,19 +178,6 @@ use crate::api::bun_secure_context::SecureContext;
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
     ($($arg:tt)*) => { bun_output::scoped_log!(Socket, $($arg)*) };
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSSocketType — codegen selector
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO(port): in Zig this returns the codegen module (`jsc.Codegen.JSTCPSocket`
-// vs `JSTLSSocket`). Rust codegen exposes these as `bun_jsc::codegen::*`; the
-// `#[bun_jsc::JsClass]` derive on `NewSocket<SSL>` wires `toJS`/`fromJS`.
-// Kept as a marker for Phase B.
-#[allow(dead_code)]
-fn js_socket_type<const SSL: bool>() {
-    // no-op marker; see `NewSocket::js` associated module.
 }
 
 // ──────────────────────────────────────────────────────────────────────────

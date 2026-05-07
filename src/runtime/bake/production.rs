@@ -655,6 +655,11 @@ pub fn build_with_vm(
             server_ptr
         };
 
+        // Zig: `.{ .js = vm.event_loop }` — construct the `AnyEventLoop` enum
+        // value (NOT a pointer-cast: the bundler matches on its discriminant).
+        // Lives in this block's stack frame, outliving the bundle call.
+        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
@@ -670,8 +675,7 @@ pub fn build_with_vm(
                 plugins: options.bundler_options.plugin.map(|p| p.cast()),
             },
             &options.arena,
-            // Zig: `.{ .js = vm.event_loop }` — bundler erased to `NonNull<()>`.
-            NonNull::new(vm.event_loop().cast()),
+            Some(NonNull::from(&mut any_loop)),
         )?
     };
     if bundled_outputs_list.is_empty() {
@@ -1171,6 +1175,11 @@ pub fn build_with_vm(
         )
     };
     render_promise.set_handled();
+    // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
+    // above accessed the same allocation through `vm_ptr`, invalidating the
+    // earlier `&mut` under Stacked Borrows.
+    // SAFETY: see binding at function entry.
+    let vm = unsafe { &mut *vm_ptr };
     vm.wait_for_promise(AnyPromise::Normal(render_promise));
     // SAFETY: vm.jsc_vm is live.
     let jsc_vm = unsafe { &mut *vm.jsc_vm };

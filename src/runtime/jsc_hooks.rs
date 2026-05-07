@@ -48,6 +48,7 @@ use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
+use crate::webcore::blob::BlobExt as _;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Per-VM runtime state
@@ -1119,6 +1120,7 @@ mod vm_loader_vtable {
     use bun_collections::StringArrayHashMap;
     use bun_resolver::package_json::PackageJSON;
     use crate::webcore::Blob;
+    use crate::webcore::blob::BlobExt as _;
 
     #[inline]
     unsafe fn vm(p: *const ()) -> *const VirtualMachine {
@@ -1390,6 +1392,7 @@ unsafe fn retroactively_report_discovered_tests(
     }
 
     // Get the file path for source location info.
+    use crate::test_runner::jest::FileListExt as _;
     let file_path = runner.files.items_source()[active_file.file_id as usize]
         .path
         .text();
@@ -1575,7 +1578,11 @@ fn console_print_runtime_object_inner<const C: bool>(
                 .call(formatter.global_this, value, &[])
                 .unwrap_or_else(|err| formatter.global_this.take_exception(err));
             let mut w = IoAsFmt(writer_);
-            let r = formatter.print_as::<_, C>(
+            // UFCS — `Formatter` has an inherent `print_as` (const-generic
+            // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
+            // runtime-tag overload that accepts our `core::fmt::Write` adapter.
+            let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
+                formatter,
                 bun_jsc::FormatTag::Object,
                 &mut w,
                 result,
@@ -1794,7 +1801,7 @@ fn transpile_source_code_inner(
 
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
-            let (main, main_hash) = unsafe { ((*jsc_vm).main, (*jsc_vm).main_hash) };
+            let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
             let is_main =
                 main.len() == path.text.len() && main_hash == hash && main == path.text;
 
@@ -2138,7 +2145,7 @@ fn transpile_source_code_inner(
                     // SAFETY: `jsc_vm` is the live per-thread VM.
                     remove_cjs_module_wrapper: is_main
                         && unsafe { (*jsc_vm).module_loader.eval_source.is_some() },
-                    macro_js_ctx: core::ptr::null_mut(),
+                    macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
                 };
 
@@ -2707,7 +2714,7 @@ fn transpile_source_code_inner(
         // ────────────────────────────────────────────────────────────────────
         L::Wasm => {
             // SAFETY: per fn contract.
-            let main = unsafe { (*jsc_vm).main };
+            let main = unsafe { (*jsc_vm).main() };
             if referrer == b"undefined" && main == path.text {
                 // TODO(b2-blocked): `globalThis.wasmSourceBytes` put +
                 // `@embedFile("../js/wasi-runner.js")` — needs `ArrayBuffer::create`
@@ -3487,7 +3494,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     }
 
     // SAFETY: per fn contract.
-    let is_main = specifier == unsafe { (*jsc_vm).main };
+    let is_main = specifier == unsafe { (*jsc_vm).main() };
 
     // Spec :1019-1031 — package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name.dir;
@@ -3638,7 +3645,7 @@ unsafe fn transpile_file(
             find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
         {
             match entry {
-                CustomLoader::Loader(loader) => lr.loader = Some(loader),
+                CustomLoader::Loader(loader) => lr.loader = Some(*loader),
                 CustomLoader::Custom(strong) => {
                     // SAFETY: `ret` is a valid out-param per fn contract.
                     unsafe {
@@ -3763,7 +3770,7 @@ unsafe fn transpile_file(
                         lr.path.text,
                     ) {
                         match entry {
-                            CustomLoader::Loader(loader) => break 'loader loader,
+                            CustomLoader::Loader(loader) => break 'loader *loader,
                             CustomLoader::Custom(strong) => {
                                 // SAFETY: `ret` is a valid out-param per fn
                                 // contract.

@@ -12,7 +12,12 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_interchange::json as JSON;
-use bun_js_parser::{E, Expr, ExprData};
+// PORT NOTE: `WorkspacePackageJSONCache` returns the T2 value-subset
+// `bun_logger::js_ast::Expr` (see `bun_install::bun_json`), not the full T4
+// `bun_js_parser::Expr`. All JSON inspection in this file uses the T2 type;
+// the two T4 sinks (`js_printer::print_json`, `Publish::normalized_package`)
+// lift via `bun_js_parser::Expr::from(t2_expr)` at the call site.
+use bun_logger::js_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
@@ -74,7 +79,7 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Sourc
 fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_logger::Log {
     // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
     // `PackageManager::init()` (Zig: non-optional `*Log`).
-    unsafe { (*m).log.unwrap().as_mut() }
+    unsafe { &mut *(*m).log }
 }
 /// `manager.workspace_package_json_cache` field projection via raw pointer.
 #[inline]

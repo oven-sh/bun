@@ -685,10 +685,18 @@ impl AnyRoute {
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM
             return Ok(Some(match entry {
                 StdEntry::Vacant(v) => {
+                    // Zig stores the rc=1 `Route::init(..)` in the map and
+                    // returns that same value to the caller (the map slot is a
+                    // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
+                    // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
+                    // here keeps the net refcount at 1 — bumping for the map
+                    // slot would leak +1 per first-seen HTMLBundle.
                     let route = html_bundle::Route::init(html_bundle);
-                    let dup = route.dupe_ref();
-                    v.insert(route);
-                    AnyRoute::Html(dup)
+                    // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
+                    // adopt without bumping so the map slot stays non-owning.
+                    let borrowed = unsafe { RefPtr::adopt_ref_unchecked(route.data.as_ptr()) };
+                    v.insert(borrowed);
+                    AnyRoute::Html(route)
                 }
                 StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
             }));

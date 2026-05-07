@@ -65,29 +65,6 @@ impl Error {
     }
 }
 
-// ─── gated: JSC host fns + CompressionStream mixin bodies ─────────────────
-// Every body below builds JS values (`JSValue`, `CallFrame`, `JSGlobalObject`
-// throw helpers, `Strong`, codegen `js::*` accessors) or reaches event-loop
-// glue (`ConcurrentTask`, `WorkPool::schedule`, `VirtualMachine`) whose method
-// surface in `bun_jsc` / `bun_threading` is still in flux. Type defs (Error,
-// CountedKeepAlive, CompressionStream<T> marker) hoisted above.
-
-mod _impl {
-use super::*;
-
-use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StringJsc as _,
-    StrongOptional, WorkPoolTask,
-};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
-use bun_event_loop::Taskable;
-use bun_str::{String as BunString, ZigStringSlice};
-use bun_threading::work_pool::WorkPool;
-use bun_zlib;
-
-bun_output::declare_scope!(zlib, hidden);
-
 // ─── local shims (upstream-crate gaps) ────────────────────────────────────
 
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
@@ -768,10 +745,6 @@ pub fn native_brotli(global: &JSGlobalObject) -> JSValue {
 pub fn native_zstd(global: &JSGlobalObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::node::zlib::native_zstd::NativeZstd>(global)
 }
-} // mod _impl
-
-pub use _impl::{crc32, native_brotli, native_zlib, native_zstd};
-pub use _impl::{CompressionContext, CompressionStreamImpl};
 
 /// Implements [`CompressionContext`] for a `Context` type and
 /// [`CompressionStreamImpl`] for its owning `Native*` struct by delegating to

@@ -402,7 +402,10 @@ impl All {
                 // PORT NOTE: Zig `isStringLiteral()` — bun_jsc::JSValue exposes
                 // only `is_string()`; semantically equivalent for clearTimer's
                 // purposes (any string id is parsed below).
-                let string = timer_id_value.to_bun_string(global_this)?;
+                // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
+                // a +1 ref and there are several early `return Ok(())` exits below.
+                let string =
+                    bun_str::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string

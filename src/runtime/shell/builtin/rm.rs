@@ -664,7 +664,7 @@ pub struct DirTask {
 }
 
 // SAFETY: raw-pointer fields are only dereferenced on the threads that own
-// them (worker pool / main thread); the surrounding atomics + err_mutex
+// them (worker pool / main thread); the surrounding atomics + `err` mutex
 // provide the necessary synchronisation.
 unsafe impl Send for ShellRmTask {}
 unsafe impl Send for DirTask {}
@@ -1241,9 +1241,10 @@ impl DirTask {
             let mut buf = bun_paths::PathBuffer::uninit();
             match bun_sys::get_fd_path(tm.cwd, &mut buf) {
                 Ok(p) => {
-                    // SAFETY: see `handle_err` — only worker writers, serialised
-                    // by being the root before any subtasks are spawned.
-                    unsafe { (*(tm as *const _ as *mut ShellRmTask)).cwd_path = Some(ZBox::from_bytes(&*p)) };
+                    // SAFETY: root runs before any subtasks are spawned, so this
+                    // write is unique. Go through `task_manager` (the original
+                    // `*mut` from `Box::into_raw`) rather than casting `&tm`.
+                    unsafe { (*me.task_manager).cwd_path = Some(ZBox::from_bytes(&*p)) };
                 }
                 Err(err) => {
                     tm.handle_err(err);

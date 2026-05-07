@@ -275,7 +275,7 @@ pub trait JsonWriter {
 ///   bits 120..127 = `__len: u7`
 ///   bit  127      = `_tag: u1`
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Inlined(u128);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]

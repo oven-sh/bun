@@ -265,7 +265,7 @@ pub fn generate_code_for_lazy_export(
                                             self.all_css_asts[import_record.source_index.get() as usize]
                                                 .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
                                         else {
-                                            let _ = self.log.add_error_fmt(
+                                            bun_core::handle_oom(self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,
                                                 format_args!(
@@ -277,7 +277,7 @@ pub fn generate_code_for_lazy_export(
                                                             .pretty
                                                     ),
                                                 ),
-                                            );
+                                            ));
                                             continue;
                                         };
                                         for name in compose.names.slice() {

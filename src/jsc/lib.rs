@@ -1711,6 +1711,21 @@ impl ZigStringJsc for bun_string::ZigString {
         unsafe { ZigString__toTypeErrorInstance(self, global) }
     }
     #[inline]
+    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toSyntaxErrorInstance(self, global) }
+    }
+    #[inline]
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toRangeErrorInstance(self, global) }
+    }
+    #[inline]
+    fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode) -> JSValue {
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live; `code` is a plain u8 discriminant.
+        unsafe { ZigString__toDOMExceptionInstance(self, global, code as u8) }
+    }
+    #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         if self.is_globally_allocated() {
             return self.to_external_value(global);

@@ -450,7 +450,7 @@ pub mod store {
                 + self
                     .credentials
                     // SAFETY: `credentials` is null or a live ref-counted ptr
-                    // owned by this S3 (released in `bun_runtime`'s `deinit`).
+                    // owned by this S3 (released in `Store::drop`).
                     .map(|c| unsafe { c.as_ref() }.estimated_size())
                     .unwrap_or(0)
         }

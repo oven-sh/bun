@@ -376,7 +376,7 @@ pub struct PackageManager {
     pub scripts_node: Option<NonNull<ProgressNode>>, // UNKNOWN — points to caller stack-local // TODO(port): lifetime
     pub progress_name_buf: [u8; 768],
     pub progress_name_buf_dynamic: Vec<u8>,
-    pub cpu_count: u16,
+    pub cpu_count: u32,
 
     pub track_installed_bin: TrackInstalledBin,
 

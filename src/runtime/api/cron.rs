@@ -169,6 +169,9 @@ pub struct CronRegisterJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
+    /// Typed enum for the io-layer FilePoll vtable (CYCLEBREAK:
+    /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    event_loop_handle: EventLoopHandle,
 }
 
 #[repr(u8)]
@@ -197,12 +200,15 @@ impl BufferedReaderParent for CronRegisterJob {
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
-    unsafe fn event_loop(_this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
-        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
-        // by bun_runtime::init) knows how to interpret it.
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        bun_io::EventLoopHandle(unsafe { vm_mut() }.event_loop() as *mut core::ffi::c_void)
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: `this` is non-null/live per trait contract; field is `Copy`
+        // and disjoint from the reader.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop_handle) as *mut core::ffi::c_void
+        })
     }
 }
 
@@ -746,6 +752,8 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             exit_status: None,
             err_msg: None,
             tmp_path: None,
+            // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+            event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
@@ -893,6 +901,9 @@ pub struct CronRemoveJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
+    /// Typed enum for the io-layer FilePoll vtable (CYCLEBREAK:
+    /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    event_loop_handle: EventLoopHandle,
 }
 
 #[repr(u8)]
@@ -919,12 +930,15 @@ impl BufferedReaderParent for CronRemoveJob {
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
-    unsafe fn event_loop(_this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
-        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
-        // by bun_runtime::init) knows how to interpret it.
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        bun_io::EventLoopHandle(unsafe { vm_mut() }.event_loop() as *mut core::ffi::c_void)
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: `this` is non-null/live per trait contract; field is `Copy`
+        // and disjoint from the reader.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop_handle) as *mut core::ffi::c_void
+        })
     }
 }
 
@@ -1218,6 +1232,8 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             exit_status: None,
             err_msg: None,
             tmp_path: None,
+            // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+            event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).

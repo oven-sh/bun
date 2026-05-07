@@ -31,6 +31,9 @@ pub struct FileResponseStream {
     // PORT NOTE: LIFETIMES.tsv classes this `&'static VirtualMachine`. Stored
     // raw so the struct stays `'static` for the uWS callback userdata slot.
     vm: *const VirtualMachine,
+    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
+    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    event_loop_handle: EventLoopHandle,
     fd: Fd,
     auto_close: bool,
     idle_timeout: u8,
@@ -111,6 +114,8 @@ impl FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,
+            // SAFETY: `opts.vm` is &'static; event_loop() returns its live JS loop.
+            event_loop_handle: EventLoopHandle::init(unsafe { (*opts.vm).event_loop() }.cast::<()>()),
             fd: opts.fd,
             auto_close: opts.auto_close,
             idle_timeout: opts.idle_timeout,
@@ -609,13 +614,13 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
-        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
-        // by bun_runtime::init) knows how to interpret it.
-        // SAFETY: `this` non-null/live per trait contract; `vm` is
-        // `&'static VirtualMachine` (LIFETIMES.tsv) and disjoint from `reader`.
-        let vm = unsafe { *core::ptr::addr_of!((*this).vm) };
-        // SAFETY: `vm` is &'static; event_loop() returns its live JS loop.
-        bun_io::EventLoopHandle(unsafe { (*vm).event_loop() } as *mut c_void)
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: `this` non-null/live per trait contract; `event_loop_handle`
+        // is `Copy` and disjoint from `reader`.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop_handle) as *mut c_void
+        })
     }
 }
 

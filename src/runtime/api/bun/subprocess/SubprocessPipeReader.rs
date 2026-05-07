@@ -38,6 +38,9 @@ pub struct PipeReader {
     pub process: Option<NonNull<Subprocess<'static>>>,
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
+    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
+    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    pub event_loop_handle: bun_jsc::EventLoopHandle,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
@@ -122,6 +125,7 @@ impl PipeReader {
             process: Some(process),
             reader: IOReader::init::<PipeReader>(),
             event_loop,
+            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
         });
@@ -153,6 +157,7 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(process);
         self.event_loop = event_loop;
+        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();
@@ -438,12 +443,13 @@ impl BufferedReaderParent for PipeReader {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
-        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
-        // by bun_runtime::init) knows how to interpret it.
-        // SAFETY: `this` is non-null/live per trait contract; `event_loop` is
-        // `Copy` and disjoint from the reader field.
-        let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
-        bun_io::EventLoopHandle(ev.as_ptr() as *mut core::ffi::c_void)
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: `this` is non-null/live per trait contract; `event_loop_handle`
+        // is `Copy` and disjoint from the reader field.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop_handle) as *mut core::ffi::c_void
+        })
     }
 }
 

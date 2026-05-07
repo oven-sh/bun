@@ -252,11 +252,13 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; hand it
-        // the MiniEventLoop pointer (consumers reinterpret per io/lib.rs note).
-        // TODO(port): once bun_io::EventLoopHandle gains a typed init for the
-        // mini arm, route through it instead of the raw cast.
-        bun_io::EventLoopHandle(unsafe { (*this).event_loop() } as *mut c_void)
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the address of the stored `bun_event_loop::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: state backref valid for the lifetime of the run loop.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*(*this).state).event_loop_handle) as *mut c_void
+        })
     }
 }
 
@@ -274,6 +276,9 @@ struct State<'a> {
     // Raw `*mut` (Zig: `*MiniEventLoop`) — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
+    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
+    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
@@ -883,6 +888,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     let mut state = State {
         handles, // placeholder; reassigned after init below
         event_loop,
+        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,

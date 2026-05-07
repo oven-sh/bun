@@ -61,6 +61,9 @@ pub struct WindowsNamedPipe {
     // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for Phase A;
     // create a timeout version that doesn't need the jsc VM
     pub vm: &'static VirtualMachine,
+    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
+    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     // TODO(port): `bun.io.StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
     // is a comptime type-generator binding callbacks at type level. Phase B: encode callbacks as a
@@ -401,6 +404,7 @@ impl WindowsNamedPipe {
         // now `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
         WindowsNamedPipe {
             vm,
+            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
             pipe: Some(pipe),
             wrapper: None,
             handlers,
@@ -934,9 +938,13 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
         WindowsNamedPipe::on_close(unsafe { &mut *this })
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write. Shared-only read of `vm`.
-        // CYCLEBREAK: opaque `*mut c_void` round-tripped through io-layer vtable.
-        bun_io::EventLoopHandle(unsafe { (*this).vm.event_loop() } as *mut c_void)
+        // SAFETY: see on_write. Shared-only read of `event_loop_handle`.
+        // CYCLEBREAK: opaque `*mut c_void` round-tripped through io-layer
+        // vtable; pass the address of the stored `bun_jsc::EventLoopHandle` so
+        // the (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop_handle) as *mut c_void
+        })
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of `vm`.

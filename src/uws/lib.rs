@@ -1570,6 +1570,8 @@ mod sock_c {
         pub fn us_socket_shutdown(s: *mut us_socket_t);
         pub fn us_socket_shutdown_read(s: *mut us_socket_t);
         pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        #[cfg(not(windows))]
+        pub fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
         pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         pub fn us_socket_flush(s: *mut us_socket_t);
         pub fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);

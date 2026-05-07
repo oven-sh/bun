@@ -678,10 +678,17 @@ mod zig_std_debug {
 #[cfg(debug_assertions)]
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};
 
-// TODO(port): std.io.tty.Config — terminal color config. Placeholder.
+// Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
+// (vendor/zig/lib/std/Io/tty.zig). Only the four colors btjs emits are mapped; the
+// `windows_api` variant is omitted because btjs writes to an in-memory `Vec<u8>`
+// returned to lldb, not to the live console handle, so `SetConsoleTextAttribute`
+// would colour the wrong stream.
 #[cfg(debug_assertions)]
 mod tty {
-    pub struct Config;
+    pub enum Config {
+        NoColor,
+        EscapeCodes,
+    }
     pub enum Color {
         Bold,
         Reset,
@@ -689,14 +696,56 @@ mod tty {
         Green,
     }
     impl Config {
-        pub fn set_color(&self, _w: &mut Vec<u8>, _c: Color) -> Result<(), bun_core::Error> {
-            // TODO(port): tty_config.setColor
-            Ok(())
+        /// Port of `std.io.tty.Config.setColor`.
+        pub fn set_color(&self, w: &mut Vec<u8>, c: Color) -> Result<(), bun_core::Error> {
+            match self {
+                Config::NoColor => Ok(()),
+                Config::EscapeCodes => {
+                    let color_string: &[u8] = match c {
+                        Color::Green => b"\x1b[32m",
+                        Color::Bold => b"\x1b[1m",
+                        Color::Dim => b"\x1b[2m",
+                        Color::Reset => b"\x1b[0m",
+                    };
+                    w.extend_from_slice(color_string);
+                    Ok(())
+                }
+            }
         }
     }
+
+    /// Port of `process.hasNonEmptyEnvVarConstant`.
+    fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
+        // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
+        let val = unsafe { libc::getenv(name.as_ptr()) };
+        // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
+        !val.is_null() && unsafe { *val } != 0
+    }
+
+    /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.
     pub fn detect_config_stdout() -> Config {
-        // TODO(port): std.io.tty.detectConfig(std.fs.File.stdout())
-        Config
+        let force_color: Option<bool> = if has_non_empty_env_var(c"NO_COLOR") {
+            Some(false)
+        } else if has_non_empty_env_var(c"CLICOLOR_FORCE") {
+            Some(true)
+        } else {
+            None
+        };
+
+        if force_color == Some(false) {
+            return Config::NoColor;
+        }
+
+        // `file.getOrEnableAnsiEscapeSupport()` — on POSIX this is `isatty(fd)`;
+        // on Windows it tries to enable VT processing on the console handle.
+        // PORT NOTE: btjs writes into a `Vec<u8>` returned to lldb, so the
+        // `.windows_api` variant (which calls `SetConsoleTextAttribute` mid-write)
+        // cannot apply; fall through to escape_codes / no_color.
+        if bun_sys::isatty(bun_sys::Fd::stdout()) {
+            return Config::EscapeCodes;
+        }
+
+        if force_color == Some(true) { Config::EscapeCodes } else { Config::NoColor }
     }
 }
 #[cfg(debug_assertions)]
@@ -818,9 +867,9 @@ fn print_source_at_address(
     };
     // defer free(sl.file_name) — handled by Drop on SourceLocation.file_name: Box<[u8]>
 
-    // SAFETY: jsc_llint_begin/end are link-time symbols; addr_of! avoids creating a reference to extern static
-    let llint_begin = unsafe { core::ptr::addr_of!(jsc_llint_begin) } as usize;
-    let llint_end = unsafe { core::ptr::addr_of!(jsc_llint_end) } as usize;
+    // jsc_llint_begin/end are link-time symbols; `&raw const` avoids creating a reference to extern static
+    let llint_begin = (&raw const jsc_llint_begin) as usize;
+    let llint_end = (&raw const jsc_llint_end) as usize;
     let probably_llint = address > llint_begin && address < llint_end;
     let mut allow_llint = true;
     if symbol_info.name.starts_with(b"__") {
@@ -831,10 +880,11 @@ fn print_source_at_address(
     }
     let do_llint = probably_llint && allow_llint;
 
-    // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
-    // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
-    let frame: &CallFrame = unsafe { &*(fp as *const CallFrame) };
+    let frame = fp as *const CallFrame;
     if do_llint {
+        // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
+        // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
+        let frame = unsafe { &*frame };
         // SAFETY: VM singleton is process-lifetime; `global` is set before any
         // JS frame can be on the stack to inspect.
         let srcloc = frame.get_caller_src_loc(unsafe { &*(*VirtualMachine::get()).global });

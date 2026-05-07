@@ -145,32 +145,38 @@ pub fn enqueue_dependency_list(
 
     // we have to be very careful with pointers here
     while i < end {
-        let dependency = this.lockfile.buffers.dependencies[i as usize];
+        let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
         let resolution = this.lockfile.buffers.resolutions[i as usize];
         if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
             let path_sep = match dependency.version.tag {
                 dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
                 _ => bun_fmt::PathSep::Any,
             };
-            let note_fmt = "error occurred while resolving {}";
-            let note_args = format_args!(
-                "error occurred while resolving {}",
-                bun_fmt::fmt_path_u8(
-                    this.lockfile.str(&dependency.realname()),
-                    bun_fmt::PathFormatOptions { path_sep, escape_backslashes: false },
-                )
+            // PORT NOTE: `format_args!` borrows temporaries — bind the
+            // formatter first so it outlives the macro expansion.
+            let realname = dependency.realname();
+            let path_fmt = bun_fmt::fmt_path_u8(
+                this.lockfile.str(&realname),
+                bun_fmt::PathFormatOptions { path_sep, escape_backslashes: false },
             );
             // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
-            let _ = note_fmt;
             // SAFETY: `this.log` is non-null after `PackageManager::init()`.
             let log = unsafe { &mut *this.log };
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log
-                    .add_warning_with_note(None, logger::Loc::default(), err.name().as_bytes(), note_args)
+                    .add_warning_with_note(
+                        None,
+                        logger::Loc::default(),
+                        err.name().as_bytes(),
+                        format_args!("error occurred while resolving {}", path_fmt),
+                    )
                     .expect("unreachable");
             } else {
                 log
-                    .add_zig_error_with_note(err, note_args)
+                    .add_zig_error_with_note(
+                        err,
+                        format_args!("error occurred while resolving {}", path_fmt),
+                    )
                     .expect("unreachable");
             }
 
@@ -207,7 +213,7 @@ pub fn enqueue_tarball_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
-    let package = this.lockfile.packages.get(package_id);
+    let package = this.lockfile.packages.get(package_id as usize);
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
@@ -386,7 +392,7 @@ pub fn enqueue_package_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
-    let package = this.lockfile.packages.get(package_id);
+    let package = this.lockfile.packages.get(package_id as usize);
 
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,

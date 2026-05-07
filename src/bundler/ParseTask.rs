@@ -2526,7 +2526,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
                     *owner,
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         result,
-                        on_complete,
+                        |p| { on_complete(p); Ok(()) },
                     ),
                 );
             }

@@ -78,6 +78,7 @@ bun_router.workspace = true
 bun_s3_signing.workspace = true
 bun_safety.workspace = true
 bun_semver.workspace = true
+bun_semver_jsc.workspace = true
 bun_sha_hmac.workspace = true
 bun_shell_parser.workspace = true
 bun_simdutf_sys.workspace = true

@@ -3474,11 +3474,12 @@ impl Blob {
 
         let store = self.store.as_ref().unwrap().clone();
         if self.is_s3() {
-            let s3 = self.store.as_ref().unwrap().data.as_s3();
-            // PORT NOTE: reshaped for borrowck — `s3.path()` borrows `self.store`;
-            // `content_type_or_mime_type()` re-borrows `self`. Snapshot path bytes
-            // up front (the `s3` borrow stays live for `get_credentials*`).
-            let path = s3.path().to_vec();
+            // PORT NOTE: reshaped for borrowck — Zig holds `*const S3` while
+            // also mutating `this.content_type*`. Borrow `s3` through the
+            // cloned `store: StoreRef` (independent of `self`) so the
+            // content-type writes below don't conflict.
+            let s3 = store.data.as_s3();
+            let path = s3.path();
             // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
             // is the process-singleton dotenv loader, never null once init'd.
             let proxy_url: Option<bun_url::URL<'_>> = unsafe {
@@ -3544,7 +3545,7 @@ impl Blob {
                 let mut creds = credentials_with_options.credentials.dupe();
                 return crate::webcore::s3::client::writable_stream(
                     &mut creds,
-                    &path,
+                    path,
                     global_this,
                     credentials_with_options.options,
                     self.content_type_or_mime_type(),
@@ -3557,10 +3558,9 @@ impl Blob {
             }
 
             let mut creds = s3.get_credentials().dupe();
-            let request_payer = s3.request_payer;
             return crate::webcore::s3::client::writable_stream(
                 &mut creds,
-                &path,
+                path,
                 global_this,
                 Default::default(),
                 self.content_type_or_mime_type(),
@@ -3568,7 +3568,7 @@ impl Blob {
                 None,
                 proxy,
                 None,
-                request_payer,
+                s3.request_payer,
             );
         }
 
@@ -3612,7 +3612,7 @@ impl Blob {
                 }
                 matches!(
                     fd.stdio_tag(),
-                    Some(bun_sys::StdioTag::StdOut) | Some(bun_sys::StdioTag::StdErr)
+                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
                 )
             };
 

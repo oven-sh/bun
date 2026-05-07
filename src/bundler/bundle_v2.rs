@@ -1541,17 +1541,21 @@ impl<'a> BundleV2<'a> {
         }
         // From bake where the loop running the bundle is also the loop running
         // the plugins (Zig: `switch (this.loop().*) { .js => |l| l, .mini => @panic }`).
-        // The erased `EventLoop` here carries the JS-loop owner directly.
-        let owner = self
+        let any_loop = self
             .r#loop()
             .expect("No JavaScript event loop for transpiler plugins to run on")
             .as_ptr();
-        let vt = bun_event_loop::any_event_loop::JS_EVENT_LOOP_VTABLE
-            .load(core::sync::atomic::Ordering::Acquire);
-        debug_assert!(!vt.is_null(), "JS_EVENT_LOOP_VTABLE not registered by T6");
-        // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`; vtable contract
-        // per `bun_event_loop::JsEventLoopVTable`.
-        unsafe { ((*vt).enqueue_task_concurrent)(owner, task) };
+        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
+        match unsafe { &*any_loop } {
+            bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
+                // SAFETY: vtable populated by runtime; `owner` is a live
+                // erased `*mut jsc::EventLoop`.
+                unsafe { (vtable.enqueue_task_concurrent)(*owner, task) };
+            }
+            bun_event_loop::AnyEventLoop::Mini(_) => {
+                panic!("No JavaScript event loop for transpiler plugins to run on");
+            }
+        }
     }
 
     fn ensure_client_transpiler(&mut self) {

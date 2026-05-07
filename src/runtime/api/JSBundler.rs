@@ -1768,14 +1768,23 @@ pub mod js_bundler {
     /// `onResolveAsync`/`onLoadAsync` is still called and the bundler's
     /// pending-item counter is decremented. Returning early here would cause
     /// `Bun.build` to hang forever waiting on the counter.
-    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
-        // SAFETY: `file` borrows from `Resolve.import_record.source_file` /
-        // `Load.path` — sibling fields of the `Msg` slot it is stored into
-        // (`ResolveValue::Err` / `LoadValue::Err`). Both live for the rest of
-        // the build, so the `'static` constraint on `logger::Location.file` is
-        // satisfied for the message's actual lifetime.
+    ///
+    /// `arena` is `BundleV2::allocator()`; `file` is copied into it so the
+    /// `logger::Location.file: &'static [u8]` it produces borrows arena memory
+    /// (lives for the entire build pass) instead of the `Resolve`/`Load` field
+    /// it came from.
+    fn plugin_msg_from_js(
+        plugin: &mut Plugin,
+        arena: &bun_alloc::Arena,
+        file: &[u8],
+        exception: JSValue,
+    ) -> logger::Msg {
+        // SAFETY: ARENA — `arena` is the build-pass bump allocator (never
+        // freed before the `Msg` is consumed); detaching the borrow lifetime
+        // matches the `Location.file: &'static [u8]` porting convention used
+        // throughout `bun_logger` (PORTING.md §Lifetimes: ARENA → `&'bump T`).
         let file: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file) };
+            unsafe { &*(arena.alloc_slice_copy(file) as *const [u8]) };
         let global = plugin.global_object();
         match bun_logger_jsc::msg_from_js(global, file, exception) {
             Ok(msg) => msg,
@@ -1817,14 +1826,19 @@ pub mod js_bundler {
         match which.as_int32() {
             0 => {
                 let resolve = unsafe { &mut *(ctx as *mut Resolve) };
-                let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
+                // SAFETY: bv2 backref is valid for the duration of the bundle.
+                let arena = unsafe { (*resolve.bv2).allocator() };
+                let msg =
+                    plugin_msg_from_js(plugin, arena, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*resolve.bv2).on_resolve_async(resolve) };
             }
             1 => {
                 let load = unsafe { &mut *(ctx as *mut Load) };
-                let msg = plugin_msg_from_js(plugin, &load.path, exception);
+                // SAFETY: bv2 backref is valid for the duration of the bundle.
+                let arena = unsafe { (*load.bv2).allocator() };
+                let msg = plugin_msg_from_js(plugin, arena, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*load.bv2).on_load_async(load) };

@@ -50,7 +50,8 @@ use bun_str::strings;
 
 use bun_http_types::URLPath;
 use bun_resolver::fs as Fs;
-use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
+use bun_resolver::Resolver;
+use bun_router::{self as Router, Match as RouterMatch, RouteConfig, RouteLoaderLog};
 use bun_url::{route_param, CombinedScanner, QueryStringMap, URL};
 
 use crate::webcore::{Request, Response};
@@ -909,5 +910,5 @@ thread_local! {
 //   source:     src/runtime/api/filesystem_router.zig (709 lines)
 //   confidence: medium
 //   todos:      15
-//   notes:      Arena ownership + self-ref `route` ptr need Phase B borrowck work; load_routes blocked on ResolverLike/DirInfoRef wiring; RefString held as *mut.
+//   notes:      Arena ownership + self-ref `route` ptr need Phase B borrowck work; RefString held as *mut.
 // ──────────────────────────────────────────────────────────────────────────

@@ -479,87 +479,98 @@ impl Queue {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig compacted by index; Rust uses retain_mut.
-        self.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.tag)` /
-            // `.items(.root_dependency_id)` → `Vec<PendingResolution>`
-            // field walk via `iter_mut()`.
-            let pending_imports = &mut module.parse_result.pending_imports;
-            // var esms = module.parse_result.pending_imports.items(.esm);
-            // var versions = module.parse_result.pending_imports.items(.dependency);
-            let mut done_count: usize = 0;
-            let tags_len = pending_imports.len();
-            for tag_i in 0..tags_len {
-                let root_id = pending_imports[tag_i].root_dependency_id;
-                let resolution_ids = pm.lockfile.buffers.resolutions.as_slice();
-                if root_id as usize >= resolution_ids.len() {
-                    continue;
-                }
-                let package_id = resolution_ids[root_id as usize];
+        // PORT NOTE: reshaped for borrowck — Zig compacted by index then
+        // truncated `items.len` without running deinit on finished slots. Rust
+        // walks by index and `remove(i)` finished modules by value into
+        // `done(self)`, so each module's owned fields are dropped exactly once
+        // (in `on_done`).
+        let mut i = 0;
+        while i < self.map.len() {
+            let (done_count, tags_len) = {
+                let module = &mut self.map[i];
+                // PORT NOTE: Zig `MultiArrayList.items(.tag)` /
+                // `.items(.root_dependency_id)` → `Vec<PendingResolution>`
+                // field walk via `iter_mut()`.
+                let pending_imports = &mut module.parse_result.pending_imports;
+                // var esms = module.parse_result.pending_imports.items(.esm);
+                // var versions = module.parse_result.pending_imports.items(.dependency);
+                let mut done_count: usize = 0;
+                let tags_len = pending_imports.len();
+                for tag_i in 0..tags_len {
+                    let root_id = pending_imports[tag_i].root_dependency_id;
+                    let resolution_ids = pm.lockfile.buffers.resolutions.as_slice();
+                    if root_id as usize >= resolution_ids.len() {
+                        continue;
+                    }
+                    let package_id = resolution_ids[root_id as usize];
 
-                match pending_imports[tag_i].tag {
-                    bun_resolver::PendingResolutionTag::Resolve => {
-                        if package_id == install::INVALID_PACKAGE_ID {
+                    match pending_imports[tag_i].tag {
+                        bun_resolver::PendingResolutionTag::Resolve => {
+                            if package_id == install::INVALID_PACKAGE_ID {
+                                continue;
+                            }
+
+                            // if we get here, the package has already been resolved.
+                            pending_imports[tag_i].tag =
+                                bun_resolver::PendingResolutionTag::Download;
+                        }
+                        bun_resolver::PendingResolutionTag::Download => {
+                            if package_id == install::INVALID_PACKAGE_ID {
+                                unreachable!();
+                            }
+                        }
+                        bun_resolver::PendingResolutionTag::Done => {
+                            done_count += 1;
                             continue;
                         }
+                    }
 
-                        // if we get here, the package has already been resolved.
-                        pending_imports[tag_i].tag = bun_resolver::PendingResolutionTag::Download;
-                    }
-                    bun_resolver::PendingResolutionTag::Download => {
-                        if package_id == install::INVALID_PACKAGE_ID {
-                            unreachable!();
-                        }
-                    }
-                    bun_resolver::PendingResolutionTag::Done => {
-                        done_count += 1;
+                    if package_id == install::INVALID_PACKAGE_ID {
                         continue;
                     }
-                }
 
-                if package_id == install::INVALID_PACKAGE_ID {
-                    continue;
-                }
+                    let package = pm.lockfile.packages.get(package_id);
+                    debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
 
-                let package = pm.lockfile.packages.get(package_id);
-                debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
-
-                let mut name_and_version_hash: Option<u64> = None;
-                let mut patchfile_hash: Option<u64> = None;
-                match pm.determine_preinstall_state(
-                    &package,
-                    &pm.lockfile,
-                    &mut name_and_version_hash,
-                    &mut patchfile_hash,
-                ) {
-                    install::PreinstallState::Done => {
-                        // we are only truly done if all the dependencies are done.
-                        let current_tasks = pm.total_tasks;
-                        // so if enqueuing all the dependencies produces no new tasks, we are done.
-                        pm.enqueue_dependency_list(package.dependencies);
-                        if current_tasks == pm.total_tasks {
-                            pending_imports[tag_i].tag = bun_resolver::PendingResolutionTag::Done;
-                            done_count += 1;
+                    let mut name_and_version_hash: Option<u64> = None;
+                    let mut patchfile_hash: Option<u64> = None;
+                    match pm.determine_preinstall_state(
+                        &package,
+                        &pm.lockfile,
+                        &mut name_and_version_hash,
+                        &mut patchfile_hash,
+                    ) {
+                        install::PreinstallState::Done => {
+                            // we are only truly done if all the dependencies are done.
+                            let current_tasks = pm.total_tasks;
+                            // so if enqueuing all the dependencies produces no new tasks, we are done.
+                            pm.enqueue_dependency_list(package.dependencies);
+                            if current_tasks == pm.total_tasks {
+                                pending_imports[tag_i].tag =
+                                    bun_resolver::PendingResolutionTag::Done;
+                                done_count += 1;
+                            }
                         }
+                        install::PreinstallState::Extracting => {
+                            // we are extracting the package
+                            // we need to wait for the next poll
+                            continue;
+                        }
+                        install::PreinstallState::Extract => {}
+                        _ => {}
                     }
-                    install::PreinstallState::Extracting => {
-                        // we are extracting the package
-                        // we need to wait for the next poll
-                        continue;
-                    }
-                    install::PreinstallState::Extract => {}
-                    _ => {}
                 }
-            }
+                (done_count, tags_len)
+            };
 
             if done_count == tags_len {
+                let module = self.map.remove(i);
                 // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
                 module.done(unsafe { &mut *vm_ptr });
-                false
             } else {
-                true
+                i += 1;
             }
-        });
+        }
 
         if self.map.is_empty() {
             // ensure we always end the progress bar

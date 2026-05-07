@@ -889,6 +889,7 @@ impl Runner {
     pub fn run(
         macro_: &Macro,
         log: &mut Log,
+        bump: &bun_alloc::Arena,
         function_name: &[u8],
         caller: Expr,
         source: &Source,
@@ -906,24 +907,34 @@ impl Runner {
         // the holder is never read in this body (legacy from an earlier
         // exception-reporting path); a thread-local sentinel suffices.
         EXCEPTION_HOLDER.with(|h| h.set(true));
-        let mut js_args: Vec<JSValue> = Vec::new();
-        let mut js_processed_args_len: usize = 0;
-        // PORT NOTE: reshaped for borrowck — `js_args`/`js_processed_args_len`
-        // are mutated below and read in cleanup; bind via raw ptrs so the guard
-        // closure does not hold an exclusive borrow across the body.
-        let js_args_ptr: *mut Vec<JSValue> = &mut js_args;
-        let processed_ptr: *mut usize = &mut js_processed_args_len;
-        let _unprotect_guard = scopeguard::guard((), move |_| {
-            // SAFETY: `js_args_ptr`/`processed_ptr` point at locals on this
-            // stack frame; the guard runs at scope exit, after which both are
-            // still live (dropped immediately after).
-            let (js_args, processed) = unsafe { (&mut *js_args_ptr, *processed_ptr) };
-            let n = processed.saturating_sub(usize::from(javascript_object != JSValue::ZERO));
-            for arg in &js_args[0..n] {
-                arg.unprotect();
+
+        // PORT NOTE: Zig's `defer { for js_args[..n] |a| a.unprotect();
+        // allocator.free(js_args); }` becomes an RAII guard that *owns* the
+        // `Vec<JSValue>` + processed count. All mutation goes through the
+        // guard's fields so there is no aliasing of a raw pointer with later
+        // direct writes (the previous `*mut Vec` capture popped its
+        // Stacked-Borrows tag on reassignment).
+        struct JsArgs {
+            args: Vec<JSValue>,
+            processed_len: usize,
+            has_js_object: bool,
+        }
+        impl Drop for JsArgs {
+            fn drop(&mut self) {
+                let n = self
+                    .processed_len
+                    .saturating_sub(usize::from(self.has_js_object));
+                for arg in &self.args[0..n] {
+                    arg.unprotect();
+                }
+                // `allocator.free(js_args)` — Vec drops with `self`.
             }
-            // `allocator.free(js_args)` — Vec drops at scope exit.
-        });
+        }
+        let mut js_args = JsArgs {
+            args: Vec::new(),
+            processed_len: 0,
+            has_js_object: javascript_object != JSValue::ZERO,
+        };
 
         // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
         // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
@@ -932,11 +943,11 @@ impl Runner {
         match &caller.data {
             ExprData::ECall(call) => {
                 let call_args: &[Expr] = call.args.slice();
-                js_args = vec![
+                js_args.args = vec![
                     JSValue::ZERO;
                     call_args.len() + usize::from(javascript_object != JSValue::ZERO)
                 ];
-                js_processed_args_len = js_args.len();
+                js_args.processed_len = js_args.args.len();
 
                 for (i, in_) in call_args.iter().enumerate() {
                     let value = match in_.to_js(global_object) {
@@ -944,12 +955,12 @@ impl Runner {
                         Err(e) => {
                             // Keeping a separate variable instead of modifying js_args.len
                             // due to allocator.free call in defer
-                            js_processed_args_len = i;
+                            js_args.processed_len = i;
                             return Err(e.into());
                         }
                     };
                     value.protect();
-                    js_args[i] = value;
+                    js_args.args[i] = value;
                 }
             }
             ExprData::ETemplate(_) => {
@@ -963,11 +974,11 @@ impl Runner {
         }
 
         if javascript_object != JSValue::ZERO {
-            if js_args.is_empty() {
-                js_args = vec![JSValue::ZERO; 1];
+            if js_args.args.is_empty() {
+                js_args.args = vec![JSValue::ZERO; 1];
             }
-            let last = js_args.len() - 1;
-            js_args[last] = javascript_object;
+            let last = js_args.args.len() - 1;
+            js_args.args[last] = javascript_object;
         }
 
         // PORT NOTE: Zig stashes the call args + result in threadlocals so the
@@ -982,6 +993,7 @@ impl Runner {
         struct CallData<'c> {
             macro_: &'c Macro,
             log: &'c mut Log,
+            bump: &'c bun_alloc::Arena,
             function_name: &'c [u8],
             caller: Expr,
             js_args: &'c [JSValue],
@@ -997,6 +1009,7 @@ impl Runner {
                 state.result = Run::run_async(
                     state.macro_,
                     state.log,
+                    state.bump,
                     state.function_name,
                     state.caller,
                     state.js_args,
@@ -1009,9 +1022,10 @@ impl Runner {
         let mut data = CallData {
             macro_,
             log,
+            bump,
             function_name,
             caller,
-            js_args: &js_args,
+            js_args: &js_args.args,
             source,
             id,
             result: Err(MacroError::MacroFailed),
@@ -1044,5 +1058,5 @@ unsafe extern "C" {
 //   source:     src/js_parser_jsc/Macro.zig (642 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      Macro disabled-sentinel restructured to Option<NonNull>; CallData threadlocal trampoline reshaped to *mut c_void; comptime Tag reshaped to runtime arg; protect/unprotect guard reshaped via raw-ptr capture.
+//   notes:      Macro disabled-sentinel restructured to Option<NonNull>; CallData threadlocal trampoline reshaped to *mut c_void; comptime Tag reshaped to runtime arg; default_allocator → MacroContext-owned bump arena threaded as &Arena; protect/unprotect defer reshaped to RAII JsArgs guard.
 // ──────────────────────────────────────────────────────────────────────────

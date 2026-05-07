@@ -118,7 +118,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                     *owner,
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         result,
-                        on_complete,
+                        |p| { on_complete(p); Ok(()) },
                     ),
                 );
             }

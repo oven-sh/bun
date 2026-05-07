@@ -1705,7 +1705,7 @@ impl JSValkeyClient {
             // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
             unsafe { boringssl::c::SSL_CTX_free(s) };
         }
-        this.client.deinit(None);
+        this.client.shutdown(None);
         this.poll_ref.disable();
         this.stop_timers();
         this.ref_count.assert_no_refs();
@@ -1932,22 +1932,32 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     fn fail_handshake_with_verify_error(
         this: &mut JSValkeyClient,
-        vm: *mut c_void,
+        vm: &VirtualMachine,
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsTerminatedResult<()> {
-        // TODO(b2-blocked): bun_uws::us_bun_verify_error_t::to_js — bridges to a
-        // JS Error object. Free fn shim once `verify_error_to_js` lands in
-        // src/runtime/socket; for now record the block and fail-close.
-        let _ = ssl_error;
-        let ssl_js_value: JSValue =
-            todo!("blocked_on: bun_uws::us_bun_verify_error_t::to_js");
-        #[allow(unreachable_code)]
+        let ssl_js_value =
+            match crate::socket::uws_jsc::verify_error_to_js(ssl_error, this.global_object) {
+                Ok(v) => v,
+                Err(jsc::JsError::Terminated) => return Err(jsc::JsTerminated),
+                Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+                Err(jsc::JsError::Thrown) => {
+                    // Clear any pending exception since we can't convert it to
+                    // JS, but still fail-close the connection so we never fall
+                    // through to the authenticated state after a rejected
+                    // handshake.
+                    this.global_object.clear_exception();
+                    this.client.flags.is_authenticated = false;
+                    this.client.flags.is_manually_closed = true;
+                    this.client.close();
+                    return Ok(());
+                }
+            };
         Self::fail_handshake(this, vm, ssl_js_value)
     }
 
     fn fail_handshake(
         this: &mut JSValkeyClient,
-        _vm: *mut c_void,
+        _vm: &VirtualMachine,
         err_value: JSValue,
     ) -> JsTerminatedResult<()> {
         this.client.flags.is_authenticated = false;

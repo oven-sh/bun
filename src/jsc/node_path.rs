@@ -133,10 +133,10 @@ impl PathLike {
         if let Self::Buffer(b) = self {
             b.buffer.value.unprotect();
         }
-        // Reassigning runs `Drop` on the old value, which releases
-        // `SliceWithUnderlyingString` / `ThreadsafeString` / `EncodedSlice`
-        // exactly as Zig's `deinitAndUnprotect` does for those arms.
-        *self = Self::default();
+        // Dropping the taken value releases `SliceWithUnderlyingString` /
+        // `ThreadsafeString` / `EncodedSlice` exactly as Zig's
+        // `deinitAndUnprotect` does for those arms; nothing is reused.
+        drop(core::mem::take(self));
     }
 }
 

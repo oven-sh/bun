@@ -559,6 +559,243 @@ pub const Installer = struct {
 
                     var pkg_cache_dir_subpath: bun.AutoRelPath = .from(switch (pkg_res.tag) {
                         else => |tag| pkg_cache_dir_subpath: {
+                            // If an active `bun link` is registered for this
+                            // package name and the user did not opt into the
+                            // symlink backend, source the body from the
+                            // producer dir instead of the registry tarball
+                            // cache. Under isolated linking the top-level
+                            // symlink-only contract isn't available, so
+                            // without this the `.bun/<storepath>` body stays
+                            // pinned to the (stale) tarball cache while the
+                            // top-level symlink points at the producer.
+                            if (installer.supported_backend.load(.monotonic) != .symlink) {
+                                var linked_buf: bun.PathBuffer = undefined;
+                                if (manager.linkedPackagePath(pkg_name.slice(string_buf), &linked_buf)) |producer_path| {
+                                    const folder_dir = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
+                                        .result => |fd| fd,
+                                        .err => |err| return .failure(.{ .link_package = err }),
+                                    };
+                                    defer folder_dir.close();
+
+                                    // Producer root is a working repo, not a published
+                                    // tarball. The contract: what `bun pm pack` would
+                                    // ship from this repo === what we hardlink into
+                                    // `.bun/<hash>/<pkg>/`. We delegate the
+                                    // file-selection question to pack_command so that
+                                    // `package.json#files` (with globs and negation),
+                                    // `bin`, default excludes, and nested `.npmignore`
+                                    // / `.gitignore` files are interpreted exactly the
+                                    // way `bun pm pack` interprets them — no parallel
+                                    // implementation to drift.
+                                    //
+                                    // Windows: pack_command yields POSIX-separator
+                                    // subpaths and the path-iteration helpers below
+                                    // assume u8/Posix. Fall back to the previous
+                                    // basename-skip Walker on Windows until the path
+                                    // helpers learn WTF-16; producers typically
+                                    // `bun link` from POSIX hosts.
+                                    const publishable: ?bun.cli.PackCommand.PublishablePaths = if (comptime Environment.isWindows) null else publishable: {
+                                        var pkg_path_buf: bun.PathBuffer = undefined;
+                                        const pkg_path = bun.path.joinAbsStringBufZ(
+                                            producer_path,
+                                            &pkg_path_buf,
+                                            &.{"package.json"},
+                                            .auto,
+                                        );
+                                        // The cache returns a `*MapEntry` that another
+                                        // worker thread can invalidate by growing the
+                                        // hashmap. Hold the lock across the lookup
+                                        // and the copy-out of `e.root`; afterwards
+                                        // `root` is a stable Expr value pointing at
+                                        // default_allocator-owned tree nodes, safe to
+                                        // use without the lock.
+                                        const root = blk: {
+                                            const cache = &manager.workspace_package_json_cache;
+                                            cache.lock.lock();
+                                            defer cache.lock.unlock();
+                                            switch (cache.getWithPath(manager.allocator, manager.log, pkg_path, .{})) {
+                                                .entry => |e| break :blk e.root,
+                                                else => break :publishable null,
+                                            }
+                                        };
+                                        break :publishable bun.handleOom(bun.cli.PackCommand.collectPublishablePaths(
+                                            manager.allocator,
+                                            folder_dir.stdDir(),
+                                            root,
+                                        ));
+                                    };
+                                    var publishable_owned = publishable;
+                                    defer if (publishable_owned) |*p| p.deinit();
+
+                                    // Default-excludes used by the Windows /
+                                    // unparseable-AST fallback below. Mirrors
+                                    // `bun pm pack`'s `default_ignore_patterns` /
+                                    // `root_default_ignore_patterns` for everything
+                                    // expressible via the Walker's basename hash filter.
+                                    const linked_skip_dirs: []const bun.OSPathSlice = &.{
+                                        comptime bun.OSPathLiteral("node_modules"),
+                                        comptime bun.OSPathLiteral(".git"),
+                                        comptime bun.OSPathLiteral(".hg"),
+                                        comptime bun.OSPathLiteral(".svn"),
+                                        comptime bun.OSPathLiteral("CVS"),
+                                    };
+                                    const linked_skip_files: []const bun.OSPathSlice = &.{
+                                        comptime bun.OSPathLiteral(".DS_Store"),
+                                        comptime bun.OSPathLiteral(".gitignore"),
+                                        comptime bun.OSPathLiteral(".npmignore"),
+                                        comptime bun.OSPathLiteral(".npmrc"),
+                                        comptime bun.OSPathLiteral(".lock-wscript"),
+                                        comptime bun.OSPathLiteral("npm-debug.log"),
+                                        comptime bun.OSPathLiteral("bunfig.toml"),
+                                        comptime bun.OSPathLiteral(".env.production"),
+                                        comptime bun.OSPathLiteral("package-lock.json"),
+                                        comptime bun.OSPathLiteral("yarn.lock"),
+                                        comptime bun.OSPathLiteral("pnpm-lock.yaml"),
+                                        comptime bun.OSPathLiteral("bun.lockb"),
+                                        comptime bun.OSPathLiteral("bun.lock"),
+                                    };
+
+                                    const uses_global_store_link = installer.entryUsesGlobalStore(this.entry_id);
+                                    if (uses_global_store_link) {
+                                        // Previous staging from a crashed run would
+                                        // otherwise collide with our fresh writes.
+                                        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                        defer staging.deinit();
+                                        installer.appendGlobalStoreEntryPath(&staging, this.entry_id, .staging);
+                                        FD.cwd().deleteTree(staging.slice()) catch {};
+
+                                        // Producer content is mutable (the live `bun
+                                        // link` symlink points at an editor-owned
+                                        // dir), so the content-addressed assumption
+                                        // of the global store doesn't hold: the
+                                        // previous `<final>` is *not* byte-equivalent
+                                        // to the producer's current tree. Commit's
+                                        // collision-is-success path would otherwise
+                                        // keep serving the stale entry on reinstall.
+                                        var final: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                        defer final.deinit();
+                                        installer.appendGlobalStoreEntryPath(&final, this.entry_id, .final);
+                                        FD.cwd().deleteTree(final.slice()) catch {};
+                                    } else {
+                                        // Non-global linked entries write straight to
+                                        // the project-local final path (no staging).
+                                        // Re-hardlinking would layer atop whatever
+                                        // was left from the previous install, so
+                                        // files the producer has since deleted would
+                                        // remain. Wipe the entry dir first.
+                                        var final: bun.Path(.{ .sep = .auto }) = .init();
+                                        defer final.deinit();
+                                        installer.appendRealStorePath(&final, this.entry_id, .final);
+                                        FD.cwd().deleteTree(final.slice()) catch {};
+                                    }
+
+                                    if (publishable_owned) |publishable_paths| {
+                                        var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                        defer dest.deinit();
+                                        installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                        backend: switch (PackageInstall.Method.hardlink) {
+                                            .hardlink => switch (linkedHardlinkPaths(folder_dir, publishable_paths.paths, &dest)) {
+                                                .result => {},
+                                                .err => |err| {
+                                                    if (err.getErrno() == .XDEV) continue :backend .copyfile;
+                                                    return .failure(.{ .link_package = err });
+                                                },
+                                            },
+                                            .copyfile => switch (linkedCopyPaths(folder_dir, publishable_paths.paths, &dest)) {
+                                                .result => {},
+                                                .err => |err| return .failure(.{ .link_package = err }),
+                                            },
+                                            else => unreachable,
+                                        }
+
+                                        continue :next_step this.nextStep(current_step);
+                                    }
+
+                                    // Fallback (Windows or unparseable package.json):
+                                    // existing Hardlinker / FileCopier path with
+                                    // default exact-name excludes only.
+                                    backend: switch (PackageInstall.Method.hardlink) {
+                                        .hardlink => {
+                                            var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
+                                            defer src.deinit();
+                                            src.appendJoin(@as([]const u8, producer_path));
+
+                                            var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                            defer dest.deinit();
+                                            installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                            var hardlinker: Hardlinker = try .init(
+                                                folder_dir,
+                                                src,
+                                                dest,
+                                                linked_skip_files,
+                                                linked_skip_dirs,
+                                            );
+                                            defer hardlinker.deinit();
+
+                                            switch (try hardlinker.link()) {
+                                                .result => {},
+                                                .err => |err| {
+                                                    if (err.getErrno() == .XDEV) {
+                                                        continue :backend .copyfile;
+                                                    }
+                                                    return .failure(.{ .link_package = err });
+                                                },
+                                            }
+                                        },
+
+                                        .copyfile => {
+                                            var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .init();
+                                            defer src_path.deinit();
+
+                                            if (comptime Environment.isWindows) {
+                                                const src_path_len = bun.windows.GetFinalPathNameByHandleW(
+                                                    folder_dir.cast(),
+                                                    src_path.buf().ptr,
+                                                    @intCast(src_path.buf().len),
+                                                    0,
+                                                );
+
+                                                if (src_path_len == 0 or src_path_len >= src_path.buf().len) {
+                                                    const err: bun.sys.SystemErrno = if (src_path_len == 0)
+                                                        (bun.windows.Win32Error.get().toSystemErrno() orelse .EUNKNOWN)
+                                                    else
+                                                        .ENAMETOOLONG;
+                                                    return .failure(
+                                                        .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
+                                                    );
+                                                }
+
+                                                src_path.setLength(src_path_len);
+                                            }
+
+                                            var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                            defer dest.deinit();
+                                            installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                            var file_copier: FileCopier = try .init(
+                                                folder_dir,
+                                                src_path,
+                                                dest,
+                                                linked_skip_files,
+                                                linked_skip_dirs,
+                                            );
+                                            defer file_copier.deinit();
+
+                                            switch (file_copier.copy()) {
+                                                .result => {},
+                                                .err => |err| return .failure(.{ .link_package = err }),
+                                            }
+                                        },
+
+                                        else => unreachable,
+                                    }
+
+                                    continue :next_step this.nextStep(current_step);
+                                }
+                            }
+
                             const patch_info = try installer.packagePatchInfo(
                                 pkg_name,
                                 pkg_name_hash,
@@ -610,6 +847,7 @@ pub const Installer = struct {
                                         folder_dir,
                                         src,
                                         dest,
+                                        &.{},
                                         &.{comptime bun.OSPathLiteral("node_modules")},
                                     );
                                     defer hardlinker.deinit();
@@ -675,6 +913,7 @@ pub const Installer = struct {
                                         folder_dir,
                                         src_path,
                                         dest,
+                                        &.{},
                                         &.{comptime bun.OSPathLiteral("node_modules")},
                                     );
                                     defer file_copier.deinit();
@@ -848,6 +1087,7 @@ pub const Installer = struct {
                                 src,
                                 dest_subpath,
                                 &.{},
+                                &.{},
                             );
                             defer hardlinker.deinit();
 
@@ -914,6 +1154,7 @@ pub const Installer = struct {
                                 cached_package_dir.?,
                                 src_path,
                                 dest_subpath,
+                                &.{},
                                 &.{},
                             );
                             defer file_copier.deinit();
@@ -2006,6 +2247,102 @@ pub const Installer = struct {
 const string = []const u8;
 
 const debug = Output.scoped(.IsolatedInstaller, .hidden);
+
+/// Hardlink each `paths[i]` from `folder_dir` into `dest` (a path relative
+/// to cwd). `paths` contains POSIX-separator relative paths produced by
+/// `bun.cli.PackCommand.collectPublishablePaths`; missing source files are
+/// skipped (optional `bin` targets), and EEXIST is resolved by deleting
+/// the existing destination and retrying. EXDEV bubbles up so the caller
+/// can fall back to copyfile, mirroring the `Hardlinker` contract.
+fn linkedHardlinkPaths(
+    folder_dir: FD,
+    paths: []const [:0]const u8,
+    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+) sys.Maybe(void) {
+    FD.cwd().makePath(u8, dest.sliceZ()) catch {};
+
+    for (paths) |rel| {
+        var save = dest.save();
+        defer save.restore();
+        dest.append(rel);
+
+        if (dest.dirname()) |parent| {
+            FD.cwd().makePath(u8, parent) catch {};
+        }
+
+        switch (sys.linkatZ(folder_dir, rel, FD.cwd(), dest.sliceZ())) {
+            .result => {},
+            .err => |err1| switch (err1.getErrno()) {
+                .EXIST => {
+                    FD.cwd().deleteTree(dest.slice()) catch {};
+                    switch (sys.linkatZ(folder_dir, rel, FD.cwd(), dest.sliceZ())) {
+                        .result => {},
+                        .err => |err2| return .initErr(err2),
+                    }
+                },
+                .NOENT => continue,
+                else => return .initErr(err1),
+            },
+        }
+    }
+
+    return .success;
+}
+
+/// Same path-list contract as `linkedHardlinkPaths`, but copies each file
+/// instead of hardlinking. Used as the EXDEV fallback when the producer's
+/// FS and the project's `node_modules` live on different devices (e.g.
+/// Docker bind-mounts).
+fn linkedCopyPaths(
+    folder_dir: FD,
+    paths: []const [:0]const u8,
+    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+) sys.Maybe(void) {
+    FD.cwd().makePath(u8, dest.sliceZ()) catch {};
+    var copy_state: bun.CopyFileState = .{};
+
+    for (paths) |rel| {
+        var save = dest.save();
+        defer save.restore();
+        dest.append(rel);
+
+        if (dest.dirname()) |parent| {
+            FD.cwd().makePath(u8, parent) catch {};
+        }
+
+        const src = switch (folder_dir.openat(rel, bun.O.RDONLY, 0)) {
+            .result => |fd| fd,
+            .err => |err| {
+                if (err.getErrno() == .NOENT) continue;
+                return .initErr(err);
+            },
+        };
+        defer src.close();
+
+        const dest_fd = switch (sys.openat(FD.cwd(), dest.sliceZ(), bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+            .result => |fd| fd,
+            .err => |err| return .initErr(err),
+        };
+        defer dest_fd.close();
+
+        if (comptime Environment.isPosix) {
+            // Best-effort: preserve file mode. Failure here is non-fatal.
+            switch (src.stat()) {
+                .result => |stat| {
+                    _ = bun.c.fchmod(dest_fd.cast(), @intCast(stat.mode));
+                },
+                .err => {},
+            }
+        }
+
+        switch (bun.copyFileWithState(src, dest_fd, &copy_state)) {
+            .result => {},
+            .err => |err| return .initErr(err),
+        }
+    }
+
+    return .success;
+}
 
 const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");

@@ -410,6 +410,123 @@ pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const 
     return .{ dir, this.global_link_dir_path };
 }
 
+/// Read the global link dir once and populate
+/// `this.linked_names` with every registered package name (including
+/// scoped names as `@scope/name`). Must be called on the main thread
+/// before any install worker touches `linkedPackagePath`; after that
+/// the map is read-only and lock-free.
+///
+/// Safe to call repeatedly; subsequent calls are no-ops.
+pub fn populateLinkedNamesCache(this: *PackageManager) void {
+    if (this.linked_names_populated) return;
+    this.linked_names_populated = true;
+
+    // Best-effort: for users who have never run `bun link`, the global
+    // link dir may not exist (or may be unreadable). `globalLinkDirPath`
+    // would `Global.exit(1)` on setup failure — treat that same failure
+    // here as "no links on this machine" instead, and leave the cache
+    // empty so `linkedPackagePath` short-circuits to null. If a later
+    // code path really does need the global dir (e.g. `bun link`
+    // itself), `globalLinkDirPath` will be called on that path and
+    // surface the error there.
+    const dir_path = dir_path: {
+        if (this.global_link_dir_path.len != 0) break :dir_path this.global_link_dir_path;
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch return;
+        const link_dir = global_dir.makeOpenPath("node_modules", .{}) catch return;
+        this.global_dir = global_dir;
+        this.global_link_dir = link_dir;
+        var buf: bun.PathBuffer = undefined;
+        const path_slice = bun.getFdPath(.fromStdDir(link_dir), &buf) catch return;
+        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, path_slice));
+        break :dir_path this.global_link_dir_path;
+    };
+    const root_fd = switch (bun.openDirForIteration(bun.FD.cwd(), dir_path)) {
+        .result => |fd| fd,
+        // Dir missing / unreadable → empty set. Every linkedPackagePath
+        // lookup will short-circuit to null with no further syscalls.
+        .err => return,
+    };
+    defer root_fd.close();
+
+    var iter = bun.DirIterator.iterate(root_fd, if (bun.Environment.isWindows) .u16 else .u8);
+    while (iter.next().unwrap() catch null) |entry| {
+        const name = entry.name.slice();
+        if (name.len == 0) continue;
+
+        // Scope dirs (`@scope`) contain the actual links nested one
+        // level deeper; flatten to `@scope/name` in the cache.
+        if (name[0] == '@' and entry.kind == .directory) {
+            if (comptime bun.Environment.isWindows) {
+                // WTF-16 name; skip scope flattening on Windows for now.
+                // Falls through to the lstat path in linkedPackagePath.
+                continue;
+            }
+            const scope_fd = switch (bun.openDirForIteration(root_fd, name)) {
+                .result => |fd| fd,
+                .err => continue,
+            };
+            defer scope_fd.close();
+
+            var scope_iter = bun.DirIterator.iterate(scope_fd, .u8);
+            while (scope_iter.next().unwrap() catch null) |scope_entry| {
+                const sub_name = scope_entry.name.slice();
+                if (sub_name.len == 0) continue;
+                const full = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }));
+                bun.handleOom(this.linked_names.put(this.allocator, full, {}));
+            }
+            continue;
+        }
+
+        if (comptime bun.Environment.isWindows) continue;
+        const dup = bun.handleOom(this.allocator.dupe(u8, name));
+        bun.handleOom(this.linked_names.put(this.allocator, dup, {}));
+    }
+}
+
+/// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created by
+/// `bun link` from the producer dir), write its absolute path into `buf` and
+/// return it. Otherwise `null`. Scoped names (`@scope/name`) are handled
+/// because `joinAbsStringBufZ` preserves the `/`.
+///
+/// Performance: when `linked_names` has been populated (via
+/// `populateLinkedNamesCache` at install start), this is a single
+/// hashmap check with no syscalls. When the cache is empty (no active
+/// links on this machine), it returns immediately. Falls back to the
+/// per-call `lstat` when the cache has not been populated (e.g. on
+/// Windows, or if a caller runs outside the isolated-install flow).
+pub fn linkedPackagePath(
+    this: *PackageManager,
+    pkg_name: []const u8,
+    buf: *bun.PathBuffer,
+) ?[:0]const u8 {
+    if (pkg_name.len == 0) return null;
+
+    const use_cache = this.linked_names_populated and !bun.Environment.isWindows;
+    if (use_cache) {
+        if (this.linked_names.count() == 0) return null;
+        if (!this.linked_names.contains(pkg_name)) return null;
+        const dir_path = this.globalLinkDirPath();
+        return bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    }
+
+    const dir_path = this.globalLinkDirPath();
+    const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    if (comptime bun.Environment.isWindows) {
+        const attrs = bun.sys.getFileAttributes(joined) orelse return null;
+        return if (attrs.is_directory or attrs.is_reparse_point) joined else null;
+    }
+    return switch (bun.sys.lstat(joined)) {
+        .result => |st| brk: {
+            const mode: u32 = @intCast(st.mode);
+            if (std.posix.S.ISDIR(mode) or std.posix.S.ISLNK(mode)) {
+                break :brk joined;
+            }
+            break :brk null;
+        },
+        .err => null,
+    };
+}
+
 pub fn pathForCachedNPMPath(
     this: *PackageManager,
     buf: *bun.PathBuffer,

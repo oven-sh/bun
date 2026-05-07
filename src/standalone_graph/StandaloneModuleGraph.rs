@@ -1356,7 +1356,7 @@ pub fn inject(
                 }
             };
 
-            let mut elf_file = match bun_elf::ElfFile::init(&input_bytes) {
+            let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
                     Output::pretty_errorln(format_args!("Error initializing ELF file: {}", e));
@@ -1372,7 +1372,6 @@ pub fn inject(
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
-            drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 Output::pretty_errorln(format_args!("Error seeking to start of temporary file: {}", err));

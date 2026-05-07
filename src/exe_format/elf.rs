@@ -41,12 +41,12 @@ pub struct ElfFile {
 }
 
 impl ElfFile {
-    pub fn init(elf_data: &[u8]) -> Result<Box<ElfFile>, ElfError> {
-        if elf_data.len() < size_of::<Elf64_Ehdr>() {
+    pub fn init(data: Vec<u8>) -> Result<Box<ElfFile>, ElfError> {
+        if data.len() < size_of::<Elf64_Ehdr>() {
             return Err(ElfError::InvalidElfFile);
         }
 
-        let ehdr = read_ehdr(elf_data);
+        let ehdr = read_ehdr(&data);
 
         // Validate ELF magic
         if &ehdr.e_ident[0..4] != b"\x7fELF" {
@@ -62,9 +62,6 @@ impl ElfFile {
         if ehdr.e_ident[EI_DATA] != ELFDATA2LSB {
             return Err(ElfError::NotLittleEndian);
         }
-
-        let mut data = Vec::with_capacity(elf_data.len());
-        data.extend_from_slice(elf_data);
 
         Ok(Box::new(ElfFile { data }))
     }

@@ -106,10 +106,10 @@ pub fn validate_integer(
     max_value: Option<i64>,
 ) -> JsResult<i64> {
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
+        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
 
-    if !value.is_any_int() {
+    if !value.is_integer() {
         return Err(throw_range_error_msg(global_this, value.as_number(), name, b"an integer"));
     }
 
@@ -157,7 +157,7 @@ pub fn validate_integer_or_big_int(
     }
 
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
+        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
 
     let num = value.as_number();
@@ -274,7 +274,7 @@ pub fn validate_number(
     maybe_max: Option<f64>,
 ) -> JsResult<f64> {
     if !value.is_number() {
-        return Err(throw_invalid_argument_type_value(global_this, name, "number", value));
+        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
 
     let num: f64 = value.as_number();
@@ -466,7 +466,7 @@ pub fn validate_function(
     value: JSValue,
 ) -> JsResult<JSValue> {
     if !value.is_function() {
-        return Err(throw_invalid_argument_type_value(global, name, "function", value));
+        return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
     Ok(value)
 }

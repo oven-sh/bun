@@ -381,7 +381,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             return;
         }
         if let Some(js_this) = self.js_this.try_get() {
-            let global_object = self.global();
+            // SAFETY: see [`Self::global`].
+            let global_object = unsafe { &*self.global_this };
 
             if let Some(ondrain) = Self::get_drain(js_this) {
                 self.status = Status::Started;
@@ -417,7 +418,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             js_this.ensure_still_alive();
 
             let on_cancel_callback = Self::get_cancel(js_this);
-            let global_object = self.global();
+            // SAFETY: see [`Self::global`].
+            let global_object = unsafe { &*self.global_this };
 
             // detach first so if cancel calls end will be a no-op
             self.detach_js();

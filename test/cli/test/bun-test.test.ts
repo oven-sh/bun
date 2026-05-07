@@ -1307,7 +1307,7 @@ describe("bun test", () => {
             test.todo("todo that passes", () => { expect(1).toBe(1); });
             test("has-assertions fail", () => { expect.hasAssertions(); });
             test("assertion-count fail", () => { expect.assertions(5); expect(1).toBe(1); });
-            test("timeout", async () => { await new Promise(r => setTimeout(r, 50)); }, 1);
+            test("timeout", async () => { await Bun.sleep(50); }, 1);
             test("timeout with done", (done) => { setTimeout(done, 50); }, 1);
           });
         });

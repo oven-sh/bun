@@ -10,6 +10,7 @@ use core::mem::size_of;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
 use bun_collections::BabyList;
 use bun_string::{self as bun_str, strings, String as BunString};
 
@@ -855,7 +856,7 @@ pub struct Parser<'bump> {
     pub alloc: &'bump Bump,
     pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
-    pub errors: bumpalo::collections::Vec<'bump, ParserError<'bump>>,
+    pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
     pub inside_subshell: Option<SubshellKind>,
 }
 
@@ -894,7 +895,7 @@ impl<'bump> Parser<'bump> {
             alloc: bump,
             jsobjs,
             current: 0,
-            errors: bumpalo::collections::Vec::new_in(bump),
+            errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
         })
     }
@@ -916,7 +917,7 @@ impl<'bump> Parser<'bump> {
             current: self.current,
             errors: core::mem::replace(
                 &mut self.errors,
-                bumpalo::collections::Vec::new_in(self.alloc),
+                bun_alloc::ArenaVec::new_in(self.alloc),
             ),
             inside_subshell: Some(kind),
         }
@@ -930,7 +931,7 @@ impl<'bump> Parser<'bump> {
         };
         self.errors = core::mem::replace(
             &mut subparser.errors,
-            bumpalo::collections::Vec::new_in(self.alloc),
+            bun_alloc::ArenaVec::new_in(self.alloc),
         );
         self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
@@ -944,7 +945,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn parse_impl(&mut self) -> ParseResult<ast::Script<'bump>> {
-        let mut stmts = bumpalo::collections::Vec::new_in(self.alloc);
+        let mut stmts = bun_alloc::ArenaVec::new_in(self.alloc);
         if self.tokens.is_empty()
             || (self.tokens.len() == 1 && matches!(self.tokens[0], Token::Eof))
         {
@@ -969,7 +970,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
-        let mut exprs = bumpalo::collections::Vec::new_in(self.alloc);
+        let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
             !self.match_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
@@ -1024,7 +1025,7 @@ impl<'bump> Parser<'bump> {
         let mut expr = self.parse_compound_cmd()?;
 
         if self.peek().tag() == TokenTag::Pipe {
-            let mut pipeline_items = bumpalo::collections::Vec::new_in(self.alloc);
+            let mut pipeline_items = bun_alloc::ArenaVec::new_in(self.alloc);
             let item = match expr.as_pipeline_item() {
                 Some(i) => i,
                 None => {
@@ -1403,7 +1404,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_simple_cmd(&mut self) -> ParseResult<ast::CmdOrAssigns<'bump>> {
-        let mut assigns = bumpalo::collections::Vec::new_in(self.alloc);
+        let mut assigns = bun_alloc::ArenaVec::new_in(self.alloc);
         while if self.inside_subshell.is_none() {
             !self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         } else {
@@ -1453,7 +1454,7 @@ impl<'bump> Parser<'bump> {
             }
         };
 
-        let mut name_and_args = bumpalo::collections::Vec::new_in(self.alloc);
+        let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
         while let Some(arg) = self.parse_atom()? {
             name_and_args.push(arg);
@@ -1575,7 +1576,7 @@ impl<'bump> Parser<'bump> {
 
     fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
         // PERF(port): was stack-fallback (1 SimpleAtom) — profile in Phase B
-        let mut atoms = bumpalo::collections::Vec::with_capacity_in(1, self.alloc);
+        let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
         let mut has_comma = false;
@@ -1955,7 +1956,7 @@ impl<'bump> Parser<'bump> {
         // PORT NOTE: bumpalo::collections::Vec<u8> doesn't impl io::Write.
         // Format into a stack String, then bump-copy. PERF(port): collapse to
         // a bumpalo `String` writer once available.
-        let s = bumpalo::collections::String::from_str_in(
+        let s = bun_alloc::ArenaString::from_str_in(
             &std::fmt::format(args),
             self.alloc,
         );
@@ -2303,11 +2304,11 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     /// anytime characters are added to the string pool this needs to be updated
     pub j: u32,
 
-    pub strpool: bumpalo::collections::Vec<'bump, u8>,
-    pub tokens: bumpalo::collections::Vec<'bump, Token>,
+    pub strpool: bun_alloc::ArenaVec<'bump, u8>,
+    pub tokens: bun_alloc::ArenaVec<'bump, Token>,
     pub delimit_quote: bool,
     pub in_subshell: Option<SubShellKind>,
-    pub errors: bumpalo::collections::Vec<'bump, LexError>,
+    pub errors: bun_alloc::ArenaVec<'bump, LexError>,
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
@@ -2328,9 +2329,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     ) -> Self {
         Self {
             chars: ShellCharIter::<ENCODING>::init(src),
-            tokens: bumpalo::collections::Vec::new_in(bump),
-            strpool: bumpalo::collections::Vec::new_in(bump),
-            errors: bumpalo::collections::Vec::new_in(bump),
+            tokens: bun_alloc::ArenaVec::new_in(bump),
+            strpool: bun_alloc::ArenaVec::new_in(bump),
+            errors: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2368,9 +2369,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let bump = self.strpool.bump();
         let mut sublexer = Self {
             chars: self.chars,
-            strpool: core::mem::replace(&mut self.strpool, bumpalo::collections::Vec::new_in(bump)),
-            tokens: core::mem::replace(&mut self.tokens, bumpalo::collections::Vec::new_in(bump)),
-            errors: core::mem::replace(&mut self.errors, bumpalo::collections::Vec::new_in(bump)),
+            strpool: core::mem::replace(&mut self.strpool, bun_alloc::ArenaVec::new_in(bump)),
+            tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
+            errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
             in_subshell: Some(kind),
             word_start: self.word_start,
             j: self.j,
@@ -2388,11 +2389,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         log!("[lex] drop sublexer");
         let bump = sublexer.strpool.bump();
         self.strpool =
-            core::mem::replace(&mut sublexer.strpool, bumpalo::collections::Vec::new_in(bump));
+            core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
         self.tokens =
-            core::mem::replace(&mut sublexer.tokens, bumpalo::collections::Vec::new_in(bump));
+            core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
         self.errors =
-            core::mem::replace(&mut sublexer.errors, bumpalo::collections::Vec::new_in(bump));
+            core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
 
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;

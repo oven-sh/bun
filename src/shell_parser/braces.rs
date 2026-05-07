@@ -1,13 +1,14 @@
 use core::ptr;
 
 use bun_alloc::{AllocError, Arena as Bump};
+use bun_alloc::ArenaVecExt as _;
 // PORT NOTE: `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use smallvec::SmallVec;
 // move-in (CYCLEBREAK MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser): defined below.
 use self::StringEncoding as Encoding;
 use bun_string::{strings, SmolStr};
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::ArenaVec as BumpVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK move-in from `bun_shell` (src/shell/shell.zig):

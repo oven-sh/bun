@@ -1,6 +1,7 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
 #![feature(sync_unsafe_cell)]
 #![feature(arbitrary_self_types_pointers)]
+#![feature(allocator_api)]
 
 use core::fmt::Write as _;
 use core::mem::{size_of, MaybeUninit};
@@ -151,11 +152,22 @@ impl<'a> FixedBufferAllocator<'a> {
     }
 }
 
-// PORTING.md §Allocators: AST crates use bumpalo; non-AST use Vec/Box (global mimalloc).
-pub type Arena = bumpalo::Bump;
-pub type MimallocArena = bumpalo::Bump; // legacy alias
-/// `bumpalo::collections::Vec<'bump, T>` — arena-backed Vec for AST crates.
-pub type ArenaVec<'bump, T> = bumpalo::collections::Vec<'bump, T>;
+// PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
+// (global mimalloc). `Arena` is now the real per-heap `MimallocArena` (matching
+// Zig's `bun.allocators.MimallocArena`) — unlike `bumpalo::Bump`, it supports
+// per-allocation free + realloc, so `ArenaVec` no longer leaks on grow.
+//
+// `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
+// node stores that are never resized and where the no-op `deallocate` is the
+// point).
+pub use mimalloc_arena::MimallocArena;
+pub type Arena = MimallocArena;
+/// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
+pub type Bump = bumpalo::Bump;
+/// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
+/// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
+pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
+pub use mimalloc_arena::{vec_from_iter_in, ArenaString, ArenaVecExt};
 /// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
 pub type TypedArena<T> = typed_arena::Arena<T>;
 
@@ -194,7 +206,8 @@ pub use max_heap_allocator::MaxHeapAllocator;
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use maybe_owned::MaybeOwned;
 
-pub mod mimalloc_arena { pub use crate::MimallocArena; }
+#[path = "MimallocArena.rs"]
+pub mod mimalloc_arena;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. The wider

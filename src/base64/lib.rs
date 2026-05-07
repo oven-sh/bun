@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 use std::sync::LazyLock;
 
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};

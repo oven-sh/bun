@@ -912,7 +912,7 @@ fn get_ast(
             let path_to_use: &'static [u8] = 'brk: {
                 // Implements embedded sqlite
                 if loader == Loader::SqliteEmbedded {
-                    let mut buf = bumpalo::collections::String::new_in(bump);
+                    let mut buf = bun_alloc::ArenaString::new_in(bump);
                     write!(
                         &mut buf,
                         "{}A{:08}",
@@ -1003,7 +1003,7 @@ fn get_ast(
                 return Err(err!("ParserError"));
             }
 
-            let mut buf = bumpalo::collections::String::new_in(bump);
+            let mut buf = bun_alloc::ArenaString::new_in(bump);
             write!(
                 &mut buf,
                 "{}A{:08}",
@@ -1237,7 +1237,7 @@ fn get_ast(
                 //
                 // To avoid a mutex, the actual insertion of the asset to DevServer
                 // is done on the bundler thread.
-                let mut buf = bumpalo::collections::String::new_in(bump);
+                let mut buf = bun_alloc::ArenaString::new_in(bump);
                 write!(
                     &mut buf,
                     "{}/{}{}",
@@ -1248,7 +1248,7 @@ fn get_ast(
                 .expect("unreachable");
                 leak_static(buf.into_bump_str().as_bytes())
             } else {
-                let mut buf = bumpalo::collections::String::new_in(bump);
+                let mut buf = bun_alloc::ArenaString::new_in(bump);
                 write!(
                     &mut buf,
                     "{}A{:08}",

@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 //! Port of `src/logger/logger.zig`.
 //!
 //! TODO(port): OWNERSHIP — almost every `[]const u8` field in this module has

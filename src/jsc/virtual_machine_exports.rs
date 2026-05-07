@@ -77,8 +77,9 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 #[crate::host_fn(export = "Bun__Process__send")]
 pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let vm = unsafe { &mut *global.bun_vm() };
+    // SAFETY: bun_vm_ptr() yields the live per-thread VM (Zig `bunVM()` is
+    // mutable); `get_ipc_instance` writes `self.ipc` on first call.
+    let vm = unsafe { &mut *global.bun_vm_ptr() };
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
@@ -90,8 +91,7 @@ pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    str.eql_utf8(unsafe { (*global.bun_vm()).main })
+    str.eql_utf8(global.bun_vm().main)
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,

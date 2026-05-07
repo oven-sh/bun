@@ -1010,15 +1010,20 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
+    // PORT NOTE: reshaped for borrowck — `defer!` is non-`move`, so the closure
+    // would capture the *place* `*jsc_vm_ptr` and conflict with later
+    // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
+    // local so the closure's captured place is disjoint.
+    let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
         if IS_SYNC {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
-                let main_loop = (*jsc_vm_ptr).event_loop();
-                (*jsc_vm_ptr)
+                let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
+                (*jsc_vm_ptr_cleanup)
                     .rare_data()
-                    .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-                    .cleanup(jsc_vm_ptr.cast(), main_loop.cast());
+                    .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
+                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
             }
         }
     }

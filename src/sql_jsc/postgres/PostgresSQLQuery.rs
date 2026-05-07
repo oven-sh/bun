@@ -583,7 +583,7 @@ impl PostgresSQLQuery {
                     let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
                     this.statement = Some(stmt);
                     // SAFETY: `stmt` is the live map entry.
-                    unsafe { stmt_ref(stmt) };
+                    unsafe { (*stmt).r#ref() };
                     drop(signature);
 
                     // SAFETY: `stmt` is live (just ref'd).
@@ -595,7 +595,7 @@ impl PostgresSQLQuery {
                                 .unwrap()
                                 .to_js(global_object)?;
                             // SAFETY: drop the ref we took above.
-                            unsafe { stmt_deref(stmt) };
+                            unsafe { PostgresSQLStatement::deref(stmt) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                             unsafe { Self::deref_(this_ptr) };
                             return Err(global_object.throw_value(error_response));
@@ -618,7 +618,7 @@ impl PostgresSQLQuery {
                                     // fail to run do cleanup
                                     this.statement = None;
                                     // SAFETY: drop the ref we took above.
-                                    unsafe { stmt_deref(stmt) };
+                                    unsafe { PostgresSQLStatement::deref(stmt) };
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                                     unsafe { Self::deref_(this_ptr) };
 
@@ -665,7 +665,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
                             // SAFETY: `stmt` was previously ref'd for `this.statement`.
-                            unsafe { stmt_deref(stmt) };
+                            unsafe { PostgresSQLStatement::deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref_(this_ptr) };
@@ -699,7 +699,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
                             // SAFETY: `stmt` was previously ref'd for `this.statement`.
-                            unsafe { stmt_deref(stmt) };
+                            unsafe { PostgresSQLStatement::deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref_(this_ptr) };

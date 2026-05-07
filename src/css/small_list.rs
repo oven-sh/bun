@@ -737,9 +737,17 @@ impl<T, const N: usize> SmallList<T, N> {
                 unsafe {
                     let mut v = Vec::from_raw_parts(ptr_, length as usize, cap as usize);
                     v.reserve_exact((new_cap - length) as usize);
+                    // `reserve_exact` may give us more than requested; record the
+                    // actual capacity so the next `Vec::from_raw_parts` (in Drop /
+                    // the next grow) reconstructs with the layout the allocator
+                    // actually handed back. Mismatching capacity here is UB per
+                    // `Vec::from_raw_parts` and corrupts later reallocs.
+                    let actual_cap = v.capacity();
                     let new_ptr = v.as_mut_ptr();
                     core::mem::forget(v);
-                    new_ptr
+                    self.data = Data { heap: HeapData { ptr: new_ptr, len: length } };
+                    self.capacity = u32::try_from(actual_cap).expect("int cast");
+                    return;
                 }
             };
             self.data = Data { heap: HeapData { ptr: new_alloc, len: length } };

@@ -4548,7 +4548,11 @@ pub fn write_file_internal(
                             let proxy_owned = http_proxy_href(global_this);
                             let proxy_url = proxy_owned.as_deref();
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                aws_options.credentials.dupe(),
+                                if options.extra_options.is_some() {
+                                    aws_options.credentials.dupe()
+                                } else {
+                                    s3.get_credentials().dupe()
+                                },
                                 s3.path(),
                                 readable,
                                 global_this,

@@ -749,27 +749,24 @@ pub fn update_package_json_and_install_catch_error(
     subcommand: Subcommand,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
+    // Zig: `&bun.cli.Cli.log_`. `ctx.log` *is* `&Cli.log_` — `Command.create()` writes
+    // `data.log = log` where `log = &Cli.log_` (see runtime/cli/cli.zig:333). Capture the
+    // pointer up-front so we don't reborrow `*ctx` after handing it to the inner call.
+    let log: *mut bun_logger::Log = ctx.log;
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
-            // bun_runtime::cli::Cli::log_mut() via hook (GENUINE b0).
-            let hook = CLI_LOG_HOOK.load(Ordering::Acquire);
-            if !hook.is_null() {
-                // SAFETY: CLI_LOG_HOOK is set once at startup to fn() -> *mut Log.
-                let f: unsafe fn() -> *mut bun_logger::Log = unsafe { core::mem::transmute(hook) };
-                // SAFETY: hook returns the address of the process-global `bun.cli.Cli.log_` (see
-                // .zig L498). We are on the single CLI thread in the install error path; no other
-                // `&mut Log` to that static is live for the duration of this `print` call.
-                let log = unsafe { &mut *f() };
-                let _ = log.print(Output::error_writer() as *mut _);
-            }
+            // SAFETY: `log` is the process-global `Cli.log_` (set once during single-threaded
+            // CLI startup, never freed). We are on the single CLI thread in the install error
+            // path; no other `&mut Log` to it is live for the duration of this `print` call.
+            let _ = unsafe { &mut *log }.print(Output::error_writer() as *mut _);
             Global::exit(1);
         }
         Err(e) => Err(e),
     }
 }
 
-fn update_package_json_and_install_and_cli(
+pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
     cli: CommandLineArguments,

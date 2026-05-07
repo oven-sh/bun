@@ -2360,10 +2360,10 @@ pub fn parse_into_binary_lockfile(
         }
 
         if let Err(err) = lockfile.resolve(log) {
-            if err == bun_core::err!("OutOfMemory") {
-                return Err(ParseError::OutOfMemory);
-            }
-            return Err(ParseError::InvalidPackagesObject);
+            return Err(match err {
+                tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
+                tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
+            });
         }
     }
 
@@ -2383,7 +2383,9 @@ fn map_dep_to_pkg(
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
             dep.version.tag = DependencyVersionTag::Workspace;
-            dep.version.value = DependencyVersionValue { workspace: res.value.workspace };
+            // SAFETY: `res.tag == Workspace` was just checked, so the
+            // `workspace` arm of the `Resolution.value` union is the active one.
+            dep.version.value = DependencyVersionValue { workspace: unsafe { res.value.workspace } };
         }
     }
 }
@@ -2513,7 +2515,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         name.hash,
                         version_sliced.slice,
                         &version_sliced,
-                        log,
+                        &mut *log,
                         None,
                     ) {
                         Some(v) => v,
@@ -2556,7 +2558,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     continue;
                 }
 
-                let name = value.get(b"name").unwrap().as_utf8_string_literal().unwrap();
+                let name_expr = value.get(b"name").unwrap();
+                let name = name_expr.as_utf8_string_literal().unwrap();
                 let name_hash = StringBuilder::string_hash(name);
 
                 let dep = Dependency {

@@ -590,9 +590,8 @@ pub fn is_filtered_dependency_or_workspace(
                     return false;
                 }
 
-                filter_path.join(&[res
-                    .value
-                    .workspace
+                // SAFETY: `res.tag == Workspace` checked immediately above.
+                filter_path.join(&[unsafe { res.value.workspace }
                     .slice(lockfile.buffers.string_bytes.as_slice())]);
 
                 break 'path_pattern (path_pattern, filter_path.slice());
@@ -657,6 +656,9 @@ impl Tree {
 
         let pkgs = builder.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
+        // PORT NOTE: reshaped for borrowck — copy the `&'a [Dependency]` out of
+        // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
+        let dependencies: &[Dependency] = builder.dependencies;
 
         builder.sort_buf.clear();
         builder
@@ -727,7 +729,7 @@ impl Tree {
                 }
             }
 
-            let dependency = builder.dependencies[dep_id as usize];
+            let dependency = &dependencies[dep_id as usize];
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
@@ -961,10 +963,12 @@ impl Tree {
                 if dependency.version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile.packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.value.npm.version;
+                    // SAFETY: `dependency.version.tag == Npm` checked immediately above.
+                    let version = unsafe { &dependency.version.value.npm.version };
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(
-                            &resolution.value.npm.version,
+                            // SAFETY: `resolution.tag == Npm` checked on the line above.
+                            unsafe { resolution.value.npm }.version,
                             builder.buf(),
                             builder.buf(),
                         )

@@ -16,7 +16,7 @@ use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_aio::KeepAlive;
+use bun_aio::{KeepAlive, EventLoopCtx, AllocatorType};
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;

@@ -92,43 +92,39 @@ pub mod subprocess {
     /// `StaticPipeWriter` streams to the child's stdin/extra-fd. Only the
     /// owned-bytes variant is needed at this tier (security_scanner feeds a
     /// JSON blob); the `Blob`/`ArrayBuffer` variants live in `bun_runtime`.
+    ///
+    /// `Cell` because Zig's `detach` mutates through an intrusive shared ref
+    /// (`this.* = .detached` on a `*Source` field of a refcounted struct).
     pub struct Source {
-        bytes: Option<Box<[u8]>>,
+        bytes: core::cell::Cell<Option<Box<[u8]>>>,
     }
 
     impl Source {
         #[inline]
         pub fn from_owned_bytes(bytes: Box<[u8]>) -> Self {
-            Self { bytes: Some(bytes) }
+            Self { bytes: core::cell::Cell::new(Some(bytes)) }
         }
 
         /// Zig: `Source.detach()` — drop the owned payload without writing it.
         ///
         /// PORT NOTE: the full `bun_runtime` `Source` is a tagged union over
         /// `Blob`/`ArrayBuffer`/owned-bytes whose `detach` zeroes the active
-        /// variant in-place (the surrounding `StaticPipeWriter` is intrusively
-        /// ref-counted so the field is reached through `&self`). At this tier
-        /// only the owned-bytes variant exists; clearing it via interior
-        /// mutability matches the Zig `array_buffer.held.deinit(); self.* =
-        /// .detached;` semantics — the bytes are released immediately, and
-        /// subsequent `slice()` calls return `&[]`.
+        /// variant in-place. At this tier only the owned-bytes variant exists;
+        /// `Cell::take()` matches the Zig `self.* = .detached;` semantics —
+        /// the bytes are released immediately and subsequent `slice()` calls
+        /// return `&[]`.
         #[inline]
         pub fn detach(&self) {
-            // SAFETY: `Source` is only ever reached through the single-thread
-            // `StaticPipeWriter` (intrusive `Rc` handle, `!Send`). No other
-            // borrow of `bytes` outlives this call — `slice()` is only used to
-            // seed the runtime writer's internal buffer at `start()`, never
-            // held across `detach()`.
-            unsafe {
-                let cell = &self.bytes as *const Option<Box<[u8]>> as *mut Option<Box<[u8]>>;
-                core::ptr::drop_in_place(cell);
-                core::ptr::write(cell, None);
-            }
+            drop(self.bytes.take());
         }
 
         #[inline]
         pub fn slice(&self) -> &[u8] {
-            self.bytes.as_deref().unwrap_or(&[])
+            // SAFETY: `Source` is `!Sync` (Cell) and only ever reached through
+            // the single-thread `StaticPipeWriter` `Rc` handle. The returned
+            // borrow is never held across a `detach()` — callers use it once
+            // to seed the runtime writer's buffer in `create()`.
+            unsafe { (*self.bytes.as_ptr()).as_deref().unwrap_or(&[]) }
         }
     }
 
@@ -205,7 +201,10 @@ pub mod subprocess {
         pub source: Source,
         pub stdio_result: StdioResult,
         /// Erased `IntrusiveRc<bun_runtime::…::StaticPipeWriter<ErasedParent>>`.
-        inner: *mut c_void,
+        /// `Cell` because `create()` returns `Rc<Self>` and seeds this after
+        /// allocation (the source slice borrows `self.source`, so the wrapper
+        /// must exist before the runtime writer is built).
+        inner: core::cell::Cell<*mut c_void>,
         _parent: core::marker::PhantomData<*const P>,
     }
 

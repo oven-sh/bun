@@ -909,8 +909,8 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            let _close = scopeguard::guard((), |_| {
-                let _ = bin_for_reading.close();
+            let bin_for_reading = scopeguard::guard(bin_for_reading, |f| {
+                let _ = f.close();
             });
 
             let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
@@ -1011,8 +1011,8 @@ impl<'a> Linker<'a> {
             ) else {
                 return;
             };
-            let _close = scopeguard::guard((), |_| {
-                let _ = tmpfile.close();
+            let tmpfile = scopeguard::guard(tmpfile, |f| {
+                let _ = f.close();
             });
 
             // Write the corrected shebang (without \r)
@@ -1231,11 +1231,14 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    let node_modules_path_save = self.node_modules_path.save();
-                    self.node_modules_path.append(b".bin");
-                    // TODO(port): bun.makePath(std.fs.cwd(), ...)
+                    // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
+                    // defer s.restore();` returns a `ResetScope` holding `&mut Path`;
+                    // capture `len()` and restore via `set_length()` so the path
+                    // can be re-borrowed for `append`/`slice` in between.
+                    let node_modules_path_save = self.node_modules_path.len();
+                    let _ = self.node_modules_path.append(b".bin");
                     let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
-                    node_modules_path_save.restore();
+                    self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {

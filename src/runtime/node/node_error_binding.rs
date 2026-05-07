@@ -1,43 +1,63 @@
-use bun_jsc::node::ErrorCode;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, Js2NativeFunctionType, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStringJsc as _};
+use bun_string::ZigString;
 
-// PORT NOTE: reshaped — Zig's `createSimpleError` is a comptime fn that returns a fn pointer
-// (token-pasting / monomorphized fn generation). Rust expresses this as `macro_rules!`.
-// Macro must precede the `pub const` users in Rust, so order is flipped vs the .zig.
+use super::nodejs_error_code::Code as ErrorCode;
+
+// PORT NOTE: reshaped — Zig's `createSimpleError` is a comptime fn that mints a
+// monomorphized `cbb: fn(*JSGlobalObject) JSError!JSValue` and returns it as a
+// `jsc.JS2NativeFunctionType` const. Rust cannot mint an `fn` item from a const
+// generic fn pointer, so each call site becomes a `pub fn` directly (same shape
+// the `generated_js2native.rs` thunk layer expects). Names stay SCREAMING to
+// match the .zig spec exactly.
+//
+// `createFn` was `createErrorInstanceWithCode` / `createTypeErrorInstanceWithCode`
+// — both removed from `JSGlobalObject` upstream; their historical bodies were
+// `createErrorInstance(fmt, args)` + `err.put("code", @tagName(code))`, which is
+// inlined here.
 macro_rules! create_simple_error {
-    ($create_fn:ident, $code:expr, $message:expr) => {{
-        #[bun_jsc::host_fn]
-        fn cb(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-            global.$create_fn($code, $message, format_args!(""))
-        }
-        fn cbb(global: &JSGlobalObject) -> JsResult<JSValue> {
-            JSFunction::create(
+    ($name:ident, $create_fn:ident, $code:expr, $message:literal) => {
+        #[allow(non_snake_case)]
+        pub fn $name(global: &JSGlobalObject) -> JsResult<JSValue> {
+            #[bun_jsc::host_fn]
+            fn cb(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+                let err = global.$create_fn(format_args!($message));
+                err.put(
+                    global,
+                    "code",
+                    ZigString::init(<&'static str>::from($code).as_bytes()).to_js(global),
+                );
+                Ok(err)
+            }
+            Ok(JSFunction::create(
                 global,
                 <&'static str>::from($code),
-                cb,
+                __jsc_host_cb,
                 0,
                 Default::default(),
-            )
+            ))
         }
-        cbb as Js2NativeFunctionType
-    }};
+    };
 }
 
-pub const ERR_INVALID_HANDLE_TYPE: Js2NativeFunctionType = create_simple_error!(
-    create_type_error_instance_with_code,
+create_simple_error!(
+    ERR_INVALID_HANDLE_TYPE,
+    create_type_error_instance,
     ErrorCode::ERR_INVALID_HANDLE_TYPE,
-    b"This handle type cannot be sent"
+    "This handle type cannot be sent"
 );
-pub const ERR_CHILD_CLOSED_BEFORE_REPLY: Js2NativeFunctionType = create_simple_error!(
-    create_error_instance_with_code,
+create_simple_error!(
+    ERR_CHILD_CLOSED_BEFORE_REPLY,
+    create_error_instance,
     ErrorCode::ERR_CHILD_CLOSED_BEFORE_REPLY,
-    b"Child closed before reply received"
+    "Child closed before reply received"
 );
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_error_binding.zig (25 lines)
-//   confidence: medium
+//   confidence: high
 //   todos:      0
-//   notes:      comptime fn-generator → macro_rules!; verify Js2NativeFunctionType sig & JSFunction::create args in Phase B
+//   notes:      comptime fn-generator → macro_rules!; `JS2NativeFunctionType` and
+//               `create*ErrorInstanceWithCode` no longer exist upstream — bodies
+//               inlined per their historical impl (createErrorInstance + put "code").
 // ──────────────────────────────────────────────────────────────────────────

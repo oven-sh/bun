@@ -46,7 +46,7 @@ impl CatalogMap {
             if self.default.count() == 0 {
                 return None;
             }
-            return self.default.get_adapted(&dep_name, ctx(buf)).copied();
+            return self.default.get_adapted(&dep_name, ctx(buf)).cloned();
         }
 
         let group = self.groups.get_adapted(&catalog_name, ctx(buf))?;
@@ -55,7 +55,7 @@ impl CatalogMap {
             return None;
         }
 
-        group.get_adapted(&dep_name, ctx(buf)).copied()
+        group.get_adapted(&dep_name, ctx(buf)).cloned()
     }
 
     pub fn get_or_put_group(

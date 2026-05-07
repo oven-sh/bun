@@ -943,6 +943,6 @@ pub fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSVa
 // PORT STATUS
 //   source:     src/runtime/webcore/S3File.zig (665 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      S3BlobStatTask lifetime (<'a> on heap struct) is awkward — LIFETIMES.tsv says JSC_BORROW; Phase B may need *const JSGlobalObject. @export/jsc.conv shims and toJSHostFnWithContext need proc-macro wiring. Output::pretty_fmt! is a placeholder for comptime ANSI formatting.
+//   todos:      7
+//   notes:      S3BlobStatTask.global stored as *const (heap-alloc across async callback). BUN__createJSS3File extern still uses C ABI on win-x64.
 // ──────────────────────────────────────────────────────────────────────────

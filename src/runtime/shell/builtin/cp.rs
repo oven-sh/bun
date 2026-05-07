@@ -403,6 +403,47 @@ impl ShellCpTask {
         }))
     }
 
+    /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
+    /// buffer (printed to stdout once the cp finishes).
+    fn on_copy_impl(&mut self, src: &[u8], dest: &[u8]) {
+        use core::fmt::Write as _;
+        // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
+        let _ = write!(
+            bun_string::ByteWriter::new(&mut self.verbose_output),
+            "{} -> {}\n",
+            bun_string::BStr::new(src),
+            bun_string::BStr::new(dest),
+        );
+    }
+
+    /// Spec: cp.zig `cpOnCopy`. Called from the node:fs `NewAsyncCpTask<true>`
+    /// work-pool thread for every successfully-copied file. Records the pair
+    /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
+    pub fn cp_on_copy(&mut self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
+        if !self.opts.verbose { return; }
+        #[cfg(not(windows))]
+        { self.on_copy_impl(src, dest); }
+        #[cfg(windows)]
+        {
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf2 = bun_paths::PathBuffer::uninit();
+            let src8 = bun_string::strings::from_wpath(&mut buf, src);
+            let dest8 = bun_string::strings::from_wpath(&mut buf2, dest);
+            self.on_copy_impl(src8, dest8);
+        }
+    }
+
+    /// Spec: cp.zig `cpOnFinish` → `onSubtaskFinish`. Called when the node:fs
+    /// async cp completes (success or first error). Records the error (if any)
+    /// and re-queues this `ShellCpTask` onto the JS thread so the interpreter
+    /// can drain `verbose_output` / surface the error.
+    pub fn cp_on_finish(&mut self, result: bun_sys::Maybe<()>) {
+        if let Err(e) = result {
+            self.err = Some(ShellErr::from_sys(e));
+        }
+        self.task.on_finish();
+    }
+
     /// Spec: cp.zig `runFromThreadPoolImpl`.
     pub fn run_from_thread_pool(this: *mut ShellCpTask) {
         // SAFETY: `this` is a live Box::into_raw'd task.

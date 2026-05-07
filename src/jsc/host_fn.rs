@@ -505,6 +505,23 @@ pub enum DomEffectId {
 //
 // TODO(port): proc-macro — `DOMCall` type-generator.
 
+/// Runtime descriptor for a `DOMCall(...)`-generated DOMJIT entry.
+///
+/// In Zig `DOMCall` returns a comptime-generated `extern struct` type that
+/// `@export`s `<class>__<fn>__slowpath`/`__fastpath` and `@extern`s
+/// `<class>__<fn>__put`. Until the `#[bun_jsc::dom_call]` proc-macro lands,
+/// callers (e.g. `bun:ffi`'s `FFIObject`) hand-write the slow/fast paths and
+/// declare the C++-side `*__put` extern themselves; this struct carries just
+/// enough to drive `to_js` (the `put(global, obj)` call that installs the
+/// DOMJIT-backed property on a JS object).
+#[derive(Clone, Copy)]
+pub struct DomCall {
+    pub class_name: &'static str,
+    pub function_name: &'static str,
+    /// `<class>__<fn>__put` — generated in `ZigLazyStaticFunctions-inlines.h`.
+    pub put: unsafe extern "C" fn(*mut JSGlobalObject, JSValue),
+}
+
 // ───────────────────────── instance/static method wrapping ─────────────────────────
 
 // Zig: `pub fn InstanceMethodType(comptime Container: type) type`

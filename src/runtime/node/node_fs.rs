@@ -2092,19 +2092,6 @@ impl AsyncReaddirRecursiveTask {
         }
     }
 
-    /// Free the heap copy made in `create()` (`Box<[u8; len+1]>` round-tripped
-    /// through `PathString`). Idempotent — second call sees `EMPTY` and no-ops.
-    fn free_root_path(&mut self) {
-        let path = core::mem::replace(&mut self.root_path, PathString::EMPTY);
-        let slice = path.slice();
-        if slice.is_empty() { return; }
-        let len_with_nul = slice.len() + 1;
-        let ptr = slice.as_ptr() as *mut u8;
-        // SAFETY: `ptr` came from `Box::into_raw(Box<[u8; len+1]>)` in
-        // `create()`; reconstructed exactly once with the original layout.
-        drop(unsafe { Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)) });
-    }
-
     /// May be called from any thread (the subtasks)
     pub fn finish_concurrently(&mut self) {
         if self.has_result.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_err() {

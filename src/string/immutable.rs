@@ -1011,6 +1011,7 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 
 // 31 character string or a slice
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct StringOrTinyString {
     remainder_buf: [u8; StringOrTinyString::MAX],
     meta: StringOrTinyStringMeta,

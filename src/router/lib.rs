@@ -30,32 +30,15 @@ mod b1_stubs {
         bun_wyhash::hash(input)
     }
 
-    // TODO(b2-blocked): bun_logger crate not yet in [dependencies]. Spec uses
-    // these on *recoverable* paths (log-and-continue / log-and-return-None) so
-    // the stub MUST be a no-op, never panic — PORTING.md §Forbidden.
+    // CYCLEBREAK B-2 resolved: `bun_logger` is a lower-tier crate (deps:
+    // bun_core/collections/string/sys only), so depending on it here is
+    // acyclic. Re-export the real types so route-validation diagnostics
+    // (`append_route` duplicates, `Pattern::validate`, open failures) land in
+    // the SAME `Log` the caller threads through `load_routes` and later throws
+    // to JS. The previous no-op ZST stub silently dropped those errors —
+    // a spec divergence vs. router.zig.
     pub mod logger {
-        pub struct Log;
-        impl Log {
-            pub fn add_error_fmt(
-                &mut self,
-                _source: Option<&Source>,
-                _loc: Loc,
-                _args: core::fmt::Arguments<'_>,
-            ) -> Result<(), ()> {
-                // no-op until bun_logger lands; spec is log-and-continue
-                Ok(())
-            }
-        }
-        pub struct Source;
-        impl Source {
-            pub fn init_empty_file(_path: &[u8]) -> Source {
-                Source
-            }
-        }
-        pub struct Loc;
-        impl Loc {
-            pub const EMPTY: Loc = Loc;
-        }
+        pub use bun_logger::{Loc, Log, Source};
     }
 
     // CYCLEBREAK B-2: bun_sys::fs landed opaque MOVE_DOWN stubs for FileSystem /
@@ -180,10 +163,9 @@ mod b1_stubs {
 }
 use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs, HashedString, PathString};
 
-// PORT NOTE: `load_routes` takes the crate-private stub `b1_stubs::logger::Log`
-// (until bun_logger is wired). Re-export it so out-of-crate callers
-// (`bun_runtime::api::filesystem_router`) can construct one.
-pub use b1_stubs::logger::Log as RouteLoaderLog;
+// `load_routes` takes the real `bun_logger::Log`. Kept as a re-export so
+// out-of-crate callers don't need a direct `bun_logger` import for the type.
+pub use bun_logger::Log as RouteLoaderLog;
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK Phase B-0 — cross-tier decoupling
@@ -641,7 +623,7 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params,
+                    params: params as *mut _,
                     name: index.name,
                     path: index.abs_path.slice(),
                     pathname: url_path.pathname,
@@ -664,7 +646,7 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params,
+                params: params as *mut _,
                 name: route.name,
                 path: route.abs_path.slice(),
                 pathname: url_path.pathname,
@@ -1544,19 +1526,39 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    pub params: &'a mut route_param::List<'a>,
+    // PORT NOTE: raw `*mut` (not `&'a mut`) to match Zig's `*Param.List`.
+    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
+    // `&'a mut List` here would be invalidated under Stacked Borrows the
+    // moment any `&mut MatchedRoute` is taken. Callers that need a borrow
+    // go through `params()`/`params_mut()`.
+    pub params: *mut route_param::List<'a>,
     pub redirect_path: Option<&'a [u8]>,
     pub query_string: &'a [u8],
 }
 
 impl<'a> Match<'a> {
+    /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
+    #[inline]
+    pub unsafe fn params(&self) -> &route_param::List<'a> {
+        unsafe { &*self.params }
+    }
+
+    /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
+    #[inline]
+    pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
+        unsafe { &mut *self.params }
+    }
+
     #[inline]
     pub fn has_params(&self) -> bool {
-        self.params.len() > 0
+        // SAFETY: producers (`Routes::match_page*`) always set `params` to a
+        // live caller-provided list that outlives the `Match`.
+        unsafe { (*self.params).len() > 0 }
     }
 
     pub fn params_iterator(&self) -> PathnameScanner<'_> {
-        PathnameScanner::init(self.pathname, self.name, self.params)
+        // SAFETY: see `has_params`.
+        PathnameScanner::init(self.pathname, self.name, unsafe { &*self.params })
     }
 
     pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
@@ -2285,8 +2287,8 @@ mod tests {
 
             let mut log = bun_logger::Log::init();
             // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
-            // no errdefer; the test harness panics on error anyway, and the stub
-            // `b1_stubs::logger::Log` carries no buffered messages to flush.
+            // no errdefer; the test harness panics on error anyway, but the guard
+            // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
@@ -2315,10 +2317,10 @@ mod tests {
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
             // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
-            let mut route_log = logger::Log;
+            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             let routes = RouteLoader::load_all(
                 router.config.clone(),
-                &mut route_log,
+                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
                 &mut resolver,
                 dir_info_ref(root_dir),
                 top_level_dir,

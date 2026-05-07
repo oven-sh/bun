@@ -87,6 +87,13 @@ impl JSValue {
         Self::js_number(addr as f64)
     }
 
+    /// `JSValue.asPtrAddress` (JSValue.zig) — inverse of `from_ptr_address`:
+    /// `@intFromFloat(this.asNumber())`.
+    #[inline]
+    pub fn as_ptr_address(self) -> usize {
+        self.as_number() as usize
+    }
+
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
     /// the trailing argument to each. Thin wrapper over `JSC__JSValue___then`.
     ///
@@ -338,6 +345,10 @@ impl JSValue {
     pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JSValue {
         // SAFETY: `global` is live.
         unsafe { JSC__JSValue__fromInt64NoTruncate(global, i) }
+    }
+    pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
+        // SAFETY: `global` is live.
+        unsafe { JSC__JSValue__fromUInt64NoTruncate(global, i) }
     }
     /// `JSValue.fromEntries` (JSValue.zig:757) — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
@@ -1131,6 +1142,7 @@ unsafe extern "C" {
     fn JSC__JSValue__dateInstanceFromNullTerminatedString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
     fn JSC__JSValue__dateInstanceFromNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
     fn JSC__JSValue__fromInt64NoTruncate(global: *const JSGlobalObject, i: i64) -> JSValue;
+    fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
         keys: *mut bun_string::ZigString,

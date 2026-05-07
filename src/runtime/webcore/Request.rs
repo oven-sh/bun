@@ -1350,10 +1350,19 @@ impl Request {
                 match value.get_truthy(global_this, b"signal") {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        let _ = signal_;
-                        todo!("blocked_on: bun_jsc::AbortSignal::from_js");
+                        if let Some(signal) = AbortSignalRef::from_js(signal_) {
+                            // Keep it alive
+                            signal_.ensure_still_alive();
+                            // `from_js` already ref'd (Zig: `signal.ref()`).
+                            req.signal = Some(signal);
+                        } else {
+                            if !global_this.has_exception() {
+                                bail!(Err(global_this.throw(format_args!(
+                                    "Failed to construct 'Request': signal is not of type AbortSignal."
+                                ))));
+                            }
+                            bail!(Err(JsError::Thrown));
+                        }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
@@ -1419,20 +1428,38 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRedirect");
+                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
+                    Ok(Some(redirect_value)) => {
+                        req.flags.redirect = redirect_value;
+                        fields.insert(Fields::Redirect);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchCacheMode");
+                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
+                    Ok(Some(cache_value)) => {
+                        req.flags.cache = cache_value;
+                        fields.insert(Fields::Cache);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                let _ = (&value, global_this);
-                todo!("blocked_on: bun_jsc::FromJsEnum for FetchRequestMode");
+                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
+                    Ok(Some(mode_value)) => {
+                        req.flags.mode = mode_value;
+                        fields.insert(Fields::Mode);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
             }
         }
 
@@ -1606,7 +1633,8 @@ impl Request {
         };
 
         if let Some(signal) = &self.signal {
-            req.signal = Some(signal.clone()); // signal.ref()
+            // `AbortSignalRef::clone` → C++ `ref()` (matches Zig `signal.ref()`).
+            req.signal = Some(signal.clone());
         }
         Ok(())
     }
@@ -1687,7 +1715,7 @@ impl Request {
         method: Method,
         request_context: AnyRequestContext,
         https: bool,
-        signal: Option<Arc<AbortSignal>>,
+        signal: Option<AbortSignalRef>,
         body: Box<BodyValue>,
     ) -> Request {
         Request {

@@ -1,5 +1,5 @@
 use bun_collections::{StringHashMap, ArrayHashMap};
-use bun_core::{err, Error, Global, Output};
+use bun_core::{err, zstr, Error, Global, Output};
 use bun_logger as logger;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString, SlicedString};
@@ -17,6 +17,7 @@ use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
 use crate::repository::Repository;
 use crate::lockfile::{self, Lockfile, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Format as LockfileFormat, Migrated, PackageListEntry};
+use crate::lockfile_real::package::{PackageField, PackageListExt as _};
 use crate::lockfile_real::package::workspace_map::{WorkspaceMap, Entry as WorkspaceEntry};
 use crate::external_slice::ExternalSlice;
 use crate::yarn;
@@ -62,7 +63,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::Migrating,
                     value: e,
-                    lockfile_path: b"package-lock.json",
+                    lockfile_path: zstr!("package-lock.json"),
                     format: LockfileFormat::Text,
                 });
             }
@@ -92,7 +93,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::Migrating,
                     value: e,
-                    lockfile_path: b"yarn.lock",
+                    lockfile_path: zstr!("yarn.lock"),
                     format: LockfileFormat::Text,
                 });
             }
@@ -165,7 +166,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::Migrating,
                     value: e.into(),
-                    lockfile_path: b"pnpm-lock.yaml",
+                    lockfile_path: zstr!("pnpm-lock.yaml"),
                     format: LockfileFormat::Text,
                 });
             }
@@ -324,8 +325,8 @@ pub fn migrate_npm_lockfile<'a>(
             let workspace_packages_count = workspaces.process_names_array(
                 &mut tmp_cache,
                 log,
-                // SAFETY: arena-backed StoreRef; mutated only via `.slice()` reads
-                unsafe { &mut *json_array.as_ptr() },
+                // SAFETY: arena-backed StoreRef lives for duration of this fn
+                unsafe { &*json_array.as_ptr() },
                 &json_src,
                 wksp.loc,
                 None,
@@ -481,7 +482,7 @@ pub fn migrate_npm_lockfile<'a>(
     this.buffers.dependencies.reserve(num_deps as usize);
     this.buffers.resolutions.reserve(num_deps as usize);
     this.buffers.extern_strings.reserve(num_extern_strings as usize);
-    this.packages.reserve(package_idx as usize);
+    this.packages.ensure_total_capacity(package_idx as usize)?;
     // The package index is overallocated, but we know the upper bound
     this.package_index.reserve(package_idx as usize);
 
@@ -744,8 +745,7 @@ pub fn migrate_npm_lockfile<'a>(
 
         // Instead of calling this.appendPackage, manually append
         // the other function has some checks that will fail since we have not set resolution+dependencies yet.
-        this.packages.push(PackageListEntry {
-            // PERF(port): was assume_capacity
+        this.packages.append_assume_capacity(PackageListEntry {
             name: appended_name,
             name_hash,
 
@@ -799,10 +799,14 @@ pub fn migrate_npm_lockfile<'a>(
     }
 
     // PORT NOTE: MultiArrayList simultaneous mutable column access — split via raw ptrs.
-    let resolutions_col: *mut Resolution = this.packages.resolution.as_mut_ptr();
-    let metas_col: *mut lockfile::Meta = this.packages.meta.as_mut_ptr();
-    let dependencies_list_col: *mut ExternalSlice<Dependency> = this.packages.dependencies.as_mut_ptr();
-    let resolution_list_col: *mut ExternalSlice<PackageID> = this.packages.resolutions.as_mut_ptr();
+    // SAFETY: distinct columns alias-free; capacity fixed (no further append until end of fn).
+    let pkg_slice = this.packages.slice();
+    let resolutions_col: *mut Resolution = unsafe { pkg_slice.items_raw::<Resolution>(PackageField::Resolution) };
+    let metas_col: *mut lockfile::Meta = unsafe { pkg_slice.items_raw::<lockfile::Meta>(PackageField::Meta) };
+    let dependencies_list_col: *mut ExternalSlice<Dependency> =
+        unsafe { pkg_slice.items_raw::<ExternalSlice<Dependency>>(PackageField::Dependencies) };
+    let resolution_list_col: *mut ExternalSlice<PackageID> =
+        unsafe { pkg_slice.items_raw::<ExternalSlice<PackageID>>(PackageField::Resolutions) };
     let pkg_count = this.packages.len();
 
     #[cfg(debug_assertions)]
@@ -820,7 +824,7 @@ pub fn migrate_npm_lockfile<'a>(
         *resolutions_col = Resolution::init(ResTagged::Root);
         (*metas_col).origin = lockfile::Origin::Local;
     }
-    let root_name_hash = this.packages.name_hash[0];
+    let root_name_hash = this.packages.items_name_hash()[0];
     this.get_or_put_id(0, root_name_hash)?;
 
     // made it longer than max path just in case something stupid happens
@@ -1204,7 +1208,7 @@ pub fn migrate_npm_lockfile<'a>(
                                     };
                                 }
 
-                                let nh = this.packages.name_hash[id as usize];
+                                let nh = this.packages.items_name_hash()[id as usize];
                                 this.get_or_put_id(id, nh)?;
                             }
 

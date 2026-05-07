@@ -70,6 +70,20 @@ pub mod udp_socket {
     pub struct UDPSocket(());
 }
 
+/// Codegen path alias.
+///
+/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
+/// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
+/// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
+/// `mod.rs` as the wiring layer, so re-export the js2native entry points under
+/// the name the generator expects rather than special-casing the generator.
+pub mod socket {
+    pub use super::socket_body::{
+        js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
+        js_set_socket_options, js_upgrade_duplex_to_tls,
+    };
+}
+
 // ─── SocketEvents glue ───────────────────────────────────────────────────────
 // `uws_handlers::SocketEvents<SSL>` is the trait the vtable dispatch layer
 // (`uws_dispatch.rs`) requires of `api::NewSocket<SSL>`. The inherent

@@ -70,47 +70,6 @@ impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
     }
 }
 
-// ── BoringSSL FFI not yet surfaced in `bun_boringssl_sys` — declared locally
-// (mirrors `extern fn`s in `boringssl.zig`).
-mod boringssl_ffi {
-    use core::ffi::{c_int, c_uint, c_void};
-    use bun_boringssl_sys::{SSL, SSL_CTX};
-    pub const SSL_TLSEXT_ERR_OK: c_int = 0;
-    pub const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
-    pub const SSL_TLSEXT_ERR_NOACK: c_int = 3;
-    pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
-    unsafe extern "C" {
-        pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
-        pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
-        pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
-        pub fn SSL_select_next_proto(
-            out: *mut *mut u8,
-            outlen: *mut u8,
-            server: *const u8,
-            server_len: c_uint,
-            client: *const u8,
-            client_len: c_uint,
-        ) -> c_int;
-        pub fn SSL_CTX_set_alpn_select_cb(
-            ctx: *mut SSL_CTX,
-            cb: Option<
-                unsafe extern "C" fn(
-                    *mut SSL,
-                    *mut *const u8,
-                    *mut u8,
-                    *const u8,
-                    c_uint,
-                    *mut c_void,
-                ) -> c_int,
-            >,
-            arg: *mut c_void,
-        );
-        pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: c_uint) -> c_int;
-        pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
-        pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const core::ffi::c_char) -> c_int;
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Local NewSocketHandler address helpers (not yet in `bun_uws`)
 // ──────────────────────────────────────────────────────────────────────────
@@ -263,19 +222,19 @@ pub extern "C" fn select_alpn_callback(
     _arg: *mut c_void,
 ) -> c_int {
     // SAFETY: `SSL_get_ex_data(ssl, 0)` was set in `on_open` to `*mut TLSSocket`.
-    let this_ptr = unsafe { boringssl_ffi::SSL_get_ex_data(ssl, 0) };
+    let this_ptr = unsafe { boringssl_sys::SSL_get_ex_data(ssl, 0) };
     if this_ptr.is_null() {
-        return boringssl_ffi::SSL_TLSEXT_ERR_NOACK;
+        return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open).
     let this: &TLSSocket = unsafe { &*(this_ptr as *const TLSSocket) };
     if let Some(protos) = &this.protos {
         if protos.is_empty() {
-            return boringssl_ffi::SSL_TLSEXT_ERR_NOACK;
+            return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
         }
         // SAFETY: out/outlen/in are valid per BoringSSL ALPN callback contract.
         let status = unsafe {
-            boringssl_ffi::SSL_select_next_proto(
+            boringssl_sys::SSL_select_next_proto(
                 out as *mut *mut u8,
                 outlen,
                 protos.as_ptr(),
@@ -289,13 +248,13 @@ pub extern "C" fn select_alpn_callback(
         // in a useful ALPN response as part of the Server Hello message.
         // We now return SSL_TLSEXT_ERR_ALERT_FATAL in that case as per Section 3.2
         // of RFC 7301, which causes a fatal no_application_protocol alert.
-        if status == boringssl_ffi::OPENSSL_NPN_NEGOTIATED {
-            boringssl_ffi::SSL_TLSEXT_ERR_OK
+        if status == boringssl_sys::OPENSSL_NPN_NEGOTIATED {
+            boringssl_sys::SSL_TLSEXT_ERR_OK
         } else {
-            boringssl_ffi::SSL_TLSEXT_ERR_ALERT_FATAL
+            boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL
         }
     } else {
-        boringssl_ffi::SSL_TLSEXT_ERR_NOACK
+        boringssl_sys::SSL_TLSEXT_ERR_NOACK
     }
 }
 
@@ -1130,13 +1089,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL {
             if let Some(ssl_ptr) = self.socket.ssl() {
                 // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
-                if unsafe { boringssl_ffi::SSL_is_init_finished(ssl_ptr) } == 0 {
+                if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } == 0 {
                     if let Some(server_name) = &self.server_name {
                         let host: &[u8] = server_name.as_ref();
                         if !host.is_empty() {
                             let host_z = bun_core::ZBox::from_bytes(host);
                             // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe { boringssl_ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+                            unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
                         }
                     } else if let Some(connection) = &self.connection {
                         if let super::listener::UnixOrHost::Host { host, .. } = connection {
@@ -1144,7 +1103,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             if !host.is_empty() {
                                 let host_z = bun_core::ZBox::from_bytes(host);
                                 // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                                unsafe { boringssl_ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+                                unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
                             }
                         }
                     }
@@ -1154,13 +1113,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // not the CTX-level arg (shared across the listener).
                             // SAFETY: BoringSSL FFI; `self` outlives the SSL handshake.
                             unsafe {
-                                boringssl_ffi::SSL_set_ex_data(
+                                boringssl_sys::SSL_set_ex_data(
                                     ssl_ptr,
                                     0,
                                     self as *mut Self as *mut c_void,
                                 );
-                                boringssl_ffi::SSL_CTX_set_alpn_select_cb(
-                                    boringssl_ffi::SSL_get_SSL_CTX(ssl_ptr),
+                                boringssl_sys::SSL_CTX_set_alpn_select_cb(
+                                    boringssl_sys::SSL_get_SSL_CTX(ssl_ptr),
                                     Some(select_alpn_callback),
                                     ptr::null_mut(),
                                 );
@@ -1168,7 +1127,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         } else {
                             // SAFETY: BoringSSL FFI.
                             unsafe {
-                                boringssl_ffi::SSL_set_alpn_protos(
+                                boringssl_sys::SSL_set_alpn_protos(
                                     ssl_ptr,
                                     protos.as_ptr(),
                                     c_uint::try_from(protos.len()).unwrap(),

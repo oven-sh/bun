@@ -87,14 +87,17 @@ impl FileJsc for File {
 
             // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.
             // The standalone graph (and thus this Blob) lives for the process.
+            // `cached_blob` is typed against the lower crate's opaque `Blob`
+            // newtype (it cannot name `webcore::Blob` without a dep cycle), so
+            // erase via `.cast()` here and back below.
             // SAFETY: `Blob::new` returns a fresh non-null `Box::into_raw`.
-            self.cached_blob = Some(unsafe { NonNull::new_unchecked(Blob::new(b)) });
+            self.cached_blob = Some(unsafe { NonNull::new_unchecked(Blob::new(b)) }.cast());
         }
 
         // SAFETY: populated above; pointer originates from `Blob::new` and is
         // never freed for the graph's lifetime (store is intentionally leaked
-        // via `.ref_()`).
-        unsafe { self.cached_blob.unwrap().as_mut() }
+        // via `.ref_()`). Cast restores the real `webcore::Blob` type.
+        unsafe { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
     }
 }
 

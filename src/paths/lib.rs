@@ -417,10 +417,7 @@ pub mod fs {
         /// `instance_loaded` is asserted.
         #[inline]
         pub fn instance() -> &'static FileSystem {
-            INSTANCE.get().unwrap_or_else(|| {
-                eprintln!("FileSystem.instance accessed before init\n{}", std::backtrace::Backtrace::force_capture());
-                std::process::abort();
-            })
+            INSTANCE.get().expect("FileSystem.instance accessed before init")
         }
 
         /// Zig: `FileSystem.init(top_level_dir)` (force=false path). Higher-tier

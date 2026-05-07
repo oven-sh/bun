@@ -137,8 +137,8 @@ pub mod group {
         }
     }
 
-    /// RAII guard returned by [`begin`]; calls [`end`] on drop. Mirrors Zig's
-    /// `group.begin(@src()); defer group.end();` pattern.
+    /// RAII guard returned by [`begin`] / [`begin_msg`]; calls [`end`] on drop.
+    /// Mirrors Zig's `group.beginMsg(...); defer group.end();` pattern.
     #[must_use = "binding this guard keeps the log group open until end of scope"]
     pub struct GroupGuard(());
 
@@ -160,25 +160,26 @@ pub mod group {
             loc.line(),
             loc.column(),
             "", // fn_name not available in stable Rust
-        ));
-        GroupGuard(())
+        ))
     }
 
-    pub fn begin_msg(args: fmt::Arguments<'_>) {
-        if !get_log_enabled() {
-            return;
+    pub fn begin_msg(args: fmt::Arguments<'_>) -> GroupGuard {
+        if get_log_enabled() {
+            // TODO(port): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
+            // route through bun_core::Output stdout writer in Phase B.
+            let mut buf: Vec<u8> = Vec::new();
+            print_indent(&mut buf);
+            let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
+            let _ = write!(&mut buf, "{}\n", args);
+            let _ = std::io::stdout().write_all(buf.as_slice());
+
+            INDENT.fetch_add(1, Ordering::Relaxed);
+            LAST_WAS_START.store(true, Ordering::Relaxed);
         }
-
-        // TODO(port): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
-        // route through bun_core::Output stdout writer in Phase B.
-        let mut buf: Vec<u8> = Vec::new();
-        print_indent(&mut buf);
-        let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
-        let _ = write!(&mut buf, "{}\n", args);
-        let _ = std::io::stdout().write_all(buf.as_slice());
-
-        INDENT.fetch_add(1, Ordering::Relaxed);
-        LAST_WAS_START.store(true, Ordering::Relaxed);
+        // Guard returned unconditionally; `end()` is itself gated on
+        // `get_log_enabled()` so the disabled path stays a symmetric no-op
+        // (matches Zig's unconditional `defer group.end()`).
+        GroupGuard(())
     }
 
     pub fn end() {
@@ -186,9 +187,8 @@ pub mod group {
             return;
         }
         INDENT.fetch_sub(1, Ordering::Relaxed);
-        let last_was_start = LAST_WAS_START.load(Ordering::Relaxed);
-        // defer last_was_start = false;
-        let _guard = scopeguard::guard((), |_| LAST_WAS_START.store(false, Ordering::Relaxed));
+        // Zig: `defer last_was_start = false;` — read-then-clear, so a single swap suffices.
+        let last_was_start = LAST_WAS_START.swap(false, Ordering::Relaxed);
         if last_was_start {
             return; // std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
         }

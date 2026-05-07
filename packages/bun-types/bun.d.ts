@@ -4219,9 +4219,12 @@ declare module "bun" {
 
   type WebSocketOptionsProxy = {
     /**
-     * HTTP proxy to use for the WebSocket connection.
+     * Proxy to use for the WebSocket connection.
      *
      * Can be a string URL or an object with `url` and optional `headers`.
+     * Supported proxy URL schemes are `http:`, `https:`, `socks5:`, and
+     * `socks5h:`. SOCKS proxies support username/password credentials in the
+     * proxy URL. `proxy.headers` only applies to HTTP(S) proxies.
      *
      * @example
      * ```ts
@@ -4250,7 +4253,7 @@ declare module "bun" {
       | string
       | {
           /**
-           * The proxy URL (http:// or https://)
+           * The proxy URL (`http://`, `https://`, `socks5://`, or `socks5h://`)
            */
           url: string;
           /**

@@ -1937,6 +1937,9 @@ interface BunFetchRequestInit extends RequestInit {
    * This is a custom property that is not part of the Fetch API specification.
    *
    * Can be a string URL or an object with `url` and optional `headers`.
+   * Supported proxy URL schemes are `http:`, `https:`, `socks5:`, and `socks5h:`.
+   * SOCKS proxies support username/password credentials in the proxy URL.
+   * `proxy.headers` only applies to HTTP(S) proxies.
    *
    * @example
    * ```js

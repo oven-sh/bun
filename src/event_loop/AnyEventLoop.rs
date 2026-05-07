@@ -757,12 +757,15 @@ pub unsafe fn __bun_io_file_poll_register(
     kind: FilePollKind,
     fd: Fd,
 ) -> bun_sys::Result<()> {
-    let flag = match kind {
-        FilePollKind::Readable => AioFlags::PollReadable,
-        FilePollKind::Writable => AioFlags::PollWritable,
-    };
     // Spec PipeReader.zig:330 / PipeWriter.zig:64: `registerWithFd(loop,
-    // .{read,writ}able, .dispatch, fd)`.
+    // .{read,writ}able, .dispatch, fd)` — the *request* flag (`Readable` /
+    // `Writable`), not the registered-state flag (`PollReadable` / …).
+    // `register_with_fd_impl` switches on the former and would hit
+    // `unreachable!()` on the latter.
+    let flag = match kind {
+        FilePollKind::Readable => AioFlags::Readable,
+        FilePollKind::Writable => AioFlags::Writable,
+    };
     // SAFETY: `p` is a live hive slot; `loop_` is the `*mut UwsLoop` returned
     // by `__bun_io_event_loop_to_loop` (same ev handle).
     unsafe {

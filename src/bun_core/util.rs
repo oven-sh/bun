@@ -1124,8 +1124,14 @@ pub struct Version {
 #[repr(transparent)]
 pub struct RacyCell<T: ?Sized>(core::cell::UnsafeCell<T>);
 // SAFETY: by construction, callers promise external synchronization or
-// single-thread access. This is the `SyncUnsafeCell` contract — `Sync` is
-// unconditional because the cell *is* the synchronization boundary.
+// single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
+// `Sync` on `T: Sync`), this impl is intentionally unconditional: many
+// payloads ported from `static mut` are `!Sync` only by auto-trait inference
+// (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
+// because all access is single-threaded or externally synchronized — the
+// exact contract `static mut` already imposed. **Do not** wrap types whose
+// `!Sync` is load-bearing (`Cell<T>`, `Rc<T>`, `RefCell<T>`); use
+// `thread_local!` or a real lock for those.
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 

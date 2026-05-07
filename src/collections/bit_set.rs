@@ -790,17 +790,20 @@ pub type DynShiftInt = u32;
 const DYN_MASK_BITS: u32 = usize::BITS;
 
 // Never modified — the Zig comment about needing `static mut` was a Zig
-// limitation (no const-ptr → mut-ptr cast at comptime). Rust has no such
-// constraint: keep it in `.rodata` and cast to `*mut` at the boundary. The
-// only writes through `self.masks` are guarded by `num_masks() > 0`, which is
-// false for the empty sentinel (bit_length == 0).
-static EMPTY_MASKS_DATA: [usize; 2] = [0, 0];
+// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
+// `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
+// sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
+// forming a `*mut usize` to it remains a legally-mutable pointer target —
+// writing through a pointer derived from an immutable `static` would be UB
+// even if it never happens at runtime, and it lets `masks_slice_mut` form a
+// zero-length `&mut [usize]` without provenance hazards.
+static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::new([0, 0]);
 
 #[inline(always)]
 fn empty_masks_ptr() -> *mut usize {
     // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
     // The `*mut` is never written through while pointing at this static.
-    unsafe { (&raw const EMPTY_MASKS_DATA).cast::<usize>().add(1).cast_mut() }
+    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
 }
 
 impl Default for DynamicBitSetUnmanaged {

@@ -1270,19 +1270,23 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         // CLI overrides env var (NODE_USE_SYSTEM_CA)
-        let store = if use_bundled_ca {
-            BunCAStore::Bundled
+        let store: Option<BunCAStore> = if use_bundled_ca {
+            Some(BunCAStore::Bundled)
         } else if use_openssl_ca {
-            BunCAStore::Openssl
+            Some(BunCAStore::Openssl)
         } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
-            BunCAStore::System
+            Some(BunCAStore::System)
         } else {
-            // SAFETY: only this thread writes during startup; default is Bundled.
-            unsafe { core::mem::transmute::<u8, BunCAStore>(Bun__Node__CAStore.load(core::sync::atomic::Ordering::Relaxed)) }
+            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
+            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
+            // would be UB on an out-of-range discriminant.
+            None
         };
-        Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-        // Back-compat boolean used by native code until fully migrated
-        Bun__Node__UseSystemCA.store(store == BunCAStore::System, core::sync::atomic::Ordering::Relaxed);
+        if let Some(store) = store {
+            Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
+            // Back-compat boolean used by native code until fully migrated
+            Bun__Node__UseSystemCA.store(store == BunCAStore::System, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     if opts.port.is_some() && opts.origin.is_none() {

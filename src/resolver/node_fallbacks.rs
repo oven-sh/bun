@@ -83,11 +83,12 @@ type FallbackEntry = (&'static [u8], PackageJSON, fs::Path<'static>, fn() -> &'s
 
 // PORT NOTE: `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a
 // `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. Zig built this at
-// comptime (no thread-safety concern); the Rust port uses `static mut` + `Once`,
+// comptime (no thread-safety concern); the Rust port uses `RacyCell` + `Once`,
 // which matches the "process-lifetime singleton, init once, read-only thereafter"
 // shape. All reads go through `modules()`/`map()` which assert init ordering.
-static mut MODULES: Option<Box<[FallbackEntry]>> = None;
-static mut MAP: Option<bun_collections::StringHashMap<FallbackModule>> = None;
+static MODULES: bun_core::RacyCell<Option<Box<[FallbackEntry]>>> = bun_core::RacyCell::new(None);
+static MAP: bun_core::RacyCell<Option<bun_collections::StringHashMap<FallbackModule>>> =
+    bun_core::RacyCell::new(None);
 static INIT: std::sync::Once = std::sync::Once::new();
 
 #[cold]
@@ -120,19 +121,18 @@ fn init_modules() {
 
     let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
-    // thread observes `MODULES`/`MAP` until this returns. `&raw mut` avoids the
-    // static_mut_refs lint.
+    // thread observes `MODULES`/`MAP` until this returns.
     unsafe {
-        *(&raw mut MODULES) = Some(modules);
+        *MODULES.get() = Some(modules);
         let modules_ref: &'static [FallbackEntry] =
-            (*(&raw const MODULES)).as_deref().unwrap();
+            (*MODULES.get()).as_deref().unwrap();
         for (name, pkg, path, code) in modules_ref.iter() {
             m.insert(
                 Box::from(*name),
                 FallbackModule { path: path.clone(), package_json: pkg, code: *code },
             );
         }
-        *(&raw mut MAP) = Some(m);
+        *MAP.get() = Some(m);
     }
 }
 
@@ -140,14 +140,14 @@ fn init_modules() {
 fn modules() -> &'static [FallbackEntry] {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MODULES` is `Some` and never written again.
-    unsafe { (*(&raw const MODULES)).as_deref().unwrap() }
+    unsafe { (*MODULES.get()).as_deref().unwrap() }
 }
 
 #[inline]
 pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
-    unsafe { (*(&raw const MAP)).as_ref().unwrap() }
+    unsafe { (*MAP.get()).as_ref().unwrap() }
 }
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {

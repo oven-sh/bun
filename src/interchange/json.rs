@@ -867,35 +867,30 @@ type PackageJSONParser<'a, 'bump> =
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): these were `var` (mutable file-scope) in Zig because Expr.Data
-// stores `*E.Object` etc. Kept as `static mut` to preserve identity; access
-// must be `unsafe`. Phase B: prefer `Expr::Data` constructors that don't need
-// a backing static (e.g. inline empty-object sentinel).
-static mut EMPTY_OBJECT: E::Object = E::Object::EMPTY;
-static mut EMPTY_ARRAY: E::Array = E::Array::EMPTY;
-static mut EMPTY_STRING: E::String = E::String::EMPTY;
+// stores `*E.Object` etc. Never mutated — `RacyCell` only because
+// `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
+// Phase B: prefer `Expr::Data` constructors that don't need a backing static
+// (e.g. inline empty-object sentinel).
+static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
+static EMPTY_ARRAY: bun_core::RacyCell<E::Array> = bun_core::RacyCell::new(E::Array::EMPTY);
+static EMPTY_STRING: bun_core::RacyCell<E::String> = bun_core::RacyCell::new(E::String::EMPTY);
 
 #[inline]
 fn empty_string_data() -> js_ast::expr::Data {
-    // SAFETY: EMPTY_STRING is never mutated after init; treated as &'static.
-    // `StoreRef::from_raw` requires non-null aligned and outliving the next
-    // Store reset — a `static` trivially satisfies both.
-    js_ast::expr::Data::EString(unsafe {
-        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_STRING))
-    })
+    // SAFETY: EMPTY_STRING is never mutated; `StoreRef::from_raw` requires
+    // non-null aligned and outliving the next Store reset — a `static`
+    // trivially satisfies both.
+    js_ast::expr::Data::EString(unsafe { js_ast::StoreRef::from_raw(EMPTY_STRING.get()) })
 }
 #[inline]
 fn empty_object_data() -> js_ast::expr::Data {
     // SAFETY: see above.
-    js_ast::expr::Data::EObject(unsafe {
-        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_OBJECT))
-    })
+    js_ast::expr::Data::EObject(unsafe { js_ast::StoreRef::from_raw(EMPTY_OBJECT.get()) })
 }
 #[inline]
 fn empty_array_data() -> js_ast::expr::Data {
     // SAFETY: see above.
-    js_ast::expr::Data::EArray(unsafe {
-        js_ast::StoreRef::from_raw(core::ptr::addr_of_mut!(EMPTY_ARRAY))
-    })
+    js_ast::expr::Data::EArray(unsafe { js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()) })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

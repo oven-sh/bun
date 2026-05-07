@@ -81,12 +81,11 @@ impl OverrideMap {
 
     // the rest of this struct is expression parsing code:
 
-    pub fn parse_count(
-        &mut self,
-        _lockfile: &mut Lockfile,
-        expr: Expr,
-        builder: &mut StringBuilder,
-    ) {
+    // PORT NOTE: Zig passed `lockfile: *Lockfile` solely for `lockfile.allocator`
+    // (string transcode); JSON strings are already UTF-8 here, so the parameter
+    // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
+    // alias at the only call site.
+    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
             let ExprData::EObject(obj) = &overrides.expr.data else { return };
 
@@ -167,11 +166,11 @@ impl OverrideMap {
 
             let name_hash = SemverBuilder::string_hash(k);
 
-            let value = 'value: {
+            let value: Expr = 'value: {
                 // for one level deep, we will only support a string and  { ".": value }
                 let value_expr = prop.value.as_ref().unwrap();
                 if value_expr.data.is_e_string() {
-                    break 'value Some(*value_expr);
+                    break 'value *value_expr;
                 } else if let ExprData::EObject(value_obj) = &value_expr.data {
                     if let Some(dot) = value_expr.as_property(b".") {
                         if dot.expr.data.is_e_string() {
@@ -181,15 +180,15 @@ impl OverrideMap {
                             break 'value dot.expr;
                         } else {
                             log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
-                            break 'value None;
+                            continue;
                         }
                     } else {
                         log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
-                        break 'value None;
+                        continue;
                     }
                 }
                 log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
-                None
+                continue;
             };
 
             let version_str = value.as_utf8_string_literal().unwrap();

@@ -1903,8 +1903,8 @@ fn enqueue_local_tarball(
         // Normally tarball paths are always relative to the root directory, but if a
         // workspace depends on a tarball path, it should be relative to the workspace.
         // SAFETY: `workspace_res.tag == Workspace` checked above.
-        let workspace_path = unsafe { workspace_res.value.workspace }
-            .slice(this.lockfile.buffers.string_bytes.as_slice());
+        let workspace_str = unsafe { workspace_res.value.workspace };
+        let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
         let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &mut abs_buf,
@@ -2211,7 +2211,7 @@ fn get_or_put_resolved_package(
                     let existing_id = *existing_id;
                     if (existing_id as usize) < resolutions.len() {
                         let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, existing_resolution, version) {
+                        if resolution_satisfies_dependency(this, existing_resolution, &version) {
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -2258,7 +2258,7 @@ fn get_or_put_resolved_package(
                     for &existing_id in list.iter() {
                         if (existing_id as usize) < resolutions.len() {
                             let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, existing_resolution, version) {
+                            if resolution_satisfies_dependency(this, existing_resolution, &version) {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
                                     package: this.lockfile.packages.get(existing_id as usize),
@@ -2545,7 +2545,13 @@ fn get_or_put_resolved_package(
             let res: FolderResolutionValue = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
-                    let folder_path = this.lockfile.str(&folder);
+                    // PORT NOTE: reshaped for borrowck — `folder_path` borrows
+                    // `string_bytes`; route through a raw root so the
+                    // `&mut PackageManager` for `get_or_put` is reachable.
+                    let this_ptr: *mut PackageManager = this;
+                    // SAFETY: `get_or_put` copies `folder_path_abs` into the
+                    // lockfile string buffer before any other mutation.
+                    let folder_path = unsafe { &*this_ptr }.lockfile.str(&folder);
                     let mut buf2 = PathBuffer::uninit();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
@@ -2568,12 +2574,6 @@ fn get_or_put_resolved_package(
                     //     return .{ .package = this.lockfile.packages.get(0) };
                     // }
 
-                    // PORT NOTE: reshaped for borrowck — `folder_path_abs`
-                    // borrows either `this.lockfile` or `buf2`; route through
-                    // a raw root so `&mut PackageManager` is reachable.
-                    let this_ptr: *mut PackageManager = this;
-                    // SAFETY: `get_or_put` copies `folder_path_abs` into the
-                    // lockfile string buffer before any other mutation.
                     break 'res FolderResolution::get_or_put(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
                         version,
@@ -2650,7 +2650,13 @@ fn get_or_put_resolved_package(
                 .get(&name_hash)
                 .copied()
                 .unwrap_or(unsafe { version.value.workspace });
-            let workspace_path = this.lockfile.str(&workspace_path_raw);
+            // PORT NOTE: reshaped for borrowck — `workspace_path` may borrow
+            // `string_bytes`; route through a raw root so the
+            // `&mut PackageManager` for `get_or_put` is reachable.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `get_or_put` copies `workspace_path_u8` into the
+            // lockfile string buffer before any other mutation.
+            let workspace_path = unsafe { &*this_ptr }.lockfile.str(&workspace_path_raw);
             let mut buf2 = PathBuffer::uninit();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
@@ -2662,11 +2668,6 @@ fn get_or_put_resolved_package(
                 )
             };
 
-            // PORT NOTE: reshaped for borrowck — `workspace_path_u8` may
-            // borrow `this.lockfile`; route through a raw root.
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `get_or_put` copies `workspace_path_u8` into the
-            // lockfile string buffer before any other mutation.
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
                 version,
@@ -2733,7 +2734,7 @@ fn get_or_put_resolved_package(
 fn resolution_satisfies_dependency(
     this: &PackageManager,
     resolution: Resolution,
-    dependency: dependency::Version,
+    dependency: &dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {

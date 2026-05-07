@@ -371,7 +371,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                         name_hash,
                         version_sliced.slice,
                         &version_sliced,
-                        log,
+                        Some(&mut *log),
                         Some(&mut *manager),
                     ) {
                         Some(v) => v,
@@ -586,7 +586,10 @@ pub fn migrate_pnpm_lockfile<'a>(
                     Err(_) => return Err(invalid_pnpm_lockfile()),
                 };
 
-                let workspace_root = &workspace_pkg_json.root;
+                // PORT NOTE: copy `Expr` out by value so the `&mut manager`
+                // borrow held by `workspace_pkg_json` ends here — `manager`
+                // is reborrowed below for `parse_append_importer_dependencies`.
+                let workspace_root: Expr = workspace_pkg_json.root;
 
                 let name = as_string(&workspace_root.get(b"name").unwrap()).unwrap();
                 let name_hash = semver::string::Builder::string_hash(name);

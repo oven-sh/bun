@@ -1992,7 +1992,7 @@ pub fn init(
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
-        path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
+        resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
@@ -2252,7 +2252,12 @@ pub fn init_with_runtime_once(
                 network_task_fifo: NetworkQueue::init(),
                 log: log as *mut _,
                 root_dir,
-                env: Some(NonNull::from(env)),
+                // PORT NOTE: reborrow `&mut *env` so the local stays usable for
+                // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
+                // reads (Zig PackageManager.zig:1072 keeps using `env` after
+                // storing it in the struct). `NonNull` is a raw pointer —
+                // ending the reborrow here does not alias the later uses.
+                env: Some(NonNull::from(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count as u32,
@@ -2397,7 +2402,10 @@ pub fn init_with_runtime_once(
     // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
     // passed in does not alias the `&mut Lockfile` receiver.
-    if root_dir.has_comptime_query(b"bun.lockb") {
+    // PORT NOTE: `root_dir` was moved into `*manager` above (the field is
+    // `&'static mut DirEntry`, so the local reborrow is for `'static` and the
+    // original binding is dead). Read it back through `manager.root_dir`.
+    if manager.root_dir.has_comptime_query(b"bun.lockb") {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}

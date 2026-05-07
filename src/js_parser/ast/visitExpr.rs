@@ -268,7 +268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
                 match is_error {
                     true => p
-                        .log
+                        .log()
                         .add_range_error_fmt_with_notes(
                             Some(p.source),
                             r,
@@ -281,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .expect("unreachable"),
 
                     false => p
-                        .log
+                        .log()
                         .add_range_error_fmt_with_notes(
                             Some(p.source),
                             r,
@@ -759,10 +759,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             (record.path.text, record.range)
                         };
                         // We must visit it to convert inline_identifiers and record usage
+                        // Hoist the `Log` reborrow before the disjoint
+                        // `&mut p.options.macro_context` borrow so both can be
+                        // passed to one call (Zig held two raw `*Log`).
+                        // SAFETY: see `P::log()` — pointee outlives `'a`.
+                        let log = unsafe { &mut *p.log.as_ptr() };
                         let macro_result = match macro_context_call(
                             p.options.macro_context.as_deref_mut(),
                             record_path_text,
-                            p.log(),
+                            log,
                             p.source,
                             record_range,
                             expr,
@@ -2069,10 +2074,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let copied = Expr { loc: expr.loc, data: expr.data };
                 let start_error_count = p.log().errors;
                 p.macro_call_count += 1;
+                // Hoist the `Log` reborrow before the disjoint
+                // `&mut p.options.macro_context` borrow so both can be passed
+                // to one call (Zig held two raw `*Log`).
+                // SAFETY: see `P::log()` — pointee outlives `'a`.
+                let log = unsafe { &mut *p.log.as_ptr() };
                 let macro_result = match macro_context_call(
                     p.options.macro_context.as_deref_mut(),
                     record_path_text,
-                    p.log(),
+                    log,
                     p.source,
                     record_range,
                     copied,

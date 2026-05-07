@@ -2480,8 +2480,8 @@ impl Data {
                 )
             });
         }
-        #[inline(always)]
         use crate::ast::base::RefExt as _;
+        #[inline(always)]
         fn name_of<H: bun_core::Hasher + ?Sized, S: crate::ast::base::SymbolTable + ?Sized>(
             h: &mut H,
             symbol_table: &mut S,

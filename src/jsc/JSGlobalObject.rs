@@ -1349,13 +1349,12 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum BunPluginTarget {
-    Bun = 0,
-    Node = 1,
-    Browser = 2,
-}
+/// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). The enum is
+/// defined once in `bun_bundler::transpiler` (the lowest tier that names it,
+/// for `Linker::link`'s call into `PluginResolver::on_resolve`) and re-exported
+/// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
+/// type — no mirror enum, no transmute.
+pub use bun_bundler::transpiler::BunPluginTarget;
 
 // PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
 // (only `errno`/`name` default to null). Callers must always supply `code`.

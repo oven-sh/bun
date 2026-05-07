@@ -1168,7 +1168,204 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
+    apply_standalone_runtime_flags,
+    parse_worker_exec_argv_allow_addons,
+    cron_clear_all_teardown,
+    retroactively_report_discovered_tests,
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// WebWorker / Debugger runtime hooks (spec web_worker.zig / Debugger.zig)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec web_worker.zig:552.
+///
+/// # Safety
+/// `transpiler` is the worker VM's live `&mut Transpiler` (not yet visible to
+/// any other thread); `graph` is the process-lifetime trait object whose data
+/// pointer is a `bun_standalone_graph::Graph` (the only implementor — set in
+/// `init_with_module_graph` / inherited from the parent VM).
+unsafe fn apply_standalone_runtime_flags(
+    transpiler: *mut bun_bundler::Transpiler<'static>,
+    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+) {
+    // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
+    // the concrete `Graph`. Same downcast pattern as `load_standalone_sourcemap`.
+    let graph = unsafe {
+        &*(graph as *const dyn bun_resolver::StandaloneModuleGraph
+            as *const bun_standalone_graph::Graph)
+    };
+    // SAFETY: per fn contract.
+    crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
+}
+
+/// Spec web_worker.zig:445-476 — parse a Worker's `execArgv` against the
+/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
+/// on parse error (Zig's `catch break :parse_new_args`).
+///
+/// PORT NOTE: the Rust `bun_clap::parse_ex` port currently constrains
+/// `ArgIter<'static>` (parsed values are stored by reference), which would
+/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
+/// reads the single `--no-addons` flag from the result (per the in-tree
+/// `// TODO: currently this only checks for --no-addons`), so this body scans
+/// the converted argv directly with the same `stop_after_positional_at = 1`
+/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
+/// borrowed-lifetime variant.
+///
+/// # Safety
+/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
+/// `Worker::create` array, kept alive for the worker's lifetime).
+unsafe fn parse_worker_exec_argv_allow_addons(
+    exec_argv: &[bun_string::WTFStringImpl],
+) -> Option<bool> {
+    let mut no_addons = false;
+    for &arg in exec_argv {
+        if arg.is_null() {
+            continue;
+        }
+        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
+        let owned = unsafe { (*arg).to_owned_slice_z() };
+        let bytes = owned.as_bytes();
+        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
+        if bytes.first() != Some(&b'-') {
+            break;
+        }
+        if bytes == b"--" {
+            break;
+        }
+        if bytes == b"--no-addons" {
+            no_addons = true;
+        }
+    }
+    // Spec: `transform_options.allow_addons = !args.flag("--no-addons")` —
+    // override unconditionally on successful parse.
+    Some(!no_addons)
+}
+
+/// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
+/// web_worker.zig:727. Stops every in-process `Bun.cron()` job registered on
+/// this VM and releases the pending-promise ref so the struct frees (the event
+/// loop is dying; settle callbacks will never run).
+///
+/// # Safety
+/// `vm` is the live worker-thread VM, unpublished (sole owner) at the call
+/// site (`WebWorker::shutdown` after `vm_lock` unpublish).
+unsafe fn cron_clear_all_teardown(vm: *mut VirtualMachine) {
+    use crate::api::cron::{ClearMode, CronJob};
+    // SAFETY: per fn contract.
+    CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(unsafe { &mut *vm });
+}
+
+/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec
+/// Debugger.zig:351-421. When `TestReporter.enable` arrives after test
+/// collection has started, walk the already-discovered scope tree, assign
+/// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
+///
+/// # Safety
+/// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
+/// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
+/// thread.
+unsafe fn retroactively_report_discovered_tests(
+    agent: *mut bun_jsc::debugger::TestReporterHandle,
+) {
+    use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
+    use crate::test_runner::jest::Jest;
+    use bun_jsc::debugger::{TestReporterHandle, TestType};
+
+    let Some(runner) = Jest::runner() else { return };
+    let Some(active_file) = runner.bun_test_root.active_file.as_ref() else { return };
+    // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
+    let active_file = unsafe { &mut *active_file.as_ptr() };
+
+    // Only report if we're in collection or execution phase (tests have been
+    // discovered).
+    match active_file.phase {
+        Phase::Collection | Phase::Execution => {}
+        Phase::Done => return,
+    }
+
+    // Get the file path for source location info.
+    let file_path = runner.files.items_source()[active_file.file_id as usize]
+        .path
+        .text();
+    let mut source_url = bun_string::String::init(file_path);
+
+    // Track the maximum ID we assign.
+    let mut max_id: i32 = 0;
+
+    // Recursively report all discovered tests starting from root scope.
+    retroactively_report_scope(
+        agent,
+        &mut active_file.collection.root_scope,
+        -1,
+        &mut max_id,
+        &mut source_url,
+    );
+
+    bun_core::scoped_log!(TestReporterAgent, "retroactively reported {} tests", max_id);
+
+    /// Spec Debugger.zig:376 `retroactivelyReportScope`.
+    fn retroactively_report_scope(
+        agent: *mut TestReporterHandle,
+        scope: &mut DescribeScope,
+        parent_id: i32,
+        max_id: &mut i32,
+        source_url: &mut bun_string::String,
+    ) {
+        for entry in scope.entries.iter_mut() {
+            match entry {
+                TestScheduleEntry::Describe(describe) => {
+                    if describe.base.test_id_for_debugger == 0 {
+                        *max_id += 1;
+                        let test_id = *max_id;
+                        // Assign the ID so start/end events will fire during
+                        // execution.
+                        describe.base.test_id_for_debugger = test_id;
+                        let mut name = bun_string::String::init(
+                            describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                        );
+                        // SAFETY: `agent` is a live C++ handle (fn contract).
+                        unsafe { &mut *agent }.report_test_found_with_location(
+                            test_id,
+                            &mut name,
+                            TestType::Describe,
+                            parent_id,
+                            source_url,
+                            describe.base.line_no as i32,
+                        );
+                        // Recursively report children with this describe as
+                        // parent.
+                        retroactively_report_scope(agent, describe, test_id, max_id, source_url);
+                    } else {
+                        // Already has ID, just recurse with existing ID as
+                        // parent.
+                        let existing = describe.base.test_id_for_debugger;
+                        retroactively_report_scope(agent, describe, existing, max_id, source_url);
+                    }
+                }
+                TestScheduleEntry::TestCallback(test_entry) => {
+                    if test_entry.base.test_id_for_debugger == 0 {
+                        *max_id += 1;
+                        let test_id = *max_id;
+                        test_entry.base.test_id_for_debugger = test_id;
+                        let mut name = bun_string::String::init(
+                            test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                        );
+                        // SAFETY: `agent` is a live C++ handle (fn contract).
+                        unsafe { &mut *agent }.report_test_found_with_location(
+                            test_id,
+                            &mut name,
+                            TestType::Test,
+                            parent_id,
+                            source_url,
+                            test_entry.base.line_no as i32,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // ConsoleObject runtime-type hooks (spec ConsoleObject.zig)

@@ -186,7 +186,7 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
-    pub plugin_runner: Option<bun_bundler::transpiler::PluginRunner>,
+    pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 

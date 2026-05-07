@@ -406,6 +406,7 @@ pub mod garbage_collection_controller;
 #[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"] pub mod resolver_jsc;
 #[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
+#[path = "PluginRunner.rs"] pub mod plugin_runner;
 
 #[rustfmt::skip]
 #[path = "host_fn.rs"] pub mod host_fn;
@@ -1277,9 +1278,9 @@ pub struct ValidateObjectOpts {
 }
 
 /// Mirrors `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig). Defined once
-/// in `js_global_object` (where `run_on_load_plugins` consumes it) and
-/// re-exported here so `crate::BunPluginTarget` and the method parameter share
-/// one nominal type.
+/// in `bun_bundler::transpiler` (lowest tier) and re-exported via
+/// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
+/// nominal type.
 pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1429,20 +1430,16 @@ pub type ZigStringSlice = bun_string::ZigStringSlice;
 /// full API surface.
 #[allow(non_snake_case)]
 pub mod WebCore {
-    pub use crate::webcore_types::store::Store;
-    pub use crate::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
+    pub use crate::webcore_types::store::{Store, StoreRef};
+    pub use crate::webcore_types::{Blob, SizeType, MAX_SIZE};
 }
 /// Lower-case alias + nested `blob` namespace (Zig: `jsc.webcore.blob.Store`).
 pub mod webcore {
-    pub use crate::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
+    pub use crate::webcore_types::{Blob, SizeType, MAX_SIZE};
     pub mod blob {
         pub use crate::webcore_types::store::*;
         pub use crate::webcore_types::{SizeType, MAX_SIZE};
     }
-}
-/// `jsc.API` (jsc.zig:164, deprecated alias) — only `BuildArtifact` is hoisted.
-pub mod api {
-    pub use crate::webcore_types::BuildArtifact;
 }
 /// `jsc.Node` (jsc.zig:165, deprecated alias) — `PathLike`/`PathOrFileDescriptor`
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.

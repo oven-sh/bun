@@ -1758,8 +1758,8 @@ impl<'a> LinkerContext<'a> {
         let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
             &*(&self.graph.files.items_line_offset_table()[source_index.get() as usize] as *const _)
         };
-        let mangled_props: &js_printer::MangledProps =
-            unsafe { &*(&self.mangled_props as *const _) };
+        let mangled_props: &MangledProps =
+            unsafe { &*(&self.mangled_props as *const MangledProps) };
 
         let print_options = js_printer::Options {
             bundling: true,

@@ -861,7 +861,12 @@ pub struct SendQueue {
     pub incoming_fd: Option<Fd>,
 
     pub socket: SocketUnion,
-    pub owner: SendQueueOwner,
+    /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
+    /// SendQueue is stored inline in its owner, so this is a self-referential
+    /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
+    /// live (every access goes through `unsafe { &mut *self.owner }` at the
+    /// call site, mirroring the Zig union dispatch).
+    pub owner: *mut dyn SendQueueOwner,
 
     pub close_next_tick: Option<Task>,
     /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
@@ -875,52 +880,24 @@ pub struct SendQueue {
     pub windows: WindowsState,
 }
 
-/// Dispatch table for the SendQueue's owning object — either a `Subprocess`
-/// (parent side) or a `VirtualMachine::IPCInstance` (child side). Both live in
-/// `bun_runtime` (tier-6), so the concrete types are erased here and routed
-/// through fn pointers that `bun_runtime` supplies at construction time.
-pub struct SendQueueOwnerVTable {
-    pub global_this: unsafe fn(*mut c_void) -> *const JSGlobalObject,
-    pub handle_ipc_close: unsafe fn(*mut c_void),
-    pub handle_ipc_message: unsafe fn(*mut c_void, DecodedIPCMessage, JSValue),
-    /// `Subprocess.this_value.tryGet()` — returns ZERO for the VM-side owner.
-    pub this_jsvalue: unsafe fn(*mut c_void) -> JSValue,
+/// Dispatch surface for the SendQueue's embedding object — either a
+/// `Subprocess` (parent side, `bun_runtime`) or a `VirtualMachine::IPCInstance`
+/// (child side, this crate). Replaces the Zig `union(enum) { subprocess,
+/// virtual_machine }` switch with a trait object so the concrete `Subprocess`
+/// type need not be named here.
+pub trait SendQueueOwner {
+    fn global_this(&self) -> *const JSGlobalObject;
+    fn handle_ipc_close(&mut self);
+    fn handle_ipc_message(&mut self, msg: DecodedIPCMessage, handle: JSValue);
+    /// `Subprocess.this_value.tryGet()` — returns `ZERO` for the VM-side owner.
+    fn this_jsvalue(&self) -> JSValue;
+    fn kind(&self) -> SendQueueOwnerKind;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum SendQueueOwnerKind {
     Subprocess,
     VirtualMachine,
-}
-
-pub struct SendQueueOwner {
-    pub ptr: *mut c_void,
-    pub kind: SendQueueOwnerKind,
-    pub vtable: &'static SendQueueOwnerVTable,
-}
-
-impl SendQueueOwner {
-    #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
-        // the vtable fn was supplied by the same crate that owns `ptr`.
-        unsafe { &*(self.vtable.global_this)(self.ptr) }
-    }
-    #[inline]
-    fn handle_ipc_close(&self) {
-        // SAFETY: see global_this.
-        unsafe { (self.vtable.handle_ipc_close)(self.ptr) }
-    }
-    #[inline]
-    fn handle_ipc_message(&self, msg: DecodedIPCMessage, handle: JSValue) {
-        // SAFETY: see global_this.
-        unsafe { (self.vtable.handle_ipc_message)(self.ptr, msg, handle) }
-    }
-    #[inline]
-    fn this_jsvalue(&self) -> JSValue {
-        // SAFETY: see global_this.
-        unsafe { (self.vtable.this_jsvalue)(self.ptr) }
-    }
 }
 
 #[cfg(windows)]
@@ -935,7 +912,7 @@ pub enum SocketUnion {
 }
 
 impl SendQueue {
-    pub fn init(mode: Mode, owner: SendQueueOwner, socket: SocketUnion) -> Self {
+    pub fn init(mode: Mode, owner: *mut dyn SendQueueOwner, socket: SocketUnion) -> Self {
         log!("SendQueue#init");
         Self {
             queue: Vec::new(),
@@ -1121,7 +1098,8 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
-        this.owner.handle_ipc_close();
+        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+        unsafe { (*this.owner).handle_ipc_close() };
         Ok(())
     }
 
@@ -1215,8 +1193,7 @@ impl SendQueue {
                 if let Ok(warning_name_js) =
                     crate::bun_string_jsc::transfer_to_js(&mut warning_name, global)
                 {
-                    let _ = global_emit_warning(
-                        global,
+                    let _ = global.emit_warning(
                         warning_js,
                         warning_name_js,
                         JSValue::UNDEFINED,
@@ -1579,8 +1556,8 @@ impl SendQueue {
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
         // JSC for the VM's lifetime, so the 'static erase is sound here.
-        // SAFETY: see above — BACKREF through owner vtable.
-        unsafe { &*(self.owner.vtable.global_this)(self.owner.ptr) }
+        // SAFETY: see above — BACKREF through owner trait object.
+        unsafe { &*(*self.owner).global_this() }
     }
 
     #[cfg(windows)]

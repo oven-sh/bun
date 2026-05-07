@@ -288,7 +288,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-     // blocked_on: P::init / parse_stmts_up_to / add_import_record (P.rs gated)
     fn _scan_imports<const TS: bool, JX: JsxT>(
         &mut self,
         scan_pass: &'a mut ScanPassResult,
@@ -419,7 +418,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-     // blocked_on: P::init / prepare_for_visit_pass / to_ast (P.rs gated)
     pub fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
@@ -520,7 +518,6 @@ impl<'a> Parser<'a> {
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, WrapMode::None, b"")?))
     }
 
-     // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
     pub fn analyze(
         &mut self,
         context: *mut c_void,

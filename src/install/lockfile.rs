@@ -914,7 +914,7 @@ impl Lockfile {
     }
 
     pub fn clean(
-        old: &mut Lockfile,
+        &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
         exact_versions: bool,
@@ -925,7 +925,7 @@ impl Lockfile {
         let mut log = logger::Log::init();
         // defer { for (...) item.deinit(); log.deinit(); } — handled by Drop
 
-        Lockfile::clean_with_logger(old, manager, updates, &mut log, exact_versions, log_level)
+        self.clean_with_logger(manager, updates, &mut log, exact_versions, log_level)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -1008,7 +1008,7 @@ impl Lockfile {
     }
 
     pub fn clean_with_logger(
-        old: &mut Lockfile,
+        &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
         log: &mut logger::Log,
@@ -1016,6 +1016,9 @@ impl Lockfile {
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
+        // Zig names the receiver `old`; alias `self` so the body reads
+        // identically to the spec (lockfile.zig:637).
+        let old: &mut Lockfile = self;
         // Zig: `var timer: std.time.Timer = undefined;` — model the
         // uninitialized sentinel with `Option`.
         let mut timer: Option<Timer> = None;
@@ -2681,10 +2684,13 @@ impl<'a> EqlSorter<'a> {
 impl Lockfile {
     /// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
     pub fn eql(
-        l: &Lockfile,
+        &self,
         r: &Lockfile,
         cut_off_pkg_id: usize,
     ) -> Result<bool, AllocError> {
+        // Zig names the receiver `l`; alias `self` so the body matches the
+        // spec verbatim (lockfile.zig:1798).
+        let l: &Lockfile = self;
         let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
         let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
         let l_string_buf = l.buffers.string_bytes.as_slice();

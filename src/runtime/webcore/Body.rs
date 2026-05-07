@@ -1376,9 +1376,16 @@ impl Value {
                     locked.readable = Default::default();
                 }
             }
-            Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
-                // Zig: `clearAndFree` / `str.deref` — handled by dropping the
-                // variant payload (Vec / Arc<WTFStringImpl>) via assignment.
+            Value::InternalBlob(_) => {
+                // Zig: `clearAndFree` — handled by dropping the Vec via assignment.
+                *self = Value::Null;
+            }
+            Value::WTFStringImpl(s) => {
+                // Zig: `this.WTFStringImpl.deref(); this.* = .Null;` — release the
+                // intrusive +1 the body holds. WTFStringImpl is a Copy raw ptr with no
+                // Drop, so we must deref explicitly.
+                // SAFETY: non-null live WTF::StringImpl; deref may free it.
+                unsafe { (**s).deref() };
                 *self = Value::Null;
             }
             Value::Blob(b) => {
@@ -1533,10 +1540,10 @@ impl Value {
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
 
-        if let Value::WTFStringImpl(s) = self {
+        if let Value::WTFStringImpl(s) = *self {
             // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr; bump +1.
-            unsafe { (***s).r#ref() };
-            return Ok(Value::WTFStringImpl(std::sync::Arc::new(**s)));
+            unsafe { (*s).r#ref() };
+            return Ok(Value::WTFStringImpl(s));
         }
 
         if matches!(self, Value::Null) {

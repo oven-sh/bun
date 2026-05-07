@@ -134,7 +134,8 @@ pub mod expect {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
-        // ── Phase-D shims for matcher drafts (TODO(port): land in bun_jsc) ──
+        // ── forwarders to `bun_jsc::JSValue` inherents (kept on the trait so
+        //    matcher drafts importing `JSValueTestExt` resolve them in scope) ──
         fn values(self, global: &JSGlobalObject) -> JsResult<JSValue>;
         fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue>;
         fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool>;

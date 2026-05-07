@@ -590,18 +590,20 @@ impl S3Client {
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-        // `S3::list_objects` takes `&mut self` plus `&Store` (the same allocation);
-        // borrowck cannot prove these disjoint through `StoreRef`'s `Deref`, so go
-        // through the raw `as_ptr()` (mutable provenance from `Box::into_raw`).
+        // `S3::list_objects` takes `&mut self` plus the parent `Store` as
+        // `NonNull` (raw) — passing it as `&Store` would invalidate the
+        // `&mut S3` receiver under Stacked Borrows since both alias the same
+        // allocation.
         let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: `store_ptr` is live for the duration of `blob`; aliasing
-        // `&mut S3` (a field of `Store.data`) with `&Store` mirrors the Zig
-        // pointer semantics — single-threaded JS event-loop discipline.
+        // SAFETY: `store_ptr` is live for the duration of `blob` and never null
+        // (`StoreRef` wraps `NonNull`); single-threaded JS event-loop discipline.
         unsafe {
-            (*store_ptr)
-                .data
-                .as_s3_mut()
-                .list_objects(&*store_ptr, global, object_keys, options)
+            (*store_ptr).data.as_s3_mut().list_objects(
+                NonNull::new_unchecked(store_ptr),
+                global,
+                object_keys,
+                options,
+            )
         }
     }
 

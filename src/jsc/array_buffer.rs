@@ -533,41 +533,48 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
+    /// Zig `asU16`: `@alignCast(asU16Unaligned())`. `@alignCast` is a checked
+    /// cast in Zig safe builds, so we debug-assert the same precondition here
+    /// before handing out a naturally-aligned `&mut [u16]`. Callers that cannot
+    /// guarantee alignment must use [`as_u16_unaligned`] instead.
     #[inline]
     pub fn as_u16(&mut self) -> &mut [u16] {
-        // TODO(port): Zig @alignCast — Rust slices require natural alignment. This will be UB
-        // if ptr is not 2-byte aligned. Phase B: consider returning &[Unaligned<u16>] or asserting.
-        self.as_u16_unaligned()
+        bun_core::Unaligned::slice_align_cast_mut(self.as_u16_unaligned())
     }
 
+    /// Zig `asU16Unaligned() []align(1) u16`. Returns a slice of
+    /// [`Unaligned<u16>`](bun_core::Unaligned) — Rust forbids forming
+    /// `&[u16]` over a possibly-odd address, so the align(1) wrapper carries
+    /// the "load via `read_unaligned`" obligation to the caller.
     #[inline]
-    pub fn as_u16_unaligned(&mut self) -> &mut [u16] {
+    pub fn as_u16_unaligned(&mut self) -> &mut [bun_core::Unaligned<u16>] {
         if self.is_detached() {
             return &mut [];
         }
-        // TODO(port): Zig returns []align(1) u16; Rust has no unaligned slice type.
-        // SAFETY: ptr non-null; len = floor(byte_len/2). Alignment NOT checked — see above.
-        // `&mut self` enforces exclusive access to this view.
+        // SAFETY: ptr non-null (checked above); `Unaligned<u16>` has size 2 and
+        // align 1, so any `*mut u8` is a valid `*mut Unaligned<u16>`. `&mut self`
+        // enforces exclusive access to this view for the borrow's lifetime.
         let len = self.byte_len / core::mem::size_of::<u16>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<u16>(), len) }
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
     }
 
+    /// See [`as_u16`]; 4-byte variant.
     #[inline]
     pub fn as_u32(&mut self) -> &mut [u32] {
-        // TODO(port): see as_u16 alignment note.
-        self.as_u32_unaligned()
+        bun_core::Unaligned::slice_align_cast_mut(self.as_u32_unaligned())
     }
 
+    /// See [`as_u16_unaligned`]; 4-byte variant.
     #[inline]
-    pub fn as_u32_unaligned(&mut self) -> &mut [u32] {
+    pub fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
         if self.is_detached() {
             return &mut [];
         }
-        // TODO(port): Zig returns []align(1) u32; Rust has no unaligned slice type.
-        // SAFETY: ptr non-null; len = floor(byte_len/4). Alignment NOT checked.
-        // `&mut self` enforces exclusive access to this view.
+        // SAFETY: ptr non-null; `Unaligned<u32>` has size 4 / align 1, so any
+        // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
+        // exclusive access to this view.
         let len = self.byte_len / core::mem::size_of::<u32>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<u32>(), len) }
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
     }
 }
 
@@ -734,17 +741,17 @@ impl BinaryType {
             | BinaryType::BigUint64Array => {
                 let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
                 // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
-                // `buffer` is a fresh ArrayBuffer JSValue (cell pointer), so its encoded bits
-                // are a valid JSObjectRef.
+                // `buffer` is a fresh ArrayBuffer JSValue (cell pointer), so
+                // `as_object_ref` yields a valid `JSObjectRef`.
                 let obj = unsafe {
                     JSObjectMakeTypedArrayWithArrayBuffer(
                         global,
                         self.to_typed_array_type().to_c(),
-                        buffer.0 as jsc_c::JSObjectRef,
+                        buffer.as_object_ref(),
                         ptr::null_mut(),
                     )
                 };
-                Ok(JSValue::from_encoded(obj as usize))
+                Ok(JSValue::c(obj))
             }
         }
     }

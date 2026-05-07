@@ -1186,6 +1186,9 @@ unsafe extern "C" {
     fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
     fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toRangeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toDOMExceptionInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject, code: u8) -> JSValue;
     fn ZigString__toValueGC(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toAtomicValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toExternalValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
@@ -1440,25 +1443,8 @@ impl FromJsEnum for bun_sys::SignalCode {
     }
 }
 
-unsafe extern "C" {
-    fn URL__pathFromFileURL(input: *mut bun_string::String) -> bun_string::String;
-    fn URL__getHrefFromJS(value: JSValue, global: *mut JSGlobalObject) -> bun_string::String;
-}
-impl URL {
-    pub fn path_from_file_url(s: bun_string::String) -> bun_string::String {
-        let mut input = s;
-        // SAFETY: `input` is a valid bun.String passed by mutable pointer (FFI consumes it).
-        unsafe { URL__pathFromFileURL(&mut input) }
-    }
-    #[track_caller]
-    pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
-        // SAFETY: `global` is live; FFI may set an exception. `#[track_caller]`
-        // forwards the caller's source location into the exception scope.
-        host_fn::from_js_host_call_generic(global, || unsafe {
-            URL__getHrefFromJS(value, global.as_ptr())
-        })
-    }
-}
+// `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
+// dedicated port file); the lib.rs copies were duplicate definitions.
 
 // B-2 Track A — JSString (un-gated; real module in JSString.rs).
 #[path = "JSString.rs"] pub mod js_string;
@@ -1685,6 +1671,12 @@ impl StringJsc for bun_string::String {
 pub trait ZigStringJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toSyntaxErrorInstance` (ZigString.zig:814).
+    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toRangeErrorInstance` (ZigString.zig:819).
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toDOMExceptionInstance` (ZigString.zig:809).
+    fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode) -> JSValue;
     /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
     /// external value if globally allocated).
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;

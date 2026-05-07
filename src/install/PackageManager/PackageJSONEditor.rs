@@ -256,6 +256,15 @@ pub fn edit_update_no_args(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
+    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for
+    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
+    // SAFETY: `manager` is a leaked singleton; the arena's address is stable for the
+    // remainder of the process. Taken as a raw pointer (then reborrowed at each use
+    // site) so the compiler does not see a long-lived shared borrow of `*manager`
+    // overlapping the disjoint `&mut manager.<field>` accesses below.
+    let arena: *const bun_alloc::Arena = &manager.ast_arena;
+    let arena = unsafe { &*arena };
+
     for group in DEPENDENCY_GROUPS {
         let group_str = group.0;
 

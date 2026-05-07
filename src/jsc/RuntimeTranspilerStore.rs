@@ -50,7 +50,6 @@ use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, Resol
 // `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
 use bun_bundler::RuntimeTranspilerCache;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -706,14 +705,22 @@ impl TranspilerJob {
             m
         };
 
-        let mut fallback_source: logger::Source = logger::Source::default();
+        // Zig: `var fallback_source: logger.Source = undefined;` — only
+        // initialised on the `is_node_override` branch and only read through
+        // `parse_options.virtual_source` (raw-ptr borrow). `MaybeUninit` mirrors
+        // the `= undefined` exactly; the write is `Cow::Borrowed`/borrowed-path
+        // only, so skipping `Drop` is sound.
+        let mut fallback_source = core::mem::MaybeUninit::<logger::Source>::uninit();
 
         // Usually, we want to close the input file automatically.
         //
         // If we're re-using the file descriptor from the fs watcher
         // Do not close it because that will break the kqueue-based watcher
         //
-        let mut should_close_input_file_fd = fd.is_none();
+        // PORT NOTE: stored in a `Cell` so the scopeguard closure can capture
+        // `&Cell<bool>` and the post-parse writes are visible to it without
+        // raw-pointer laundering (which the unused-assignment lint can't see).
+        let should_close_input_file_fd = Cell::new(fd.is_none());
 
         let mut input_file_fd: Fd = Fd::INVALID;
 

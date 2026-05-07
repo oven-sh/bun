@@ -355,7 +355,12 @@ pub struct PackageManager {
     pub cache_directory_: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir → bun_sys::Dir
     pub cache_directory_path: ZBox,             // TODO(port): lifetime — singleton-leaked
     pub root_dir: &'static mut fs::DirEntry,
-    // allocator: dropped per §Allocators
+    // allocator: dropped per §Allocators (was `bun.default_allocator`). For the
+    // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
+    // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
+    // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
+    // this arena has process lifetime, matching the Zig allocator's semantics.
+    pub ast_arena: bun_alloc::Arena,
     // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut logger::Log`
     // (struct gets `<'a>`). Kept as raw ptr because PackageManager is a leaked singleton stored
     // in a `static`; threading `<'a>` through the global holder is deferred to Phase B.
@@ -1874,6 +1879,7 @@ pub fn init(
                 patch_task_fifo: PatchTaskFifo::init(),
                 log: ctx.log,
                 root_dir: entries_option,
+                ast_arena: bun_alloc::Arena::new(),
                 // PORT NOTE: reborrow `&mut *env` so the local stays usable for
                 // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
                 // reads (Zig PackageManager.zig:910 keeps using `env` after
@@ -2252,6 +2258,7 @@ pub fn init_with_runtime_once(
                 network_task_fifo: NetworkQueue::init(),
                 log: log as *mut _,
                 root_dir,
+                ast_arena: bun_alloc::Arena::new(),
                 // PORT NOTE: reborrow `&mut *env` so the local stays usable for
                 // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
                 // reads (Zig PackageManager.zig:1072 keeps using `env` after

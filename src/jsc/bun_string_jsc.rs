@@ -362,11 +362,14 @@ pub mod unicode_testing_apis {
             }
         };
 
-        // SAFETY: `to_utf16_alloc_for_real(.., sentinel=true)` writes a NUL at
-        // index `len`; the backing allocation is `len + 1` wide.
-        debug_assert!(unsafe { *result.as_ptr().add(result.len()) } == 0);
+        // PORT NOTE: the Rust port of `to_utf16_alloc_for_real(.., sentinel=true)`
+        // stores the trailing NUL **inside** the `Vec` (Zig's `[:0]u16` excludes
+        // it from `.len`). Slice it off before cloning so the JS string doesn't
+        // gain a stray U+0000.
+        debug_assert!(matches!(result.last(), Some(&0)));
+        let payload = &result[..result.len().saturating_sub(1)];
 
-        let out = String::clone_utf16(&result);
+        let out = String::clone_utf16(payload);
         let js = to_js(&out, global_this);
         out.deref();
         js

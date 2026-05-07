@@ -875,18 +875,23 @@ impl<'a> LinkerContext<'a> {
         if !source_indices.is_empty() {
             {
                 let index = source_indices[0];
-                let mut path = sources[index as usize].path.clone();
+                let path = &sources[index as usize].path;
                 source_id_map.put_no_clobber(index, 0)?;
 
-                if path.is_file() {
-                    let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
-                    // PORT NOTE: `Path.pretty` is `&'static [u8]` (interned in Zig);
-                    // leak the relative path into the bump-equivalent global heap.
-                    path.pretty = Box::leak(rel_path);
-                }
+                // PORT NOTE: Zig mutated a local copy's `path.pretty` from the
+                // worker arena; we keep the relative path in a local owned
+                // buffer instead (drops at scope exit — same lifetime as the
+                // arena slice).
+                let rel_path_storage;
+                let pretty: &[u8] = if path.is_file() {
+                    rel_path_storage = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    &rel_path_storage
+                } else {
+                    path.pretty
+                };
 
-                let mut quote_buf = MutableString::init(path.pretty.len() + 2)?;
-                js_printer::quote_for_json(&path.pretty, &mut quote_buf, false)?;
+                let mut quote_buf = MutableString::init(pretty.len() + 2)?;
+                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
                 // PERF(port): was arena-backed; `to_default_owned` moves the
                 // buffer into the joiner (joiner owns it until `done`).
                 j.push_owned(quote_buf.to_default_owned());
@@ -902,16 +907,19 @@ impl<'a> LinkerContext<'a> {
                 *gop.value_ptr = next_mapping_source_index;
                 next_mapping_source_index += 1;
 
-                let mut path = sources[index as usize].path.clone();
+                let path = &sources[index as usize].path;
 
-                if path.is_file() {
-                    let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, &path.text)?;
-                    path.pretty = Box::leak(rel_path);
-                }
+                let rel_path_storage;
+                let pretty: &[u8] = if path.is_file() {
+                    rel_path_storage = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    &rel_path_storage
+                } else {
+                    path.pretty
+                };
 
-                let mut quote_buf = MutableString::init(path.pretty.len() + ", ".len() + 2)?;
+                let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
                 quote_buf.append_assume_capacity(b", "); // PERF(port): was assume_capacity
-                js_printer::quote_for_json(&path.pretty, &mut quote_buf, false)?;
+                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
                 j.push_owned(quote_buf.to_default_owned());
             }
         }

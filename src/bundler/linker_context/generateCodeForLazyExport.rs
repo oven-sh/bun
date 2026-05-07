@@ -215,8 +215,8 @@ pub fn generate_code_for_lazy_export(
                         unsafe { &*syms.at(css_ref.inner_index() as usize).original_name };
                     let loc = ast.local_scope.get_adapted(name, SliceBoxAdapter).unwrap().loc;
 
-                    // PERF(port): was `catch |err| bun.handleOom(err)`.
-                    let _ = self.log.add_range_error_fmt_with_note(
+                    // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
+                    bun_core::handle_oom(self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
                         bun_logger::Range { loc: compose_loc, ..Default::default() },
                         format_args!(
@@ -228,7 +228,7 @@ pub fn generate_code_for_lazy_export(
                             bun_fmt::quote(name),
                         ),
                         bun_logger::Range { loc, ..Default::default() },
-                    );
+                    ));
                 }
 
                 fn visit_composes(

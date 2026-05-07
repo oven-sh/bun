@@ -1,7 +1,6 @@
 use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 use core::marker::{PhantomData, PhantomPinned};
-use core::panic::Location;
 
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;

@@ -1110,23 +1110,24 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        manager
-            .log_mut()
+        // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+        unsafe { &*manager.log }
             .print(Output::error_writer() as *mut _)
             .map_err(|_| bun_core::err!("WriteFailed"))?;
     }
-    if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
+    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+    if had_errors_before_cleaning_lockfile || unsafe { &*manager.log }.has_errors() {
         Global::crash();
     }
 
     let did_meta_hash_change =
         // If the lockfile was frozen, we already checked it
-        !manager.options.enable.frozen_lockfile
+        !manager.options.enable.frozen_lockfile()
             && if load_result.loaded_from_text_lockfile() {
                 !manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)?
             } else {
                 manager.lockfile.has_meta_hash_changed(
-                    PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string,
+                    PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
                     packages_len_before_install.min(manager.lockfile.packages.len()),
                 )?
             };
@@ -1140,7 +1141,7 @@ pub fn install_with_manager(
                 && manager.lockfile.text_lockfile_version != TextLockfile::Version::CURRENT))
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
-        || (manager.options.do_.save_lockfile
+        || (manager.options.do_.save_lockfile()
             && (did_meta_hash_change
                 || had_any_diffs
                 || !manager.update_requests.is_empty()
@@ -1148,14 +1149,18 @@ pub fn install_with_manager(
                     && (load_result.ok().serializer_result.packages_need_update
                         || load_result.ok().serializer_result.migrated_from_lockb_v2))
                 || manager.lockfile.is_empty()
-                || manager.options.enable.force_save_lockfile));
+                || manager.options.enable.force_save_lockfile()));
 
     if should_save_lockfile {
-        manager.save_lockfile(
+        // SAFETY: `lockfile_before_install` was derived from `manager.lockfile`
+        // above and the box hasn't been replaced; it points at the same
+        // allocation `save_lockfile` will read against itself.
+        save_lockfile(
+            manager,
             &load_result,
             save_format,
             had_any_diffs,
-            lockfile_before_install,
+            unsafe { &*lockfile_before_install },
             packages_len_before_install,
             log_level,
         )?;
@@ -1165,7 +1170,11 @@ pub fn install_with_manager(
         manager.summary.add = manager.lockfile.packages.len() as u32;
     }
 
-    if manager.options.do_.save_yarn_lock {
+    if manager.options.do_.save_yarn_lock() {
+        // PORT NOTE: reshaped for borrowck — Zig holds `*Progress.Node` (returned by
+        // `progress.start`) across `writeYarnLock(manager)`. `Progress::start` returns
+        // `&mut self.root`, so re-access it via `manager.progress.root` after the
+        // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
         let mut node_started = false;
         if log_level.show_progress() {
             manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -1177,7 +1186,7 @@ pub fn install_with_manager(
             Output::flush();
         }
 
-        manager.write_yarn_lock()?;
+        write_yarn_lock(manager)?;
         if log_level.show_progress() {
             if node_started {
                 manager.progress.root.complete_one();
@@ -1188,7 +1197,7 @@ pub fn install_with_manager(
         }
     }
 
-    if manager.options.do_.run_scripts && install_root_dependencies && !manager.options.global {
+    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
         if let Some(scripts) = manager.root_lifecycle_scripts.take() {
             if cfg!(debug_assertions) {
                 debug_assert!(scripts.total > 0);
@@ -1233,6 +1242,15 @@ pub fn install_with_manager(
 // Zig: `fn runAndWaitFn(comptime check_peers: bool, comptime only_pre_patch: bool) *const fn(*PackageManager) anyerror!void`
 // Ported as a const-generic struct + three thin wrapper fns.
 
+/// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
+/// `runAndWaitFn::isDone` (Zig passed an anonymous struct with `void` hooks
+/// and `progress_bar = true`). Only the comptime flags differ from the default.
+struct InstallWaitCallbacks;
+impl RunTasksCallbacks for InstallWaitCallbacks {
+    type Ctx = ();
+    const PROGRESS_BAR: bool = true;
+}
+
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     // PORT NOTE: Zig stores `*PackageManager` here while the caller also holds the same
     // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
@@ -1264,20 +1282,14 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         this.drain_dependency_list();
 
-        // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass `this` as
-        // both receiver and ctx (aliased &mut). Phase B: add a `VoidCallbacks` impl in
-        // run_tasks.rs so this becomes `run_tasks::<VoidCallbacks>(this, &mut (), ..)`.
+        // PORT NOTE: void RunTasksCallbacks — Zig passes an anon struct with
+        // `void` hooks and `progress_bar = true`. The Rust trait dispatch needs a
+        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
+        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
         let log_level = this.options.log_level;
-        if let Err(err) = this.run_tasks(
+        if let Err(err) = run_tasks::<InstallWaitCallbacks>(
+            this,
             &mut (),
-            RunTasksCallbacks {
-                on_extract: (),
-                on_resolve: (),
-                on_package_manifest_error: (),
-                on_package_download_error: (),
-                progress_bar: true,
-                manifests_only: false,
-            },
             CHECK_PEERS,
             log_level,
         ) {
@@ -1357,7 +1369,7 @@ fn print_install_summary(
     let _flush_guard = Output::flush_guard();
 
     let mut printed_timestamp = false;
-    if this.options.do_.summary {
+    if this.options.do_.summary() {
         // PORT NOTE: reshaped for borrowck — Zig builds `Printer` borrowing
         // `this.lockfile` / `this.options` while also passing `this` (the
         // PackageManager) to `Tree::print`. Route through a single `*mut
@@ -1444,7 +1456,7 @@ fn print_install_summary(
         } else if install_summary.skipped > 0 && install_summary.fail == 0 && this.update_requests.is_empty() {
             let count = this.lockfile.packages.len() as PackageID;
             if count != install_summary.skipped {
-                if !this.options.enable.only_missing {
+                if !this.options.enable.only_missing() {
                     Output::pretty(format_args!(
                         "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
                         install_summary.skipped,
@@ -1481,7 +1493,7 @@ fn print_install_summary(
         }
     }
 
-    if this.options.do_.summary {
+    if this.options.do_.summary() {
         if !printed_timestamp {
             Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
             Output::prettyln(format_args!("<d> done<r>"));
@@ -1533,8 +1545,8 @@ pub fn get_workspace_filters(
         && !manager.options.filter_patterns.is_empty()
     {
         workspace_filters.reserve(manager.options.filter_patterns.len());
-        for pattern in &manager.options.filter_patterns {
-            workspace_filters.push(WorkspaceFilter::init(pattern, original_cwd, &mut path_buf));
+        for pattern in manager.options.filter_patterns {
+            workspace_filters.push(WorkspaceFilter::init(pattern, original_cwd, &mut path_buf)?);
         }
     }
 
@@ -1609,15 +1621,17 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
         },
     );
 
+    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+    let log = unsafe { &mut *manager.log };
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-        bun_core::handle_oom(manager.log_mut().add_warning_with_note(
+        bun_core::handle_oom(log.add_warning_with_note(
             None,
             Default::default(),
             err.name().as_bytes(),
             format_args!("error occurred while resolving {}", path_fmt),
         ));
     } else {
-        bun_core::handle_oom(manager.log_mut().add_zig_error_with_note(
+        bun_core::handle_oom(log.add_zig_error_with_note(
             err,
             format_args!("error occurred while resolving {}", path_fmt),
         ));

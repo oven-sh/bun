@@ -205,6 +205,72 @@ impl AbortSignal {
     }
 }
 
+/// Intrusive smart pointer over a C++-refcounted `WebCore::AbortSignal`.
+///
+/// `Clone` bumps the C++ refcount via `ref()`; `Drop` decrements via `unref()`.
+/// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
+/// cannot own a C++-allocated object — its payload address is not the C++
+/// object address). Mirrors Zig `?*AbortSignal` + manual `ref()`/`unref()`.
+#[repr(transparent)]
+pub struct AbortSignalRef(NonNull<AbortSignal>);
+
+impl AbortSignalRef {
+    /// Adopt a `+1`-ref'd `*mut AbortSignal` (e.g. from `AbortSignal::ref_()`
+    /// or `AbortSignal::new`).
+    ///
+    /// # Safety
+    /// `ptr` must be non-null, point to a live `WebCore::AbortSignal`, and
+    /// carry an owned reference that this `AbortSignalRef` will release on drop.
+    #[inline]
+    pub unsafe fn adopt(ptr: *mut AbortSignal) -> Self {
+        debug_assert!(!ptr.is_null());
+        // SAFETY: caller contract — `ptr` is non-null.
+        Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
+
+    /// Downcast a JS value, ref the underlying signal, and wrap. Returns
+    /// `None` if `value` is not a JS `AbortSignal`.
+    #[inline]
+    pub fn from_js(value: JSValue) -> Option<Self> {
+        AbortSignal::from_js(value).map(|p| {
+            // SAFETY: `from_js` returned a live borrow of the JS wrapper's
+            // payload; `ref_()` bumps the intrusive refcount and returns the
+            // same non-null pointer with +1 ownership.
+            unsafe { Self::adopt((*p).ref_()) }
+        })
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut AbortSignal {
+        self.0.as_ptr()
+    }
+}
+
+impl core::ops::Deref for AbortSignalRef {
+    type Target = AbortSignal;
+    #[inline]
+    fn deref(&self) -> &AbortSignal {
+        // SAFETY: held +1 ref keeps the C++ object alive for `'_`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Clone for AbortSignalRef {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: `ref_()` returns the same non-null pointer with +1 refcount.
+        unsafe { Self::adopt(self.0.as_ref().ref_()) }
+    }
+}
+
+impl Drop for AbortSignalRef {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: held +1 ref keeps the C++ object alive until this unref.
+        unsafe { self.0.as_ref().unref() }
+    }
+}
+
 pub enum AbortReason {
     Common(CommonAbortReason),
     Js(JSValue),

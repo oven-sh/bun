@@ -345,10 +345,11 @@ impl PackageManager {
     ) -> Result<(), bun_core::Error> {
         match item {
             TaskCallbackContext::Dependency(dependency_id) => {
-                // PORT NOTE: reshaped for borrowck — copy the dependency/row
+                // PORT NOTE: reshaped for borrowck — clone the dependency row
                 // out of the buffer before re-borrowing `self` for enqueue.
-                let dependency =
-                    self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+                let dependency = Clone::clone(
+                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
+                );
                 let resolution =
                     self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
 
@@ -361,8 +362,9 @@ impl PackageManager {
                 )?;
             }
             TaskCallbackContext::RootDependency(dependency_id) => {
-                let dependency =
-                    self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+                let dependency = Clone::clone(
+                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
+                );
                 let resolution =
                     self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
 
@@ -390,8 +392,11 @@ impl PackageManager {
 
     pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            let dependency =
-                self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize];
+            // PORT NOTE: reshaped for borrowck — clone the dependency row out
+            // of the buffer before re-borrowing `self` for enqueue.
+            let dependency = Clone::clone(
+                &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
+            );
             let resolution =
                 self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
 
@@ -420,7 +425,7 @@ impl PackageManager {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;
             let mut any_root = false;
-            for item in dependency_list.iter().copied() {
+            for item in dependency_list.iter().cloned() {
                 self.process_dependency_list_item(item, Some(&mut any_root), install_peer)?;
             }
 

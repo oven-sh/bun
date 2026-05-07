@@ -824,6 +824,21 @@ impl JSValue {
         }
     }
     /// JSValue.zig:1748 `getOptionalEnum` — `get(prop)`, filter
+    /// undefined/null → `None`, otherwise `toEnum` (dispatches via
+    /// `FromJsEnum`).
+    pub fn get_optional_enum<E: FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, property_name)? {
+            Some(v) if !v.is_empty_or_undefined_or_null() => {
+                Ok(Some(v.to_enum::<E>(global, property_name)?))
+            }
+            _ => Ok(None),
+        }
+    }
+    /// JSValue.zig:1748 `getOptionalEnum` — `get(prop)`, filter
     /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
     pub fn get_optional_enum_from_map<E: Copy>(
         self,

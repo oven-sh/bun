@@ -413,7 +413,7 @@ pub fn edit_update_no_args(
 
                                     let resolved_version = lockfile
                                         .resolve_catalog_dependency(workspace_dep)
-                                        .unwrap_or(&workspace_dep.version);
+                                        .unwrap_or_else(|| workspace_dep.version.clone());
                                     if let Some(npm_version) = resolved_version.npm() {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
@@ -610,31 +610,9 @@ pub fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
-                                                let mut is_alias = false;
-                                                if strings::trim(
-                                                    version_literal,
-                                                    &strings::WHITESPACE_CHARS,
-                                                )
-                                                .starts_with(b"npm:")
-                                                {
-                                                    if let Some(at_index) =
-                                                        strings::last_index_of_char(
-                                                            version_literal,
-                                                            b'@',
-                                                        )
-                                                    {
-                                                        tag = dependency::Tag::infer(
-                                                            &version_literal[at_index + 1..],
-                                                        );
-                                                        if tag != dependency::Tag::Npm
-                                                            && tag != dependency::Tag::DistTag
-                                                        {
-                                                            break 'add_packages_to_update;
-                                                        }
-                                                        is_alias = true;
-                                                    }
-                                                }
-
+                                                // PORT NOTE: reshaped for borrowck — capture an
+                                                // owned copy of the literal before borrowing
+                                                // `manager.updating_packages` mutably.
                                                 let version_literal_owned =
                                                     Box::<[u8]>::from(version_literal);
                                                 let entry = manager
@@ -644,6 +622,38 @@ pub fn edit(
                                                 // first come, first serve
                                                 if entry.found_existing {
                                                     break 'add_packages_to_update;
+                                                }
+
+                                                // PORT NOTE: Zig leaves `entry.value_ptr.*`
+                                                // undefined across the `npm:`-alias bailout
+                                                // below (Zig:435), which is later read by
+                                                // `fetchSwapRemove` — UB. `get_or_put` here
+                                                // already default-initializes the slot, so
+                                                // `found_existing` semantics match Zig and the
+                                                // bailout path is well-defined.
+                                                let mut is_alias = false;
+                                                if strings::trim(
+                                                    &version_literal_owned,
+                                                    &strings::WHITESPACE_CHARS,
+                                                )
+                                                .starts_with(b"npm:")
+                                                {
+                                                    if let Some(at_index) =
+                                                        strings::last_index_of_char(
+                                                            &version_literal_owned,
+                                                            b'@',
+                                                        )
+                                                    {
+                                                        tag = dependency::Tag::infer(
+                                                            &version_literal_owned[at_index + 1..],
+                                                        );
+                                                        if tag != dependency::Tag::Npm
+                                                            && tag != dependency::Tag::DistTag
+                                                        {
+                                                            break 'add_packages_to_update;
+                                                        }
+                                                        is_alias = true;
+                                                    }
                                                 }
 
                                                 *entry.value_ptr = PackageUpdateInfo {
@@ -796,7 +806,7 @@ pub fn edit(
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
                         new_dependencies[k] = G::Property::default();
-                        // TODO(port): Zig does `items.len -= 1` here without shifting; replicating via truncate
+                        // Zig: `items.len -= 1` (no shift) — drop the trailing slot.
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
                     }

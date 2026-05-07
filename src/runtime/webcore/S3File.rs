@@ -73,41 +73,48 @@ where
 
     if !content_type.is_empty() {
         writer.write_str("\n")?;
-        // PORT NOTE: reshaped for borrowck — Zig `defer formatter.indent -|= 1;` inlined (scopeguard would alias &mut formatter)
+        // PORT NOTE: Zig `defer formatter.indent -|= 1;` runs on every exit.
+        // A scopeguard would alias `&mut formatter`, so run the fallible body
+        // in a closure and `indent_dec()` unconditionally before propagating.
         formatter.indent_inc();
+        let r: core::fmt::Result = (|| {
+            formatter.write_indent(writer)?;
+            write!(
+                writer,
+                "{}",
+                output::pretty_fmt_args(
+                    "type<d>:<r> <green>\"{}\"<r>",
+                    ENABLE_ANSI_COLORS,
+                    (bstr::BStr::new(content_type),),
+                ),
+            )?;
 
-        formatter.write_indent(writer)?;
-        write!(
-            writer,
-            "{}",
-            output::pretty_fmt_args(
-                "type<d>:<r> <green>\"{}\"<r>",
-                ENABLE_ANSI_COLORS,
-                (bstr::BStr::new(content_type),),
-            ),
-        )?;
-
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        if offset > 0 {
-            writer.write_str("\n")?;
-        }
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            if offset > 0 {
+                writer.write_str("\n")?;
+            }
+            Ok(())
+        })();
         formatter.indent_dec();
+        r?;
     }
 
     if offset > 0 {
-        // PORT NOTE: reshaped for borrowck — Zig `defer formatter.indent -|= 1;` inlined
+        // PORT NOTE: Zig `defer formatter.indent -|= 1;` — see above.
         formatter.indent_inc();
+        let r: core::fmt::Result = (|| {
+            formatter.write_indent(writer)?;
 
-        formatter.write_indent(writer)?;
+            write!(
+                writer,
+                "{}",
+                output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
+            )?;
 
-        write!(
-            writer,
-            "{}",
-            output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
-        )?;
-
-        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+        })();
         formatter.indent_dec();
+        r?;
     }
     s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(&**credentials, s3.options, s3.acl, formatter, writer)?;
     formatter.write_indent(writer)?;
@@ -669,12 +676,15 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.as_ref().unwrap().data.as_s3();
-    // PORT NOTE: `S3CredentialsWithOptions` is not `Default` (raw-ptr fields) and
-    // `S3Credentials` is intrusive-refcounted (not `Clone`). Route through
-    // `get_credentials_with_options(None, …)` to obtain a fully-initialized struct;
-    // its `credentials` field already mirrors `s3.get_credentials()`.
-    let mut credentials_with_options = s3.get_credentials_with_options(None, global)?;
-    credentials_with_options.request_payer = s3.request_payer;
+    // Zig: `.{ .credentials = s3.getCredentials().*, .request_payer = s3.request_payer }`.
+    // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
+    // defaults here — they are only seeded from the store when extra_options
+    // is provided (via `getCredentialsWithOptions` below).
+    let mut credentials_with_options = s3::S3CredentialsWithOptions {
+        credentials: (**s3.get_credentials()).clone(),
+        request_payer: s3.request_payer,
+        ..Default::default()
+    };
 
     if let Some(options) = extra_options {
         if options.is_object() {
@@ -688,13 +698,11 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
                     }
                 };
             }
-            if let Some(expires_js) = options.get_truthy(global, "expiresIn")? {
-                // TODO(port): blocked_on bun_jsc::JSValue::get_optional::<i32>
-                let expires_ = expires_js.coerce_to_i32(global)?;
+            if let Some(expires_) = options.get_optional_int::<i32>(global, "expiresIn")? {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments("expiresIn must be greather than 0"));
                 }
-                expires = usize::try_from(expires_).unwrap();
+                expires = expires_ as usize;
             }
         }
         credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
@@ -841,7 +849,6 @@ pub fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     }
 }
 
-// TODO(port): callconv(jsc.conv) — raw ABI shim emitted by #[bun_jsc::host_fn]
 pub fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
     bun_jsc::mark_binding();
     let Some(blob) = value.as_::<Blob>() else {

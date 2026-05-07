@@ -1930,6 +1930,22 @@ impl ReaddirSubtask {
 impl AsyncReaddirRecursiveTask {
     pub fn new(init: Self) -> Box<Self> { Box::new(init) }
 
+    /// `bun.default_allocator.free(this.root_path.slice())` — paired with the
+    /// `dupeZ` in `create()`. Idempotent (`PathString::EMPTY` after first call).
+    fn free_root_path(&mut self) {
+        let rp = core::mem::replace(&mut self.root_path, PathString::EMPTY);
+        let bytes = rp.slice();
+        if bytes.is_empty() { return; }
+        // SAFETY: `bytes.as_ptr()` is the start of a `Box<[u8]>` allocation of
+        // `bytes.len() + 1` (NUL) made in `create()`; reconstructed exactly once.
+        unsafe {
+            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+                bytes.as_ptr() as *mut u8,
+                bytes.len() + 1,
+            )));
+        }
+    }
+
     pub fn enqueue(&mut self, basename: &ZStr) {
         // Spec (node_fs.zig:1058) does `bun.default_allocator.dupeZ(u8, basename)` —
         // the subtask runs on another thread after the caller's `name_to_copy_z`
@@ -2062,7 +2078,8 @@ impl AsyncReaddirRecursiveTask {
             // PERF(port): was appendSliceAssumeCapacity
             clone.append(result);
             self.result_list_count.fetch_add(clone.len(), Ordering::Relaxed);
-            // TODO(port): @unionInit by ResultType — needs trait dispatch to map T -> variant
+            // Zig `@unionInit(Value, @tagName(Field), clone)` →
+            // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
             let list = Box::new(ResultListEntry {
                 next: core::ptr::null_mut(),
                 value: ResultListEntryValue::from_vec(clone),
@@ -2073,6 +2090,19 @@ impl AsyncReaddirRecursiveTask {
         if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.finish_concurrently();
         }
+    }
+
+    /// Free the heap copy made in `create()` (`Box<[u8; len+1]>` round-tripped
+    /// through `PathString`). Idempotent — second call sees `EMPTY` and no-ops.
+    fn free_root_path(&mut self) {
+        let path = core::mem::replace(&mut self.root_path, PathString::EMPTY);
+        let slice = path.slice();
+        if slice.is_empty() { return; }
+        let len_with_nul = slice.len() + 1;
+        let ptr = slice.as_ptr() as *mut u8;
+        // SAFETY: `ptr` came from `Box::into_raw(Box<[u8; len+1]>)` in
+        // `create()`; reconstructed exactly once with the original layout.
+        drop(unsafe { Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)) });
     }
 
     /// May be called from any thread (the subtasks)
@@ -2087,9 +2117,7 @@ impl AsyncReaddirRecursiveTask {
             use bun_sys::FdExt as _;
             self.root_fd = FD::INVALID;
             root_fd.close();
-            // free root_path's heap-backed slice
-            // TODO(port): self.root_path was allocator.dupeZ; drop owned slice here
-            self.root_path = PathString::EMPTY;
+            self.free_root_path();
         }
 
         if self.pending_err.is_some() {
@@ -2103,8 +2131,9 @@ impl AsyncReaddirRecursiveTask {
             // be read by the iterator.
             let mut to_destroy: Option<*mut ResultListEntry> = None;
 
-            // TODO(port): match on tag, ensureTotalCapacityPrecise on the correct vec,
-            // append each batch's items, then drop the entry box. Mirrors zig:1206-1225.
+            // Zig: `inline else => |tag| { var results = &@field(result_list, @tagName(tag));
+            // results.ensureTotalCapacityPrecise(count); … results.appendSliceAssumeCapacity(field) }`.
+            // `reserve_exact`/`append_from` dispatch on the runtime tag.
             let cap = self.result_list_count.swap(0, Ordering::Relaxed);
             self.result_list.reserve_exact(cap);
             loop {
@@ -2207,7 +2236,7 @@ impl AsyncReaddirRecursiveTask {
         // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
         this_ref.r#ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         this_ref.args.deinit();
-        // TODO(port): free root_path slice
+        this_ref.free_root_path();
         this_ref.clear_result_list();
         // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via Box::from_raw below).
         // SAFETY: paired with Box::leak in create()
@@ -6164,7 +6193,12 @@ impl NodeFS {
             return strings::from_wpath(&mut self.sync_error_buf, &tmp[..slice.len()]);
         }
         #[cfg(not(windows))]
-        { let _ = slice; &[] } // TODO(port): zig fn has no posix branch (returns void?)
+        {
+            // PORT NOTE: Zig has no POSIX arm here — every call site is inside
+            // an `if (Environment.isWindows)` branch. On POSIX `OSPathChar == u8`,
+            // so the input is already the canonical byte slice.
+            slice
+        }
     }
 
     fn cp_sync_inner(

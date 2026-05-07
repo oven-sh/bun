@@ -2,17 +2,18 @@ use core::cmp::Ordering;
 
 use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
+use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::{Dependency, Lockfile, PackageManager};
 use bun_install::lockfile::StringBuilder;
-use bun_js_parser::{Expr, ExprData, E};
+use bun_js_parser::{E, Expr, ExprData};
 use bun_logger::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
-use bun_str::strings;
 
-// TODO(port): `Map` uses a context-based ArrayHashMap keyed by `bun_semver::String`
-// where hash/eq are computed against an external string buffer (`String.ArrayHashContext`).
-// `bun_collections::ArrayHashMap` must expose `*_context` method variants.
+// `Map` is keyed by `bun_semver::String` whose hash/eq depend on an external
+// string buffer. The default `AutoContext` cannot satisfy `String: Hash`, so
+// every lookup/insert goes through the `*_adapted` methods with an explicit
+// `ArrayHashContext` carrying the `arg_buf`/`existing_buf` pair.
 pub type Map = ArrayHashMap<String, Dependency>;
 
 #[derive(Default)]
@@ -21,61 +22,55 @@ pub struct CatalogMap {
     pub groups: ArrayHashMap<String, Map>,
 }
 
+/// Zig `String.arrayHashContext(lockfile, null)` — convenience constructor that
+/// reads the lockfile's string buffer for both arg & existing sides. Lives here
+/// (not on `bun_semver::String`) to avoid a `bun_semver → bun_install` back-edge.
+#[inline]
+fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
+    ArrayHashContext { arg_buf: buf, existing_buf: buf }
+}
+
 impl CatalogMap {
     pub fn has_any(&self) -> bool {
         self.default.count() > 0 || self.groups.count() > 0
     }
 
     pub fn get(
-        &mut self,
+        &self,
         lockfile: &Lockfile,
         catalog_name: String,
         dep_name: String,
     ) -> Option<Dependency> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
         if catalog_name.is_empty() {
             if self.default.count() == 0 {
                 return None;
             }
-            return match self
-                .default
-                .get_context(dep_name, String::array_hash_context(lockfile, None))
-            {
-                Some(d) => Some(d),
-                None => None,
-            };
+            return self.default.get_adapted(&dep_name, ctx(buf)).copied();
         }
 
-        let Some(group) = self
-            .groups
-            .get_context(catalog_name, String::array_hash_context(lockfile, None))
-        else {
-            return None;
-        };
+        let group = self.groups.get_adapted(&catalog_name, ctx(buf))?;
 
         if group.count() == 0 {
             return None;
         }
 
-        match group.get_context(dep_name, String::array_hash_context(lockfile, None)) {
-            Some(d) => Some(d),
-            None => None,
-        }
+        group.get_adapted(&dep_name, ctx(buf)).copied()
     }
 
     pub fn get_or_put_group(
         &mut self,
-        lockfile: &mut Lockfile,
+        lockfile: &Lockfile,
         catalog_name: String,
     ) -> Result<&mut Map, AllocError> {
         if catalog_name.is_empty() {
             return Ok(&mut self.default);
         }
 
-        let entry = self.groups.get_or_put_context(
-            catalog_name,
-            String::array_hash_context(lockfile, None),
-        )?;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let entry = self.groups.get_or_put_adapted(catalog_name, ctx(buf))?;
         if !entry.found_existing {
+            *entry.key_ptr = catalog_name;
             *entry.value_ptr = Map::default();
         }
 
@@ -92,29 +87,25 @@ impl CatalogMap {
             return Some(&mut self.default);
         }
 
-        self.groups.get_ptr_context(
-            catalog_name,
-            ArrayHashContext {
-                arg_buf: catalog_name_buf,
-                existing_buf: map_buf,
-            },
+        self.groups.get_ptr_adapted(
+            &catalog_name,
+            ArrayHashContext { arg_buf: catalog_name_buf, existing_buf: map_buf },
         )
     }
 
     pub fn parse_count(
         &mut self,
-        lockfile: &mut Lockfile,
+        _lockfile: &mut Lockfile,
         expr: Expr,
         builder: &mut StringBuilder,
     ) {
-        let _ = lockfile;
         if let Some(default_catalog) = expr.get(b"catalog") {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let dep_name = item.key.unwrap().as_string().unwrap();
+                    let dep_name = item.key.unwrap().as_utf8_string_literal().unwrap();
                     builder.count(dep_name);
                     if let ExprData::EString(version_str) = &item.value.unwrap().data {
-                        builder.count(version_str.slice());
+                        builder.count(version_str.data);
                     }
                 }
             }
@@ -123,14 +114,14 @@ impl CatalogMap {
         if let Some(catalogs) = expr.get(b"catalogs") {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
-                    let catalog_name = catalog.key.unwrap().as_string().unwrap();
+                    let catalog_name = catalog.key.unwrap().as_utf8_string_literal().unwrap();
                     builder.count(catalog_name);
                     if let ExprData::EObject(obj) = &catalog.value.unwrap().data {
                         for item in obj.properties.slice() {
-                            let dep_name = item.key.unwrap().as_string().unwrap();
+                            let dep_name = item.key.unwrap().as_utf8_string_literal().unwrap();
                             builder.count(dep_name);
                             if let ExprData::EString(version_str) = &item.value.unwrap().data {
-                                builder.count(version_str.slice());
+                                builder.count(version_str.data);
                             }
                         }
                     }
@@ -154,16 +145,16 @@ impl CatalogMap {
             found_any = true;
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let dep_name_str = item.key.unwrap().as_string().unwrap();
+                    let dep_name_str = item.key.unwrap().as_utf8_string_literal().unwrap();
 
                     let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                     let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
 
                     if let ExprData::EString(version_str) = &item.value.unwrap().data {
-                        let version_literal = builder.append::<String>(version_str.slice());
+                        let version_literal = builder.append::<String>(version_str.data);
 
-                        let version_sliced =
-                            version_literal.sliced(lockfile.buffers.string_bytes.as_slice());
+                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        let version_sliced = version_literal.sliced(buf);
 
                         let Some(version) = Dependency::parse(
                             dep_name,
@@ -173,28 +164,33 @@ impl CatalogMap {
                             log,
                             Some(pm),
                         ) else {
-                            log.add_error(source, item.value.unwrap().loc, b"Invalid dependency version")?;
+                            log.add_error(
+                                Some(source),
+                                item.value.unwrap().loc,
+                                b"Invalid dependency version",
+                            )?;
                             continue;
                         };
 
-                        let entry = group.get_or_put_context(
-                            dep_name,
-                            String::array_hash_context(lockfile, None),
-                        )?;
+                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                         if entry.found_existing {
-                            log.add_error(source, item.key.unwrap().loc, b"Duplicate catalog")?;
+                            log.add_error(
+                                Some(source),
+                                item.key.unwrap().loc,
+                                b"Duplicate catalog",
+                            )?;
                             continue;
                         }
 
-                        let dep = Dependency {
+                        *entry.key_ptr = dep_name;
+                        *entry.value_ptr = Dependency {
                             name: dep_name,
                             name_hash: dep_name_hash,
                             version,
                             ..Dependency::default()
                         };
-
-                        *entry.value_ptr = dep;
                     }
                 }
             }
@@ -204,22 +200,24 @@ impl CatalogMap {
             found_any = true;
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
-                    let catalog_name_str = catalog.key.unwrap().as_string().unwrap();
+                    let catalog_name_str =
+                        catalog.key.unwrap().as_utf8_string_literal().unwrap();
                     let catalog_name = builder.append::<String>(catalog_name_str);
 
                     let group = self.get_or_put_group(lockfile, catalog_name)?;
 
                     if let ExprData::EObject(obj) = &catalog.value.unwrap().data {
                         for item in obj.properties.slice() {
-                            let dep_name_str = item.key.unwrap().as_string().unwrap();
+                            let dep_name_str =
+                                item.key.unwrap().as_utf8_string_literal().unwrap();
                             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                             let dep_name =
                                 builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
                             if let ExprData::EString(version_str) = &item.value.unwrap().data {
                                 let version_literal =
-                                    builder.append::<String>(version_str.slice());
-                                let version_sliced = version_literal
-                                    .sliced(lockfile.buffers.string_bytes.as_slice());
+                                    builder.append::<String>(version_str.data);
+                                let buf = lockfile.buffers.string_bytes.as_slice();
+                                let version_sliced = version_literal.sliced(buf);
 
                                 let Some(version) = Dependency::parse(
                                     dep_name,
@@ -230,35 +228,32 @@ impl CatalogMap {
                                     Some(pm),
                                 ) else {
                                     log.add_error(
-                                        source,
+                                        Some(source),
                                         item.value.unwrap().loc,
                                         b"Invalid dependency version",
                                     )?;
                                     continue;
                                 };
 
-                                let entry = group.get_or_put_context(
-                                    dep_name,
-                                    String::array_hash_context(lockfile, None),
-                                )?;
+                                let buf = lockfile.buffers.string_bytes.as_slice();
+                                let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                                 if entry.found_existing {
                                     log.add_error(
-                                        source,
+                                        Some(source),
                                         item.key.unwrap().loc,
                                         b"Duplicate catalog",
                                     )?;
                                     continue;
                                 }
 
-                                let dep = Dependency {
+                                *entry.key_ptr = dep_name;
+                                *entry.value_ptr = Dependency {
                                     name: dep_name,
                                     name_hash: dep_name_hash,
                                     version,
                                     ..Dependency::default()
                                 };
-
-                                *entry.value_ptr = dep;
                             }
                         }
                     }
@@ -276,7 +271,7 @@ impl CatalogMap {
         string_buf: &mut StringBuf,
     ) -> Result<(), FromPnpmLockfileError> {
         for prop in catalogs_obj.properties.slice() {
-            let Some(group_name_str) = prop.key.unwrap().as_string() else {
+            let Some(group_name_str) = prop.key.unwrap().as_utf8_string_literal() else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
 
@@ -284,115 +279,79 @@ impl CatalogMap {
                 continue;
             }
 
-            // TODO(port): Zig accesses `.data.e_object` directly after `isObject()` check
             let ExprData::EObject(entries_obj) = &prop.value.unwrap().data else {
                 unreachable!()
             };
 
+            // PORT NOTE: reshaped for borrowck — the Zig version threads
+            // `*Lockfile` through; here `string_buf` already borrows the
+            // lockfile's `string_bytes`/`string_pool`, so we resolve the
+            // group up front and pass only what's disjoint.
             if group_name_str == b"default" {
-                // PORT NOTE: reshaped for borrowck — split borrow of lockfile.catalogs.default
                 put_entries_from_pnpm_lockfile(
-                    lockfile,
+                    &mut lockfile.catalogs.default,
                     log,
-                    None,
                     entries_obj,
                     string_buf,
                 )?;
             } else {
                 let group_name = string_buf.append(group_name_str)?;
-                // PORT NOTE: reshaped for borrowck — cannot hold &mut Map across &mut lockfile
-                let group = lockfile.catalogs.get_or_put_group(lockfile, group_name)?;
-                put_entries_from_pnpm_lockfile(
-                    lockfile,
-                    log,
-                    Some(group),
-                    entries_obj,
-                    string_buf,
-                )?;
-                // TODO(port): the above double-borrows `lockfile` (catalogs is a field of lockfile).
-                // Phase B: pass `String::array_hash_context` pieces by value or split lockfile borrows.
+                let group = {
+                    let buf = string_buf.bytes.as_slice();
+                    let entry = lockfile
+                        .catalogs
+                        .groups
+                        .get_or_put_adapted(group_name, ctx(buf))?;
+                    if !entry.found_existing {
+                        *entry.key_ptr = group_name;
+                        *entry.value_ptr = Map::default();
+                    }
+                    entry.value_ptr
+                };
+                put_entries_from_pnpm_lockfile(group, log, entries_obj, string_buf)?;
             }
         }
         Ok(())
     }
 
     pub fn sort(&mut self, lockfile: &Lockfile) {
-        struct DepSortCtx<'a> {
-            buf: &'a [u8],
-            catalog_deps: &'a [Dependency],
-        }
+        let buf = lockfile.buffers.string_bytes.as_slice();
 
-        impl<'a> DepSortCtx<'a> {
-            fn less_than(&mut self, l: usize, r: usize) -> bool {
-                let deps = self.catalog_deps;
-                let l_dep = &deps[l];
-                let r_dep = &deps[r];
-                let buf = self.buf;
-
-                l_dep.name.order(&r_dep.name, buf, buf) == Ordering::Less
-            }
-        }
-
-        struct NameSortCtx<'a> {
-            buf: &'a [u8],
-            catalog_names: &'a [String],
-        }
-
-        impl<'a> NameSortCtx<'a> {
-            fn less_than(&mut self, l: usize, r: usize) -> bool {
-                let buf = self.buf;
-                let names = self.catalog_names;
-                let l_name = names[l];
-                let r_name = names[r];
-
-                l_name.order(&r_name, buf, buf) == Ordering::Less
-            }
-        }
-
-        let mut dep_sort_ctx = DepSortCtx {
-            buf: lockfile.buffers.string_bytes.as_slice(),
-            catalog_deps: lockfile.catalogs.default.values(),
+        let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
+            deps[l].name.order(&deps[r].name, buf, buf) == Ordering::Less
         };
 
-        self.default.sort(&mut dep_sort_ctx);
+        self.default.sort(dep_less_than);
 
         let mut iter = self.groups.iterator();
         while let Some(catalog) = iter.next() {
-            dep_sort_ctx.catalog_deps = catalog.value_ptr.values();
-            catalog.value_ptr.sort(&mut dep_sort_ctx);
+            catalog.value_ptr.sort(dep_less_than);
         }
 
-        let mut name_sort_ctx = NameSortCtx {
-            buf: lockfile.buffers.string_bytes.as_slice(),
-            catalog_names: self.groups.keys(),
-        };
-
-        self.groups.sort(&mut name_sort_ctx);
+        self.groups.sort(|names: &[String], _: &[Map], l: usize, r: usize| -> bool {
+            names[l].order(&names[r], buf, buf) == Ordering::Less
+        });
     }
 
     // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
-    // collections whose `Drop` recursively frees the nested maps. No explicit `Drop` needed.
+    // collections whose `Drop` recursively frees the nested maps.
 
     pub fn count(&mut self, lockfile: &mut Lockfile, builder: &mut StringBuilder) {
+        let buf = lockfile.buffers.string_bytes.as_slice();
         let mut deps_iter = self.default.iterator();
         while let Some(entry) = deps_iter.next() {
-            let dep_name = entry.key_ptr;
-            let dep = entry.value_ptr;
-            builder.count(dep_name.slice(lockfile.buffers.string_bytes.as_slice()));
-            dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
+            builder.count(entry.key_ptr.slice(buf));
+            entry.value_ptr.count(buf, builder);
         }
 
         let mut groups_iter = self.groups.iterator();
         while let Some(catalog) = groups_iter.next() {
-            let catalog_name = catalog.key_ptr;
-            builder.count(catalog_name.slice(lockfile.buffers.string_bytes.as_slice()));
+            builder.count(catalog.key_ptr.slice(buf));
 
             let mut deps_iter = catalog.value_ptr.iterator();
             while let Some(entry) = deps_iter.next() {
-                let dep_name = entry.key_ptr;
-                let dep = entry.value_ptr;
-                builder.count(dep_name.slice(lockfile.buffers.string_bytes.as_slice()));
-                dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
+                builder.count(entry.key_ptr.slice(buf));
+                entry.value_ptr.count(buf, builder);
             }
         }
     }
@@ -403,28 +362,26 @@ impl CatalogMap {
         old: &mut Lockfile,
         new: &mut Lockfile,
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, AllocError> {
+    ) -> Result<CatalogMap, bun_core::Error> {
         let mut new_catalog = CatalogMap::default();
 
-        new_catalog
-            .default
-            .ensure_total_capacity(self.default.count())?;
+        new_catalog.default.ensure_total_capacity(self.default.count())?;
+
+        let old_buf = old.buffers.string_bytes.as_slice();
+        let new_buf = new.buffers.string_bytes.as_slice();
+        let new_ctx = ctx(new_buf);
 
         let mut deps_iter = self.default.iterator();
         while let Some(entry) = deps_iter.next() {
-            let dep_name = entry.key_ptr;
-            let dep = entry.value_ptr;
-            // PERF(port): was assume_capacity
             new_catalog.default.put_assume_capacity_context(
-                builder.append::<String>(dep_name.slice(old.buffers.string_bytes.as_slice())),
-                dep.clone_in(pm, old.buffers.string_bytes.as_slice(), builder)?,
-                String::array_hash_context(new, None),
+                builder.append::<String>(entry.key_ptr.slice(old_buf)),
+                entry.value_ptr.clone_in(pm, old_buf, builder)?,
+                |k| new_ctx.hash(k),
+                |a, b, i| new_ctx.eql(a, b, i),
             );
         }
 
-        new_catalog
-            .groups
-            .ensure_total_capacity(self.groups.count())?;
+        new_catalog.groups.ensure_total_capacity(self.groups.count())?;
 
         let mut groups_iter = self.groups.iterator();
         while let Some(group) = groups_iter.next() {
@@ -436,21 +393,19 @@ impl CatalogMap {
 
             let mut deps_iter = deps.iterator();
             while let Some(entry) = deps_iter.next() {
-                let dep_name = entry.key_ptr;
-                let dep = entry.value_ptr;
-                // PERF(port): was assume_capacity
                 new_group.put_assume_capacity_context(
-                    builder.append::<String>(dep_name.slice(old.buffers.string_bytes.as_slice())),
-                    dep.clone_in(pm, old.buffers.string_bytes.as_slice(), builder)?,
-                    String::array_hash_context(new, None),
+                    builder.append::<String>(entry.key_ptr.slice(old_buf)),
+                    entry.value_ptr.clone_in(pm, old_buf, builder)?,
+                    |k| new_ctx.hash(k),
+                    |a, b, i| new_ctx.eql(a, b, i),
                 );
             }
 
-            // PERF(port): was assume_capacity
             new_catalog.groups.put_assume_capacity_context(
-                builder.append::<String>(catalog_name.slice(old.buffers.string_bytes.as_slice())),
+                builder.append::<String>(catalog_name.slice(old_buf)),
                 new_group,
-                String::array_hash_context(new, None),
+                |k| new_ctx.hash(k),
+                |a, b, i| new_ctx.eql(a, b, i),
             );
         }
 
@@ -482,25 +437,22 @@ impl From<FromPnpmLockfileError> for bun_core::Error {
 }
 
 fn put_entries_from_pnpm_lockfile(
-    lockfile: &mut Lockfile,
+    catalog_map: &mut Map,
     log: &mut Log,
-    // None => use lockfile.catalogs.default
-    catalog_map: Option<&mut Map>,
     entries_obj: &E::Object,
     string_buf: &mut StringBuf,
 ) -> Result<(), FromPnpmLockfileError> {
-    // TODO(port): Zig signature took `*Map` directly; reshaped here because the
-    // caller cannot hold `&mut lockfile.catalogs.default` while also passing
-    // `&mut lockfile`. Phase B should restructure to pass only the hash-context
-    // buffer instead of the whole lockfile.
     for entry_prop in entries_obj.properties.slice() {
-        let Some(dep_name_str) = entry_prop.key.unwrap().as_string() else {
+        let Some(dep_name_str) = entry_prop.key.unwrap().as_utf8_string_literal() else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
         let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
         let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
 
-        let Some((version_str, _)) = entry_prop.value.unwrap().get_string(b"specifier")? else {
+        let Some(specifier) = entry_prop.value.unwrap().get(b"specifier") else {
+            return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
+        };
+        let Some(version_str) = specifier.as_utf8_string_literal() else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
         let version_hash = StringBuilderNs::string_hash(version_str);
@@ -512,7 +464,7 @@ fn put_entries_from_pnpm_lockfile(
             dep_name_hash,
             version_sliced.slice,
             &version_sliced,
-            log,
+            Some(log),
             None,
         ) else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
@@ -525,30 +477,27 @@ fn put_entries_from_pnpm_lockfile(
             ..Dependency::default()
         };
 
-        let ctx = String::array_hash_context(lockfile, None);
-        let map: &mut Map = match catalog_map {
-            Some(ref mut m) => *m,
-            None => &mut lockfile.catalogs.default,
-        };
-        let entry = map.get_or_put_context(dep_name, ctx)?;
+        let buf = string_buf.bytes.as_slice();
+        let entry = catalog_map.get_or_put_adapted(dep_name, ctx(buf))?;
 
         if entry.found_existing {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         }
 
+        *entry.key_ptr = dep_name;
         *entry.value_ptr = dep;
     }
     Ok(())
 }
 
-// `strings` import is used implicitly via `==` on byte slices; kept for parity.
-#[allow(unused_imports)]
-use strings as _;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/CatalogMap.zig (471 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      ArrayHashMap *_context API assumed; from_pnpm_lockfile reshaped for borrowck (lockfile self-borrow); allocator params dropped per global-mimalloc rule
+//   confidence: high
+//   notes:      ArrayHashMap *_context calls routed via *_adapted (ArrayHashAdapter
+//               impl added on bun_semver::string::ArrayHashContext); allocator
+//               params dropped per global-mimalloc rule; from_pnpm_lockfile
+//               reshaped to thread the catalog map directly so `string_buf`
+//               (which already borrows the lockfile's string buffer) supplies
+//               the hash-context bytes.
 // ──────────────────────────────────────────────────────────────────────────

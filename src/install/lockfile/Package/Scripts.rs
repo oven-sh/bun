@@ -27,7 +27,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Scripts {
     pub preinstall: SemverString,
     pub install: SemverString,
@@ -260,8 +260,8 @@ impl Scripts {
 
     // Zig: `comptime Builder: type, builder: Builder` — duck-typed over any
     // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
-    // so both `lockfile_real::StringBuilder` and the column-vec
-    // `crate::lockfile::StubStringBuilder` are accepted (both impl the trait).
+    // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
+    // are accepted (both impl the trait).
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: &Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {

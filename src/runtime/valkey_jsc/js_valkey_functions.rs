@@ -429,7 +429,8 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let command = frame.argument(0).to_bun_string(global)?;
+        // Zig: `defer command.deref()`.
+        let command = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
@@ -1076,9 +1077,10 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrby")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
+        // Zig: `defer key.deref()` / `defer field.deref()` / `defer value.deref()`.
+        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
+        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
 
         let key_slice = key.to_utf8_without_ref();
         let field_slice = field.to_utf8_without_ref();
@@ -1111,9 +1113,10 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrbyfloat")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
+        // Zig: `defer key.deref()` / `defer field.deref()` / `defer value.deref()`.
+        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
+        let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
+        let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
 
         let key_slice = key.to_utf8_without_ref();
         let field_slice = field.to_utf8_without_ref();
@@ -1146,7 +1149,8 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, command)?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
+        // Zig: `defer key.deref()`.
+        let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
         let second_arg = frame.argument(1);
 
@@ -1183,10 +1187,11 @@ impl JSValkeyClient {
                 args.push(field_slice);
 
                 let value_str = object_iter.value.to_bun_string(global)?;
-
-                let value_slice = value_str.to_utf8();
                 // PERF(port): was assume_capacity
-                args.push(value_slice);
+                args.push(value_str.to_utf8());
+                // Zig: `defer value_str.deref()` — `to_utf8()` already bumped
+                // (or copied) the ref the slice needs, so release ours now.
+                value_str.deref();
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])

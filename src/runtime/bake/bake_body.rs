@@ -1278,13 +1278,14 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // TODO(port): `out.options.framework` is `Option<&bun_bundler::options::Framework>`
-        // (the TYPE_ONLY moved-down subset), not `bake_body::Framework`. A
-        // proper conversion needs the full Framework→bake_types::Framework
-        // bridge; until then leave the bundler's view unset.
-        out.options.framework = None;
-        // todo!("blocked_on: bun_bundler::options::Framework <- bake_body::Framework")
-        let _ = &*self;
+        // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
+        // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
+        // projection (`bake_types::Framework`); construct it here and give it
+        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
+        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
+        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
+        // is reshaped to `&'a [u8]`.
+        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -1295,9 +1296,10 @@ impl Framework {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
-        // TODO(port): `BundleOptions` has no `Clone`; Zig copied by value.
-        // todo!("blocked_on: bun_bundler::BundleOptions::clone")
-        // out.resolver.opts = out.options.clone();
+        // Spec bake.zig:788 `out.resolver.opts = out.options` (struct copy). The
+        // resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
+        // re-project via the dedicated helper rather than `Clone`.
+        out.sync_resolver_opts();
 
         out.configure_linker();
         out.configure_defines()?;
@@ -1347,10 +1349,9 @@ impl Framework {
             out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
         }
 
-        // TODO(port): `BundleOptions` has no `Clone`; Zig copied by value.
-        // todo!("blocked_on: bun_bundler::BundleOptions::clone")
-        // out.resolver.opts = out.options.clone();
-        let _ = arena;
+        // Spec bake.zig:821 — re-sync after define/naming mutations so the
+        // resolver sees the final option set.
+        out.sync_resolver_opts();
         Ok(())
     }
 }

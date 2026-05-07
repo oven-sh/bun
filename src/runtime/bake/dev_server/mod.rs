@@ -274,48 +274,6 @@ impl GraphTraceState {
 
 pub use super::dev_server_body::init;
 
-// PORT NOTE: `CurrentBundle`/`NextBundle`/`HTMLRouter` moved to body file
-// (re-exported above). Stale local stubs left here only for the
-// `IncrementalGraph` `memory_cost` impl below — removed.
-
-// (start_data type stub kept for the vtable's `current_bundle_start_data` slot)
-#[allow(dead_code)]
-struct _CurrentBundleStub {
-    bv2: Box<bun_bundler::BundleV2<'static>>,
-    start_data: *mut (),
-    timer: std::time::Instant,
-    had_reload_event: bool,
-    pub requests: deferred_request::List,
-    pub resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
-    pub promise: DeferredPromise,
-}
-
-pub struct NextBundle {
-    pub route_queue: ArrayHashMap<route_bundle::Index, ()>,
-    /// BORROW_FIELD: ptr into `dev.watcher_atomics.events[]` (LIFETIMES.tsv).
-    pub reload_event: Option<*mut HotReloadEvent>,
-    pub requests: deferred_request::List,
-    pub promise: DeferredPromise,
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// HTMLRouter
-// ──────────────────────────────────────────────────────────────────────────
-/// Does not increment refcounts; lifetimes tied to the owning `Bun.serve`
-/// instance (LIFETIMES.tsv: BORROW_PARAM `&'a HTMLBundleRoute`).
-#[derive(Default)]
-pub struct HTMLRouter {
-    // SAFETY: lifetime tied to Bun.serve; deinit ignores (DevServer.zig:4393).
-    pub map: StringHashMap<*const HTMLBundleRoute>,
-    pub fallback: Option<*const HTMLBundleRoute>,
-}
-impl HTMLRouter {
-    /// `HTMLRouter.get` — DevServer.zig:4399.
-    pub fn get(&self, path: &[u8]) -> Option<*const HTMLBundleRoute> {
-        self.map.get(path).copied().or(self.fallback)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule types (struct shapes un-gated; method bodies stay in drafts)
 // ──────────────────────────────────────────────────────────────────────────

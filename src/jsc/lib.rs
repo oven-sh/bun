@@ -674,7 +674,7 @@ pub use self::deferred_error::DeferredError;
 pub use self::url::URL;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use self::zig_stack_frame::ZigStackFrame;
-pub use abort_signal::AbortSignal;
+pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
 // once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and

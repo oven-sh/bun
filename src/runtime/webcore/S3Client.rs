@@ -57,16 +57,25 @@ impl S3CredentialsExt for S3Credentials {
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         bun_s3_signing::credentials::guess_bucket(endpoint)
     }
+    #[inline]
     fn get_credentials_with_options(
-        _this: &S3Credentials,
-        _default_options: MultiPartUploadOptions,
-        _options: Option<JSValue>,
-        _default_acl: Option<ACL>,
-        _default_storage_class: Option<StorageClass>,
-        _default_request_payer: bool,
-        _global: &JSGlobalObject,
+        this: &S3Credentials,
+        default_options: MultiPartUploadOptions,
+        options: Option<JSValue>,
+        default_acl: Option<ACL>,
+        default_storage_class: Option<StorageClass>,
+        default_request_payer: bool,
+        global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
-        todo!("blocked_on: crate::webcore::s3::credentials_jsc::get_credentials_with_options (module not mounted)")
+        crate::webcore::s3::credentials_jsc::get_credentials_with_options(
+            this,
+            default_options,
+            options,
+            default_acl,
+            default_storage_class,
+            default_request_payer,
+            global,
+        )
     }
 }
 

@@ -747,11 +747,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(terminal_val) = args.get_truthy(global_this, "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // SAFETY: `from_js` returns a live `*mut Terminal` borrowed
-                        // from the JS wrapper's `m_ctx`; it stays valid for as long
-                        // as `terminal_val` is reachable (kept alive below via
+                        // SAFETY: `from_js` returns the live `m_ctx` pointer borrowed
+                        // from the JS wrapper; it stays valid for as long as
+                        // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`).
-                        let term = unsafe { &*terminal };
+                        let term = unsafe { terminal.as_ref() };
                         if term.is_closed() {
                             return Err(global_this.throw_invalid_arguments(format_args!("terminal is closed")));
                         }
@@ -770,7 +770,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal pseudoconsole is no longer valid")));
                         }
-                        existing_terminal = Some(terminal);
+                        existing_terminal = Some(terminal.as_ptr());
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options

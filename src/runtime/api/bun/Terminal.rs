@@ -124,9 +124,9 @@ pub struct Terminal {
     event_loop_handle: EventLoopHandle,
 
     /// Global object reference
-    // TODO(port): LIFETIMES.tsv says JSC_BORROW → `&JSGlobalObject`, but Terminal
+    // PORT NOTE: LIFETIMES.tsv says JSC_BORROW → `&JSGlobalObject`, but Terminal
     // is a heap-allocated `.classes.ts` m_ctx payload and cannot carry a lifetime
-    // param in Phase A. Stored as raw; deref via `self.global()`.
+    // param. Stored as raw; deref via `self.global()`.
     global_this: core::ptr::NonNull<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
@@ -163,8 +163,8 @@ bitflags::bitflags! {
 }
 
 /// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
-// TODO(port): the Zig anon-struct of callback decls becomes a trait impl on
-// `Terminal` for `bun_io::StreamingWriterHandler` (or const-generic fn ptrs).
+/// — the anon-struct of callback decls is the `PosixStreamingWriterParent` /
+/// `WindowsStreamingWriterParent` trait impls at the bottom of this file.
 pub type IOWriter = StreamingWriter<Terminal>;
 
 /// Poll type alias for FilePoll Owner registration
@@ -637,9 +637,9 @@ impl Terminal {
     /// before the thread completes.
     #[cfg(windows)]
     fn close_pseudoconsole_off_thread(&mut self, hpcon: windows::HPCON) {
-        // TODO(port): std::Thread.spawn → bun_threading or raw CreateThread; PORTING.md
-        // bans std::process but std::thread is not explicitly banned. Using a raw
-        // detached OS thread here matches the Zig (no event-loop integration needed).
+        // PORT NOTE: Zig used `std.Thread.spawn(.{}, fn, .{hpcon})` then
+        // `.detach()`. PORTING.md bans std::process but not std::thread; a raw
+        // detached OS thread matches the Zig (no event-loop integration needed).
         let hpcon_addr = hpcon as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
@@ -744,8 +744,8 @@ mod lib_util {
     use super::*;
     use bun_core::ZStr;
 
-    // TODO(port): Zig used non-atomic file-level vars (single-threaded init).
-    // Using a once-cell would be more idiomatic; keeping mutable statics to match.
+    // PORT NOTE: Zig used non-atomic file-level vars (single-threaded init).
+    // Mutable statics mirror that exactly; only ever touched from the JS thread.
     static mut HANDLE: Option<*mut c_void> = None;
     static mut LOADED: bool = false;
 
@@ -783,7 +783,8 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
     // On macOS, openpty is in libc, so we can use it directly
     #[cfg(target_os = "macos")]
     {
-        // TODO(port): move to <area>_sys
+        // PORT NOTE: declared locally (not via the `libc` crate) so the
+        // `OpenPtyFn` type unifies with the Linux dlsym path.
         unsafe extern "C" {
             pub fn openpty(
                 amaster: *mut c_int,
@@ -847,9 +848,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             let mut t = termios;
 
             // Input flags: standard terminal input processing
-            // TODO(port): Zig used struct-literal flag init on std.posix tc_iflag_t.
-            // Rust libc termios uses raw c_uint bitfields; Phase B should map these
-            // to bun_sys::posix::termios constants. Preserving intent as bit-ORs.
+            // PORT NOTE: Zig used struct-literal flag init on std.posix tc_iflag_t;
+            // Rust libc termios uses raw tcflag_t bitfields, so these are bit-ORs
+            // of the libc constants (identical values).
             t.c_iflag = libc::ICRNL // Map CR to NL on input
                 | libc::IXON // Enable XON/XOFF flow control on output
                 | libc::IXANY // Any character restarts output
@@ -899,8 +900,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
-            // TODO(port): Zig assigned `.B38400` to ispeed/ospeed enum fields;
-            // libc termios uses cfsetispeed/cfsetospeed. Phase B: pick bun_sys API.
+            // PORT NOTE: Zig assigned `.B38400` to ispeed/ospeed enum fields;
+            // libc termios on Linux encodes speed in c_cflag, so use
+            // cfsetispeed/cfsetospeed (the portable way to set both).
             // SAFETY: `t` is a fully-initialized termios from tcgetattr.
             unsafe {
                 libc::cfsetispeed(&mut t, libc::B38400);
@@ -1213,9 +1215,9 @@ impl Terminal {
             let Some(termios_data) = get_termios(self.master_fd) else {
                 return JSValue::js_number(0.0);
             };
-            // TODO(port): Zig used @typeInfo to extract the packed-struct backing
+            // PORT NOTE: Zig used @typeInfo to extract the packed-struct backing
             // integer of std.posix tc_*flag_t. In Rust/libc these are already raw
-            // integers (tcflag_t). Reading the field directly.
+            // integers (tcflag_t), so read the field directly.
             let raw: u64 = match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag as u64,
                 TermiosField::Oflag => termios_data.c_oflag as u64,
@@ -1245,8 +1247,8 @@ impl Terminal {
             let Some(mut termios_data) = get_termios(self.master_fd) else {
                 return Ok(());
             };
-            // TODO(port): Zig computed maxInt of the packed-struct backing integer
-            // via @typeInfo. Using tcflag_t::MAX (platform-dependent width).
+            // PORT NOTE: Zig computed maxInt of the packed-struct backing integer
+            // via @typeInfo. tcflag_t::MAX is the same value (platform width).
             let max_val: f64 = libc::tcflag_t::MAX as f64;
             let clamped = num.max(0.0).min(max_val);
             let bits = clamped as libc::tcflag_t;
@@ -1415,11 +1417,6 @@ impl Terminal {
                 ws_ypixel: u16,
             }
 
-            // TODO(port): move to <area>_sys
-            unsafe extern "C" {
-                fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
-            }
-
             let winsize = IoctlWinsize {
                 ws_row: new_rows,
                 ws_col: new_cols,
@@ -1429,7 +1426,13 @@ impl Terminal {
 
             // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
             // takes a *const winsize.
-            let ioctl_result = unsafe { ioctl(self.master_fd.native(), TIOCSWINSZ, &winsize) };
+            let ioctl_result = unsafe {
+                libc::ioctl(
+                    self.master_fd.native(),
+                    TIOCSWINSZ as _,
+                    &winsize as *const IoctlWinsize,
+                )
+            };
             if ioctl_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to resize terminal")));
             }

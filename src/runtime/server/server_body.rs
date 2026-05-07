@@ -3433,26 +3433,31 @@ where
 macro_rules! impl_server_jsclass {
     ($ty:ident, $from_js:ident, $from_js_direct:ident, $create:ident, $get_ctor:ident) => {
         const _: () = {
+            // Signatures use `*mut c_void` (not `*mut $ty`) so they (a) match
+            // the canonical decls in `mod.rs` exactly — avoiding
+            // `clashing_extern_declarations` — and (b) don't trip
+            // `improper_ctypes` on the non-`repr(C)` `NewServer<..>` generic.
             unsafe extern "C" {
-                fn $from_js(value: JSValue) -> Option<NonNull<$ty>>;
-                fn $from_js_direct(value: JSValue) -> Option<NonNull<$ty>>;
+                fn $from_js(value: JSValue) -> Option<NonNull<c_void>>;
+                fn $from_js_direct(value: JSValue) -> Option<NonNull<c_void>>;
                 // C++ ABI is `${T}__create(Zig::GlobalObject*, void* ptr)` —
                 // global FIRST, ptr SECOND (see ZigGeneratedClasses.cpp).
-                fn $create(global: *const JSGlobalObject, ptr: *mut $ty) -> JSValue;
+                fn $create(global: *const JSGlobalObject, ptr: *mut c_void) -> JSValue;
                 fn $get_ctor(global: *const JSGlobalObject) -> JSValue;
             }
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
-                    // SAFETY: thin FFI forward into generated `${T}__fromJS`.
-                    unsafe { $from_js(value) }.map(|p| p.as_ptr())
+                    // SAFETY: thin FFI forward into generated `${T}__fromJS`;
+                    // C++ side wraps a `$ty*`, so the cast back is sound.
+                    unsafe { $from_js(value) }.map(|p| p.as_ptr().cast::<Self>())
                 }
                 fn from_js_direct(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: thin FFI forward into generated `${T}__fromJSDirect`.
-                    unsafe { $from_js_direct(value) }.map(|p| p.as_ptr())
+                    unsafe { $from_js_direct(value) }.map(|p| p.as_ptr().cast::<Self>())
                 }
                 fn to_js(self, global: &JSGlobalObject) -> JSValue {
                     // SAFETY: `${T}__create` takes ownership of the heap ptr.
-                    unsafe { $create(global, Box::into_raw(Box::new(self))) }
+                    unsafe { $create(global, Box::into_raw(Box::new(self)).cast()) }
                 }
                 fn get_constructor(global: &JSGlobalObject) -> JSValue {
                     // SAFETY: thin FFI forward.

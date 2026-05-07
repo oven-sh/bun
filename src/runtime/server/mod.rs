@@ -1170,13 +1170,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if self.config.allow_hot && !self.config.id.is_empty() {
             // PORT NOTE: reshaped for borrowck — `id` borrows `self.config`;
-            // `vm_mut()` goes through the singleton so it does not conflict,
-            // but `hot_map()` returns `&mut HotMap` which would alias if it
-            // were reached via `self`. Snapshot the slice via raw ptr/len.
+            // `hot_map()` returns `&mut HotMap` reached via the VM singleton
+            // (raw ptr deref), so the two borrows do not overlap from rustc's
+            // POV. Snapshot the slice via raw ptr/len anyway to keep the
+            // `&self.config` borrow scoped tightly.
             let (id_ptr, id_len) = (self.config.id.as_ptr(), self.config.id.len());
-            if let Some(hot) = self.vm_mut().hot_map() {
-                // SAFETY: `id` bytes live in `self.config` for this scope.
-                hot.remove(unsafe { core::slice::from_raw_parts(id_ptr, id_len) });
+            // SAFETY: `vm_mut()` is the non-null process-static VM pointer;
+            // `id` bytes live in `self.config` for this scope.
+            unsafe {
+                if let Some(hot) = (*self.vm_mut()).hot_map() {
+                    hot.remove(core::slice::from_raw_parts::<u8>(id_ptr, id_len));
+                }
             }
         }
 
@@ -1208,16 +1212,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // again before the task has run.
             self.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
 
-            // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init() ran.
-            let global = unsafe { &*self.global_this };
+            // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init()
+            // ran. `vm` is the process-static `*mut VirtualMachine` (non-null for
+            // the server's lifetime); single-threaded JS context, no aliasing `&mut`.
+            let (global, vm_ref) = unsafe { (&*self.global_this, &mut *vm) };
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     promise: jsc::JSPromiseStrong::from_value(self.all_closed_promise.value(), global),
-                    tracker: jsc::AsyncTaskTracker::init(vm),
+                    tracker: jsc::AsyncTaskTracker::init(vm_ref),
                 },
-                vm,
+                vm_ref,
             );
         }
         if self.pending_requests == 0
@@ -1255,7 +1261,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.flags.insert(ServerFlags::DEINIT_SCHEDULED);
         httplog!("scheduleDeinit");
 
-        let vm = self.vm_mut();
+        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
+        // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
+        let vm = unsafe { &mut *self.vm_mut() };
 
         if !self.flags.contains(ServerFlags::TERMINATED) {
             // App.close can cause finalizers to run.
@@ -1263,11 +1271,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
             // PORT NOTE: Zig `AnyTask.New(App, App.close).init(app)` — Rust
-            // `AnyTask` stores an erased fn-ptr directly.
+            // `AnyTask` stores an erased fn-ptr directly (the `New` shim cannot
+            // take a comptime fn value on stable Rust).
             let app = self.app.unwrap();
-            let task = Box::into_raw(Box::new(bun_event_loop::AnyTask {
+            let task = Box::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
                 ctx: core::ptr::NonNull::new(app.cast()),
-                callback: |ctx| {
+                callback: |ctx: *mut core::ffi::c_void| {
                     // SAFETY: `ctx` is the `*mut NewApp<SSL>` stored above; the
                     // app handle is kept alive until `deinit()` destroy()s it.
                     unsafe { (*ctx.cast::<uws_sys::NewApp<SSL>>()).close() };
@@ -1277,9 +1286,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             vm.enqueue_task(bun_event_loop::Task::init(task));
         }
 
-        let task = Box::into_raw(Box::new(bun_event_loop::AnyTask {
+        let task = Box::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
             ctx: core::ptr::NonNull::new((self as *mut Self).cast()),
-            callback: |ctx| {
+            callback: |ctx: *mut core::ffi::c_void| {
                 Self::deinit(ctx.cast::<Self>());
                 Ok(())
             },
@@ -1292,7 +1301,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return self.on_listen_failed();
         };
         self.listener = Some(socket);
-        self.vm_mut().event_loop_handle = Some(bun_aio::Loop::get());
+        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
+        // for the server's lifetime); single-threaded JS context.
+        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_aio::Loop::get()) };
         if !SSL {
             // SAFETY: `socket` is a live uws ListenSocket FFI handle just bound
             // by `app.listen`; deref'd once to read the socket fd. `vm` is a
@@ -1460,17 +1471,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Register HTTP routes on `self.app` (and `h3_app` when present). Returns
     /// the JS `RouteList` value for codegen-backed user routes, or `.zero` when
     /// there are none.
-    ///
-    /// cycle-7: user-route registration, negative routes, websocket fallback,
-    /// and the consolidated `/*` fallback are real. Static-route / DevServer /
-    /// plugins / chrome-devtools paths stay narrowly gated where they touch
-    /// not-yet-real surface (see inline `` blocks below); the
-    /// bodies are preserved in `server_body.rs::set_routes`.
     fn set_routes(&mut self) -> JSValue {
+        use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
         // SAFETY: set_routes is only called after `self.app = Some(..)` in listen().
         let app = unsafe { &mut *self.app.unwrap() };
         let self_ptr: *mut Self = self;
+        let any_server = AnyServer::from(self_ptr as *const Self);
+        // PORT NOTE: reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
+        // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
+        // don't conflict with `&mut self.config` / `&mut self.user_routes`.
+        let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
+            self.dev_server.as_deref_mut().map(|d| d as *mut _);
+
+        // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+        // Only enable this when we're using the dev server.
+        let mut should_add_chrome_devtools_json_route = DEBUG
+            && self.config.allow_hot
+            && dev_server.is_some()
+            && self.config.enable_chrome_devtools_automatic_workspace_folders;
+        const CHROME_DEVTOOLS_ROUTE: &[u8] = b"/.well-known/appspecific/com.chrome.devtools.json";
 
         // --- 1. user_routes_to_build → user_routes + RouteList JS object ---
         if !self.config.user_routes_to_build.is_empty() {

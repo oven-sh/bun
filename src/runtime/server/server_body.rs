@@ -3126,7 +3126,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         jsc::mark_binding!();
         self.pending_requests += 1;
-        scopeguard::defer! { self.pending_requests -= 1; }
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
 
@@ -3148,6 +3147,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
+        self.pending_requests -= 1;
     }
 
     pub fn on_pending_request(&mut self) {
@@ -3161,12 +3161,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
     ) {
         self.on_pending_request();
-        #[cfg(debug_assertions)]
-        unsafe { (*self.vm.event_loop()).debug.enter() };
-        scopeguard::defer! {
-            #[cfg(debug_assertions)]
-            unsafe { (*self.vm.event_loop()).debug.exit() };
-        }
+        // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
+        let _dbg_guard = unsafe {
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm.event_loop()).debug))
+        };
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);
 

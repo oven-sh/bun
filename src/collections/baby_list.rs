@@ -99,6 +99,32 @@ impl<T> BabyList<T> {
         Ok(Self::init_with_buffer_vec(v))
     }
 
+    /// Allocate `cap` uninitialised slots in a bump arena and return a list
+    /// with `len = 0, cap = cap, origin = Borrowed`.
+    ///
+    /// Mirrors Zig `BabyList(T).initCapacity(arena_allocator, cap)`: `Drop` is
+    /// a no-op (the arena owns the buffer), so the resulting list — and any
+    /// bitwise copy of its header — may be safely dropped without freeing.
+    /// Growth via `append`/`ensure_*` is **not** supported; callers must
+    /// pre-size and use `append_assume_capacity`.
+    pub fn init_capacity_in(arena: &bun_alloc::Arena, cap: usize) -> Self {
+        let ptr = if cap == 0 {
+            NonNull::dangling()
+        } else {
+            let layout = core::alloc::Layout::array::<T>(cap).expect("overflow");
+            arena.alloc_layout(layout).cast::<T>()
+        };
+        Self {
+            ptr,
+            len: 0,
+            cap: u32::try_from(cap).unwrap(),
+            origin: Origin::Borrowed {
+                #[cfg(debug_assertions)]
+                trace: None,
+            },
+        }
+    }
+
     /// Construct from raw `(ptr, len, cap)` triple.
     ///
     /// # Safety

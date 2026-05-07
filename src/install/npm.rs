@@ -1348,7 +1348,7 @@ pub mod package_manifest {
             pos += Self::HEADER_BYTES.len() as u64;
 
             writer.write_int_le::<u64>(scope.url_hash)?;
-            writer.write_int_le::<u64>(strings::without_trailing_slash(&scope.url.href).len() as u64)?;
+            writer.write_int_le::<u64>(strings::without_trailing_slash(scope.url.href()).len() as u64)?;
 
             pos += 128 / 8;
 
@@ -1742,7 +1742,7 @@ pub mod package_manifest {
             }
 
             let registry_length = pkg_stream.read_int_le::<u64>()?;
-            if strings::without_trailing_slash(&scope.url.href).len() as u64 != registry_length {
+            if strings::without_trailing_slash(scope.url.href()).len() as u64 != registry_length {
                 return Ok(None);
             }
 

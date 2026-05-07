@@ -5114,6 +5114,40 @@ impl Dir {
     pub fn open_dir_z(&self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
         open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd).map_err(Into::into)
     }
+
+    /// `std.fs.Dir.openDir(sub_path, .{ .iterate, .no_follow, .access_sub_paths = true })`.
+    ///
+    /// On POSIX, `iterate` / `access_sub_paths` are advisory (stdlib opens with
+    /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
+    /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
+    /// handle is opened **without** `read_only` so the caller may create/rename
+    /// children — matching `std.fs.Dir.openDir`, *not* `bun.openDir`.
+    #[inline]
+    pub fn open_dir(
+        &self,
+        sub_path: &[u8],
+        opts: OpenDirOptions,
+    ) -> core::result::Result<Dir, bun_core::Error> {
+        #[cfg(windows)]
+        {
+            return open_dir_at_windows_a(
+                self.fd,
+                sub_path,
+                WindowsOpenDirOptions {
+                    iterable: opts.iterate,
+                    no_follow: opts.no_follow,
+                    ..Default::default()
+                },
+            )
+            .map(Dir::from_fd)
+            .map_err(Into::into);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = opts;
+            open_dir_at(self.fd, sub_path).map(Dir::from_fd).map_err(Into::into)
+        }
+    }
 }
 
 /// bun.zig — `bun.openDir(dir, path)`. Opens `path` relative to `dir` as a

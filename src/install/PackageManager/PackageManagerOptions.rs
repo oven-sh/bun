@@ -634,7 +634,7 @@ impl Options {
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
             if !cli.registry.is_empty() {
-                self.scope.url = URL::parse(cli.registry);
+                self.scope.url = bun_url::OwnedURL::from_href(cli.registry.into());
             }
 
             if let Some(cache_dir) = cli.cache_dir {

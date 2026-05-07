@@ -5261,7 +5261,7 @@ impl Blob {
 
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
                     let mut iter = jsc::JSArrayIterator::init(current, global)?;
-                    // PERF(port): Zig ensureUnusedCapacity(iter.len); ArrayVec is fixed-cap.
+                    stack.reserve(iter.len as usize);
                     let mut any_arrays = false;
                     while let Some(item) = iter.next()? {
                         if item.is_undefined_or_null() { continue; }
@@ -5320,7 +5320,8 @@ impl Blob {
                             }
                         }
 
-                        stack.push(item); // PERF(port): was assume_capacity
+                        // `reserve(iter.len)` above guarantees no realloc here.
+                        stack.push(item);
                     }
                 }
 

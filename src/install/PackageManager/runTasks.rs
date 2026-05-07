@@ -833,7 +833,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -843,9 +843,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
-                        );
+                        ));
                     } else {
-                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -855,7 +855,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
-                        );
+                        ));
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -975,7 +975,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &(*req.network).url_buf },
                         );
                     } else {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -983,7 +983,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 err.name(),
                                 bstr::BStr::new(name),
                             ),
-                        );
+                        ));
                     }
 
                     continue;
@@ -1094,7 +1094,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                    bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -1102,7 +1102,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             err.name(),
                             bstr::BStr::new(alias),
                         ),
-                    );
+                    ));
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1328,7 +1328,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1336,7 +1336,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 err.name(),
                                 bstr::BStr::new(name),
                             ),
-                        );
+                        ));
                     }
                     continue;
                 }
@@ -1433,7 +1433,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(repo),
                         );
                     } else {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1441,7 +1441,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 err.name(),
                                 bstr::BStr::new(alias.slice()),
                             ),
-                        );
+                        ));
                     }
 
                     continue;

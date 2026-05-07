@@ -241,8 +241,10 @@ impl<'a> Task<'a> {
                     // `response_buffer` borrow doesn't overlap the immutable
                     // `response`/`callback` reads below.
                     let network = &mut *manifest.network;
-                    let body = &mut network.response_buffer;
-                    // TODO(port): `defer body.deinit()` — free response_buffer after use
+                    // Zig: `defer body.deinit()` — take ownership so the
+                    // multi-MB manifest buffer drops on every exit of this arm
+                    // instead of staying live on the NetworkTask until recycle.
+                    let mut body = core::mem::take(&mut network.response_buffer);
 
                     let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)

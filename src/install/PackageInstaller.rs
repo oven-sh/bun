@@ -5,7 +5,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{self as Path, platform, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
+use bun_paths::{self as Path, platform, AbsPath, AutoAbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String;
 use bun_str::{strings, ZStr};
 use bun_sys::{self as Syscall, Dir, Fd, FdDirExt, FdExt};
@@ -114,10 +114,29 @@ pub struct PackageInstaller<'a> {
 
 /// Port of `bun.handleOom` for `Result<T, AllocError>`-shaped fallible
 /// container ops used throughout this file (Zig: `catch bun.outOfMemory()`).
+///
+/// PORT NOTE: deliberately NOT a blanket `impl<T,E>` — `bun.handleOom` is only
+/// valid for `error{OutOfMemory}`, and a blanket impl would silently swallow
+/// real (non-OOM) error variants if a future call site's `E` widened. Each
+/// concrete error type is whitelisted below.
 trait UnwrapOrOom<T> {
     fn unwrap_or_oom(self) -> T;
 }
-impl<T, E> UnwrapOrOom<T> for core::result::Result<T, E> {
+impl<T> UnwrapOrOom<T> for core::result::Result<T, bun_core::AllocError> {
+    #[inline]
+    fn unwrap_or_oom(self) -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => bun_core::out_of_memory(),
+        }
+    }
+}
+/// `bun.AbsPath(.{}).from()` / `.append()` are infallible in Zig (the default
+/// `check_length = .assume_always_less_than_max_path` panics on overflow).
+/// The Rust port unconditionally returns `Result<T, MaxPathExceeded>` (see
+/// `paths/Path.rs` PORT NOTE), so the `Err` arm here is the same crash, not a
+/// recoverable error being swallowed.
+impl<T> UnwrapOrOom<T> for core::result::Result<T, bun_paths::path_options::Error> {
     #[inline]
     fn unwrap_or_oom(self) -> T {
         match self {

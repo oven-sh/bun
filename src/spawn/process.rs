@@ -4278,29 +4278,22 @@ pub mod sync {
             };
             (fd, restore)
         };
-        scopeguard::defer! {
-            if chld_fd != spawn_sys::INVALID_FD {
-                chld_fd.close();
-            }
-        }
+        // Shadow as RAII owner *after* `_restore_mask` so LIFO drop order is
+        // preserved (close signalfd, then restore the signal mask).
+        let chld_fd = AutoCloseFd::new(chld_fd);
 
         // Parent-death: pidfd when available (instant wake). When not
         // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
         // `getppid()`.
-        let mut ppid_fd = spawn_sys::INVALID_FD;
+        let mut ppid_fd = AutoCloseFd::invalid();
         if ppid > 1 {
             match spawn_sys::pidfd_open(ppid, 0) {
-                Maybe::Ok(fd) => ppid_fd = Fd::from_native(fd),
+                Maybe::Ok(fd) => ppid_fd = AutoCloseFd::new(Fd::from_native(fd)),
                 Maybe::Err(e) => {
                     if e.get_errno() == bun_sys::E::ESRCH {
                         Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                     }
                 }
-            }
-        }
-        scopeguard::defer! {
-            if ppid_fd != spawn_sys::INVALID_FD {
-                ppid_fd.close();
             }
         }
         // `enable()` armed `PDEATHSIG=SIGKILL` on us. The kernel queues
@@ -4326,9 +4319,9 @@ pub mod sync {
             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
 
-        let need_ppid_fallback = ppid > 1 && ppid_fd == spawn_sys::INVALID_FD;
+        let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == spawn_sys::INVALID_FD;
         let timeout_ms: i32 =
-            if need_ppid_fallback || chld_fd == spawn_sys::INVALID_FD { 100 } else { -1 };
+            if need_ppid_fallback || chld_fd.fd() == spawn_sys::INVALID_FD { 100 } else { -1 };
 
         let mut child_status: Option<Status> = None;
         loop {

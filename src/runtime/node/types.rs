@@ -57,7 +57,6 @@ impl Drop for BlobOrStringOrBuffer {
     }
 }
 
-// `.js_type()`, `.throw_invalid_arguments()`, `Blob::store()`).
 
 impl BlobOrStringOrBuffer {
     pub fn slice(&self) -> &[u8] {
@@ -265,7 +264,6 @@ impl Drop for StringOrBuffer {
     }
 }
 
-// `.js_type()`, `bun_str::String::from_js`, `.vm()`).
 
 impl StringOrBuffer {
     pub fn to_thread_safe(&mut self) {
@@ -1348,7 +1346,6 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 
 
-// `path.to_thread_safe()` reaches `.protect()`).
 
 
 

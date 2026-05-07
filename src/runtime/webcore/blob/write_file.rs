@@ -321,14 +321,11 @@ impl WriteFile {
         unsafe {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;
-
-            // PORT NOTE: Zig `bytes_blob.store.?.deref()` / `file_blob.store.?.deref()` —
-            // drop the `Option<StoreRef>` to release the +1 from `create_with_ctx`.
-            (*this).bytes_blob.store = None;
-            (*this).file_blob.store = None;
-
             system_error = (*this).system_error.take();
             total_written = (*this).total_written;
+            // PORT NOTE: Zig `bytes_blob.store.?.deref()` / `file_blob.store.?.deref()`
+            // are subsumed by `StoreRef::drop` when the Box is reclaimed (paired
+            // with the RAII note in `create_with_ctx`).
             drop(Box::from_raw(this));
         }
 
@@ -598,11 +595,12 @@ mod windows_impl {
                 poll_ref: KeepAlive::default(),
                 owned_fd: false,
             });
-            // SAFETY: just allocated, sole owner until returned
+            // SAFETY: just allocated, sole owner until returned.
+            // PORT NOTE: Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
+            // are omitted — the Rust caller passes `+1` Blobs via `dupe()` and
+            // `deinit` releases them via `Box::from_raw → StoreRef::drop`.
             unsafe {
                 let wf = &mut *write_file;
-                wf.file_blob.store.as_ref().unwrap().ref_();
-                wf.bytes_blob.store.as_ref().unwrap().ref_();
                 wf.io_request.loop_ = (*event_loop).virtual_machine.event_loop_handle.unwrap();
                 wf.io_request.data = write_file.cast::<c_void>();
 
@@ -985,10 +983,9 @@ mod windows_impl {
             if fd > 0 && self.owned_fd {
                 aio::Closer::close(Fd::from_uv(fd), self.io_request.loop_);
             }
-            // PORT NOTE: Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()` —
-            // drop the `Option<StoreRef>` to release the +1 from `create_with_ctx`.
-            self.file_blob.store = None;
-            self.bytes_blob.store = None;
+            // PORT NOTE: Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()`
+            // are subsumed by `StoreRef::drop` when the Box is reclaimed below
+            // (paired with the RAII note in `create_with_ctx`).
             self.poll_ref.disable();
             // SAFETY: self.io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
             // is safe on a zeroed or previously-used req.
@@ -1090,9 +1087,13 @@ impl WriteFileWaitFromLockedValueTask {
         // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
         // task was scheduled; the global outlives every `Body::Value` callback.
         let global_this = unsafe { &*this_ref.global_this };
-        // PORT NOTE: Zig copied `var file_blob = this.file_blob;` by value (Blob is a value type
-        // in Zig). `dupe()` is the explicit shallow copy that bumps `Store`'s
-        // intrusive refcount, matching the Zig copy semantics.
+        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a bitwise copy
+        // with no ref bump and no dtor. `dupe()` here adds +1; in the consuming
+        // arms that extra ref is balanced by `Box::from_raw(this)` dropping
+        // `this.file_blob` (-1, which Zig's `bun.destroy` does not do). In the
+        // `Locked` arm `this` is kept alive for the next callback and the local
+        // `file_blob` drops the +1 at scope exit, leaving `this.file_blob`
+        // intact — net zero either way.
         let mut file_blob = this_ref.file_blob.dupe();
         match value {
             body::Value::Error(err_ref) => {

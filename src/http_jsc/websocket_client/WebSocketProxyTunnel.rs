@@ -12,13 +12,24 @@
 //! ## Aliasing model
 //!
 //! Every public entry that drives the `SslWrapper` (`start`, `receive`, `on_writable`,
-//! `write`, `shutdown`) and every `SslWrapper` callback can synchronously re-enter this
-//! struct through the `ctx` backref. To stay sound under Stacked Borrows, those
-//! functions take `*mut Self` and never bind a long-lived `&mut Self` across an
-//! outbound call. Field access goes through short-lived raw-pointer projections
-//! (`ptr::addr_of_mut!` / `(*this).field`) so two frames never hold overlapping
-//! exclusive borrows of the tunnel. This mirrors the Zig spec, which freely aliases
-//! `*WebSocketProxyTunnel` across callbacks.
+//! `write`, `shutdown`) forms a `&mut SslWrapper` over the `wrapper` field and then
+//! synchronously re-enters this struct through the `ctx` backref via
+//! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
+//!
+//! To stay sound under Stacked Borrows:
+//! - Driving entries take `*mut Self` and project to `wrapper` via
+//!   `ptr::addr_of_mut!` so the `&mut` covers only that field's bytes.
+//! - Callbacks **never** form `&Self`/`&mut Self` (whole-struct) and **never** read
+//!   `(*ctx).wrapper` — either would touch `wrapper`'s bytes through the
+//!   Box-provenance `ctx` and pop the caller's `&mut SslWrapper` Unique tag.
+//!   They access only disjoint fields (`ref_count`, `ssl`, `sni_hostname`,
+//!   `write_buffer`, `socket`, `upgrade_client`, `connected_websocket`) via
+//!   `(*ctx).field` raw projections.
+//! - The `*mut SSL` needed by `on_handshake` is snapshotted into `self.ssl` in
+//!   `start()` so it can be read without going through `wrapper`.
+//!
+//! This mirrors the Zig spec, which freely aliases `*WebSocketProxyTunnel` across
+//! callbacks.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -235,8 +246,9 @@ impl WebSocketProxyTunnel {
             reject_unauthorized,
         });
         // ref_count initialized to 1; caller owns the Box allocation via the
-        // returned raw pointer (paired with `deref()` for release).
-        Ok(NonNull::from(Box::leak(boxed)))
+        // returned raw pointer (paired with `Box::from_raw` in `deref()`).
+        // SAFETY: Box::into_raw never returns null.
+        Ok(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) })
     }
 
     /// Start TLS handshake inside the tunnel
@@ -656,5 +668,5 @@ pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
 //   source:     src/http_jsc/websocket_client/WebSocketProxyTunnel.zig (371 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      const-generic SSL bool → variant dispatch in init() uses transmute_copy (identity at monomorphization); SslConfig/SslWrapper import paths need verification; public SslWrapper-driving entries take *mut Self to avoid aliased &mut across synchronous callback re-entry (see module-level Aliasing model)
+//   notes:      const-generic SSL bool → variant dispatch in init() uses transmute_copy (identity at monomorphization); SslConfig/SslWrapper import paths need verification; callbacks never touch `wrapper` field bytes — `ssl` is snapshotted into a disjoint field and SNI is hoisted into start() (see module-level Aliasing model)
 // ──────────────────────────────────────────────────────────────────────────

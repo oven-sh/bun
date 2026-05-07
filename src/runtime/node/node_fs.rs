@@ -3502,7 +3502,9 @@ pub mod args {
 
     pub type UnwatchFile = ();
     pub type Watch<'a> = super::Watcher::Arguments<'a>;
-    pub type WatchFile<'a> = super::StatWatcher::Arguments<'a>;
+    // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
+    // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
+    pub type WatchFile = super::StatWatcher::Arguments;
 
     pub struct Fsync { pub fd: FD }
     impl Fsync {

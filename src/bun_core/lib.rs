@@ -467,7 +467,8 @@ pub mod strings {
         Some(allocate_latin1_into_utf8_with_list(Vec::with_capacity(latin1.len()), 0, latin1))
     }
 
-    /// WTF-8 fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
+    /// Slow-path fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
+    /// Unpaired surrogates are replaced with U+FFFD, matching `utf16CodepointWithFFFDAndFirstInputChar`.
     fn append_wtf8_from_utf16(list: &mut Vec<u8>, utf16: &[u16]) {
         let mut i = 0usize;
         let mut buf = [0u8; 4];
@@ -480,8 +481,11 @@ pub mod strings {
                     if (0xDC00..=0xDFFF).contains(&lo) {
                         cp = 0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00);
                         i += 2;
-                    } else { cp = unit; i += 1; }
-                } else { cp = unit; i += 1; }
+                    } else { cp = 0xFFFD; i += 1; }
+                } else { cp = 0xFFFD; i += 1; }
+            } else if (0xDC00..=0xDFFF).contains(&unit) {
+                cp = 0xFFFD;
+                i += 1;
             } else { cp = unit; i += 1; }
             let n = encode_wtf8_rune(&mut buf, cp);
             list.extend_from_slice(&buf[..n]);

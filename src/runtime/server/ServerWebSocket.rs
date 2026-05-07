@@ -937,7 +937,7 @@ impl ServerWebSocket {
 
         let callback = args.ptr[0];
         if callback.is_empty_or_undefined_or_null() || !callback.is_callable() {
-            return Err(global_this.throw_invalid_argument_type_value("cork", "callback", callback));
+            return Err(global_this.throw_invalid_argument_type_value(b"cork", b"callback", callback));
         }
 
         if self.is_closed() {
@@ -1485,9 +1485,9 @@ impl ServerWebSocket {
             Some(FullBinaryType::Uint8Array) => BinaryType::Uint8Array,
             // some other value which we don't support
             _ => {
-                return Err(global_this.throw(
+                return Err(global_this.throw(format_args!(
                     "binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"",
-                ));
+                )));
             }
         };
         self.flags.set_binary_type(val);
@@ -1525,7 +1525,7 @@ impl ServerWebSocket {
         }
 
         if !args.ptr[0].is_string() {
-            return Err(global_this.throw_invalid_argument_type_value("topic", "string", args.ptr[0]));
+            return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args.ptr[0]));
         }
 
         let topic = args.ptr[0].to_slice(global_this)?;
@@ -1553,7 +1553,7 @@ impl ServerWebSocket {
         }
 
         if !args.ptr[0].is_string() {
-            return Err(global_this.throw_invalid_argument_type_value("topic", "string", args.ptr[0]));
+            return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args.ptr[0]));
         }
 
         let topic = args.ptr[0].to_slice(global_this)?;
@@ -1581,7 +1581,7 @@ impl ServerWebSocket {
         }
 
         if !args.ptr[0].is_string() {
-            return Err(global_this.throw_invalid_argument_type_value("topic", "string", args.ptr[0]));
+            return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args.ptr[0]));
         }
 
         let topic = args.ptr[0].to_slice(global_this)?;

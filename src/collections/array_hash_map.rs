@@ -855,6 +855,22 @@ impl<K, V: Default, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
         Ok(self.gop_at(i, false))
     }
 
+    /// Zig `getOrPutAssumeCapacity`: like [`get_or_put`] but skips the grow
+    /// check. Caller must have called `ensure_unused_capacity` first.
+    pub fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
+        let h = self.ctx.hash(&key);
+        if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
+            return self.gop_at(i, true);
+        }
+        let i = self.keys.len();
+        // PERF(port): `push_within_capacity` is unstable; `push` is a no-grow
+        // when the prior `ensure_unused_capacity` reserved the slot.
+        self.keys.push(key);
+        self.values.push(V::default());
+        self.hashes.push(h);
+        self.gop_at(i, false)
+    }
+
     /// Zig `getOrPutValue`: like `get_or_put` but writes `value` when absent.
     pub fn get_or_put_value(
         &mut self,
@@ -1192,6 +1208,15 @@ impl<V> StringHashMap<V> {
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
         self.inner.insert(Box::from(key), value);
+        Ok(())
+    }
+
+    /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
+    /// OOM surfaces as `Err` instead of aborting (matches Zig `put` returning
+    /// `error.OutOfMemory`); callers can roll back side effects on failure.
+    pub fn put_owned(&mut self, key: Box<[u8]>, value: V) -> Result<(), AllocError> {
+        self.inner.try_reserve(1).map_err(|_| AllocError)?;
+        self.inner.insert(key, value);
         Ok(())
     }
 

@@ -932,7 +932,11 @@ impl RunCommand {
 
 pub struct Run {
     vm: *mut VirtualMachine,
-    entry_path: &'static [u8],
+    /// Owned copy of the entry-point path (Zig: `[]u8` from
+    /// `ctx.allocator.dupe`). `vm.main` is a backref into this buffer, so it
+    /// must outlive the VM — process-lifetime here since `start()` ends in
+    /// `global_exit`.
+    entry_path: Box<[u8]>,
     /// Snapshot of `ctx.runtime_options.eval.eval_and_print`. The full
     /// `Command::Context` is not stored: its remaining `start()` consumers
     /// (cpu/heap profiler, redis/sql preconnect) read VM-side fields that
@@ -941,11 +945,10 @@ pub struct Run {
 }
 
 // Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
-static mut RUN: Run = Run {
-    vm: ::core::ptr::null_mut(),
-    entry_path: b"",
-    eval_and_print: false,
-};
+// `MaybeUninit` because `Box<[u8]>` has no `const` initializer; the only read
+// is via the `hold_api_lock` trampoline after `boot`/`boot_standalone` writes
+// it, so the uninit window is never observed.
+static mut RUN: ::core::mem::MaybeUninit<Run> = ::core::mem::MaybeUninit::uninit();
 
 // PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
 // unhandled-rejection callback while `Run::start` holds `&mut self` (via the

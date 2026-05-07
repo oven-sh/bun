@@ -341,13 +341,20 @@ impl ShellSubprocess {
                     StdioKind::Stdin => unreachable!(),
                 };
                 if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-                    if matches!(pipe.state, PipeReaderState::Done(_)) {
-                        // Move the done buffer out of the pipe state.
-                        // TODO(port): Arc<PipeReader> needs interior mutability to take state.
+                    // The only callers reach here from inside
+                    // `PipeReader::on_reader_done`/`on_reader_error`, which still
+                    // hold a raw `*mut PipeReader` to this same allocation.
+                    // Route every read/write through `Arc::as_ptr` (no `Deref`)
+                    // so we never materialise a `&PipeReader` that would alias
+                    // those callers' access; see `PipeReader::take_done_buffer`.
+                    let pp = Arc::as_ptr(&pipe).cast_mut();
+                    // SAFETY: `pp` projects from the Arc allocation's NonNull;
+                    // raw place read of the discriminant only.
+                    let is_done = matches!(unsafe { &(*pp).state }, PipeReaderState::Done(_));
+                    if is_done {
                         // SAFETY: raw-ptr write through the Arc allocation; see
-                        // PipeReader::take_done_buffer. `pipe` is the sole strong ref here.
-                        let buf =
-                            unsafe { PipeReader::take_done_buffer(Arc::as_ptr(&pipe).cast_mut()) };
+                        // `PipeReader::take_done_buffer`.
+                        let buf = unsafe { PipeReader::take_done_buffer(pp) };
                         *out = Readable::Buffer(buf);
                     } else {
                         *out = Readable::Ignore;
@@ -940,17 +947,13 @@ impl Writable {
     // never exposes its stdin Writable to JS.
 
     pub fn finalize(&mut self) {
-        // SAFETY: `self` points to ShellSubprocess.stdin (always — see Zig @fieldParentPtr).
-        let subprocess: *mut Subprocess = unsafe {
-            (self as *mut _ as *mut u8)
-                .sub(offset_of!(Subprocess, stdin))
-                .cast::<Subprocess>()
-        };
-        // SAFETY: subprocess derived from valid &mut self field.
-        let _subproc = unsafe { &*subprocess };
-        // TODO(port): Zig checked `subprocess.this_jsvalue != .zero` here, but the field
-        // is never assigned (always .zero) — dead code path under Zig lazy compilation.
-        // Dropped along with the `this_jsvalue` field.
+        // PORT NOTE: Zig recovered `*Subprocess` via @fieldParentPtr to gate on
+        // `subprocess.this_jsvalue != .zero`. That field is never assigned on
+        // ShellSubprocess (dead code path under Zig lazy compilation) and was
+        // dropped from the port, so the parent-pointer recovery is unnecessary.
+        // Computing it would also require materialising a `&Subprocess` while
+        // `&mut self` (== `&mut subprocess.stdin`) is live — an aliasing
+        // violation under Stacked Borrows even if never read.
 
         match self {
             Writable::Pipe(_) => {

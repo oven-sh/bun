@@ -246,7 +246,7 @@ pub mod help_command {
   <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
-";
+" }; }
 
     const CLI_HELPTEXT_FOOTER: &str = "
 Learn more about Bun:            <magenta>https://bun.com/docs<r>
@@ -297,17 +297,13 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                     }
                 }
 
-                // TODO(port): Output::pretty is a printf-style fn; Phase B wires the
-                // 7-arg substitution into CLI_HELPTEXT_FMT properly.
-                let _ = &args;
                 Output::pretty(format_args!(
-                    "{}",
-                    const_format::concatcp!(
-                        "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(",
-                        Global::package_json_version_with_revision,
-                        ")<r>\n\n",
-                        CLI_HELPTEXT_FMT,
+                    concat!(
+                        "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({version})<r>\n\n",
+                        cli_helptext_fmt!(),
                     ),
+                    version = Global::package_json_version_with_revision,
+                    args.0, args.1, args.2, args.3, args.4, args.5, args.6,
                 ));
                 if show_all_flags {
                     Output::pretty(format_args!("\n<b>Flags:<r>"));

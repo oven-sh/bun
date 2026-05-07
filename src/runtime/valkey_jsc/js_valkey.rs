@@ -24,6 +24,20 @@ use super::protocol_jsc;
 /// `bun.JSTerminated!T` — convenience alias (no public re-export in `bun_jsc` yet).
 type JsTerminatedResult<T> = Result<T, jsc::JsTerminated>;
 
+/// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
+/// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
+/// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
+/// / `resolve`); the other variants are unreachable on this path.
+#[inline]
+fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
+    r.map_err(|e| match e {
+        jsc::JsError::Terminated => jsc::JsTerminated::JSTerminated,
+        jsc::JsError::OutOfMemory => bun_core::out_of_memory(),
+        // valkey.rs never throws into JS from these paths; treat as terminal.
+        jsc::JsError::Thrown => jsc::JsTerminated::JSTerminated,
+    })
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Local shims / extension traits (Phase-D adapt-on-our-side)
 // ───────────────────────────────────────────────────────────────────────────

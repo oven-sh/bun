@@ -1631,8 +1631,19 @@ it.if(privilegedBindEACCES !== null)("reports EACCES (not EADDRINUSE) for privil
 // through so Bun.serve reports the real code (EADDRNOTAVAIL, EACCES, etc.)
 // instead of always falling back to EADDRINUSE. Works on macOS and Linux with
 // no special privileges — 192.0.2.0/24 is TEST-NET-1 (RFC 5737) and bind()
-// returns EADDRNOTAVAIL there on both platforms.
-it.skipIf(process.platform === "win32")(
+// returns EADDRNOTAVAIL there on both platforms. Skip on Linux when
+// ip_nonlocal_bind is enabled, since the kernel then allows the bind to
+// succeed (e.g. on hosts that run a load balancer with floating IPs).
+const canReproduceEADDRNOTAVAIL = (() => {
+  if (process.platform === "win32") return false;
+  if (process.platform === "linux") {
+    try {
+      if (readFileSync("/proc/sys/net/ipv4/ip_nonlocal_bind", "utf8").trim() === "1") return false;
+    } catch {}
+  }
+  return true;
+})();
+it.if(canReproduceEADDRNOTAVAIL)(
   "reports EADDRNOTAVAIL (not EADDRINUSE) for bind to a non-local address (#30363, #10318)",
   () => {
     try {

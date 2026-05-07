@@ -2164,25 +2164,33 @@ struct ModuleBufs {
 }
 
 thread_local! {
-    // PORT NOTE: bun.ThreadlocalBuffers — Zig uses raw threadlocal vars with no aliasing rules.
+    // PORT NOTE: bun.ThreadlocalBuffers — Zig heap-allocates the buffer struct on first use and
+    // stores only a pointer in TLS so the static-TLS template stays small (PE/COFF has no
+    // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
     // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
-    // Use UnsafeCell + raw-pointer access; only form `&mut PathBuffer` inside the non-recursive
-    // `String` arms where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::UnsafeCell<ModuleBufs> = const {
-        core::cell::UnsafeCell::new(ModuleBufs {
-            resolved_path_buf_percent: PathBuffer::ZEROED,
-            resolve_target_buf: PathBuffer::ZEROED,
-            resolve_target_buf2: PathBuffer::ZEROED,
-            resolve_target_reverse_prefix_buf: PathBuffer::ZEROED,
-            resolve_target_reverse_prefix_buf2: PathBuffer::ZEROED,
-        })
-    };
+    // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
+    // where the buffers are actually written (no overlap with a live outer `&mut`).
+    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(core::cell::UnsafeCell::get)
+    MODULE_BUFS.with(|c| {
+        let mut p = c.get();
+        if p.is_null() {
+            p = Box::into_raw(Box::new(ModuleBufs {
+                resolved_path_buf_percent: PathBuffer::ZEROED,
+                resolve_target_buf: PathBuffer::ZEROED,
+                resolve_target_buf2: PathBuffer::ZEROED,
+                resolve_target_reverse_prefix_buf: PathBuffer::ZEROED,
+                resolve_target_reverse_prefix_buf2: PathBuffer::ZEROED,
+            }));
+            c.set(p);
+        }
+        p
+    })
 }
 
 // PORT NOTE: Zig used `r: *const ESModule` (const ptr) but mutated `r.module_type.*`

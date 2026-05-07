@@ -482,15 +482,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut replacements: Vec<Replacement> = Vec::new();
 
             // PORT NOTE: `ModuleInfo.{strings_buf,strings_lens}` are private in
-            // `bun_js_printer`; access via the borrowed `as_deserialized()` view
-            // (same backing storage, public fields).
-            // TODO(port): `as_deserialized()` debug-asserts `finalized`; this path
-            // runs pre-`finalize` to allow `replace_string_id`. Phase B should add
-            // a `strings_iter()` accessor on `ModuleInfo`.
-            let (strings_buf, strings_lens): (&[u8], &[u32]) = {
-                let view = mi.as_deserialized();
-                (view.strings_buf, view.strings_lens)
-            };
+            // `bun_js_printer`. `as_deserialized()` debug-asserts `finalized`,
+            // but this path runs pre-finalize so the `replace_string_id` calls
+            // below (which assert `!finalized`) can mutate the table. Use the
+            // dedicated `strings()` accessor that carries no `finalized`
+            // precondition.
+            let (strings_buf, strings_lens): (&[u8], &[u32]) = mi.strings();
             let mut offset: usize = 0;
             for (string_index, &slen) in strings_lens.iter().enumerate() {
                 let len: usize = usize::try_from(slen).expect("int cast");

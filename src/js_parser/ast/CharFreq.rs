@@ -139,14 +139,20 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
         deltas[c as usize] += delta;
     }
 
-    // PORT NOTE: Zig writes `freqs[0..26].* = deltas[...]` which *overwrites* the
-    // accumulator (a latent bug — `var freqs = out.*` is dead). With Zig's
-    // deterministic StringHashMap iteration the lossy result is stable, but in
-    // Rust the RandomState-seeded `scope.members` order makes the overwritten
-    // value vary run-to-run, breaking minified-output determinism (the
-    // observable `OV`/`OU` flap on three.js). We add instead — the histogram
-    // the algorithm intends — so output is stable and the freq table reflects
-    // the whole input rather than the last ≥32-byte scan.
+    // PORT NOTE — INTENTIONAL SPEC DIVERGENCE: CharFreq.zig:64 writes
+    // `freqs[0..26].* = deltas[...]`, which *overwrites* the accumulator
+    // (`var freqs = out.*` is dead). That is an upstream bug: every ≥32-byte
+    // scan discards all prior counts, so the result is last-big-scan-wins
+    // rather than the histogram the NameMinifier expects. Zig's output is
+    // stable only because its StringHashMap iteration order is deterministic,
+    // so the *same* symbol name overwrites last on every run. The Rust
+    // `scope.members` map is RandomState-seeded, so a faithful overwrite port
+    // is nondeterministic (the observed `OV`/`OU` flap on three.js), and even
+    // a deterministic-iteration port wouldn't reproduce Zig's specific hash
+    // order. We accumulate (`+=`) instead — the algorithm's intent — which
+    // makes the freq table both correct and run-to-run stable. Minified
+    // output therefore differs from Zig by design here (three.js: 2 bytes
+    // smaller); byte-identical-vs-Zig is not a goal for this function.
     for i in 0..26 { out[i] += deltas[b'a' as usize + i]; }
     for i in 0..26 { out[26 + i] += deltas[b'A' as usize + i]; }
     for i in 0..10 { out[52 + i] += deltas[b'0' as usize + i]; }

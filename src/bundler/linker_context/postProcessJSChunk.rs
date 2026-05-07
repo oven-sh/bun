@@ -24,14 +24,6 @@ use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}}
 #[allow(dead_code)]
 type IndexInt = u32;
 
-/// Helper: get printed code from a `PrintResult` (Zig: `result.result.code`).
-fn print_result_code(r: &PrintResult) -> &[u8] {
-    match r {
-        PrintResult::Result(ok) => &ok.code,
-        PrintResult::Err(_) => b"",
-    }
-}
-
 /// Move the printed code out of a `PrintResult`. Mirrors Zig
 /// `j.push(result.code, worker.allocator)` where the joiner takes ownership of
 /// the slice — the Rust `PrintResultSuccess.code` is a `Box<[u8]>` that would

@@ -3609,7 +3609,7 @@ impl<'a> LinkerContext<'a> {
         pieces.push(OutputPiece::init(output, crate::chunk::Query::NONE));
 
         Ok(crate::chunk::IntermediateOutput::Pieces(
-            Vec::<OutputPiece>::from_owned_slice(pieces.into_boxed_slice()),
+            crate::chunk::OutputPieces::new(pieces, complete_output),
         ))
     }
 }

@@ -2789,6 +2789,13 @@ impl<'a> BundleV2<'a> {
         }
     }
 
+    /// RAII form of Zig's `defer this.decrementScanCounter()`. Captures `self` as
+    /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
+    /// rest of the scope; the caller must ensure `self` outlives the guard.
+    pub fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
+        ScanCounterGuard { bv2: self as *mut BundleV2<'a> as *mut BundleV2<'static> }
+    }
+
     // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
     // TODO(port): comptime variant enum param + dependent data type — split into three monomorphic fns
     pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(&mut self, data: &[P]) -> Result<(), Error> {

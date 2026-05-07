@@ -53,22 +53,16 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
     #[cfg(feature = "show_crash_trace")]
-    let _crash_guard = {
-        let prev_action = bun_crash_handler::current_action();
-        // SAFETY: `c_ptr` / `chunk_ptr` carry valid mutable provenance (see extraction above);
-        // we materialize transient `&` refs only to hand erased `*const ()` to the crash-trace
-        // vtable — they are not retained past this expression.
-        bun_crash_handler::set_current_action(Some(
-            crate::linker_context_mod::bundle_generate_chunk_action(
-                unsafe { &*c_ptr },
-                unsafe { &*chunk_ptr },
-                &part_range.part_range,
-            ),
-        ));
-        scopeguard::guard((), move |_| {
-            bun_crash_handler::set_current_action(prev_action);
-        })
-    };
+    // SAFETY: `c_ptr` / `chunk_ptr` carry valid mutable provenance (see extraction above);
+    // we materialize transient `&` refs only to hand erased `*const ()` to the crash-trace
+    // vtable — they are not retained past this expression.
+    let _crash_guard = bun_crash_handler::scoped_action(
+        crate::linker_context_mod::bundle_generate_chunk_action(
+            unsafe { &*c_ptr },
+            unsafe { &*chunk_ptr },
+            &part_range.part_range,
+        ),
+    );
 
     #[cfg(feature = "show_crash_trace")]
     {

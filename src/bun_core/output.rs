@@ -1579,11 +1579,7 @@ impl ScopedLogger {
             return;
         }
 
-        scoped_debug_writer::DISABLE_INSIDE_LOG.set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() + 1);
-        let _guard = scopeguard::guard((), |_| {
-            scoped_debug_writer::DISABLE_INSIDE_LOG
-                .set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() - 1);
-        });
+        let _guard = scoped_debug_writer::DisableGuard::new();
 
         if !self.is_visible() {
             return;

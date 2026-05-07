@@ -1791,7 +1791,10 @@ impl Package<u64> {
                             .satisfies(workspace_version.unwrap(), buf, buf)
                     };
                     if pm.options.link_workspace_packages && satisfies {
-                        let path = workspace_path.unwrap().sliced(buf);
+                        // `String::sliced` takes `&'a self`; bind the unwrapped
+                        // value so the borrow outlives the parse call.
+                        let wp = workspace_path.unwrap();
+                        let path = wp.sliced(buf);
                         if let Some(dep) = dependency::parse_with_tag(
                             external_alias.value,
                             Some(external_alias.hash),

@@ -885,7 +885,7 @@ impl NegatableEnum for Architecture {
 // name a real type instead of an opaque blob.
 
 #[repr(C)]
-#[derive(Copy, Default, Debug)]
+#[derive(Copy, Default)]
 pub struct Repository {
     pub owner: SemverString,
     pub repo: SemverString,

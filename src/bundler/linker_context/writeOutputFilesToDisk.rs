@@ -142,7 +142,7 @@ pub fn write_output_files_to_disk(
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
         // guard that resets on drop and derefs to the allocator, so when Phase B
         // wires up `code_allocator` it can borrow through `_code_allocator`.
-        let mut _code_allocator = max_heap_allocator.scope();
+        let _code_allocator = max_heap_allocator.scope();
 
         let rel_path: &[u8] = chunk.final_rel_path;
         let rel_parent =

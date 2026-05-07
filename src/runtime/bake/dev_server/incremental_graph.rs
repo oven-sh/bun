@@ -8,8 +8,8 @@
 //! `File` payload is folded into a single struct carrying both field sets and
 //! per-side behaviour is dispatched on the `SIDE` const parameter.
 
-use core::fmt::Write as _;
 use core::mem::offset_of;
+use std::io::Write as _;
 
 use bun_collections::{bit_set::DynamicBitSetUnmanaged, ArrayHashMap, StringArrayHashMap};
 use bun_str::strings;
@@ -1419,7 +1419,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // TODO(port): DevServer should get a stdio manager which can process
         // the error list as it changes while also supporting a REPL.
-        let _ = log.print(bun_core::Output::error_writer());
+        let _ = log.print(bun_core::Output::error_writer() as *mut _);
 
         let failure = {
             let mut buf = bun_paths::path_buffer_pool::get();

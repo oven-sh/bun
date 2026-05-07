@@ -146,7 +146,7 @@ impl Options {
 
         let _flowlabel = if let Some(fl) = obj.get(global, "flowlabel")? {
             if !fl.is_number() {
-                return Err(global.throw_invalid_argument_type_value("options.flowlabel", "number", fl));
+                return Err(global.throw_invalid_argument_type_value(b"options.flowlabel", b"number", fl));
             }
             if !fl.is_uint32_as_any_int() {
                 return Err(global.throw_range_error(
@@ -174,7 +174,7 @@ impl Options {
 
     fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
         // `defer ty.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
-        let Ok(ty) = global.determine_specific_type(port_) else {
+        let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
                 .err(bun_jsc::ErrorCode::SOCKET_BAD_PORT, format_args!("The \"options.port\" argument must be a valid IP port number."))
                 .throw();
@@ -204,7 +204,7 @@ impl SocketAddress {
         let input: OwnedString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
-                return Err(global.throw_invalid_argument_type_value("input", "string", input_arg));
+                return Err(global.throw_invalid_argument_type_value(b"input", b"string", input_arg));
             }
             OwnedString::new(BunString::from_js(input_arg, global)?)
         };
@@ -346,7 +346,7 @@ impl SocketAddress {
 
     pub fn init_from_addr_family(global: &JSGlobalObject, address_js: JSValue, family_js: JSValue) -> JsResult<SocketAddress> {
         if !address_js.is_string() {
-            return Err(global.throw_invalid_argument_type_value("options.address", "string", address_js));
+            return Err(global.throw_invalid_argument_type_value(b"options.address", b"string", address_js));
         }
         let address_: BunString = BunString::from_js(address_js, global)?;
         let family_: AF = AF::from_js(global, family_js)?;

@@ -1996,9 +1996,7 @@ where
     pub fn on_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(global.throw_type_error(format_args!(
-                "Not enough arguments to 'reload'. Expected 1, got 0."
-            )));
+            return Err(global.throw_not_enough_arguments("reload", 1, 0));
         }
 
         // SAFETY: bun_vm() returns the live per-thread VM singleton.

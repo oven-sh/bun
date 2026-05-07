@@ -722,19 +722,16 @@ impl LinkerGraph {
     }
 
     /// Transfers ownership of the AST to the graph allocator.
-    /// This is valid only if all allocators are `MimallocArena`s.
     ///
     /// PORT NOTE: the Zig body calls `BabyList::transfer_ownership(heap)` with
-    /// a `MimallocArena::Borrowed` downcast of the graph allocator. The Rust
-    /// `BabyList::transfer_ownership` (baby_list.rs) currently takes no
-    /// allocator argument — `CheckedAllocator` tracking was dropped — so the
-    /// per-column transfer is a no-op until that lands. Kept un-gated so
-    /// `scanImportsAndExports` resolves; the debug-only walk is preserved for
-    /// when `transfer_ownership` grows a real body.
+    /// a `MimallocArena::Borrowed` downcast of the graph allocator — purely
+    /// `CheckedAllocator` bookkeeping, since mimalloc can free across heaps.
+    /// In Rust the parser-side lists live in a `bumpalo::Bump` (see
+    /// `P::to_ast` → `from_bump_slice`), so `transfer_ownership` must actually
+    /// reallocate Borrowed buffers into the global heap before the linker
+    /// starts `append`ing to them. This walk is therefore unconditional, not
+    /// `SAFETY_CHECKS`-gated as in Zig.
     pub fn take_ast_ownership(&mut self) {
-        if !bun_collections::baby_list::SAFETY_CHECKS {
-            return;
-        }
         for import_records in self.ast.items_import_records_mut().iter_mut() {
             import_records.transfer_ownership();
         }

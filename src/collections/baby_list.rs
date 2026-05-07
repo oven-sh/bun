@@ -771,12 +771,53 @@ impl<T> BabyList<T> {
         }
     }
 
-    /// Transfers ownership of this `BabyList` to a new allocator.
+    /// Transfers ownership of this `BabyList`'s buffer to the global allocator.
     ///
-    /// This method is valid only if both the old allocator and new allocator are
-    /// `MimallocArena`s. See `bun.safety.CheckedAllocator.transferOwnership`.
+    /// In Zig both the parser and the linker graph use `MimallocArena`s, so
+    /// `transferOwnership` is purely `CheckedAllocator` bookkeeping — mimalloc
+    /// can free/remap a pointer regardless of which heap allocated it. In the
+    /// Rust port the parser allocates AST lists in a `bumpalo::Bump` (see
+    /// `from_bump_slice`), which the global allocator *cannot* realloc or free.
+    /// To preserve the spec semantics ("after this call the list may be grown
+    /// via the graph allocator"), a `Borrowed` list is promoted to `Owned` by
+    /// bitwise-moving its elements into a fresh global allocation. The old
+    /// arena buffer is leaked into its bump (it was already leaked by
+    /// `into_bump_slice_mut`; the arena reclaims it on reset).
     pub fn transfer_ownership(&mut self) {
-        // TODO(port): CheckedAllocator tracking dropped — global mimalloc only. No-op.
+        if matches!(self.origin, Origin::Owned) {
+            return;
+        }
+        if self.cap == 0 {
+            // Borrowed empty — just flip the tag so growth is permitted.
+            self.ptr = NonNull::dangling();
+            self.origin = Origin::Owned;
+            return;
+        }
+        let mut owned: Vec<T> = Vec::new();
+        // Match Zig: capacity is preserved across the transfer so subsequent
+        // `append_assume_capacity` callers see the same headroom.
+        owned
+            .try_reserve_exact(self.cap as usize)
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        // SAFETY: `ptr[..len]` are initialized `T`s in arena memory that will
+        // never be dropped or reused by their original owner (bump-leaked). A
+        // bitwise move into the new allocation is therefore a transfer, not a
+        // copy — the source bytes are abandoned in place.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                self.ptr.as_ptr(),
+                owned.as_mut_ptr(),
+                self.len as usize,
+            );
+            owned.set_len(self.len as usize);
+        }
+        let cap = u32::try_from(owned.capacity()).unwrap();
+        let ptr = owned.as_mut_ptr();
+        core::mem::forget(owned);
+        // SAFETY: Vec guarantees a non-null pointer for cap > 0.
+        self.ptr = unsafe { NonNull::new_unchecked(ptr) };
+        self.cap = cap;
+        self.origin = Origin::Owned;
     }
 
     fn assert_owned(&self) {

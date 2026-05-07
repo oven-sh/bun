@@ -1767,98 +1767,314 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .set(web_socket_server_context::HandlerFlags::SSL, SSL);
         }
 
-        // --- 3. Compiled user routes + "/*" coverage tracking ---
-        let mut star_covered_by_user_any = false;
+        // --- 3. Register compiled user routes & track "/*" coverage ---
+        let mut star_methods_covered_by_user = http_method::Set::empty();
+        let mut has_any_user_route_for_star_path = false;
+        let mut has_any_ws_route_for_star_path = false;
+
+        // PORT NOTE: reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
+        // (borrows `self.config.websocket`) while iterating `self.user_routes`.
+        // Snapshot the websocket pointer up front so the two `&mut self.*`
+        // accesses do not overlap from rustc's POV.
+        let websocket_ptr: Option<*mut WebSocketServerContext> =
+            self.config.websocket.as_mut().map(|w| w as *mut _);
+
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = (user_route as *mut UserRoute<SSL, DEBUG>).cast();
             let path = user_route.route.path.as_bytes();
-            let is_star = path == b"/*";
+            let is_star_path = path == b"/*";
+            if is_star_path {
+                has_any_user_route_for_star_path = true;
+            }
+            if should_add_chrome_devtools_json_route
+                && (path == CHROME_DEVTOOLS_ROUTE || path.starts_with(b"/.well-known/"))
+            {
+                should_add_chrome_devtools_json_route = false;
+            }
+
+            // Register HTTP routes
             match user_route.route.method {
                 server_config::RouteMethod::Any => {
                     app.any(path, Some(trampoline::on_user_route_request::<SSL, DEBUG>), ud);
-                    if is_star {
-                        star_covered_by_user_any = true;
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            // SAFETY: h3_app is a live FFI handle while self is.
+                            unsafe { &mut *h3_app }.any(
+                                path,
+                                ud.cast::<UserRoute<SSL, DEBUG>>(),
+                                Self::on_h3_user_route_request,
+                            );
+                        }
+                    }
+                    if is_star_path {
+                        star_methods_covered_by_user = http_method::Set::all();
+                    }
+                    if let Some(websocket) = websocket_ptr {
+                        if is_star_path {
+                            has_any_ws_route_for_star_path = true;
+                        }
+                        app.ws(
+                            path,
+                            ud,
+                            1, // id 1 means is a user route
+                            // SAFETY: websocket is a live `*mut WebSocketServerContext`
+                            // (snapshotted from `self.config.websocket` above).
+                            ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                        );
                     }
                 }
-                server_config::RouteMethod::Specific(m) => {
-                    app.method(m, path, Some(trampoline::on_user_route_request::<SSL, DEBUG>), ud);
+                server_config::RouteMethod::Specific(method_val) => {
+                    app.method(method_val, path, Some(trampoline::on_user_route_request::<SSL, DEBUG>), ud);
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            // SAFETY: h3_app is a live FFI handle while self is.
+                            unsafe { &mut *h3_app }.method(
+                                method_val,
+                                path,
+                                ud.cast::<UserRoute<SSL, DEBUG>>(),
+                                Self::on_h3_user_route_request,
+                            );
+                        }
+                    }
+                    if is_star_path {
+                        star_methods_covered_by_user.insert(method_val);
+                    }
+                    // Setup user websocket in the route if needed.
+                    if let Some(websocket) = websocket_ptr {
+                        // Websocket upgrade is a GET request
+                        if method_val == http_method::Method::GET {
+                            app.ws(
+                                path,
+                                ud,
+                                1, // id 1 means is a user route
+                                // SAFETY: see above.
+                                ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                            );
+                        }
+                    }
                 }
             }
-            // TODO(b2-blocked): mirror to h3_app + per-route ws() registration
-            // (server_body.rs:3291-3335) once H3/ws trampolines are real.
         }
 
-        // --- 4. Negative routes ---
+        // --- 4. Register negative routes ---
         for route_path in self.config.negative_routes.iter() {
             let p = route_path.as_bytes();
-            app.head(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr as *mut c_void);
-            app.any(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr as *mut c_void);
+            app.head(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr.cast());
+            app.any(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr.cast());
+            if Self::HAS_H3 {
+                if let Some(h3_app) = self.h3_app {
+                    // SAFETY: h3_app is a live FFI handle while self is.
+                    let h3_app = unsafe { &mut *h3_app };
+                    h3_app.head(p, self_ptr, Self::on_h3_request);
+                    h3_app.any(p, self_ptr, Self::on_h3_request);
+                }
+            }
         }
 
-        // --- 5. Static routes ---
-        let any_server = AnyServer::from(self_ptr as *const Self);
+        // --- 5. Register static routes & track "/*" coverage ---
+        let mut needs_plugins = dev_server.is_some();
+        let mut has_static_route_for_star_path = false;
+
         for entry in &self.config.static_routes {
+            if &*entry.path == b"/*" {
+                has_static_route_for_star_path = true;
+                match &entry.method {
+                    server_config::MethodOptional::Any => {
+                        star_methods_covered_by_user = http_method::Set::all();
+                    }
+                    server_config::MethodOptional::Method(method) => {
+                        star_methods_covered_by_user |= *method;
+                    }
+                }
+            }
+            if should_add_chrome_devtools_json_route
+                && (&*entry.path == CHROME_DEVTOOLS_ROUTE || entry.path.starts_with(b"/.well-known/"))
+            {
+                should_add_chrome_devtools_json_route = false;
+            }
+
             match &entry.route {
-                AnyRoute::Static(p) => server_config::apply_static_route::<SSL, StaticRoute>(
-                    any_server,
-                    app,
-                    p.as_ptr(),
-                    &entry.path,
-                    entry.method,
-                ),
-                AnyRoute::File(p) => server_config::apply_static_route::<SSL, FileRoute>(
-                    any_server,
-                    app,
-                    p.as_ptr(),
-                    &entry.path,
-                    entry.method,
-                ),
-                AnyRoute::Html(r) => server_config::apply_static_route::<SSL, html_bundle::Route>(
-                    any_server,
-                    app,
-                    r.data.as_ptr(),
-                    &entry.path,
-                    entry.method,
-                ),
+                AnyRoute::Static(p) => {
+                    server_config::apply_static_route::<SSL, StaticRoute>(
+                        any_server, app, p.as_ptr(), &entry.path, entry.method,
+                    );
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            server_config::apply_static_route_h3::<StaticRoute>(
+                                any_server,
+                                // SAFETY: h3_app is a live FFI handle while self is.
+                                unsafe { &mut *h3_app },
+                                p.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                            );
+                        }
+                    }
+                }
+                AnyRoute::File(p) => {
+                    server_config::apply_static_route::<SSL, FileRoute>(
+                        any_server, app, p.as_ptr(), &entry.path, entry.method,
+                    );
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            server_config::apply_static_route_h3::<FileRoute>(
+                                any_server,
+                                // SAFETY: h3_app is a live FFI handle while self is.
+                                unsafe { &mut *h3_app },
+                                p.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                            );
+                        }
+                    }
+                }
+                AnyRoute::Html(r) => {
+                    server_config::apply_static_route::<SSL, html_bundle::Route>(
+                        any_server, app, r.data.as_ptr(), &entry.path, entry.method,
+                    );
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            server_config::apply_static_route_h3::<html_bundle::Route>(
+                                any_server,
+                                // SAFETY: h3_app is a live FFI handle while self is.
+                                unsafe { &mut *h3_app },
+                                r.data.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                            );
+                        }
+                    }
+                    if let Some(dev) = dev_server {
+                        // SAFETY: `dev` is the live `*mut DevServer` snapshotted
+                        // from `self.dev_server` above; no other `&mut` to it
+                        // is live in this loop.
+                        bun_core::handle_oom(unsafe { &mut *dev }.html_router.put(&entry.path, r.data.as_ptr()));
+                    }
+                    needs_plugins = true;
+                }
                 AnyRoute::FrameworkRouter(_) => {}
             }
-            // TODO(port): mirror to h3_app via apply_static_route_h3 once
-            // `Self::HAS_H3` paths are un-gated (server.zig:2893-2905), and
-            // feed `dev.html_router.put(path, route)` for `.Html` when a
-            // DevServer is attached.
         }
 
-        // --- 6-8. DevServer / plugins / chrome-devtools ---
-        // TODO(port): DevServer.set_routes + ServePlugins::init + bun:info /
-        // chrome-devtools well-known routes (server_body.rs:3555-3641). Gated
-        // on DevServer route surface; the per-route uws registration shape is
-        // identical to the user-route loop above and slots in here.
-        let _ = &self.dev_server;
-        let _ = &self.plugins;
-
-        // --- 9. Consolidated "/*" HTTP fallback ---
-        if !star_covered_by_user_any {
-            let ud = self_ptr as *mut c_void;
-            if self.config.on_node_http_request.is_some() {
-                app.any(b"/*", Some(trampoline::on_node_http_request::<SSL, DEBUG>), ud);
-            } else if self.config.on_request.is_some() {
-                app.any(b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
-            } else {
-                app.any(b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+        // --- 6. Initialize plugins if needed ---
+        if needs_plugins && self.plugins.is_none() {
+            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
+            // (non-null for the server's lifetime); single-threaded JS context.
+            if let Some(serve_plugins_config) =
+                unsafe { &mut *self.vm_mut() }.transpiler.options.serve_plugins.take()
+            {
+                if !serve_plugins_config.is_empty() {
+                    self.plugins =
+                        core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config));
+                }
             }
         }
-        // TODO(b2-blocked): per-method "/*" complement fill when a
-        // method-specific user route exists for "/*" (server_body.rs:3460-3486,
-        // server.zig:2962-2976) — needs `bun_http::Method::Set`. The spec
-        // tracks a `Method.Set` of "/*" coverage and registers per-method
-        // complement handlers; this stub tracks only `star_covered_by_user_any`
-        // and falls back to `app.any("/*", …)`. Dispatch is currently
-        // equivalent because uWS routes the method-specific tree before `*`
-        // (HttpRouter.h:255-277), BUT un-gating §5 (static routes) without
-        // fixing this WILL clobber any static `.any` "/*" route via
-        // `HttpRouter.h:283 remove(methods[0], pattern, priority)`.
 
-        if self.config.on_node_http_request.is_some() {
+        // --- 7. Debug-mode specific routes ---
+        if DEBUG {
+            app.get(b"/bun:info", Some(trampoline::on_bun_info_request::<SSL, DEBUG>), self_ptr.cast());
+        }
+
+        // Snapshot "/*" coverage from user/static routes before DevServer
+        // (which is H1-only and not mirrored to the H3 router) marks it full.
+        let h3_star_covered = star_methods_covered_by_user;
+
+        // --- 8. Handle DevServer routes & track "/*" coverage ---
+        let mut has_dev_server_for_star_path = false;
+        if let Some(dev) = dev_server {
+            // dev.setRoutes might register its own "/*" HTTP handler
+            // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
+            // `self.dev_server` above; `self_ptr` is the live server. The two
+            // allocations are disjoint so the `&mut` borrows do not alias.
+            has_dev_server_for_star_path = bun_core::handle_oom(
+                unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(unsafe { &mut *self_ptr }),
+            );
+            if has_dev_server_for_star_path {
+                // Assume dev server "/*" covers all methods if it exists
+                star_methods_covered_by_user = http_method::Set::all();
+            }
+        }
+
+        // Setup user websocket fallback route aka fetch function; if fetch is
+        // not provided will respond with 403.
+        if !has_any_ws_route_for_star_path {
+            if let Some(websocket) = websocket_ptr {
+                app.ws(
+                    b"/*",
+                    self_ptr.cast(),
+                    0, // id 0 means is a fallback route and ctx is the server
+                    // SAFETY: see websocket_ptr snapshot comment above.
+                    ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                );
+            }
+        }
+
+        // --- 9. Consolidated "/*" HTTP fallback registration ---
+        let ud = self_ptr.cast::<c_void>();
+        let has_node_http = self.config.on_node_http_request.is_some();
+        let has_on_request = self.config.on_request.is_some();
+        if star_methods_covered_by_user == http_method::Set::all() {
+            // User/Static/Dev has already provided a "/*" handler for ALL methods.
+            // No further global "/*" HTTP fallback needed.
+        } else if has_any_user_route_for_star_path
+            || has_static_route_for_star_path
+            || has_dev_server_for_star_path
+        {
+            // A "/*" route exists, but doesn't cover all methods. Apply the
+            // global handler to the *remaining* methods for "/*".
+            for method_to_cover in !star_methods_covered_by_user {
+                if has_node_http {
+                    app.method(method_to_cover, b"/*", Some(trampoline::on_node_http_request::<SSL, DEBUG>), ud);
+                } else if has_on_request {
+                    app.method(method_to_cover, b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
+                } else {
+                    app.method(method_to_cover, b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+                }
+            }
+        } else if has_node_http {
+            app.any(b"/*", Some(trampoline::on_node_http_request::<SSL, DEBUG>), ud);
+        } else if has_on_request {
+            app.any(b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
+        } else {
+            app.any(b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+        }
+
+        // H3 fallback — same three-way as H1 above, but driven by user/static
+        // "/*" coverage only (DevServer routes are not mirrored to H3).
+        if Self::HAS_H3 {
+            if let Some(h3_app) = self.h3_app {
+                // SAFETY: h3_app is a live FFI handle while self is.
+                let h3_app = unsafe { &mut *h3_app };
+                if h3_star_covered == http_method::Set::all() {
+                    // user/static "/*" already covers every method
+                } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
+                    for m in !h3_star_covered {
+                        if has_on_request {
+                            h3_app.method(m, b"/*", self_ptr, Self::on_h3_request);
+                        } else {
+                            h3_app.method(m, b"/*", self_ptr, Self::on_h3_404);
+                        }
+                    }
+                } else if has_on_request {
+                    h3_app.any(b"/*", self_ptr, Self::on_h3_request);
+                } else {
+                    h3_app.any(b"/*", self_ptr, Self::on_h3_404);
+                }
+            }
+        }
+
+        if should_add_chrome_devtools_json_route {
+            app.get(
+                CHROME_DEVTOOLS_ROUTE,
+                Some(trampoline::on_chrome_devtools_json_request::<SSL, DEBUG>),
+                ud,
+            );
+        }
+
+        // If onNodeHTTPRequest is configured, it might be needed for Node.js
+        // compatibility layer for specific Node API routes, even if it's not
+        // the main "/*" handler.
+        if has_node_http {
             // SAFETY: app is a live uws handle.
             unsafe { ffi::NodeHTTP_assignOnNodeJSCompat(SSL, app as *mut _ as *mut c_void) };
         }
@@ -2311,6 +2527,36 @@ mod trampoline {
             unsafe { &mut *req },
             unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() },
         );
+    }
+
+    pub extern "C" fn on_bun_info_request<const SSL: bool, const DEBUG: bool>(
+        res: *mut uws_res,
+        req: *mut UwsRequest,
+        user_data: *mut c_void,
+    ) {
+        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
+        // req/res are live uws handles for the duration of the callback.
+        unsafe {
+            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_bun_info_request(
+                &mut *req,
+                &mut *res.cast::<uws_sys::NewAppResponse<SSL>>(),
+            )
+        };
+    }
+
+    pub extern "C" fn on_chrome_devtools_json_request<const SSL: bool, const DEBUG: bool>(
+        res: *mut uws_res,
+        req: *mut UwsRequest,
+        user_data: *mut c_void,
+    ) {
+        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
+        // req/res are live uws handles for the duration of the callback.
+        unsafe {
+            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_chrome_devtools_json_request(
+                &mut *req,
+                &mut *res.cast::<uws_sys::NewAppResponse<SSL>>(),
+            )
+        };
     }
 }
 

@@ -3460,29 +3460,9 @@ fn server_set_max_http_header_size_shim(
 // Pointee types lack #[repr(C)] but are only passed by pointer.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn NodeHTTPServer__onRequest_http(
-        any_server: usize,
-        global: *const JSGlobalObject,
-        this: JSValue,
-        callback: JSValue,
-        method_string: JSValue,
-        request: *mut uws::Request,
-        response: *mut c_void, // *uws.NewApp(false).Response
-        upgrade_ctx: *mut WebSocketUpgradeContext,
-        node_response_ptr: *mut *mut NodeHTTPResponse,
-    ) -> JSValue;
-
-    fn NodeHTTPServer__onRequest_https(
-        any_server: usize,
-        global: *const JSGlobalObject,
-        this: JSValue,
-        callback: JSValue,
-        method_string: JSValue,
-        request: *mut uws::Request,
-        response: *mut c_void, // *uws.NewApp(true).Response
-        upgrade_ctx: *mut WebSocketUpgradeContext,
-        node_response_ptr: *mut *mut NodeHTTPResponse,
-    ) -> JSValue;
+    // NodeHTTPServer__onRequest_{http,https} live in `mod.rs::ffi` (sole user
+    // is `on_node_http_request_with_upgrade_ctx`); duplicate decls here caused
+    // clashing_extern_declarations.
 
     fn Bun__createNodeHTTPServerSocketForClientError(
         is_ssl: bool,

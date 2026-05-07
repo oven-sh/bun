@@ -412,7 +412,11 @@ pub fn run_task(
             return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::BakeHotReloadEvent => {
-            BakeHotReloadEvent::run(cast!(BakeHotReloadEvent));
+            // SAFETY: §Dispatch — tag identifies pointee; the event is an inline
+            // element of `DevServer.watcher_atomics.events[_]` and `run` itself
+            // re-derives `&mut DevServer` from the BACKREF, so pass the raw
+            // pointer to avoid materialising an aliasing `&mut` here.
+            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
         task_tag::FSWatchTask => {
             // Zig: `defer t.deinit(); t.run();` — the task is heap-allocated

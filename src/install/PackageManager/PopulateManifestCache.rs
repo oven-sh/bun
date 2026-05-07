@@ -137,6 +137,7 @@ pub fn populate_manifest_cache(
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
     // not resized by anything below, so derive the slices through a raw
     // provenance root and reborrow `manager` per-call.
+    let cache_ctx = manager.manifest_disk_cache_ctx();
     let manager_ptr: *mut PackageManager = manager;
     // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
     // take *shared* projections of `lockfile` here, and the loop body never

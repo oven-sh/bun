@@ -1977,13 +1977,11 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         };
         let _key = bun_wyhash::hash(key);
 
-        self.mutex.lock();
-        // TODO(port): RAII mutex guard.
+        let _guard = self.mutex.lock();
         // TODO(port): narrow error set — IndexMap::get_or_put can only OOM.
         match self.index.entry(_key) {
             std::collections::hash_map::Entry::Occupied(e) => {
                 let v = *e.get();
-                self.mutex.unlock();
                 Ok(Result {
                     hash: _key,
                     index: v,
@@ -1996,7 +1994,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             }
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(UNASSIGNED);
-                self.mutex.unlock();
                 Ok(Result {
                     hash: _key,
                     index: UNASSIGNED,

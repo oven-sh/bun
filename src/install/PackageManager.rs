@@ -1755,11 +1755,17 @@ pub fn init(
     let env: &mut dot_env::Loader = unsafe {
         let map_ptr =
             std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()) as *mut dot_env::Map;
+        if map_ptr.is_null() {
+            bun_alloc::out_of_memory();
+        }
         core::ptr::write(map_ptr, dot_env::Map::init());
         holder::ENV_MAP = map_ptr;
 
         let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
             as *mut dot_env::Loader<'static>;
+        if loader_ptr.is_null() {
+            bun_alloc::out_of_memory();
+        }
         core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
         holder::ENV_LOADER = loader_ptr;
         &mut *loader_ptr

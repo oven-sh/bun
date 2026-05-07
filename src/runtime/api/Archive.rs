@@ -1418,16 +1418,10 @@ fn extract_to_disk_filtered(
 ) -> Result<u32, bun_core::Error> {
     // TODO(port): narrow error set
     use libarchive::lib;
-    let archive = lib::Archive::read_new();
-    let _guard = scopeguard::guard((), |_| {
-        // SAFETY: archive handle valid until guard runs after the loop.
-        let _ = unsafe { (*archive).read_free() };
-    });
-    configure_archive_reader(archive);
+    let archive = lib::ReadArchive::new();
+    configure_archive_reader(&archive);
 
-    // SAFETY: non-null handle from read_new(); single-threaded use.
-    let archive_ref = unsafe { &*archive };
-    if archive_ref.read_open_memory(file_buffer) != lib::Result::Ok {
+    if archive.read_open_memory(file_buffer) != lib::Result::Ok {
         return Err(bun_core::err!("ReadError"));
     }
 
@@ -1447,14 +1441,12 @@ fn extract_to_disk_filtered(
             };
         }
     };
-    let _dir_close = scopeguard::guard((), |_| {
-        let _ = dir_fd.close();
-    });
+    let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
 
-    while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok; entry valid until next call.
         let entry_ref = unsafe { &*entry };
         let pathname_z = entry_ref.pathname_utf8();

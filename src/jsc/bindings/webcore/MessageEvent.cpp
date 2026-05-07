@@ -127,7 +127,7 @@ void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool
     initEvent(type, canBubble, cancelable);
 
     {
-        Locker { m_concurrentDataAccessLock };
+        Locker locker { m_concurrentDataAccessLock };
         m_data = JSValueTag {};
     }
     // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
@@ -143,7 +143,7 @@ void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool
 
 size_t MessageEvent::memoryCost() const
 {
-    Locker { m_concurrentDataAccessLock };
+    Locker locker { m_concurrentDataAccessLock };
     return std::visit(
         WTF::makeVisitor(
             [](JSValueTag) -> size_t { return 0; },

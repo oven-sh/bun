@@ -297,7 +297,7 @@ pub fn constructor(
     const args = callframe.argumentsAsArray(1);
     const js_options = args[0];
 
-    if (js_options.isUndefinedOrNull()) {
+    if (!js_options.isObject()) {
         return globalObject.throw("Terminal constructor requires an options object", .{});
     }
 

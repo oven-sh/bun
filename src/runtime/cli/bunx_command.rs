@@ -1190,9 +1190,16 @@ impl BunxCommand {
                     bun_crash_handler::suppress_reporting();
                 }
 
-                if let Some(sig) = spawn_result.status.signal_code() {
-                    Global::raise_ignoring_panic_handler(sig);
-                }
+                // Zig: `.signaled => |signal| Global.raiseIgnoringPanicHandler(signal)` —
+                // always diverges. `signal_code()` range-checks 1..=31 because
+                // `bun_core::SignalCode` is exhaustive (Zig's is non-exhaustive `enum(u8)`);
+                // RT signals (>31) fall back to SIGTERM so this arm never falls through.
+                Global::raise_ignoring_panic_handler(
+                    spawn_result
+                        .status
+                        .signal_code()
+                        .unwrap_or(bun_core::SignalCode::SIGTERM),
+                );
             }
             SpawnStatus::Err(err) => {
                 Output::pretty_errorln(format_args!(

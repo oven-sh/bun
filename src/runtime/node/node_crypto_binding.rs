@@ -1152,6 +1152,9 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     // branch (double-deinit). The scopeguard wraps `data` so it's released on every path;
     // the redundant call is dropped.
     let mut data = scopeguard::guard(data, |mut d| d.deinit());
+    // Zig: `JSValue.createBufferFromLength` → `JSBuffer__bufferFromLength` (Node.js `Buffer`).
+    // `alloc::<ArrayBuffer>` routes to `Bun__allocArrayBufferForCopy` → `JSBufferSubclassStructure`,
+    // i.e. a `Buffer` (NOT a plain Uint8Array — `pbkdf2Sync` must return `Buffer`).
     let (out_arraybuffer, output) =
         ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global_this, u32::try_from(data.length).unwrap())?;
 

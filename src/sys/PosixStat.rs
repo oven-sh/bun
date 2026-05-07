@@ -65,8 +65,11 @@ fn to_u64<T: ToU64>(value: T) -> u64 {
 
 /// Platform-specific accessors over `libc::stat` mirroring Zig's
 /// `Stat.atime()` / `.mtime()` / `.ctime()` / `.birthtime()` helpers.
+/// Exported so callers (e.g. `bunx_command.rs`) can read times off the bare
+/// `bun_sys::Stat` (= `libc::stat`) without re-deriving the per-platform field
+/// names.
 #[inline]
-fn stat_atime(s: &Stat) -> Timespec {
+pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     { Timespec { sec: s.st_atime as i64, nsec: s.st_atime_nsec as i64 } }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
@@ -75,7 +78,7 @@ fn stat_atime(s: &Stat) -> Timespec {
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
-fn stat_mtime(s: &Stat) -> Timespec {
+pub fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
@@ -84,7 +87,7 @@ fn stat_mtime(s: &Stat) -> Timespec {
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
-fn stat_ctime(s: &Stat) -> Timespec {
+pub fn stat_ctime(s: &Stat) -> Timespec {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     { Timespec { sec: s.st_ctime as i64, nsec: s.st_ctime_nsec as i64 } }
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
@@ -93,7 +96,7 @@ fn stat_ctime(s: &Stat) -> Timespec {
     { let _ = s; Timespec::EPOCH }
 }
 #[inline]
-fn stat_birthtime(s: &Stat) -> Timespec {
+pub fn stat_birthtime(s: &Stat) -> Timespec {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
     { Timespec { sec: s.st_birthtimespec.tv_sec as i64, nsec: s.st_birthtimespec.tv_nsec as i64 } }
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]

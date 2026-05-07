@@ -3210,6 +3210,7 @@ pub fn self_process_memory_usage() -> Option<usize> {
 #[path = "PosixStat.rs"]
 pub mod posix_stat;
 pub use posix_stat::PosixStat;
+pub use posix_stat::{stat_atime, stat_birthtime, stat_ctime, stat_mtime};
 
 /// `std::io::Write` adapter for `Fd` (used by `File::buffered_writer`).
 pub struct FileWriter(pub Fd);

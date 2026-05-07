@@ -1678,10 +1678,10 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     if !size.is_uint32_as_any_int() {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a positive number")));
     }
-    Ok(JSValue::create_uninitialized_uint8_array(
+    JSValue::create_uninitialized_uint8_array(
         global_this,
         size.to_uint64_no_truncate() as usize,
-    ))
+    )
 }
 
 #[bun_jsc::host_fn]

@@ -117,37 +117,20 @@ impl CachedBytecode {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Zig exposed a `std.mem.Allocator` VTable here so that callers could store
-// the bytecode slice alongside an "allocator" whose `.free()` decrements the
+// Zig exposed a `std.mem.Allocator` VTable here so callers could store the
+// bytecode slice alongside an "allocator" whose `.free()` decrements the
 // CachedBytecode refcount. This is a Zig-specific ownership-tracking idiom.
-// In Rust the equivalent is an owning smart-pointer type; Phase B should
-// replace call sites with that.
 //
 // PORT NOTE: the Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
 // `VTable.alloc` panicked. The Rust `bun_alloc::Allocator` marker trait has no
 // `alloc`/`free` methods to dispatch through — so the "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this
-// allocator must instead drop the owning `NonNull<CachedBytecode>` handle and
-// call `deref()` directly. `is_instance` is preserved for the vtable-identity
-// check in `bun_safety::alloc::has_ptr`.
+// allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
+// directly. `is_instance` is preserved for the vtable-identity check in
+// `bun_safety::alloc::has_ptr`.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl bun_alloc::Allocator for CachedBytecode {}
-
-// Zero-sized probe used to obtain this impl's trait-object vtable pointer for
-// identity comparison (mirrors Zig's static `VTable` address).
-static PROBE: CachedBytecode = CachedBytecode {
-    _p: [],
-    _m: core::marker::PhantomData,
-};
-
-#[inline]
-fn vtable_of(a: &dyn bun_alloc::Allocator) -> *const () {
-    let raw: *const dyn bun_alloc::Allocator = a;
-    // SAFETY: `*const dyn Trait` is a two-word fat pointer (data, vtable); the
-    // layout is guaranteed by the Rust trait-object ABI.
-    unsafe { core::mem::transmute::<*const dyn bun_alloc::Allocator, [*const (); 2]>(raw)[1] }
-}
 
 impl CachedBytecode {
     /// Zig: `.{ .ptr = this, .vtable = VTable }`. The returned `&dyn Allocator`
@@ -157,17 +140,18 @@ impl CachedBytecode {
         self
     }
 
-    /// Zig: `allocator_.vtable == VTable`. Compares the vtable half of the
-    /// `&dyn Allocator` fat pointer against this type's vtable.
+    /// Zig: `allocator_.vtable == VTable`. Expressed as concrete-type identity
+    /// via the `Allocator::type_id()` hook (the documented Rust mapping for
+    /// Zig vtable-pointer equality checks).
     pub fn is_instance(allocator: &dyn bun_alloc::Allocator) -> bool {
-        core::ptr::eq(vtable_of(allocator), vtable_of(&PROBE))
+        bun_alloc::Allocator::type_id(allocator) == core::any::TypeId::of::<CachedBytecode>()
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/CachedBytecode.zig (76 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      allocator()/is_instance() ported as &dyn Allocator fat-pointer vtable-identity (matches bun_safety::alloc pattern); the Zig free→deref slot has no trait method to ride, so Phase B should replace call sites with an owning slice type whose Drop calls deref().
+//   confidence: high
+//   todos:      0
+//   notes:      allocator()/is_instance() ported via Allocator::type_id() identity (matches bun_alloc::is_default / MaxHeapAllocator pattern); Zig free→deref slot replaced by direct deref() at call sites.
 // ──────────────────────────────────────────────────────────────────────────

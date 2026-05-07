@@ -1906,7 +1906,7 @@ impl JSValue {
         global: &JSGlobalObject,
         ret: &mut bun_string::ZigString,
     ) -> JsResult<()> {
-        if self.is_undefined_or_null() {
+        if self.is_empty_or_undefined_or_null() {
             return Ok(());
         }
         unsafe extern "C" {

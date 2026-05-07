@@ -5944,7 +5944,10 @@ impl NodeFS {
             let e1 = err1.get_errno();
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES | E::EPERM) {
+            // PORT NOTE: Zig checks `error.IsDir|NotDir|AccessDenied`; the
+            // vendored std.posix.unlinkZ maps `.PERM => PermissionDenied`
+            // (not AccessDenied), so raw EPERM is *not* in this set.
+            if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(Maybe::Err(err2)) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
                     let e2 = err2.get_errno();

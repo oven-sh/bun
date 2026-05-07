@@ -1392,17 +1392,10 @@ pub extern "C" fn BakeProdResolve(
         debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
     }
 
-    // `bun.Dirname.dirname(u8, ...)` — std.fs.path.dirname semantics (returns
-    // None for the root). Port: bun_paths Path::dirname over the posix-style
-    // referrer (always "bake:/..." with forward slashes).
+    // `bun.Dirname.dirname(u8, ...) orelse ...` — std.fs.path.dirname semantics
+    // (returns None for the root / no-parent).
     let after_scheme = &referrer.slice()[5..];
-    let dir = match after_scheme.iter().rposition(|&b| b == b'/') {
-        // Strip trailing slash like std.fs.path.dirnamePosix does, but keep
-        // "/" for the root.
-        Some(0) => &after_scheme[..1],
-        Some(i) => &after_scheme[..i],
-        None => after_scheme,
-    };
+    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
 
     BunString::create_format(format_args!(
         "bake:{}",

@@ -1,6 +1,7 @@
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
-use bun_install::package_manager_real::{update_package_json_and_install_catch_error, Subcommand};
+use bun_install::package_manager_real::Subcommand;
 
+use crate::cli::pm_update_package_json::update_package_json_and_install_catch_error;
 use crate::cli::update_interactive_command::UpdateInteractiveCommand;
 use crate::command::Context;
 

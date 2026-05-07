@@ -1,5 +1,5 @@
 use crate::cli::command;
-use bun_install::package_manager::update_package_json_and_install_catch_error;
+use crate::cli::pm_update_package_json::update_package_json_and_install_catch_error;
 use bun_install::package_manager::Subcommand;
 
 pub struct PatchCommitCommand;

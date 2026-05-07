@@ -2,8 +2,8 @@
 //! get the precise version from the lockfile (there may be multiple)
 //! copy the contents into a temp folder
 
+use crate::cli::pm_update_package_json::update_package_json_and_install_catch_error;
 use crate::command;
-use bun_install::package_manager::update_package_json_and_install_catch_error;
 
 pub struct PatchCommand;
 

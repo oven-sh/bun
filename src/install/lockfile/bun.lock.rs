@@ -70,11 +70,26 @@ fn write_indent_fmt(w: &mut FmtBridge<'_>, indent: &mut u32) -> core::fmt::Resul
 }
 
 /// Zig `String.arrayHashContext(lockfile, null)` — both arg and existing keys
-/// resolve against the lockfile's string buffer. Routed through the already-
-/// detached `StringBuf` to avoid borrowing `lockfile` at the call site.
+/// resolve against the lockfile's string buffer.
 #[inline]
 fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
     bun_semver::string::ArrayHashContext { arg_buf: buf, existing_buf: buf }
+}
+
+// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+// lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
+// other `lockfile.*` access (the `string_buf()` method borrows the whole
+// receiver). Construct a fresh `Buf` at each append site so the disjoint
+// `buffers.string_bytes` / `string_pool` borrows end immediately and the
+// borrow checker can see that catalog/workspace/package mutations touch
+// different fields. Mirrors `src/install/pnpm.rs::sbuf!`.
+macro_rules! sbuf {
+    ($lockfile:expr) => {
+        StringBuf {
+            bytes: &mut $lockfile.buffers.string_bytes,
+            pool: &mut $lockfile.string_pool,
+        }
+    };
 }
 
 // TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
@@ -1502,7 +1517,7 @@ pub fn parse_into_binary_lockfile(
             let version_str = value.as_utf8_string_literal().unwrap();
             let version_hash = StringBuilder::string_hash(version_str);
             let version = string_buf.append_with_hash(version_str, version_hash)?;
-            let version_sliced = version.sliced(string_buf.bytes.as_slice());
+            let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
             let dep = Dependency {
                 name,
@@ -1555,7 +1570,7 @@ pub fn parse_into_binary_lockfile(
             let version_str = value.as_utf8_string_literal().unwrap();
             let version_hash = StringBuilder::string_hash(version_str);
             let version = string_buf.append_with_hash(version_str, version_hash)?;
-            let version_sliced = version.sliced(string_buf.bytes.as_slice());
+            let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
             let dep = Dependency {
                 name: dep_name,
@@ -1579,7 +1594,7 @@ pub fn parse_into_binary_lockfile(
 
             let entry = lockfile.catalogs.default.get_or_put_adapted(
                 dep_name,
-                string_array_hash_context(string_buf.bytes.as_slice()),
+                string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
             )?;
 
             if entry.found_existing {
@@ -1638,7 +1653,7 @@ pub fn parse_into_binary_lockfile(
                 let version_str = value.as_utf8_string_literal().unwrap();
                 let version_hash = StringBuilder::string_hash(version_str);
                 let version = string_buf.append_with_hash(version_str, version_hash)?;
-                let version_sliced = version.sliced(string_buf.bytes.as_slice());
+                let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
 
                 let dep = Dependency {
                     name: dep_name,
@@ -1662,7 +1677,7 @@ pub fn parse_into_binary_lockfile(
 
                 let entry = group.get_or_put_adapted(
                     dep_name,
-                    string_array_hash_context(string_buf.bytes.as_slice()),
+                    string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
                 )?;
 
                 if entry.found_existing {
@@ -1728,7 +1743,7 @@ pub fn parse_into_binary_lockfile(
 
             let version_str = string_buf.append(version_expr.as_utf8_string_literal().unwrap())?;
 
-            let parsed = Semver::Version::parse(version_str.sliced(string_buf.bytes.as_slice()));
+            let parsed = Semver::Version::parse(version_str.sliced(lockfile.buffers.string_bytes.as_slice()));
             if !parsed.valid {
                 log.add_error(Some(source), version_expr.loc, b"Invalid semver version")?;
                 return Err(ParseError::InvalidSemver);
@@ -1800,7 +1815,7 @@ pub fn parse_into_binary_lockfile(
                 let key = prop.key.unwrap();
                 let value = prop.value.unwrap();
                 let path = key.as_utf8_string_literal().unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_buf.bytes.as_slice()), true) {
+                if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
                     continue;
                 }
 
@@ -1992,9 +2007,9 @@ pub fn parse_into_binary_lockfile(
 
                     let url = ExtractTarball::build_url(
                         registry_url,
-                        &strings::StringOrTinyString::init(name.slice(string_buf.bytes.as_slice())),
+                        &strings::StringOrTinyString::init(name.slice(lockfile.buffers.string_bytes.as_slice())),
                         res.value.npm.version,
-                        string_buf.bytes.as_slice(),
+                        lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
                     res.value.npm.url = string_buf.append(&url)?;
@@ -2019,12 +2034,12 @@ pub fn parse_into_binary_lockfile(
                     // new entry, a matching workspace MUST exist
                     for _workspace_pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                         let workspace_pkg_id: PackageID = u32::try_from(_workspace_pkg_id).unwrap();
-                        if res.eql(&pkg_resolutions[workspace_pkg_id as usize], string_buf.bytes.as_slice(), string_buf.bytes.as_slice()) {
+                        if res.eql(&pkg_resolutions[workspace_pkg_id as usize], lockfile.buffers.string_bytes.as_slice(), lockfile.buffers.string_bytes.as_slice()) {
                             #[cfg(debug_assertions)]
                             {
                                 debug_assert!(!strings::eql_long(
                                     pkg_path,
-                                    pkg_names[workspace_pkg_id as usize].slice(string_buf.bytes.as_slice()),
+                                    pkg_names[workspace_pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice()),
                                     true,
                                 ));
                             }
@@ -2053,7 +2068,7 @@ pub fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         res_info.loc,
-                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.value.workspace.slice(string_buf.bytes.as_slice()))),
+                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.value.workspace.slice(lockfile.buffers.string_bytes.as_slice()))),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);
                 }

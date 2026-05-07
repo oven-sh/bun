@@ -797,6 +797,21 @@ pub mod semver_string {
         pub fn contains(&self, hash: &u64) -> bool {
             self.map.contains_key(hash)
         }
+        /// Zig `HashMap.capacity()` — number of slots reservable without rehash.
+        #[inline]
+        pub fn capacity(&self) -> usize {
+            self.map.capacity()
+        }
+        /// Zig `HashMap.ensureTotalCapacity(n)` — pre-reserve so `n` entries
+        /// fit without rehash. `try_reserve` takes *additional* capacity.
+        #[inline]
+        pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+            let len = self.map.len();
+            if n > len {
+                self.map.try_reserve(n - len).map_err(|_| AllocError)?;
+            }
+            Ok(())
+        }
     }
 
     pub struct Builder {

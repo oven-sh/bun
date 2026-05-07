@@ -1,6 +1,6 @@
 use crate::cli::command::Context;
+use crate::cli::pm_update_package_json::update_package_json_and_install_catch_error;
 use bun_install::package_manager::Subcommand;
-use bun_install::package_manager::update_package_json_and_install_catch_error;
 
 pub struct RemoveCommand;
 

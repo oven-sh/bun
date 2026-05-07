@@ -1613,9 +1613,9 @@ impl<'a> PackageInstaller<'a> {
                             if d.is_empty() { self.node_modules.path.as_slice() } else { d }
                         };
 
-                        installer.cache_dir = match self.root_node_modules_folder.make_open_path(
+                        installer.cache_dir = match bun_sys::open_dir(
+                            self.root_node_modules_folder,
                             dir_name,
-                            bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
                         ) {
                             Ok(d) => d,
                             Err(err) => {
@@ -1744,7 +1744,7 @@ impl<'a> PackageInstaller<'a> {
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep_behavior.is_optional(),
+                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -2061,7 +2061,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep_behavior.is_optional(),
+                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
                         if is_trusted_through_update_request {

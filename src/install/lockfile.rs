@@ -1212,7 +1212,7 @@ impl Lockfile {
             // of the workspace package.json files.
             let workspace_package_id = manager
                 .root_package_id
-                .get(new, manager.workspace_name_hash);
+                .get(&new, manager.workspace_name_hash);
 
             let dep_list = slice.items_dependencies()[workspace_package_id as usize];
             let res_list = slice.items_resolutions()[workspace_package_id as usize];
@@ -1391,7 +1391,7 @@ impl Lockfile {
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
-            resolutions: self.buffers.resolutions.as_slice(),
+            resolutions: self.buffers.resolutions.as_mut_slice(),
             dependencies: self.buffers.dependencies.as_slice(),
             log,
             lockfile: self,
@@ -1514,8 +1514,8 @@ impl Lockfile {
                     let mut bin_extern_strings_count: u32 = 0;
 
                     bin_extern_strings_count += pkg.package.bin.count(
-                        manifest.string_buf,
-                        manifest.extern_strings_bin_entries,
+                        &manifest.string_buf,
+                        &manifest.extern_strings_bin_entries,
                         &mut builder,
                     );
 
@@ -1539,8 +1539,8 @@ impl Lockfile {
                     let extern_strings_slice = &mut extern_strings_list[start..new_len];
 
                     *pkg_bin = pkg.package.bin.clone_with_buffers(
-                        manifest.string_buf,
-                        manifest.extern_strings_bin_entries,
+                        &manifest.string_buf,
+                        &manifest.extern_strings_bin_entries,
                         start as u32,
                         extern_strings_slice,
                         &mut builder,

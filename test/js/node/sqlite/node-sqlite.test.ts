@@ -975,6 +975,35 @@ describe("row-shape structure caching", () => {
     expect(dup.x).toBe(2);
     db.close();
   });
+
+  test("picks up column renames across ALTER TABLE (structure rebuilt per reset)", () => {
+    // sqlite3_prepare_v2 transparently re-prepares on SQLITE_SCHEMA,
+    // so after ALTER TABLE … RENAME COLUMN the same `SELECT *`
+    // statement returns the SAME column count with DIFFERENT names.
+    // Keying the row-structure cache on count alone would serve the
+    // stale names forever; it must be rebuilt on each reset.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
+    const stmt = db.prepare("SELECT * FROM t");
+    expect(stmt.get()).toEqual({ a: 1, b: 2 });
+    db.exec("ALTER TABLE t RENAME COLUMN a TO x");
+    expect(stmt.get()).toEqual({ x: 1, b: 2 });
+    db.close();
+  });
+
+  test("index-string column names go through indexed storage", () => {
+    // `SELECT 1 AS "0"` produces a column whose name is a canonical
+    // array-index string. Structure::addPropertyTransition and
+    // putDirect both assert !parseIndex(), so the fast path must
+    // bail and the fallback must use putDirectMayBeIndex().
+    const db = new DatabaseSync(":memory:");
+    const row = db.prepare('SELECT 7 AS "0", 8 AS one').get();
+    expect(row["0"]).toBe(7);
+    expect(row[0]).toBe(7);
+    expect(row.one).toBe(8);
+    expect(Object.getPrototypeOf(row)).toBe(null);
+    db.close();
+  });
 });
 
 test("SQLTagStore binds via the same JS→SQLite bridge as StatementSync", () => {

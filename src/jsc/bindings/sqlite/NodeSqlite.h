@@ -345,6 +345,14 @@ private:
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
     int m_rowColumnCount = -1;
+    // Reset-generation the cached row structure was built at. Column
+    // *count* alone isn't a sufficient shape key: sqlite3_prepare_v2
+    // transparently re-prepares on SQLITE_SCHEMA, so after an ALTER
+    // TABLE … RENAME COLUMN the same statement returns the same
+    // count with different names. Keying on reset-generation rebuilds
+    // once per run/get/all/iterate — still O(1) per .all() — instead
+    // of serving stale property names forever.
+    unsigned m_rowResetGeneration = 0;
     // Open-generation this statement was prepared on. After db.close()
     // + db.open() the JSDatabaseSync may even get the *same* sqlite3*
     // back (allocator reuse — ABA), so compare the generation counter

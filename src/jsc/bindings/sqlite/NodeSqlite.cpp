@@ -638,7 +638,11 @@ static JSValue rowToObject(JSGlobalObject* globalObject, ThrowScope& scope, sqli
         JSValue v = columnToJS(globalObject, scope, stmt, i, useBigInts);
         RETURN_IF_EXCEPTION(scope, {});
         const char* name = sqlite3_column_name(stmt, i);
-        row->putDirect(vm, Identifier::fromString(vm, WTF::String::fromUTF8(name)), v, 0);
+        // Column names are user-controlled (`SELECT 1 AS "0"`); an
+        // index-string key must go to indexed storage, not through
+        // putDirect's named-property path (which asserts !parseIndex).
+        row->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, WTF::String::fromUTF8(name)), v);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return row;
 }
@@ -1545,6 +1549,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
 
     sqlite3_int64 size = 0;
     unsigned char* data = sqlite3_serialize(self->connection(), dbNameUtf8.data(), &size, 0);
+    // For non-memdb schemas (regular :memory: or file-backed)
+    // sqlite3_serialize internally prepares `PRAGMA "<s>".page_count`,
+    // which fires the authorizer with SQLITE_PRAGMA. Surface a thrown
+    // JS exception over SQLite's "not authorized" — same as
+    // exec()/prepare()/deserialize()/TagStore. On this path `data` is
+    // already null (no cleanup needed).
+    self->takeIgnoreNextSqliteError();
+    if (scope.exception()) [[unlikely]] {
+        if (data) sqlite3_free(data);
+        return {};
+    }
     if (data == nullptr) {
         // sqlite3_serialize returns null with size==0 for a brand-new
         // empty schema whose database file hasn't been materialised yet
@@ -2033,20 +2048,29 @@ void JSStatementSync::invalidateRowStructure()
 // Build (and cache) a null-prototype Structure whose inline slots map
 // 1:1 to this statement's distinct column names. Returns nullptr when
 // the column set is too wide for JSFinalObject's inline capacity —
-// callers fall back to the generic rowToObject() in that case. The
-// shape is keyed on sqlite3_column_count(), which is stable for a
-// given prepared statement; we still re-check it so a stale cache
-// (e.g. after deserialize()) is rebuilt rather than producing an
-// object with the wrong number of slots.
+// callers fall back to the generic rowToObject() in that case.
+//
+// The cache is keyed on m_resetGeneration rather than just the
+// column count. sqlite3_prepare_v2 transparently re-prepares on
+// SQLITE_SCHEMA, so after `ALTER TABLE … RENAME COLUMN` the same
+// statement can return the *same* column count with *different*
+// names — a count-only key would serve a stale {oldName: value}
+// structure forever (bun:sqlite defends the same technique with a
+// per-db write-version; keying on reset-generation gives the same
+// correctness for the simpler cost of rebuilding once per
+// run/get/all/iterate rather than once per schema change). Within
+// a single .all() / .iterate() the generation is constant, so the
+// hot loop still hits the cache for every row after the first.
 Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
     int count = sqlite3_column_count(m_stmt);
-    if (m_rowColumnCount == count && m_rowStructure) {
+    if (m_rowResetGeneration == m_resetGeneration && m_rowColumnCount == count && m_rowStructure) {
         return m_rowStructure.get();
     }
     invalidateRowStructure();
     m_rowColumnCount = count;
+    m_rowResetGeneration = m_resetGeneration;
     if (count <= 0 || static_cast<unsigned>(count) > JSFinalObject::maxInlineCapacity) {
         return nullptr;
     }
@@ -2069,6 +2093,14 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
             return nullptr;
         }
         auto id = Identifier::fromString(vm, WTF::String::fromUTF8(name));
+        // Structure::addPropertyTransition asserts !parseIndex() —
+        // a column aliased to "0", "1", … must go through indexed
+        // storage instead. Bail to the generic path, which handles
+        // it via putDirectMayBeIndex().
+        if (parseIndex(id)) {
+            m_columnOffsets.clear();
+            return nullptr;
+        }
         int8_t off = -1;
         for (size_t j = 0; j < names.size(); ++j) {
             if (names[j] == id) {

@@ -1340,7 +1340,7 @@ impl<'a> Cloner<'a> {
                 continue;
             }
 
-            let old_package = self.old.packages.get(to_clone.old_resolution as usize);
+            let old_package = *self.old.packages.get(to_clone.old_resolution as usize);
 
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
@@ -1832,7 +1832,7 @@ impl Lockfile {
         debug_assert!(self.format == FormatVersion::current());
         let mut i: usize = 0;
         while i < self.packages.len() {
-            let package: Package = self.packages.get(i);
+            let package: Package = *self.packages.get(i);
             debug_assert!(self.str(&package.name).len() == package.name.len() as usize);
             debug_assert!(
                 SemverStringBuilder::string_hash(self.str(&package.name))
@@ -1997,7 +1997,7 @@ impl Lockfile {
             return None;
         }
 
-        Some(self.packages.get(0))
+        Some(*self.packages.get(0))
     }
 
     #[inline]

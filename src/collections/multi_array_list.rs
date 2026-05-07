@@ -17,7 +17,7 @@
 
 use core::alloc::Layout;
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr;
 use std::alloc;
 
@@ -218,12 +218,25 @@ impl<T: MultiArrayElement> Slice<T> {
         unsafe { elem.scatter(&self.ptrs[..T::FIELD_COUNT], index) };
     }
 
-    pub fn get(&self, index: usize) -> T {
+    /// Gather a `T` by per-field `ptr::read` from each column.
+    ///
+    /// The returned value is a **bitwise copy** — the SoA storage retains
+    /// ownership of every field. Dropping the gathered struct would free
+    /// columns the storage still owns (double-free on next `get` / `Drop`),
+    /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
+    /// by-value copy is harmless there.
+    ///
+    /// Use this for read-only whole-struct snapshots (fields reachable via
+    /// `Deref`); for single columns prefer the derive's `items_<field>()`
+    /// accessors which borrow the storage directly. Call `into_inner` only
+    /// if ownership is being transferred out (e.g. paired with a `set` of a
+    /// replacement, or `pop`).
+    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         // Zig: `inline for (fields) |f, i| @field(result, f.name) = self.items(i)[index]`
         // — Zig's slice index is bounds-checked against `self.len`; mirror it.
         assert!(index < self.len, "MultiArrayList::Slice::get: index out of bounds");
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
-        unsafe { T::gather(&self.ptrs[..T::FIELD_COUNT], index) }
+        ManuallyDrop::new(unsafe { T::gather(&self.ptrs[..T::FIELD_COUNT], index) })
     }
 
     pub fn to_multi_array_list(self) -> MultiArrayList<T> {
@@ -386,7 +399,10 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     }
 
     /// Obtain all the data for one array element.
-    pub fn get(&self, index: usize) -> T {
+    ///
+    /// Returns `ManuallyDrop<T>` because the gathered struct is a bitwise
+    /// copy of column storage that the list still owns; see `Slice::get`.
+    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         self.slice().get(index)
     }
 
@@ -431,7 +447,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         }
         let val = self.get(self.len - 1);
         self.len -= 1;
-        Some(val)
+        // Ownership transferred: the storage no longer references this slot,
+        // so unwrap the ManuallyDrop and hand the caller a real owned `T`.
+        Some(ManuallyDrop::into_inner(val))
     }
 
     /// Inserts an item into an ordered list. Shifts all elements
@@ -1094,7 +1112,7 @@ mod tests {
         use self::FooSliceExt;
         assert_eq!(s.c()[7], 700);
         assert_eq!(s.a()[3], 3);
-        assert_eq!(list.get(5), Foo { a: 5, b: 5, c: 500 });
+        assert_eq!(*list.get(5), Foo { a: 5, b: 5, c: 500 });
     }
 
     #[test]

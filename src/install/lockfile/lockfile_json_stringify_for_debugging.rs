@@ -346,7 +346,7 @@ where
         w.begin_array()?;
 
         for i in 0..this.packages.len() {
-            let pkg: Package = this.packages.get(i);
+            let pkg: Package = *this.packages.get(i);
             w.begin_object()?;
 
             w.object_field(b"id")?;

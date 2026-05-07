@@ -196,10 +196,10 @@ pub fn do_patch_commit(
                     Output::pretty_error("<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n");
                     Global::crash();
                 }
-                Some(PackageIndexEntry::Id(id)) => lockfile.packages.get(*id as usize),
+                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
                 Some(PackageIndexEntry::Ids(ids)) => 'brk: {
                     for &id in ids.as_slice() {
-                        let pkg = lockfile.packages.get(id as usize);
+                        let pkg = *lockfile.packages.get(id as usize);
                         let total = resolution_buf.len();
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
                         write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
@@ -242,7 +242,7 @@ pub fn do_patch_commit(
                 &mut pathbuf[..],
                 &[&node_modules_relative_path, name],
             ).as_bytes().to_vec();
-            let pkg = lockfile.packages.get(pkg_id as usize);
+            let pkg = *lockfile.packages.get(pkg_id as usize);
 
             let pkg_name_slice = pkg.name.slice(lockfile.buffers.string_bytes.as_slice()).to_vec();
             let resolution_clone = pkg.resolution;
@@ -749,10 +749,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                     Output::pretty_error("<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n");
                     Global::crash();
                 }
-                Some(PackageIndexEntry::Id(id)) => lockfile.packages.get(*id as usize),
+                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
                 Some(PackageIndexEntry::Ids(ids)) => 'id: {
                     for &id in ids.as_slice() {
-                        let pkg = lockfile.packages.get(id as usize);
+                        let pkg = *lockfile.packages.get(id as usize);
                         let total = resolution_buf.len();
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
                         write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("unreachable");
@@ -814,7 +814,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 pkg_info_for_name_and_version(&manager.lockfile, &mut iterator, pkg_maybe_version_to_patch, name, version);
 
             let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
-            let pkg = manager.lockfile.packages.get(pkg_id as usize);
+            let pkg = *manager.lockfile.packages.get(pkg_id as usize);
             let pkg_name = pkg.name.slice(strbuf).to_vec();
 
             let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
@@ -1107,7 +1107,7 @@ fn pkg_info_for_name_and_version(
         if pkg_id == invalid_package_id {
             continue;
         }
-        let pkg = lockfile.packages.get(pkg_id as usize);
+        let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
             let written = {
                 let total = buf.len();
@@ -1227,7 +1227,7 @@ fn pkg_info_for_name_and_version(
             continue;
         }
 
-        let pkg = lockfile.packages.get(pkgid as usize);
+        let pkg = *lockfile.packages.get(pkgid as usize);
 
         Output::pretty_error(format_args!("  {}@<blue>{}<r>\n", bstr::BStr::new(pkg.name.slice(strbuf)), pkg.resolution.fmt(strbuf, PathSep::Posix)));
 

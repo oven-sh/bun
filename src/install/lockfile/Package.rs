@@ -3261,7 +3261,7 @@ pub mod serializer {
             for pkg_id_ in 0..list_for_migrating_from_v2.len() {
                 let pkg_id: PackageID = PackageID::try_from(pkg_id_).unwrap();
                 let _ = pkg_id;
-                let old: OldPackageV2 = list_for_migrating_from_v2.get(pkg_id_);
+                let old: OldPackageV2 = *list_for_migrating_from_v2.get(pkg_id_);
                 let new = Package::<SemverIntType> {
                     name: old.name,
                     name_hash: old.name_hash,

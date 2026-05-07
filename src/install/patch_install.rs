@@ -328,7 +328,7 @@ impl PatchTask {
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
-            let pkg: Package = manager.lockfile.packages.get(pkg_id as usize);
+            let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
             // PORT NOTE: `Package` is not `Copy` in the Rust port; capture the
             // scalar fields we need after `determine_preinstall_state` consumes
             // it (Zig's `packages.get()` returns by-value-copy).
@@ -382,7 +382,7 @@ impl PatchTask {
                     let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
                         .behavior
                         .is_required();
-                    let pkg_again: Package = manager.lockfile.packages.get(pkg_id as usize);
+                    let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         package_manager::generate_network_task_for_tarball(
                             manager,

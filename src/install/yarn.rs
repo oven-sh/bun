@@ -860,7 +860,7 @@ pub fn migrate_yarn_lockfile<'a>(
         })?;
 
         if let Some(resolutions) = package_json.as_property(b"resolutions") {
-            let mut root_package = this.packages.get(0);
+            let mut root_package = *this.packages.get(0);
             let mut string_builder = this.string_builder();
 
             if let logger::js_ast::ExprData::EObject(e_object) = &resolutions.expr.data {

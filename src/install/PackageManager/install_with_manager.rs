@@ -846,7 +846,7 @@ pub fn install_with_manager(
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
 
     if manager.lockfile.packages.len() > 0 {
-        root = manager.lockfile.packages.get(0);
+        root = *manager.lockfile.packages.get(0);
     }
 
     if manager.lockfile.packages.len() > 0 {

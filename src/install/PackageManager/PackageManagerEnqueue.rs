@@ -205,7 +205,7 @@ pub fn enqueue_tarball_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
-    let package = this.lockfile.packages.get(package_id as usize);
+    let package = *this.lockfile.packages.get(package_id as usize);
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
@@ -404,7 +404,7 @@ pub fn enqueue_package_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
-    let package = this.lockfile.packages.get(package_id as usize);
+    let package = *this.lockfile.packages.get(package_id as usize);
 
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
@@ -2065,7 +2065,7 @@ fn get_or_put_resolved_package_with_find_result(
     ) {
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
-            package: this.lockfile.packages.get(id as usize),
+            package: *this.lockfile.packages.get(id as usize),
             is_first_time: false,
             task: None,
         }));
@@ -2216,7 +2216,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_id as usize),
+                                package: *this.lockfile.packages.get(existing_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2249,7 +2249,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_id as usize),
+                                package: *this.lockfile.packages.get(existing_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2262,7 +2262,7 @@ fn get_or_put_resolved_package(
                             if resolution_satisfies_dependency(this, existing_resolution, &version) {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
-                                    package: this.lockfile.packages.get(existing_id as usize),
+                                    package: *this.lockfile.packages.get(existing_id as usize),
                                     ..Default::default()
                                 }));
                             }
@@ -2300,7 +2300,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, list[0]);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: this.lockfile.packages.get(existing_package_id as usize),
+                                package: *this.lockfile.packages.get(existing_package_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2312,7 +2312,7 @@ fn get_or_put_resolved_package(
 
     if (resolution as usize) < this.lockfile.packages.len() {
         return Ok(Some(ResolvedPackageResult {
-            package: this.lockfile.packages.get(resolution as usize),
+            package: *this.lockfile.packages.get(resolution as usize),
             ..Default::default()
         }));
     }
@@ -2359,7 +2359,7 @@ fn get_or_put_resolved_package(
                                 // make sure verifyResolutions sees this resolution as a valid package id
                                 success_fn(this, dependency_id, workspace_package_id);
                                 return Ok(Some(ResolvedPackageResult {
-                                    package: this.lockfile.packages.get(workspace_package_id as usize),
+                                    package: *this.lockfile.packages.get(workspace_package_id as usize),
                                     is_first_time: false,
                                     task: None,
                                 }));
@@ -2507,7 +2507,7 @@ fn get_or_put_resolved_package(
                                         // make sure verifyResolutions sees this resolution as a valid package id
                                         success_fn(this, dependency_id, workspace_package_id);
                                         return Ok(Some(ResolvedPackageResult {
-                                            package: this.lockfile.packages.get(workspace_package_id as usize),
+                                            package: *this.lockfile.packages.get(workspace_package_id as usize),
                                             is_first_time: false,
                                             task: None,
                                         }));
@@ -2638,14 +2638,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))
@@ -2691,14 +2691,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))
@@ -2725,14 +2725,14 @@ fn get_or_put_resolved_package(
                 FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         ..Default::default()
                     }))
                 }
                 FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
-                        package: this.lockfile.packages.get(package_id as usize),
+                        package: *this.lockfile.packages.get(package_id as usize),
                         is_first_time: true,
                         task: None,
                     }))

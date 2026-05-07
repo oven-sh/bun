@@ -347,7 +347,7 @@ impl List {
                 if let Some(i) =
                     Self::find_index_from_generated(list.items_generated(), line, column)
                 {
-                    return Some(list.get(i));
+                    return Some(*list.get(i));
                 }
             }
         }

@@ -102,7 +102,7 @@ impl ImmediateObject {
     // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` already emits the
     // extern constructor shim that calls `<Self>::constructor(__g, __f)`.
     pub fn constructor(global_object: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global_object.throw("Immediate is not constructible"))
+        Err(global_object.throw(format_args!("Immediate is not constructible")))
     }
 
     /// returns true if an exception was thrown

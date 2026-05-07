@@ -844,25 +844,10 @@ impl HTMLString {
         unsafe { lol_html_str_free(HTMLString { ptr: ptr as *const u8, len: len as usize }) };
     }
 
-    // TODO(port): `to_string(self) -> bun.String` lives in the higher-level wrapper
-    // (bun_lolhtml / bun_runtime), not in this *_sys crate — adding a `bun_string`
-    // dep here would invert the layering. The Zig body is preserved below for the
-    // wrapper to port as an extension method.
-    //
-    //     pub fn to_string(self) -> bun_str::String {
-    //         let bytes = self.slice();
-    //         if !bytes.is_empty() && bun_str::strings::is_all_ascii(bytes) {
-    //             return bun_str::String::create_external::<*mut u8>(
-    //                 bytes, true, bytes.as_ptr() as *mut u8, Self::deinit_external,
-    //             );
-    //         }
-    //         let result = bun_str::String::clone_utf8(bytes);
-    //         self.deinit();
-    //         result
-    //     }
-
-    // `pub const toJS = @import("../runtime/api/lolhtml_jsc.zig").htmlStringToJS;`
-    // — deleted per PORTING.md: *_jsc alias; to_js is an extension-trait method in bun_runtime.
+    // `to_string(self) -> bun.String` and `to_js` live in the higher-tier
+    // wrapper at `bun_runtime::api::lolhtml_jsc::{html_string_to_string,
+    // html_string_to_js}` — this *_sys crate has no `bun_string` / `bun_jsc`
+    // dependency.
 }
 
 // ─── EndTag ───────────────────────────────────────────────────────────────

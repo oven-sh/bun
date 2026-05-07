@@ -1214,15 +1214,96 @@ impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
 }
 
 impl<H: StaticHasher> StaticCryptoHasher<H> {
-    // `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
-    // `pub const hash   = host_fn.wrapStaticMethod(ThisHasher, "hash_", false);`
-    // TODO(port): proc-macro — see note on CryptoHasher::digest/hash.
+    /// `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
+    ///
+    /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
+    /// `(*ThisHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
+    pub fn digest(
+        this: &mut Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<1>();
+        // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
+        let output: Option<StringOrBuffer> = if arguments.len > 0 {
+            let arg = arguments.ptr[0];
+            if !arg.is_empty_or_undefined_or_null() {
+                match StringOrBuffer::from_js(global, arg)? {
+                    Some(v) => Some(v),
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected string or buffer"
+                        )));
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Self::digest_(this, global, output)
+    }
+
+    /// `pub const hash = host_fn.wrapStaticMethod(ThisHasher, "hash_", false);`
+    ///
+    /// Hand-expanded `wrapStaticMethod` decode for the parameter list
+    /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
+    pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let mut i = 0usize;
+        let mut next_eat = || {
+            if i < arguments.len {
+                let v = arguments.ptr[i];
+                i += 1;
+                Some(v)
+            } else {
+                None
+            }
+        };
+
+        // Node.BlobOrStringOrBuffer
+        let input = {
+            let Some(arg) = next_eat() else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "expected blob, string or buffer"
+                )));
+            };
+            match BlobOrStringOrBuffer::from_js(global, arg)? {
+                Some(b) => b,
+                None => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "expected blob, string or buffer"
+                    )));
+                }
+            }
+        };
+
+        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
+        let output: Option<StringOrBuffer> = match next_eat() {
+            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
+                Some(v) => Some(v),
+                None => {
+                    if arg.is_undefined() {
+                        None
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected string or buffer"
+                        )));
+                    }
+                }
+            },
+            None => None,
+        };
+
+        Self::hash_(global, input, output)
+    }
 
     pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::js_number(H::DIGEST as f64)
     }
 
-    pub fn get_byte_length_static(_: &JSGlobalObject, _: JSValue, _: JSValue) -> JSValue {
+    pub fn get_byte_length_static(_: &JSGlobalObject, _: JSValue, _: PropertyName) -> JSValue {
         JSValue::js_number(H::DIGEST as f64)
     }
 

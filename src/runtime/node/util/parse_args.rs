@@ -1,11 +1,11 @@
 use core::fmt;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_str::{String, ZigString};
 
-use super::parse_args_utils::{
+use super::parse_args_utils_impl::{
     classify_token, find_option_by_short_name, is_option_like_value, OptionDefinition,
-    OptionValueType,
+    OptionValueType, TokenSubtype,
 };
 use super::validators;
 
@@ -118,7 +118,8 @@ impl<'a> fmt::Display for RawNameFormatter<'a> {
         let token = &self.token;
         let raw = token.raw.as_bun_string(self.global);
         if let Some(optgroup_idx) = token.optgroup_idx {
-            raw.substring_with_len(optgroup_idx, optgroup_idx + 1).fmt(f)
+            let i = optgroup_idx as usize;
+            raw.substring_with_len(i, i + 1).fmt(f)
         } else {
             match token.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => raw.fmt(f),
@@ -141,17 +142,13 @@ impl OptionToken {
     fn make_raw_name_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(optgroup_idx) = self.optgroup_idx {
             let raw = self.raw.as_bun_string(global);
+            let i = optgroup_idx as usize;
             let mut buf = [0u8; 8];
-            // TODO(port): std.fmt.bufPrint — write into &mut [u8]
             let str = {
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
-                write!(
-                    cursor,
-                    "-{}",
-                    raw.substring_with_len(optgroup_idx, optgroup_idx + 1)
-                )
-                .expect("unreachable");
+                write!(cursor, "-{}", raw.substring_with_len(i, i + 1))
+                    .expect("unreachable");
                 let written = 8 - cursor.len();
                 &buf[..written]
             };
@@ -190,8 +187,8 @@ pub fn find_option_by_long_name(long_name: String, options: &[OptionDefinition])
 fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     // Work out where to slice process.argv for user supplied arguments
 
-    let exec_argv = crate::api::node::process::get_exec_argv(global);
-    let argv = crate::api::node::process::get_argv(global);
+    let exec_argv = super::process::get_exec_argv(global);
+    let argv = super::process::get_argv(global);
     if argv.is_array() && exec_argv.is_array() {
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {
@@ -227,7 +224,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
 fn check_option_like_value(global: &JSGlobalObject, token: OptionToken) -> JsResult<()> {
-    if !token.inline_value && is_option_like_value(token.value.as_bun_string(global)) {
+    if !token.inline_value && is_option_like_value(&token.value.as_bun_string(global)) {
         let raw_name = RawNameFormatter { token, global };
 
         // Only show short example if user used short option.
@@ -248,7 +245,7 @@ fn check_option_like_value(global: &JSGlobalObject, token: OptionToken) -> JsRes
                 ),
             );
         }
-        return global.throw_value(err);
+        return Err(global.throw_value(err));
     }
     Ok(())
 }
@@ -273,7 +270,7 @@ fn check_option_usage(
                             bun_jsc::ErrorCode::PARSE_ARGS_UNKNOWN_OPTION,
                             format_args!("Unknown option '{raw_name}'"),
                         );
-                        return global.throw_value(err);
+                        return Err(global.throw_value(err));
                     }
                     let err = global.to_type_error(
                         bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
@@ -285,7 +282,7 @@ fn check_option_usage(
                             token.name.as_bun_string(global),
                         ),
                     );
-                    return global.throw_value(err);
+                    return Err(global.throw_value(err));
                 }
             }
             OptionValueType::Boolean => {
@@ -300,7 +297,7 @@ fn check_option_usage(
                             token.name.as_bun_string(global),
                         ),
                     );
-                    return global.throw_value(err);
+                    return Err(global.throw_value(err));
                 }
             }
         }
@@ -320,7 +317,7 @@ fn check_option_usage(
                 format_args!("Unknown option '{raw_name}'"),
             )
         };
-        return global.throw_value(err);
+        return Err(global.throw_value(err));
     }
     Ok(())
 }
@@ -361,7 +358,7 @@ fn store_option(
         // values[long_option] starts out not present,
         // first value is added as new array [new_value],
         // subsequent values are pushed to existing array.
-        if let Some(value_list) = values.get_own(global, key)? {
+        if let Some(value_list) = values.get_own(global, &key)? {
             value_list.push(global, new_value)?;
         } else {
             let value_list = JSValue::create_empty_array(global, 1)?;
@@ -427,7 +424,7 @@ fn parse_option_definitions(
                     bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!("options.{}.short must be a single character", option.long_name),
                 );
-                return global.throw_value(err);
+                return Err(global.throw_value(err));
             }
             option.short_name = short_option_str;
         }
@@ -787,7 +784,7 @@ impl<'a> ParseArgsState<'a> {
                             value.as_bun_string(global),
                         ),
                     );
-                    return global.throw_value(err);
+                    return Err(global.throw_value(err));
                 }
                 let value = value.as_js_value(global)?;
                 self.positionals.push(global, value)?;

@@ -8,6 +8,29 @@ pub enum OptionValueType {
     String,
 }
 
+impl From<OptionValueType> for &'static str {
+    #[inline]
+    fn from(v: OptionValueType) -> Self {
+        match v {
+            OptionValueType::Boolean => "boolean",
+            OptionValueType::String => "string",
+        }
+    }
+}
+
+impl super::validators::StringEnum for OptionValueType {
+    const VALUES_INFO: &'static str = "boolean | string";
+    fn from_bun_string(s: &String) -> Option<Self> {
+        if s.eql_comptime(b"boolean") {
+            Some(Self::Boolean)
+        } else if s.eql_comptime(b"string") {
+            Some(Self::String)
+        } else {
+            None
+        }
+    }
+}
+
 /// Metadata of an option known to the args parser,
 /// i.e. the values passed to `parseArgs(..., { options: <values> })`
 pub struct OptionDefinition {
@@ -41,7 +64,8 @@ impl Default for OptionDefinition {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TokenSubtype {
     /// '--'
     OptionTerminator,

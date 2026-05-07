@@ -38,10 +38,10 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         return Err(global.throw_invalid_argument_type_value("expected", "string", expected_arg));
     }
 
-    let actual_str = actual_arg.to_bun_string(global)?;
-    // `defer actual_str.deref()` — handled by Drop on bun_str::String
-    let expected_str = expected_arg.to_bun_string(global)?;
-    // `defer expected_str.deref()` — handled by Drop on bun_str::String
+    // `defer .deref()` — `bun_str::String` is `Copy` (no `Drop`), so wrap in
+    // `OwnedString` for the scope-exit ref-drop.
+    let actual_str = bstring::OwnedString::new(actual_arg.to_bun_string(global)?);
+    let expected_str = bstring::OwnedString::new(expected_arg.to_bun_string(global)?);
 
     debug_assert!(actual_str.tag() != bstring::Tag::Dead);
     debug_assert!(expected_str.tag() != bstring::Tag::Dead);

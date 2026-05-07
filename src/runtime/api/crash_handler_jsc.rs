@@ -1,7 +1,7 @@
 //! JS testing/debugging bindings for the crash handler. Keeps
 //! `src/crash_handler/` free of JSC types.
 
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigString};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_str::String as BunString;
 use bun_collections::BoundedArray;
 use bun_core::{Global, Environment};
@@ -14,24 +14,23 @@ pub mod js_bindings {
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global, 8);
         // PORT NOTE: `inline for` over homogeneous (name, host_fn) tuples → const array + plain `for`.
-        // TODO(port): `#[bun_jsc::host_fn]` emits the raw `JSHostFn` shim; confirm how to reference
-        // it as a value here (assumed: the decorated fn name coerces to `bun_jsc::JSHostFn`).
+        // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
+        // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
-            ("getMachOImageZeroOffset", js_get_mach_o_image_zero_offset),
-            ("getFeaturesAsVLQ", js_get_features_as_vlq),
-            ("getFeatureData", js_get_feature_data),
-            ("segfault", js_segfault),
-            ("panic", js_panic),
-            ("rootError", js_root_error),
-            ("outOfMemory", js_out_of_memory),
-            ("raiseIgnoringPanicHandler", js_raise_ignoring_panic_handler),
+            ("getMachOImageZeroOffset", __jsc_host_js_get_mach_o_image_zero_offset),
+            ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
+            ("getFeatureData", __jsc_host_js_get_feature_data),
+            ("segfault", __jsc_host_js_segfault),
+            ("panic", __jsc_host_js_panic),
+            ("rootError", __jsc_host_js_root_error),
+            ("outOfMemory", __jsc_host_js_out_of_memory),
+            ("raiseIgnoringPanicHandler", __jsc_host_js_raise_ignoring_panic_handler),
         ];
-        for &(name_str, func) in ENTRIES {
-            let name = ZigString::static_(name_str);
+        for &(name, func) in ENTRIES {
             obj.put(
                 global,
                 name,
-                JSFunction::create(global, name_str, func, 1, Default::default()),
+                JSFunction::create(global, name, func, 1, Default::default()),
             );
         }
         obj
@@ -62,7 +61,7 @@ pub mod js_bindings {
             // SAFETY: same as above.
             let vmaddr_slide = unsafe { _dyld_get_image_vmaddr_slide(0) } as usize;
 
-            Ok(JSValue::js_number(base_address - vmaddr_slide))
+            Ok(JSValue::js_number((base_address - vmaddr_slide) as f64))
         }
     }
 
@@ -83,12 +82,12 @@ pub mod js_bindings {
     #[bun_jsc::host_fn]
     pub fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        crash_handler::panic_impl("invoked crashByPanic() handler", None, None);
+        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
     #[bun_jsc::host_fn]
     pub fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::handle_root_error(bun_core::err!("Test"), None);
+        crash_handler::handle_root_error(bun_core::err!(Test), None);
     }
 
     #[bun_jsc::host_fn]
@@ -103,7 +102,7 @@ pub mod js_bindings {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        Global::raise_ignoring_panic_handler(bun_core::Signal::SIGSEGV);
+        Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
     }
 
     #[bun_jsc::host_fn]
@@ -113,13 +112,12 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         let bits = analytics::packed_features();
         let mut buf = BoundedArray::<u8, 16>::default();
-        // SAFETY: `bits` is a packed-struct(u64); bitcast to u64.
-        let bits_u64: u64 = unsafe { core::mem::transmute(bits) };
-        crash_handler::write_u64_as_two_vlqs(buf.writer(), bits_u64)
+        // Zig `@bitCast(bits)` → bitflags `.bits()` (PackedFeatures is repr(transparent) u64).
+        crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
         let mut str = BunString::clone_latin1(buf.slice());
-        Ok(str.transfer_to_js(global))
+        str.transfer_to_js(global)
     }
 
     #[bun_jsc::host_fn]
@@ -134,36 +132,36 @@ pub mod js_bindings {
                 BunString::static_(feature).to_js(global)?,
             )?;
         }
-        obj.put(global, ZigString::static_("features"), array);
+        obj.put(global, "features", array);
         obj.put(
             global,
-            ZigString::static_("version"),
-            BunString::init(Global::PACKAGE_JSON_VERSION).to_js(global)?,
+            "version",
+            BunString::init(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
-            ZigString::static_("is_canary"),
-            JSValue::from(Environment::IS_CANARY),
+            "is_canary",
+            JSValue::js_boolean(Environment::IS_CANARY),
         );
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
         obj.put(
             global,
-            ZigString::static_("revision"),
+            "revision",
             BunString::init(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(
             global,
-            ZigString::static_("generated_at"),
+            "generated_at",
             JSValue::js_number_from_int64(milli_timestamp().max(0)),
         );
         Ok(obj)
     }
 
-    // TODO(port): replace with `bun_core::time::milli_timestamp()` if one exists; std::time is
-    // permitted (only std::{fs,net,process} are banned).
+    // PORT NOTE: `std.time.milliTimestamp()`. std::time is permitted (only
+    // std::{fs,net,process} are banned per docs/PORTING.md).
     fn milli_timestamp() -> i64 {
         use std::time::{SystemTime, UNIX_EPOCH};
         match SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -176,7 +174,7 @@ pub mod js_bindings {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/crash_handler_jsc.zig (99 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      host_fn array in generate() assumes #[host_fn] fns coerce to JSHostFn; diverging fns (panic/root_error/oom/raise) rely on `!` coercion to JsResult<JSValue>
+//   confidence: high
+//   todos:      0
+//   notes:      diverging fns (panic/root_error/oom/raise) rely on `!` coercion to JsResult<JSValue>
 // ──────────────────────────────────────────────────────────────────────────

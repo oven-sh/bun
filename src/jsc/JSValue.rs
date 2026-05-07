@@ -400,6 +400,15 @@ impl JSValue {
             Self::js_number(i as f64)
         }
     }
+    /// `JSValue.jsNumberFromInt64` (JSValue.zig:814) — int32 fast-path,
+    /// otherwise lossy double.
+    pub fn js_number_from_int64(i: i64) -> JSValue {
+        if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
+            Self::js_number_from_int32(i as i32)
+        } else {
+            Self::js_number(i as f64)
+        }
+    }
     pub fn js_number(n: f64) -> JSValue {
         // SAFETY: pure FFI; encodes a double into a JSValue.
         unsafe { JSC__JSValue__jsNumberFromDouble(n) }

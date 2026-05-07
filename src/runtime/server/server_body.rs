@@ -1463,8 +1463,106 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
+    // ───────────── host_fn.wrapInstanceMethod hand-expansions ─────────────
+    //
+    // PORT NOTE: server.zig:581-595 defines these as comptime
+    // `host_fn.wrapInstanceMethod(ThisServer, "...", false)` aliases (or
+    // direct `pub const` aliases). The proc-macro that will replace
+    // `wrapInstanceMethod` hasn't landed, so each is hand-expanded with the
+    // exact per-type decode arms from host_fn.zig:493-648 (same error
+    // strings, same eat order). `do_reload`/`do_fetch`/`do_timeout` are
+    // straight aliases — Zig: `pub const doReload = onReload;` etc.
 
+    /// Zig: `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);`
+    /// — `stopFromJS(this, abruptly: ?JSValue)`.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut iter = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let abruptly = iter.next_eat();
+        Ok(self.stop_from_js(abruptly))
+    }
 
+    /// Zig: `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);`
+    /// — `disposeFromJS(this)`.
+    #[bun_jsc::host_fn(method)]
+    pub fn dispose(&mut self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        Ok(self.dispose_from_js())
+    }
+
+    /// Zig: `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false);`
+    /// — `onUpgrade(this, globalThis, object: JSValue, optional: ?JSValue)`.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_upgrade(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<4>();
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut iter = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let object = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        let optional = iter.next_eat();
+        self.on_upgrade(global, object, optional)
+    }
+
+    /// Zig: `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false);`
+    /// — `publish(this, globalThis, topic: ZigString, message_value: JSValue, compress_value: ?JSValue)`.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_publish(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<5>();
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut iter = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        // ZigString arm: "Missing argument" if absent, "Expected string" if undefined/null.
+        let topic_value = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        if topic_value.is_undefined_or_null() {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        }
+        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        // JSValue arm (required): "Missing argument" if absent.
+        let message_value = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        // ?JSValue arm.
+        let compress_value = iter.next_eat();
+        self.publish(global, topic, message_value, compress_value)
+    }
+
+    /// Zig: `pub const doReload = onReload;`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.on_reload(global, callframe)
+    }
+
+    /// Zig: `pub const doFetch = onFetch;`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_fetch(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.on_fetch(global, callframe)
+    }
+
+    /// Zig: `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false);`
+    /// — `requestIP(this, request: *Request)`.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_request_ip(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut iter = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        // *jsc.WebCore.Request arm: "Missing Request object" / "Expected Request object".
+        let arg = iter
+            .next_eat()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing Request object")))?;
+        let request = <Request as bun_jsc::JsClass>::from_js(arg)
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Expected Request object")))?;
+        // SAFETY: from_js returns a live *mut Request reachable from `arg`.
+        self.request_ip(unsafe { &*request })
+    }
+
+    /// Zig: `pub const doTimeout = timeout;`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.timeout(global, callframe)
+    }
 
     pub fn append_static_route(
         &mut self,

@@ -116,25 +116,102 @@ pub mod Macro {
         }
     }
 
-    /// Stand-in for `js_parser_jsc::Macro::MacroContext`.
+    /// Dispatch signature for `MacroContext::call`.
     ///
-    /// Real fields (`env`, `macros`, `remap`) reference `Transpiler` and JSC
-    /// types; the higher-tier *_jsc crate owns the full definition.
-    /// `javascript_object` is surfaced here so `Transpiler::parse` can thread
+    /// The real body lives in `bun_js_parser_jsc::Macro` (it touches
+    /// `Transpiler`, `Resolver`, `DotEnv.Loader`, and the JSC VM — all in
+    /// crates that depend on `bun_js_parser`). To break that dep cycle the
+    /// lower-tier `MacroContext` carries a fn-pointer that the `_jsc` crate
+    /// fills in at construction time; the visit pass calls through it via
+    /// `MacroContext::call` so `visitExpr.rs` is a faithful port of
+    /// `visitExpr.zig:415` / `:1443` without an upward import.
+    pub type MacroCallFn = fn(
+        ctx: &mut MacroContext,
+        import_record_path: &[u8],
+        source_dir: &[u8],
+        log: &mut bun_logger::Log,
+        source: &bun_logger::Source,
+        import_range: bun_logger::Range,
+        caller: crate::Expr,
+        function_name: &[u8],
+    ) -> Result<crate::Expr, bun_core::Error>;
+
+    /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
+    ///
+    /// Real fields (`env`, `macros`, `remap`, `resolver`) reference
+    /// `Transpiler` and JSC types; the higher-tier *_jsc crate owns them
+    /// behind `data` and reads them back inside `call_fn`. `javascript_object`
+    /// is surfaced here so `Transpiler::parse` can thread
     /// `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940) without
     /// this crate depending on `bun_jsc::JSValue`.
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
+        /// Set by `bun_js_parser_jsc` at construction; dispatches to the real
+        /// JSC-backed macro runner. See [`MacroCallFn`].
+        pub call_fn: MacroCallFn,
+        /// Opaque pointer to the higher-tier macro-runner state
+        /// (resolver/env/macros/remap/bump). `call_fn` downcasts this;
+        /// `bun_js_parser` never dereferences it.
+        pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
         #[inline]
         fn default() -> Self {
-            Self { javascript_object: MacroJSCtx::ZERO }
+            Self {
+                javascript_object: MacroJSCtx::ZERO,
+                call_fn: macro_context_call_unconfigured,
+                data: core::ptr::null_mut(),
+            }
         }
     }
+    /// Zig leaves `Options.macro_context` `= undefined`; reaching `.call()`
+    /// without the `_jsc` crate having wired a runner is a logic error. Spec
+    /// `Macro.zig`'s `call` returns `error.MacroFailed` for every runner
+    /// failure mode that doesn't carry its own diagnostic, so surface the same
+    /// tag here — the visit pass already handles it (logs "macro threw
+    /// exception" iff nothing else was logged).
+    fn macro_context_call_unconfigured(
+        _ctx: &mut MacroContext,
+        _import_record_path: &[u8],
+        _source_dir: &[u8],
+        _log: &mut bun_logger::Log,
+        _source: &bun_logger::Source,
+        _import_range: bun_logger::Range,
+        _caller: crate::Expr,
+        _function_name: &[u8],
+    ) -> Result<crate::Expr, bun_core::Error> {
+        Err(bun_core::err!("MacroFailed"))
+    }
     impl MacroContext {
+        /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
+        /// log, source, import_range, caller, function_name) !Expr`.
+        ///
+        /// Thin dispatch through [`MacroCallFn`]; the real body is installed
+        /// by `bun_js_parser_jsc::MacroContext::init`.
+        #[inline]
+        pub fn call(
+            &mut self,
+            import_record_path: &[u8],
+            source_dir: &[u8],
+            log: &mut bun_logger::Log,
+            source: &bun_logger::Source,
+            import_range: bun_logger::Range,
+            caller: crate::Expr,
+            function_name: &[u8],
+        ) -> Result<crate::Expr, bun_core::Error> {
+            (self.call_fn)(
+                self,
+                import_record_path,
+                source_dir,
+                log,
+                source,
+                import_range,
+                caller,
+                function_name,
+            )
+        }
         /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
         ///
         /// Spec body (js_parser_jsc/Macro.zig:22) is straight struct
@@ -146,17 +223,13 @@ pub mod Macro {
         /// At this tier the JSC-backed fields are owned by
         /// `bun_js_parser_jsc::MacroContext` (dep-cycle: `Transpiler` /
         /// `Resolver` / `DotEnv.Loader` live in higher-tier crates that
-        /// already depend on `bun_js_parser`). The only field surfaced here is
-        /// `javascript_object`, so the ported body reduces to writing its Zig
-        /// default — `JSValue.zero` ↔ null. `_transpiler` stays generic so
-        /// `bun_bundler::Transpiler` callers compile without an upward dep.
+        /// already depend on `bun_js_parser`). `_transpiler` stays generic so
+        /// `bun_bundler::Transpiler` callers compile without an upward dep;
+        /// the `_jsc` crate's `init` overwrites `call_fn`/`data` with the
+        /// real runner before any macro can be invoked.
         #[inline]
         pub fn init<T>(_transpiler: &mut T) -> Self {
-            // PORT NOTE: resolver/env/macros/remap backrefs are wired by the
-            // *_jsc-tier `MacroContext::init`; this JSC-free stub only carries
-            // the `javascript_object` slot the transpiler threads through
-            // (transpiler.zig:938-940).
-            Self { javascript_object: MacroJSCtx::ZERO }
+            Self::default()
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this

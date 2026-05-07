@@ -211,18 +211,14 @@ impl HotReloaderCtx for VirtualMachine {
         self.bun_watcher = Box::into_raw(iw) as *mut core::ffi::c_void;
 
         // Wire the resolver's directory-watch callback at the same time.
-        // PORT NOTE: `bun_resolver::AnyResolveWatcher` and
-        // `bun_watcher::AnyResolveWatcher` are distinct CYCLEBREAK twins;
-        // build the resolver-side shape directly instead of bridging.
-        fn on_watch(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
-            // SAFETY: `ctx` was stored from `*mut Watcher` just below.
-            let w = unsafe { &mut *(ctx as *mut Watcher) };
-            Watcher::on_maybe_watch_directory(w, dir_path, dir_fd);
-        }
-        self.transpiler.resolver.watcher = Some(bun_resolver::AnyResolveWatcher {
-            context: core::ptr::NonNull::new(watcher_ptr as *mut ()).unwrap(),
-            callback: on_watch,
-        });
+        // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
+        // `Watcher::get_resolve_watcher` is the Rust-side equivalent that
+        // erases the `*mut Watcher` into the resolver's `AnyResolveWatcher`
+        // vtable (re-exported from `bun_watcher`, so it's the same type).
+        // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
+        // via `Box::into_raw` and is live for the VM's lifetime.
+        self.transpiler.resolver.watcher =
+            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
 
         watcher_ptr
     }

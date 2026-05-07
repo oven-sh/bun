@@ -271,7 +271,9 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(e) = err {
-            let errno = e.errno as ExitCode;
+            // Spec: `defer e.deref(); @intCast(@intFromEnum(e.getErrno()))`.
+            let errno = e.get_errno() as ExitCode;
+            e.deref();
             let rchild = ReaderChildPtr { node: cmd, tag: ReaderTag::Cat };
             // Writing to stdout errored: cancel everything and finish.
             // PORT NOTE: reshaped for borrowck — pull the reader `Arc` out of
@@ -363,7 +365,14 @@ impl Cat {
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let errno: ExitCode = err.map(|e| e.errno as ExitCode).unwrap_or(0);
+        let errno: ExitCode = err
+            .map(|e| {
+                // Spec: `defer e.deref(); @intCast(@intFromEnum(e.getErrno()))`.
+                let n = e.get_errno() as ExitCode;
+                e.deref();
+                n
+            })
+            .unwrap_or(0);
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {

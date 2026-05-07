@@ -361,7 +361,7 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let name = &sig.ident;
     let inputs = &sig.inputs;
     let output = &sig.output;
-    let generics = &sig.generics;
+    let (impl_generics, _ty_generics, where_clause) = sig.generics.split_for_impl();
     // No implicit `#[no_mangle]` — multiple types share method names
     // (`has_pending_activity`, `ptr_without_type_checks`, …) and collide at
     // codegen otherwise. The generated `.classes.ts` wrappers own the canonical
@@ -370,11 +370,11 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]
         #(#attrs)*
-        #vis unsafe extern "sysv64" fn #name #generics(#inputs) #output #block
+        #vis unsafe extern "sysv64" fn #name #impl_generics(#inputs) #output #where_clause #block
 
         #[cfg(not(all(windows, target_arch = "x86_64")))]
         #(#attrs)*
-        #vis unsafe extern "C" fn #name #generics(#inputs) #output #block
+        #vis unsafe extern "C" fn #name #impl_generics(#inputs) #output #where_clause #block
     }
     .into()
 }

@@ -1,6 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
+use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc,

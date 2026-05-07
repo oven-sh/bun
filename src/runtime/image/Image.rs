@@ -22,6 +22,7 @@ use bun_jsc::{
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_string::ZigString;
 use crate::webcore::Blob;
+use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::blob::store as blob_store;
 use crate::webcore::node_types::PathOrFileDescriptor;

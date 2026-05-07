@@ -25,6 +25,7 @@ use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use crate::webcore::BlobExt as _;
 
 // ─── VirtualMachine.zig ──────────────────────────────────────────────────────
 

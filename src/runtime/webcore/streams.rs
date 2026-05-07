@@ -142,6 +142,40 @@ impl Start {
         Ok(Start::Empty)
     }
 
+    /// Runtime-tag dispatcher for `from_js_with_tag`. Zig calls
+    /// `Start.fromJSWithTag(..., comptime tag)` from `JSSink.start` via
+    /// `@field(streams.Start, abi_name)`; Rust models the per-sink tag as
+    /// `JsSinkType::START_TAG` (a runtime `Option<StartTag>`) so we re-enter
+    /// the const-generic body via this match.
+    pub fn from_js_with_runtime_tag(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        tag: StartTag,
+    ) -> JsResult<Start> {
+        match tag {
+            StartTag::ArrayBufferSink => {
+                Self::from_js_with_tag::<{ StartTag::ArrayBufferSink }>(global_this, value)
+            }
+            StartTag::FileSink => {
+                Self::from_js_with_tag::<{ StartTag::FileSink }>(global_this, value)
+            }
+            StartTag::NetworkSink => {
+                Self::from_js_with_tag::<{ StartTag::NetworkSink }>(global_this, value)
+            }
+            StartTag::HTTPSResponseSink => {
+                Self::from_js_with_tag::<{ StartTag::HTTPSResponseSink }>(global_this, value)
+            }
+            StartTag::HTTPResponseSink => {
+                Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
+            }
+            StartTag::H3ResponseSink => {
+                Self::from_js_with_tag::<{ StartTag::H3ResponseSink }>(global_this, value)
+            }
+            // No `Start` variant carries these tags from JS.
+            _ => Self::from_js(global_this, value),
+        }
+    }
+
     pub fn from_js_with_tag<const TAG: StartTag>(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -1975,6 +2009,62 @@ impl<const SSL: bool, const HTTP3: bool> SinkHandler for HTTPServerWritable<SSL,
     }
 }
 
+// `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
+// start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
+// the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
+impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
+    for HTTPServerWritable<SSL, HTTP3>
+{
+    const NAME: &'static str = Self::NAME;
+    const HAS_SIGNAL: bool = true;
+    const HAS_DONE: bool = true;
+    const HAS_FLUSH_FROM_JS: bool = true;
+    const START_TAG: Option<StartTag> = Some(if HTTP3 {
+        StartTag::H3ResponseSink
+    } else if SSL {
+        StartTag::HTTPSResponseSink
+    } else {
+        StartTag::HTTPResponseSink
+    });
+
+    fn memory_cost(&self) -> usize {
+        Self::memory_cost(self)
+    }
+    fn finalize(&mut self) {
+        Self::finalize(self)
+    }
+    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+        Self::write(self, data)
+    }
+    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+        Self::write_utf16(self, data)
+    }
+    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+        Self::write_latin1(self, data)
+    }
+    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, global)
+    }
+    fn flush(&mut self) -> bun_sys::Result<()> {
+        Self::flush(self)
+    }
+    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
+        Self::flush_from_js(self, global, wait)
+    }
+    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
+        Self::start(self, config)
+    }
+    fn signal(&mut self) -> Option<&mut Signal> {
+        Some(&mut self.signal)
+    }
+    fn done(&self) -> bool {
+        self.done
+    }
+}
+
 pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
 pub type HTTPResponseSink = HTTPServerWritable<false, false>;
 pub type H3ResponseSink = HTTPServerWritable<true, true>;
@@ -2344,7 +2434,51 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
     }
 }
 
-// TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen
+impl crate::webcore::sink::JsSinkType for NetworkSink {
+    const NAME: &'static str = Self::NAME;
+    const HAS_SIGNAL: bool = true;
+    const HAS_DONE: bool = true;
+    const HAS_FLUSH_FROM_JS: bool = true;
+    const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
+
+    fn memory_cost(&self) -> usize {
+        Self::memory_cost(self)
+    }
+    fn finalize(&mut self) {
+        Self::finalize(self)
+    }
+    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+        Self::write(self, data)
+    }
+    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+        Self::write_utf16(self, data)
+    }
+    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+        Self::write_latin1(self, data)
+    }
+    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, global)
+    }
+    fn flush(&mut self) -> bun_sys::Result<()> {
+        Self::flush(self)
+    }
+    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
+        Self::flush_from_js(self, global, wait)
+    }
+    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
+        Self::start(self, config)
+    }
+    fn signal(&mut self) -> Option<&mut Signal> {
+        Some(&mut self.signal)
+    }
+    fn done(&self) -> bool {
+        self.done
+    }
+}
+
 pub type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 
 // ──────────────────────────────────────────────────────────────────────────

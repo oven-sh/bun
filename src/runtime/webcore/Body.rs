@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
+use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, CommonAbortReason, DOMFormData, JSGlobalObject, JSPromise, JSValue,
     JsResult, Strong, SystemError, URLSearchParams, VirtualMachine,

@@ -12,6 +12,7 @@ use bun_uws::{
 };
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
+use crate::webcore::BlobExt as _;
 
 // ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
 // is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──

@@ -1719,8 +1719,16 @@ pub fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
-    let manager = &mut *ctx.manager;
-    let manager_ptr: *mut PackageManager = manager;
+    // PORT NOTE: reshaped for borrowck — Zig freely aliased `*PackageManager`
+    // alongside `ctx`-whole calls (`run_lifecycle_script(ctx, …)`,
+    // `iterate_bundled_deps(ctx, …)`). Round-trip the field through a raw
+    // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
+    // every interleaved `ctx` access touches disjoint fields (`command_ctx`,
+    // `bundled_deps`, `stats`) or only reads `manager` via `pm_*` helpers.
+    let manager_ptr: *mut PackageManager = &mut *ctx.manager;
+    // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
+    // single-threaded and no callee retains a conflicting borrow.
+    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
     let log_level = manager.options.log_level;
     let bump = pack_bump();
     // PORT NOTE: `workspace_package_json_cache` and `log` are disjoint fields on

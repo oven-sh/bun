@@ -27,6 +27,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
 use crate::webcore::{self, AnyBlob};
+use crate::webcore::BlobExt as _;
 
 // `bun.Output.scoped(.HTMLBundle, .hidden)` — wrapped in a sub-module so the
 // `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`

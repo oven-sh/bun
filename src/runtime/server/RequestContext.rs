@@ -286,18 +286,12 @@ struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3:
     *mut RequestContext<ThisServer, SSL, DBG, H3>,
 )
 where
-    ThisServer: ServerLike + 'static,
-    TransportFor<SSL, H3>: Transport,
-    RequestContext<ThisServer, SSL, DBG, H3>:
-        NativePromiseContext::NativePromiseContextType + RequestContextHostFns;
+    ThisServer: ServerLike + 'static;
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> Drop
     for RequestContextRef<ThisServer, SSL, DBG, H3>
 where
     ThisServer: ServerLike + 'static,
-    TransportFor<SSL, H3>: Transport,
-    RequestContext<ThisServer, SSL, DBG, H3>:
-        NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     #[inline]
     fn drop(&mut self) {
@@ -417,9 +411,7 @@ pub trait RequestContextHostFns {
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
-    TransportFor<SSL_ENABLED, HTTP3>: Transport,
     ThisServer: ServerLike + 'static,
-    Self: NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
@@ -3797,9 +3789,7 @@ where
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
     WebCore::PipeHandler for RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
 where
-    TransportFor<SSL_ENABLED, HTTP3>: Transport,
     ThisServer: ServerLike + 'static,
-    Self: NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     fn on_pipe(&mut self, stream: WebCore::streams::Result) {
         // Forward to the inherent associated fn (not method-dispatched to avoid

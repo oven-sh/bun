@@ -11,6 +11,7 @@ use bun_core::{self, fmt as bun_fmt};
 use bun_wyhash::hash;
 
 use crate::webcore::{Blob, Request, Response};
+use crate::webcore::BlobExt as _;
 use crate::node::util::validators;
 
 pub use bun_str::SliceWithUnderlyingString;

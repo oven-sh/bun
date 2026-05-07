@@ -3,7 +3,8 @@ use core::mem::offset_of;
 use bun_collections::BabyList;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-use crate::webcore::blob::{self, Blob, StoreRef};
+use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
+use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 

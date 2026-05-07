@@ -17,6 +17,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{write_status, AnyServer};
 use crate::webcore::body::Value as BodyValue;
+use crate::webcore::BlobExt as _;
 use crate::webcore::headers_ref::{any_blob_ref, fetch_headers_ref};
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 

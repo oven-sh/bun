@@ -597,8 +597,6 @@ impl<T: JsSinkAbi> SinkSignal<T> {
 /// Zig used `@hasDecl(SinkType, "...")` to make most of these optional; Rust
 /// models that with default method bodies. Associated `const`s replace
 /// `@hasField` checks.
-// TODO(b2-blocked): `streams::Start` is gated inside streams.rs `_jsc_gated`.
-
 pub trait JsSinkType: Sized {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.
@@ -615,8 +613,9 @@ pub trait JsSinkType: Sized {
     const HAS_UPDATE_REF: bool = false;
     /// Mirrors `@hasDecl(SinkType, "getFd")`.
     const HAS_GET_FD: bool = false;
-    /// Mirrors `@hasField(streams.Start, abi_name)` — set per-instantiation in the macro.
-    // (Handled in the macro body, not here.)
+    /// Mirrors `@hasField(streams.Start, abi_name)` — selects the
+    /// `Start::from_js_with_tag` branch in `JSSink::js_start`.
+    const START_TAG: Option<streams::StartTag> = None;
 
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
@@ -629,19 +628,24 @@ pub trait JsSinkType: Sized {
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
 
     fn construct(_this: &mut core::mem::MaybeUninit<Self>) {
-        unreachable!("construct() called but HAS_CONSTRUCT = false")
+        // Only reached when `HAS_CONSTRUCT = false` callers misroute; the
+        // real `js_construct` short-circuits before this.
+        debug_assert!(!Self::HAS_CONSTRUCT, "JsSinkType::construct missing");
     }
     fn get_pending_error(&mut self) -> Option<JSValue> {
         None
     }
-    fn signal(&mut self) -> &mut Signal {
-        unreachable!("signal() called but HAS_SIGNAL = false")
+    fn signal(&mut self) -> Option<&mut Signal> {
+        None
     }
     fn done(&self) -> bool {
         false
     }
     fn flush_from_js(&mut self, _global: &JSGlobalObject, _wait: bool) -> sys::Result<JSValue> {
-        unreachable!("flush_from_js() called but HAS_FLUSH_FROM_JS = false")
+        // Guarded by `HAS_FLUSH_FROM_JS`; default impl just delegates to
+        // `flush()` semantics (returns undefined) so the non-override path
+        // is well-defined rather than panicking.
+        sys::Result::Ok(JSValue::UNDEFINED)
     }
     fn pending_state_is_pending(&self) -> bool {
         false
@@ -649,7 +653,271 @@ pub trait JsSinkType: Sized {
     fn protect_js_wrapper(&mut self, _global: &JSGlobalObject, _this_value: JSValue) {}
     fn update_ref(&mut self, _value: bool) {}
     fn get_fd(&self) -> i32 {
-        unreachable!("get_fd() called but HAS_GET_FD = false")
+        -1
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSSink<T> generic host-fn glue (port of Sink.zig `JSSink(SinkType, abi)`)
+//
+// The codegen (`generate-jssink.ts`) emits `#[no_mangle] extern "C"` thunks
+// for `${name}__{construct,write,end,flush,start,getInternalFd,memoryCost}`
+// that call these. Keeping the host-fn validation here (instead of on each
+// `SinkType`) avoids the inherent-method name collision with the inner
+// `write/end/flush/start` and matches Zig's layering exactly: the JSSink
+// wrapper owns the JS-facing surface, the SinkType owns the streaming logic.
+// ──────────────────────────────────────────────────────────────────────────
+
+impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
+    /// `JSSink.getThis` — recover `*mut JSSink<T>` from `callframe.this()` or
+    /// throw the appropriate detached/cast-failed error.
+    fn get_this(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<*mut JSSink<T>> {
+        use crate::webcore::jsc::JsError;
+        // SAFETY: FFI call into generated C++ sink glue.
+        let raw = unsafe { T::from_js_extern(frame.this()) };
+        match raw {
+            from_js_result::DETACHED => Err(global.throw(format_args!(
+                "This {} has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.",
+                T::NAME,
+            ))),
+            from_js_result::CAST_FAILED => Err(bun_jsc::ErrorCode::INVALID_THIS
+                .throw(global, format_args!("Expected {}", T::NAME))),
+            ptr => Ok(ptr as *mut JSSink<T>),
+        }
+    }
+
+    /// `${abi_name}__construct` host-fn body.
+    pub fn js_construct(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        _frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        bun_core::mark_binding!();
+
+        if !T::HAS_CONSTRUCT {
+            let err = bun_jsc::SystemError {
+                message: bun_string::String::create_utf8(
+                    format!("{} is not constructable", T::NAME).as_bytes(),
+                ),
+                code: bun_string::String::borrow_utf8("ERR_ILLEGAL_CONSTRUCTOR"),
+                ..Default::default()
+            };
+            return Err(global.throw_value(err.to_error_instance(global)));
+        }
+
+        // Zig: `bun.new(SinkType, undefined)` then `this.construct(allocator)`.
+        let mut this: Box<core::mem::MaybeUninit<T>> = Box::new(core::mem::MaybeUninit::uninit());
+        T::construct(&mut *this);
+        // SAFETY: JsSinkType::construct fully initializes `*this` (contract).
+        let this: Box<T> = unsafe { this.assume_init() };
+        // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
+        // opaque handle; `.as_ptr()` is the sanctioned & → *mut for FFI.
+        let value = unsafe {
+            T::create_object_extern(global.as_ptr(), Box::into_raw(this).cast(), 0)
+        };
+        Ok(value)
+    }
+
+    /// `${abi_name}__write` host-fn body. Port of `Sink.zig::JSSink.write`.
+    pub fn js_write(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        bun_core::mark_binding!();
+        // SAFETY: get_this returns a live ThisSink* on Ok.
+        let this = unsafe { &mut *Self::get_this(global, frame)? };
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+
+        let args_list = frame.arguments_old::<4>();
+        let args = args_list.slice();
+
+        if args.is_empty() {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::MISSING_ARGS,
+                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
+            )));
+        }
+
+        let arg = args[0];
+        arg.ensure_still_alive();
+        let _keep = bun_jsc::EnsureStillAlive(arg);
+
+        if arg.is_empty_or_undefined_or_null() {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::STREAM_NULL_VALUES,
+                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
+            )));
+        }
+
+        if let Some(buffer) = arg.as_array_buffer(global) {
+            let slice = buffer.slice();
+            if slice.is_empty() {
+                return Ok(JSValue::js_number(0.0));
+            }
+            // SAFETY: borrowed view over GC-kept buffer for the duration of the call.
+            let data = unsafe { ByteList::from_borrowed_slice_dangerous(slice) };
+            return Ok(this
+                .sink
+                .write_bytes(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+                .to_js(global));
+        }
+
+        if !arg.is_string() {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
+            )));
+        }
+
+        let str_ = arg.to_js_string(global)?;
+        // SAFETY: to_js_string returns a live JSString* on Ok.
+        let view = unsafe { &*str_ }.view(global);
+        if view.is_empty() {
+            return Ok(JSValue::js_number(0.0));
+        }
+
+        // SAFETY: keep the JSString GC-live while we borrow its character buffer.
+        let _keep_str = bun_jsc::EnsureStillAlive(unsafe { &*str_ }.as_value());
+        if view.is_16bit() {
+            let utf16 = view.utf16_slice_aligned();
+            // SAFETY: reinterpreting &[u16] as &[u8] of double length.
+            let bytes = unsafe {
+                core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
+            };
+            // SAFETY: borrowed view over GC-kept JSString.
+            let data = unsafe { ByteList::from_borrowed_slice_dangerous(bytes) };
+            return Ok(this
+                .sink
+                .write_utf16(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+                .to_js(global));
+        }
+
+        // SAFETY: borrowed view over GC-kept JSString (Latin-1 path).
+        let data = unsafe { ByteList::from_borrowed_slice_dangerous(view.slice()) };
+        Ok(this
+            .sink
+            .write_latin1(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+            .to_js(global))
+    }
+
+    /// `${abi_name}__flush` host-fn body. Port of `Sink.zig::JSSink.flush`.
+    pub fn js_flush(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        use bun_sys_jsc::ErrorJsc;
+        bun_core::mark_binding!();
+
+        let this_ptr = Self::get_this(global, frame)?;
+        // SAFETY: get_this returns a live ThisSink* on Ok.
+        let this = unsafe { &mut *this_ptr };
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+
+        // PORT NOTE: Zig's `defer { if (done) unprotect() }` — `unprotect` is a
+        // no-op in the current port, so the guard is folded out.
+
+        if T::HAS_FLUSH_FROM_JS {
+            let wait = frame.arguments_count() > 0
+                && frame.argument(0).is_boolean()
+                && frame.argument(0).as_boolean();
+            return match this.sink.flush_from_js(global, wait) {
+                sys::Result::Ok(value) => Ok(value),
+                sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
+            };
+        }
+
+        match this.sink.flush() {
+            sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),
+            sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
+        }
+    }
+
+    /// `${abi_name}__start` host-fn body. Port of `Sink.zig::JSSink.start`.
+    pub fn js_start(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        use bun_sys_jsc::ErrorJsc;
+        bun_core::mark_binding!();
+
+        // SAFETY: get_this returns a live ThisSink* on Ok.
+        let this = unsafe { &mut *Self::get_this(global, frame)? };
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+
+        // Zig: `if (@hasField(streams.Start, abi_name)) Start.fromJSWithTag(...) else Start.fromJS(...)`
+        let config = if frame.arguments_count() > 0 {
+            match T::START_TAG {
+                Some(tag) => {
+                    streams::Start::from_js_with_runtime_tag(global, frame.argument(0), tag)?
+                }
+                None => streams::Start::from_js(global, frame.argument(0))?,
+            }
+        } else {
+            streams::Start::Empty
+        };
+
+        match this.sink.start(config) {
+            sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),
+            sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
+        }
+    }
+
+    /// `${abi_name}__end` host-fn body. Port of `Sink.zig::JSSink.end`.
+    pub fn js_end(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use bun_sys_jsc::ErrorJsc;
+        bun_core::mark_binding!();
+
+        // SAFETY: get_this returns a live ThisSink* on Ok.
+        let this = unsafe { &mut *Self::get_this(global, frame)? };
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
+
+        let result = match this.sink.end_from_js(global) {
+            sys::Result::Ok(value) => Ok(value),
+            sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
+        };
+
+        // Protect the JS wrapper from GC while an async operation is pending.
+        if T::HAS_PROTECT_JS_WRAPPER && this.sink.pending_state_is_pending() {
+            this.sink.protect_js_wrapper(global, frame.this());
+        }
+
+        result
+    }
+
+    /// `${abi_name}__getInternalFd` body.
+    #[inline]
+    pub fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
+        use crate::webcore::jsc::JSValue;
+        if T::HAS_GET_FD {
+            return JSValue::js_number(this.get_fd() as f64);
+        }
+        JSValue::NULL
+    }
+
+    /// `${abi_name}__memoryCost` body.
+    #[inline]
+    pub fn js_memory_cost(this: &T) -> usize {
+        core::mem::size_of::<JSSink<T>>() + this.memory_cost()
     }
 }
 

@@ -11,6 +11,7 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use crate::webcore::jsc::codegen::JSRequest as js;
+use crate::webcore::BlobExt as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,

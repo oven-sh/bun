@@ -8,6 +8,8 @@ use bun_str::ZigString;
 use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
+use crate::webcore::BlobExt as _;
+use crate::webcore::blob::BlobExt as _;
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
 use bun_sha_hmac::sha as hashers;
 
@@ -193,7 +195,7 @@ impl CryptoHasher {
     // wrapped fn's parameter list to decode CallFrame args. Phase B: emit via #[bun_jsc::host_fn].
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
-        global.throw("HMAC has been consumed and is no longer usable")
+        global.throw(format_args!("HMAC has been consumed and is no longer usable"))
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -18,6 +18,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
 use crate::server::{write_status, AnyServer, FileResponseStream, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::BlobExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 

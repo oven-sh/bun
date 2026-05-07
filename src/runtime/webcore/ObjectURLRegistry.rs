@@ -7,6 +7,7 @@ use bun_str as strings;
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
+use crate::webcore::BlobExt as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shims — upstream `bun_jsc::JSGlobalObject::throw_not_enough_arguments`

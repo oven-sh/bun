@@ -13,6 +13,7 @@ use bun_js_parser::js_lexer as JSLexer;
 use bun_str::{strings, ZigString, ZigStringSlice};
 
 use super::expect;
+use crate::webcore::BlobExt as _;
 
 /// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
 /// `ENABLE_ANSI_COLORS` form the Phase-A draft was written against and

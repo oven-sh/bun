@@ -18,6 +18,7 @@ use bun_jsc::{
     VirtualMachine,
 };
 use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
+use crate::webcore::BlobExt as _;
 use crate::webcore::fetch as Fetch;
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};

@@ -12,6 +12,7 @@ use bun_str::{strings, ZigString, ZigStringSlice};
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
+use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 

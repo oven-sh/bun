@@ -379,15 +379,18 @@ macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream,
 
 /// Per-monomorphization C-ABI shim table for the four promise-reaction host
 /// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation; Rust monomorphizes a generic `unsafe extern "C" fn` the
-/// same way, so the four shims below are written once and the blanket impl
-/// instantiates them per `(ThisServer, SSL, DBG, H3)`. `then_with_value` then
-/// passes `Self::ON_RESOLVE` etc. — the actual C-ABI pointers JSC will call.
+/// instantiation **and `@export`s the same pointer**, so the value passed to
+/// `then_with_value` is identical to the `Bun__HTTPRequestContext*__on*`
+/// symbol that C++'s `GlobalObject::promiseHandlerID` compares against.
+///
+/// In Rust the `#[no_mangle]` exports cannot live on a generic fn, so they are
+/// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
+/// impls — also emitted by that macro — point at those *exported* wrappers
+/// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
+/// on the function-pointer identity and `promiseHandlerID` resolves.
 ///
 /// PORT NOTE (layering): expressed as a trait (not inherent consts) so
-/// downstream `where`-clauses that already name it keep type-checking; the
-/// blanket impl makes the bound trivially satisfied for every instantiation,
-/// so callers no longer need to restate it.
+/// downstream `where`-clauses that already name it keep type-checking.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
     const ON_REJECT: bun_jsc::JSHostFn;
@@ -449,10 +452,18 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestContex
 where
     ThisServer: ServerLike + 'static,
 {
-    const ON_RESOLVE: bun_jsc::JSHostFn = host_on_resolve::<ThisServer, SSL, DBG, H3>;
-    const ON_REJECT: bun_jsc::JSHostFn = host_on_reject::<ThisServer, SSL, DBG, H3>;
-    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = host_on_resolve_stream::<ThisServer, SSL, DBG, H3>;
-    const ON_REJECT_STREAM: bun_jsc::JSHostFn = host_on_reject_stream::<ThisServer, SSL, DBG, H3>;
+    // These consts must resolve to the *exported* `#[no_mangle]` symbols
+    // (`Bun__HTTPRequestContext*__on*`), not the inner generic
+    // `host_on_*::<..>` shims: the function-pointer value is what C++'s
+    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
+    // and the exported wrapper has a different address from the generic it
+    // forwards to. The Zig spec gets this for free because `@export` re-labels
+    // the existing fn; in Rust we route through a const-fn lookup keyed on the
+    // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.
+    const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).0;
+    const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).1;
+    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).2;
+    const ON_REJECT_STREAM: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).3;
 }
 
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
@@ -3694,7 +3705,47 @@ macro_rules! request_ctx_exports {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
             unsafe { host_on_reject_stream::<$srv, $ssl, $dbg, $h3>(g, f) }
         }
-    )*};
+    )*
+
+    /// Map the `(SSL, DEBUG, H3)` const-generic tuple to the concrete
+    /// `#[no_mangle]` promise-reaction exports above. Used by the blanket
+    /// `RequestContextHostFns` impl so `Self::ON_*` resolves to the *same*
+    /// address C++'s `GlobalObject::promiseHandlerID` compares against.
+    ///
+    /// Only the six instantiations spelled out in `request_ctx_exports!` are
+    /// ever constructed; the remaining `(false, _, true)` arms (plain-HTTP/3
+    /// without TLS) are unreachable and fall back to the generic shims so the
+    /// const-eval has a value of the right type.
+    const fn exported_host_fns(
+        ssl: bool,
+        debug: bool,
+        h3: bool,
+    ) -> (
+        bun_jsc::JSHostFn,
+        bun_jsc::JSHostFn,
+        bun_jsc::JSHostFn,
+        bun_jsc::JSHostFn,
+    ) {
+        match (ssl, debug, h3) {
+            $(
+                ($ssl, $dbg, $h3) => (
+                    $on_resolve,
+                    $on_reject,
+                    $on_resolve_stream,
+                    $on_reject_stream,
+                ),
+            )*
+            // Never instantiated (HTTP/3 requires TLS); placeholder so this
+            // is exhaustive at const-eval time.
+            _ => (
+                host_on_resolve::<crate::server::HTTPServer, false, false, false>,
+                host_on_reject::<crate::server::HTTPServer, false, false, false>,
+                host_on_resolve_stream::<crate::server::HTTPServer, false, false, false>,
+                host_on_reject_stream::<crate::server::HTTPServer, false, false, false>,
+            ),
+        }
+    }
+    };
 }
 request_ctx_exports! {
     (crate::server::HTTPServer,       false, false, false) =>

@@ -480,7 +480,7 @@ impl ShellRmTask {
         // Verbose output is appended to `deleted_entries` and flushed via
         // `writeVerbose` on the main thread.
         let _ = (&this.root_path, this.cwd, this.is_absolute, this.error_signal);
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &mut Interpreter) {
@@ -507,6 +507,10 @@ impl ShellRmTask {
         // completion is routed via `ShellRmTask::run_from_main_thread`.
         let _ = &owned.path;
     }
+}
+
+impl bun_event_loop::Taskable for ShellRmTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {

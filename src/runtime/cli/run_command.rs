@@ -725,12 +725,13 @@ impl RunCommand {
                 // `BundleOptions::macro_remap` are both
                 // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
                 // but with different hasher contexts (`Auto` vs
-                // `BoxedSliceContext`), so re-seat by draining instead of move.
-                for (k, mut v) in ::core::mem::take(macros).into_iter() {
+                // `BoxedSliceContext`), so re-seat by iterating instead of move.
+                // Cold path (only hit when bunfig declares `[macros]`).
+                for (k, v) in macros.iter() {
                     let mut inner =
                         bun_resolver::package_json::MacroImportReplacementMap::default();
-                    for (ik, iv) in ::core::mem::take(&mut v).into_iter() {
-                        inner.put(ik, iv).unwrap_or_oom();
+                    for (ik, iv) in v.iter() {
+                        inner.put(ik, iv.clone()).unwrap_or_oom();
                     }
                     b.options.macro_remap.put(k, inner).unwrap_or_oom();
                 }

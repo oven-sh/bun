@@ -308,7 +308,7 @@ impl ShellTouchTask {
         // the actual touch is `utimes(path)` falling back to
         // `open(O_CREAT|O_WRONLY)` on ENOENT.
         let _ = (&this.filepath, &this.cwd_path, this.opts);
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &mut Interpreter) {
@@ -316,6 +316,10 @@ impl ShellTouchTask {
         let cmd = unsafe { (*this).cmd };
         Touch::on_shell_touch_task_done(interp, cmd, this);
     }
+}
+
+impl bun_event_loop::Taskable for ShellTouchTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {

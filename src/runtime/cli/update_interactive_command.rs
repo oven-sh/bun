@@ -904,12 +904,17 @@ impl UpdateInteractiveCommand {
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
         // needs `&mut manager.manifests` while we hold shared field-path
-        // borrows on `manager.lockfile.*` / `manager.options.*`. Route the
-        // `pm` argument as a raw pointer (Zig passes `*PackageManager` freely)
-        // and clone the per-package `Scope` so the only mutable borrow is the
-        // disjoint `manager.manifests` field. The returned `OutdatedPackage`s
-        // do *not* borrow from `manager` (they carry the singleton's raw
-        // address only), so the caller may keep using `manager` afterwards.
+        // borrows on `manager.lockfile.*` / `manager.options.*`. Route `pm`
+        // as a raw pointer end-to-end (the callee projects only fields
+        // disjoint from `manifests` and never materializes
+        // `&mut PackageManager`), and project the `manifests` receiver
+        // through the same raw root so receiver and `pm` arg share
+        // provenance. Shared reborrows of `manager.{lockfile,options}` from
+        // the original `&mut` do not pop `pm_ptr`'s SharedReadWrite tag under
+        // Stacked Borrows (reads do not invalidate SRW items). The returned
+        // `OutdatedPackage`s do *not* borrow from `manager` (they carry the
+        // singleton's raw address only), so the caller may keep using
+        // `manager` afterwards.
         let pm_ptr: *mut PackageManager = manager;
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
@@ -949,21 +954,23 @@ impl UpdateInteractiveCommand {
                 let package_name =
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
 
-                let scope = manager.scope_for_package_name(package_name).clone();
+                let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
-                // SAFETY: `manifests.by_name_allow_expired` only touches
-                // `pm.options` / `pm.get_cache_directory()` / `pm.timestamp_*`,
-                // never `pm.manifests` (Zig invariant — `*PackageManager` is
-                // freely aliased there). The `&mut self` receiver is
-                // `manager.manifests`, disjoint from those reads.
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    unsafe { &mut *pm_ptr },
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended,
-                ) else {
+                // SAFETY: receiver `&mut (*pm_ptr).manifests` and the `pm`
+                // argument are projected from the same SharedReadWrite root;
+                // the callee dereferences `pm` only for fields disjoint from
+                // `manifests` (see `by_name_hash_allow_expired` safety doc),
+                // so the `&mut manifests` borrow stack is never invalidated.
+                let Some(manifest) = (unsafe {
+                    (*pm_ptr).manifests.by_name_allow_expired(
+                        pm_ptr,
+                        &scope,
+                        package_name,
+                        Some(&mut expired),
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended,
+                    )
+                }) else {
                     continue;
                 };
 
@@ -1084,7 +1091,7 @@ impl UpdateInteractiveCommand {
                     dependency_type: dep_type,
                     workspace_name: Box::from(workspace_name),
                     behavior: dep.behavior,
-                    manager: pm_ptr,
+                    manager: pm_ptr as *const PackageManager,
                     is_catalog,
                     catalog_name,
                     use_latest: update_to_latest, // default to --latest flag value

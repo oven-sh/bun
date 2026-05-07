@@ -343,8 +343,7 @@ impl ShellMkdirTask {
         // the actual mkdir is done by the node:fs port. Stubbed: record an
         // ENOSYS-style error so behaviour is observable.
         let _ = (&this.filepath, &this.cwd_path, this.opts);
-        // (this.task.on_finish() bounces to the event loop.)
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &mut Interpreter) {
@@ -352,6 +351,10 @@ impl ShellMkdirTask {
         let cmd = unsafe { (*this).cmd };
         Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
     }
+}
+
+impl bun_event_loop::Taskable for ShellMkdirTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {

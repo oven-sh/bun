@@ -386,7 +386,8 @@ impl ShellLsTask {
             this.output.extend_from_slice(&this.path);
             this.output.push(b'\n');
         }
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline` (Zig:
+        // `runFromThreadPool` calls `this.onFinish()` after the user body).
     }
 
     pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &mut Interpreter) {
@@ -394,6 +395,10 @@ impl ShellLsTask {
         let cmd = unsafe { (*this).cmd };
         Ls::on_shell_ls_task_done(interp, cmd, this);
     }
+}
+
+impl bun_event_loop::Taskable for ShellLsTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {

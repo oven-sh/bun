@@ -808,9 +808,9 @@ pub fn bun_canonicalize_ip(
     let arguments = callframe.arguments();
 
     if arguments.is_empty() {
-        return Err(global_this.throw_invalid_arguments(
-            "canonicalizeIP() expects a string but received no arguments.",
-        ));
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "canonicalizeIP() expects a string but received no arguments."
+        )));
     }
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN: usize = if cfg!(windows) { 65 } else { 46 };

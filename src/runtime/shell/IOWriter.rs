@@ -1175,6 +1175,5 @@ pub fn on_io_writer_chunk(
 //   notes:      RefCount→Arc; UnsafeCell interior for &self enqueue;
 //               *mut Interpreter backref for async poll callbacks (set_interp
 //               must be wired by interpreter.rs root_io setup);
-//               FilePoll flag-insert (.nonblocking/.socket/.fifo) pending
-//               vtable setter; AsyncDeinit hop folded into Drop.
+//               AsyncDeinit hop folded into Drop.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1681,7 +1681,7 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
         is_sep_windows_t::<T>
     };
 
-    let mut buf_offset: usize = 0;
+    let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
     let mut last_segment_length: usize = 0;
@@ -1691,8 +1691,7 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
     let mut dots: Option<usize> = Some(0);
     let mut byte: T = T::default();
 
-    let mut i: usize = 0;
-    while i <= len {
+    for i in 0..=len {
         if i < len {
             byte = path[i];
         } else if is_sep_t(byte) {
@@ -1704,53 +1703,47 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
         if is_sep_t(byte) {
             // Translated from the following JS code:
             //   if (lastSlash === i - 1 || dots === 1) {
-            if (last_slash.is_none() && i == 0)
-                || (last_slash.is_some() && i > 0 && last_slash.unwrap() == i - 1)
-                || (dots.is_some() && dots.unwrap() == 1)
-            {
+            if last_slash == i.checked_sub(1) || dots == Some(1) {
                 // NOOP
-            } else if dots.is_some() && dots.unwrap() == 2 {
+            } else if dots == Some(2) {
                 if buf_size < 2
                     || last_segment_length != 2
                     || buf[buf_size - 1] != T::from_u8(CHAR_DOT)
                     || buf[buf_size - 2] != T::from_u8(CHAR_DOT)
                 {
                     if buf_size > 2 {
-                        let last_slash_index =
-                            buf[0..buf_size].iter().rposition(|&b| b == separator);
-                        if last_slash_index.is_none() {
-                            buf_size = 0;
-                            last_segment_length = 0;
-                        } else {
-                            buf_size = last_slash_index.unwrap();
-                            // Translated from the following JS code:
-                            //   lastSegmentLength =
-                            //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
-                            let last_index_of_sep =
-                                buf[0..buf_size].iter().rposition(|&b| b == separator);
-                            if last_index_of_sep.is_none() {
-                                // Yes (>ლ), Node relies on the -1 result of
-                                // StringPrototypeLastIndexOf(res, separator).
-                                // A - -1 is a positive 1.
-                                // So the code becomes
-                                //   lastSegmentLength = res.length - 1 + 1;
-                                // or
-                                //   lastSegmentLength = res.length;
-                                last_segment_length = buf_size;
-                            } else {
-                                last_segment_length = buf_size - 1 - last_index_of_sep.unwrap();
+                        match buf[0..buf_size].iter().rposition(|&b| b == separator) {
+                            None => {
+                                buf_size = 0;
+                                last_segment_length = 0;
+                            }
+                            Some(idx) => {
+                                buf_size = idx;
+                                // Translated from the following JS code:
+                                //   lastSegmentLength =
+                                //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
+                                last_segment_length =
+                                    match buf[0..buf_size].iter().rposition(|&b| b == separator) {
+                                        // Yes (>ლ), Node relies on the -1 result of
+                                        // StringPrototypeLastIndexOf(res, separator).
+                                        // A - -1 is a positive 1.
+                                        // So the code becomes
+                                        //   lastSegmentLength = res.length - 1 + 1;
+                                        // or
+                                        //   lastSegmentLength = res.length;
+                                        None => buf_size,
+                                        Some(sep) => buf_size - 1 - sep,
+                                    };
                             }
                         }
                         last_slash = Some(i);
                         dots = Some(0);
-                        i += 1;
                         continue;
                     } else if buf_size != 0 {
                         buf_size = 0;
                         last_segment_length = 0;
                         last_slash = Some(i);
                         dots = Some(0);
-                        i += 1;
                         continue;
                     }
                 }
@@ -1784,7 +1777,7 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
                     buf_size += 1;
                     buf[buf_offset] = separator;
                 }
-                let slice_start = if let Some(ls) = last_slash { ls + 1 } else { 0 };
+                let slice_start = last_slash.map_or(0, |ls| ls + 1);
                 let slice = &path[slice_start..i];
 
                 buf_offset = buf_size;
@@ -1793,21 +1786,16 @@ fn normalize_string_t<T: PathChar, const PLATFORM: Platform>(
 
                 // Translated from the following JS code:
                 //   lastSegmentLength = i - lastSlash - 1;
-                let subtract = if let Some(ls) = last_slash { ls + 1 } else { 2 };
-                last_segment_length = if i >= subtract { i - subtract } else { 0 };
+                let subtract = last_slash.map_or(2, |ls| ls + 1);
+                last_segment_length = i.saturating_sub(subtract);
             }
             last_slash = Some(i);
             dots = Some(0);
-            i += 1;
-            continue;
         } else if byte == T::from_u8(CHAR_DOT) && dots.is_some() {
-            dots = Some(dots.map_or(0, |d| d + 1));
-            i += 1;
-            continue;
+            dots = dots.map(|d| d + 1);
         } else {
             dots = None;
         }
-        i += 1;
     }
 
     buf[buf_size] = T::default();

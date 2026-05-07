@@ -1,19 +1,18 @@
-use bun_jsc::{CallFrame, EnsureStillAlive, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::Debugger;
+use bun_jsc::{CallFrame, EnsureStillAlive, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::{RefCount, RefCounted};
 
 use super::{EventLoopTimer, EventLoopTimerTag, Kind, TimerObjectInternals, ID};
 
-// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
-// Hand-expansion of what `src/codegen/generate-classes.ts` emits into
-// `ZigGeneratedClasses.zig` for `pub const JSTimeout = struct { ... }`:
-// `${name}GetCached` / `${name}SetCached` per `cache: true` prop, plus
-// `toJS` / `fromJS` / `fromJSDirect` thin-wrapping the C++-side
-// `Timeout__create` / `Timeout__fromJS` / `Timeout__fromJSDirect` shims.
-pub use self::js::{from_js, from_js_direct, to_js};
+/// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
+///
+/// `toJS` / `fromJS` / `fromJSDirect` and the `Timeout__create` /
+/// `Timeout__fromJS` / `Timeout__fromJSDirect` externs are emitted by
+/// `#[bun_jsc::JsClass(name = "Timeout")]` on the struct below (see
+/// `jsc_macros::js_class_hooks`); only the cached-property accessors —
+/// `${name}GetCached` / `${name}SetCached` per `cache: true` prop — are
+/// declared here.
 pub mod js {
-    use super::{JSGlobalObject, JSValue, TimeoutObject};
-
     // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
     // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
     // `.zero` → `None` on the get side (matches Zig `${name}GetCached`).
@@ -25,63 +24,6 @@ pub mod js {
         repeat,
         idleStart,
     );
-
-    // `callconv(jsc.conv)` — sysv64 on x86_64-windows, C ABI elsewhere.
-    // `*mut c_void` for the payload: the C++ side treats `m_ctx` as an opaque
-    // pointer, and `TimeoutObject` is intentionally Rust-layout (its
-    // `EventLoopTimer` field is not `#[repr(C)]`). Cast at the wrapper
-    // boundary below — same shape as the `JsClass` proc-macro hooks.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "Timeout__fromJS"]
-        fn Timeout__fromJS(value: JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Timeout__fromJSDirect"]
-        fn Timeout__fromJSDirect(value: JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Timeout__create"]
-        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "Timeout__fromJS"]
-        fn Timeout__fromJS(value: JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Timeout__fromJSDirect"]
-        fn Timeout__fromJSDirect(value: JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Timeout__create"]
-        fn Timeout__create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
-    }
-
-    /// Create a new `JSTimeout` JSCell wrapping `this` as its `m_ctx`.
-    /// Ownership of `this` transfers to the wrapper; freed via `finalize`.
-    #[inline]
-    pub fn to_js(this: *mut TimeoutObject, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global.as_ptr()` yields the FFI `*mut` via the opaque
-        // `UnsafeCell` handle (interior-mutable provenance — sound for C++ to
-        // write through; see `JSGlobalObject::as_ptr`). `this` was
-        // `Box::into_raw`'d by caller and ownership transfers to the wrapper.
-        let value = unsafe { Timeout__create(global.as_ptr(), this.cast()) };
-        #[cfg(debug_assertions)]
-        {
-            // Zig: `bun.assert(value__.as(Timeout).? == this)` — round-trip ABI check.
-            debug_assert!(from_js(value) == Some(this), "Timeout__create ABI mismatch");
-        }
-        value
-    }
-
-    /// Return the wrapped `m_ctx` pointer, or `None` on type mismatch.
-    #[inline]
-    pub fn from_js(value: JSValue) -> Option<*mut TimeoutObject> {
-        // SAFETY: pure FFI downcast; C++ returns null on mismatch.
-        let p = unsafe { Timeout__fromJS(value) };
-        if p.is_null() { None } else { Some(p.cast::<TimeoutObject>()) }
-    }
-
-    /// Like [`from_js`] but rejects subclasses / mutated structures.
-    #[inline]
-    pub fn from_js_direct(value: JSValue) -> Option<*mut TimeoutObject> {
-        // SAFETY: pure FFI downcast; C++ returns null on mismatch.
-        let p = unsafe { Timeout__fromJSDirect(value) };
-        if p.is_null() { None } else { Some(p.cast::<TimeoutObject>()) }
-    }
 }
 
 #[bun_jsc::JsClass(name = "Timeout")]
@@ -160,13 +102,22 @@ impl TimeoutObject {
         arguments: JSValue,
     ) -> JSValue {
         // internals are initialized by init()
-        // SAFETY: `*mut Self` is the `m_ctx` payload of the codegen'd JSCell wrapper;
-        // ownership transfers to the wrapper via `to_js`. Freed by `deinit` when the
-        // intrusive refcount hits zero.
+        // `bun.new(Self, .{...})` ⇒ heap-allocate; `*mut Self` is the `m_ctx`
+        // payload of the codegen'd JSCell wrapper. Ownership transfers to the
+        // wrapper via `to_js_ptr`; freed by `deref → deinit → Box::from_raw`.
         let timeout: *mut Self = Box::into_raw(Box::new(Self::default()));
-        let js_value = js::to_js(timeout, global);
+        // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `Timeout__create`
+        // shim; `timeout` is a fresh heap payload whose ownership transfers to
+        // the GC wrapper.
+        let js_value = unsafe { Self::to_js_ptr(timeout, global) };
+        // Zig codegen: `bun.assert(value__.as(Timeout).? == this)` — round-trip ABI check.
+        debug_assert!(
+            <Self as JsClass>::from_js(js_value) == Some(timeout),
+            "Timeout__create ABI mismatch",
+        );
         let _keep = EnsureStillAlive(js_value);
-        // SAFETY: `timeout` was just allocated above and is exclusively owned here.
+        // SAFETY: `timeout` was just allocated above and is exclusively owned here;
+        // `internals.init()` writes every field via `*self = Self { … }`.
         unsafe {
             (*timeout).internals.init(
                 js_value,

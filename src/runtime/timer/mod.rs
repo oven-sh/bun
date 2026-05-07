@@ -38,7 +38,7 @@ use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 pub mod timer;
 
 #[path = "TimeoutObject.rs"]
-mod timeout_object_draft;
+pub mod timeout_object;
 
 #[path = "ImmediateObject.rs"]
 mod immediate_object_draft;
@@ -336,11 +336,7 @@ pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
 /// `event_loop_timer`/`flags` offsets the low tier wrote.
 pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
 
-pub struct TimeoutObject {
-    pub ref_count: core::cell::Cell<u32>,
-    pub event_loop_timer: EventLoopTimer,
-    pub internals: TimerObjectInternals,
-}
+pub use self::timeout_object::TimeoutObject;
 
 pub struct ImmediateObject {
     pub ref_count: core::cell::Cell<u32>,
@@ -349,11 +345,9 @@ pub struct ImmediateObject {
 }
 
 // ─── intrusive refcount (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit)`) ──
-// PORT NOTE: hand-rolled over `Cell<u32>` instead of `bun_ptr::RefCount<Self>`
-// so the existing field shape (and the `@fieldParentPtr` arithmetic in
-// `All::update`/`TimerObjectInternals`) stays put. Swap to `RefCount<Self>` +
-// `RefCounted` impl once the codegen'd JS wrapper (`.classes.ts`) emits the
-// matching `from_js`/`finalize` pair.
+// `TimeoutObject` now uses `bun_ptr::RefCount<Self>` + `RefCounted` directly
+// (see `timeout_object::TimeoutObject`); this macro remains for
+// `ImmediateObject` until its port lands the same move.
 macro_rules! impl_timer_refcount {
     ($T:ident) => {
         impl $T {
@@ -401,7 +395,6 @@ macro_rules! impl_timer_refcount {
         }
     };
 }
-impl_timer_refcount!(TimeoutObject);
 impl_timer_refcount!(ImmediateObject);
 
 // `jsc.Codegen.JS{Timeout,Immediate}` — hand-expansion of what the
@@ -441,7 +434,6 @@ macro_rules! impl_timer_js_class {
         };
     };
 }
-impl_timer_js_class!(TimeoutObject, "Timeout");
 impl_timer_js_class!(ImmediateObject, "Immediate");
 
 impl ImmediateObject {

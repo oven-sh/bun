@@ -442,7 +442,7 @@ impl ShellMvCheckTargetTask {
         // else → Err(e).
         let _ = (&this.cwd, &this.target);
         this.result = Some(Ok(None));
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &mut Interpreter) {

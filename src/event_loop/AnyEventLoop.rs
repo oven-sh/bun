@@ -503,6 +503,15 @@ impl EventLoopHandle {
         }
     }
 
+    /// `enter()` and return an RAII guard that `exit()`s on drop. Prefer this
+    /// over a bare `enter()`/`exit()` pair so early returns and `?` don't leak
+    /// the entered scope.
+    #[inline]
+    pub fn entered(self) -> EnteredEventLoop {
+        self.enter();
+        EnteredEventLoop(self)
+    }
+
     /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
     /// `EventLoopHandle` is `Copy`; promoting to `&'static mut` would let two
     /// calls produce aliased exclusive references (UB). Callers deref locally

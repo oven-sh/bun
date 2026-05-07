@@ -422,7 +422,8 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-#[derive(Clone)]
+// PORT NOTE: not `Clone` — `cwd`/`package_name` are owned heap allocations
+// (Zig had borrowed slices with a commented-out `deinit`). No caller clones.
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub first_index: u8,

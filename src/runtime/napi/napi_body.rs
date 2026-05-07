@@ -2054,12 +2054,7 @@ impl Finalizer {
         let env = self.env.get();
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
-        let handle_scope = NapiHandleScope::open(env_ref, false);
-        let _hs_guard = scopeguard::guard((), |_| {
-            if !handle_scope.is_null() {
-                NapiHandleScope::close(handle_scope, env_ref);
-            }
-        });
+        let _hs = NapiHandleScope::open_scoped(env_ref);
 
         (self.fun)(env, self.data, self.hint);
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.

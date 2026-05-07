@@ -303,9 +303,19 @@ pub fn install_hoisted_packages(
             // `&[T]` into `lockfile.packages` simultaneously (and `&[A]` +
             // `&mut [B]` from the same `&PackageList`). Derive each column
             // slice through the raw `lockfile_ptr` so they share `mgr_ptr`
-            // provenance with `installer.lockfile`/`installer.manager`.
-            let pkgs: *mut crate::lockfile::PackageList =
-                unsafe { core::ptr::addr_of_mut!((*lockfile_ptr).packages) };
+            // provenance with `installer.lockfile`/`installer.manager`, then
+            // detach the borrow lifetime via raw-ptr round-trip (same pattern
+            // as `PackageInstaller::fix_cached_lockfile_package_slices`).
+            // SAFETY: `lockfile_ptr` derived from `mgr_ptr`; the packages buffer
+            // is not freed for the lifetime of `installer` (only grows, which is
+            // why `fix_cached_lockfile_package_slices` re-snapshots).
+            let mut parts = unsafe { (*lockfile_ptr).packages.slice() };
+            let metas = unsafe { &*(parts.items_meta() as *const [_]) };
+            let bins = unsafe { &*(parts.items_bin() as *const [_]) };
+            let names = unsafe { &*(parts.items_name() as *const [_]) };
+            let pkg_name_hashes = unsafe { &*(parts.items_name_hash() as *const [_]) };
+            let resolutions = unsafe { &mut *(parts.items_resolution_mut() as *mut [_]) };
+            let pkg_dependencies = unsafe { &*(parts.items_dependencies() as *const [_]) };
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -330,15 +340,12 @@ pub fn install_hoisted_packages(
                 // the `&mut PackageManager` in `manager`; Zig stores `*const
                 // Options`. Phase B retypes one of them to a raw ptr.
                 options: unsafe { &(*mgr_ptr).options },
-                // SAFETY: `pkgs` derived from `mgr_ptr` (see BACKREF note on
-                // `parts` above); columns are not resized between here and
-                // `fix_cached_lockfile_package_slices`, which re-snapshots them.
-                metas: unsafe { (*pkgs).meta.as_slice() },
-                bins: unsafe { (*pkgs).bin.as_slice() },
-                names: unsafe { (*pkgs).name.as_slice() },
-                pkg_name_hashes: unsafe { (*pkgs).name_hash.as_slice() },
-                resolutions: unsafe { (*pkgs).resolution.as_mut_slice() },
-                pkg_dependencies: unsafe { (*pkgs).dependencies.as_slice() },
+                metas,
+                bins,
+                names,
+                pkg_name_hashes,
+                resolutions,
+                pkg_dependencies,
                 // SAFETY: `lockfile_ptr` derived from `mgr_ptr`; aliases
                 // `installer.manager.lockfile` exactly as Zig's `*Lockfile`.
                 lockfile: unsafe { &mut *lockfile_ptr },

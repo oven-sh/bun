@@ -32,16 +32,9 @@ use crate::package_manager_real::package_manager_options::Do;
 /// Zig `@tagName(sig)` for `bun.SignalCode` (non-exhaustive `enum(u8)`).
 /// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
 /// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
+#[inline]
 fn signal_name(raw: u8) -> &'static str {
-    if raw > 0 && raw <= bun_sys::SignalCode::SIGSYS as u8 {
-        // SAFETY: range-checked 1..=31; SignalCode is `#[repr(u8)]` with exactly
-        // those discriminants (see SignalCode.rs `tag_name`).
-        unsafe { core::mem::transmute::<u8, bun_sys::SignalCode>(raw) }
-            .name()
-            .unwrap_or("UNKNOWN")
-    } else {
-        "UNKNOWN"
-    }
+    bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
 struct PackagePath {

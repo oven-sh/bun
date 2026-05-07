@@ -767,10 +767,12 @@ impl JSMySQLConnection {
         this.stop_timers();
 
         // Zig `defer this.updateReferenceType();` — re-enter via raw pointer so
-        // the guard closure does not hold a second `&mut` alias of `this`.
+        // the closure does not hold a second `&mut` alias of `this`.
         let p: *mut Self = this;
-        // SAFETY: `p` from live `&mut this`; `*p` outlives the guard (no deref()).
-        let _guard = scopeguard::guard((), move |_| unsafe { (*p).update_reference_type() });
+        scopeguard::defer! {
+            // SAFETY: `p` from live `&mut this`; `*p` outlives the guard (no deref()).
+            unsafe { (*p).update_reference_type() };
+        }
         this.connection
             .clean_queue_and_close(None, this.get_queries_array());
         Ok(JSValue::UNDEFINED)

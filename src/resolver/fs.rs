@@ -239,8 +239,7 @@ macro_rules! string_store_impl {
                 Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                $mutex.lock();
-                let _guard = scopeguard::guard((), |_| $mutex.unlock());
+                let _guard = $mutex.lock_guard();
                 // SAFETY: `$mutex` held — sole live `&mut` to the singleton.
                 let r = unsafe { (*<$t>::backing()).append_lower_case(s)? };
                 // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
@@ -452,8 +451,7 @@ pub mod dir_entry {
             entry_store_backing()
         }
         pub fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
-            ENTRY_STORE_MUTEX.lock();
-            let _guard = scopeguard::guard((), |_| ENTRY_STORE_MUTEX.unlock());
+            let _guard = ENTRY_STORE_MUTEX.lock_guard();
             // SAFETY: `ENTRY_STORE_MUTEX` is held, so this is the only live `&mut` to
             // the process-lifetime singleton; `append` further serializes via its
             // (now-redundant) internal mutex.

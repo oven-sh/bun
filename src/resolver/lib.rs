@@ -7305,7 +7305,7 @@ impl<'a> Resolver<'a> {
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()` mid-walk.
         let close_dirs_store_fd = self.store_fd;
         let close_dirs_rfs: *mut Fs::file_system::RealFS = rfs;
-        let _close_dirs = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             let n = open_dir_count.get();
             // SAFETY: `close_dirs_rfs` points at the process-global RealFS singleton.
             if n > 0 && (!close_dirs_store_fd || unsafe { (*close_dirs_rfs).need_to_close_files() }) {
@@ -7314,7 +7314,7 @@ impl<'a> Resolver<'a> {
                     open_dir.close();
                 }
             }
-        });
+        }
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories

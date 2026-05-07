@@ -212,6 +212,12 @@ const INET6_ADDRSTRLEN: usize = 65;
 #[cfg(not(windows))]
 const INET6_ADDRSTRLEN: usize = 46;
 
+// `libc` doesn't surface winsock AF_* on Windows (they live in winsock2.h).
+// The values are the same on every supported target, so define them locally.
+const AF_INET: c_int = 2;
+#[cfg(windows)] const AF_INET6: c_int = 23; // winsock2.h
+#[cfg(not(windows))] const AF_INET6: c_int = libc::AF_INET6 as c_int;
+
 /// converts IP string to canonicalized IP string
 /// return null when the IP is invalid
 pub fn canonicalize_ip<'a>(
@@ -226,13 +232,15 @@ pub fn canonicalize_ip<'a>(
     out_ip[..addr_str.len()].copy_from_slice(addr_str);
     out_ip[addr_str.len()] = 0;
 
-    // Zig used std.posix.AF.INET — libc constants, not bun_sys.
-    let mut af: c_int = libc::AF_INET;
+    // Zig used std.posix.AF.INET — `libc` doesn't expose AF_* on Windows
+    // (winsock lives in a different crate), so route through this module's
+    // platform-neutral constants.
+    let mut af: c_int = AF_INET;
     // get the standard text representation of the IP
     // SAFETY: out_ip is NUL-terminated above; ip_std_text is large enough for any address.
     unsafe {
         if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0 {
-            af = libc::AF_INET6;
+            af = AF_INET6;
             if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0 {
                 return None;
             }
@@ -263,8 +271,7 @@ pub fn ip2_string<'a>(
     ip: &boring::ASN1_OCTET_STRING,
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    // Zig used std.posix.AF.INET — libc constants, not bun_sys.
-    let af: c_int = if ip.length == 4 { libc::AF_INET } else { libc::AF_INET6 };
+    let af: c_int = if ip.length == 4 { AF_INET } else { AF_INET6 };
     // SAFETY: ip.data points to ip.length bytes; out_ip is INET6_ADDRSTRLEN+1 bytes.
     unsafe {
         if c_ares::ares_inet_ntop(

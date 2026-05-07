@@ -54,7 +54,9 @@ impl ListenSocket {
 
     pub fn fd(&mut self) -> Fd {
         // SAFETY: self is a valid listen socket.
-        Fd::from_native(unsafe { us_listen_socket_get_fd(self) })
+        let raw = unsafe { us_listen_socket_get_fd(self) };
+        #[cfg(windows)] { Fd::from_native(raw as u64) }
+        #[cfg(not(windows))] { Fd::from_native(raw) }
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops

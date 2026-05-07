@@ -132,19 +132,19 @@ impl PosixStat {
         }
         #[cfg(windows)]
         {
-            // Windows `Stat` is libuv `uv_stat_t` (libuv.zig:2236) — bare-named
-            // u64 fields, not `st_*`.
+            // Windows `Stat` is libuv `uv_stat_t` — `st_*`-named u64 fields
+            // (matches uv.h; see libuv.rs `uv_stat_t`).
             PosixStat {
-                dev: stat_.dev,
-                ino: stat_.ino,
-                mode: stat_.mode,
-                nlink: stat_.nlink,
-                uid: stat_.uid,
-                gid: stat_.gid,
-                rdev: stat_.rdev,
-                size: stat_.size,
-                blksize: stat_.blksize,
-                blocks: stat_.blocks,
+                dev: stat_.st_dev,
+                ino: stat_.st_ino,
+                mode: stat_.st_mode,
+                nlink: stat_.st_nlink,
+                uid: stat_.st_uid,
+                gid: stat_.st_gid,
+                rdev: stat_.st_rdev,
+                size: stat_.st_size,
+                blksize: stat_.st_blksize,
+                blocks: stat_.st_blocks,
                 atim: atime_val,
                 mtim: mtime_val,
                 ctim: ctime_val,

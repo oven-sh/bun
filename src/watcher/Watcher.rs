@@ -443,8 +443,8 @@ impl Watcher {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::ParentEqual::Unrelated {
+            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
                 Output::warn(format_args!(
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
@@ -520,8 +520,8 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::ParentEqual::Unrelated {
+            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
+            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
                 Output::warn(format_args!(
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)

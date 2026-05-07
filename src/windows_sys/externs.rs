@@ -339,6 +339,19 @@ pub mod ntdll {
             FileInformationClass: FILE_INFORMATION_CLASS,
         ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
+
+        // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
+        // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
+        // because ntdll is autoloaded into every process; the Rtl* wrappers
+        // forward to the same kernel objects.
+        pub fn RtlWaitOnAddress(
+            Address: *const c_void,
+            CompareAddress: *const c_void,
+            AddressSize: usize,
+            Timeout: *const LARGE_INTEGER,
+        ) -> NTSTATUS;
+        pub fn RtlWakeAddressSingle(Address: *const c_void);
+        pub fn RtlWakeAddressAll(Address: *const c_void);
     }
     pub use super::RtlNtStatusToDosError;
 }
@@ -434,6 +447,9 @@ impl NTSTATUS {
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
+    /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
+    /// `RtlWaitOnAddress` when the wait timed out.
+    pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self { NTSTATUS(raw) }
@@ -458,10 +474,33 @@ pub mod ws2_32 {
     use super::*;
 
     pub const AF_UNSPEC: c_int = 0;
+    pub const AF_UNIX: c_int = 1;
     pub const AF_INET: c_int = 2;
     pub const AF_INET6: c_int = 23;
     pub const SOCK_STREAM: c_int = 1;
     pub const SOCK_DGRAM: c_int = 2;
+    pub const IPPROTO_TCP: c_int = 6;
+    pub const IPPROTO_UDP: c_int = 17;
+
+    /// `ADDRINFOA` (`ws2def.h`). Field names match POSIX `addrinfo` so
+    /// cross-platform `bun_dns` code can dot-access without cfg arms.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct addrinfo {
+        pub ai_flags: c_int,
+        pub ai_family: c_int,
+        pub ai_socktype: c_int,
+        pub ai_protocol: c_int,
+        pub ai_addrlen: usize,          // size_t
+        pub ai_canonname: *mut c_char,
+        pub ai_addr: *mut sockaddr,
+        pub ai_next: *mut addrinfo,
+    }
+
+    #[link(name = "ws2_32")]
+    unsafe extern "system" {
+        pub fn freeaddrinfo(ai: *mut addrinfo);
+    }
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]

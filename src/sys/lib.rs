@@ -773,7 +773,12 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 /// upper-case errno name (e.g. `"ENOENT"`) or null for an unrecognised code.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
-    match SystemErrno::init(err as _) {
+    // `SystemErrno::init` has a per-target signature: i64 on Linux, i32 on
+    // macOS, `impl Into<i32>` on FreeBSD, generic `SystemErrnoInit` on Windows.
+    // Feed it the widest signed int and let each impl narrow.
+    #[cfg(target_os = "linux")] let code = err as i64;
+    #[cfg(not(target_os = "linux"))] let code = err;
+    match SystemErrno::init(code) {
         Some(e) => <&'static str>::from(e).as_ptr() as *const core::ffi::c_char,
         None => core::ptr::null(),
     }
@@ -2437,10 +2442,23 @@ mod windows_impl {
         unsafe { info.assume_init() }.dwPageSize as usize
     }
     pub fn mkdirat(dir: Fd, path: &ZStr, _mode: Mode) -> Maybe<()> {
-        // sys.zig: routes to `mkdiratW` (CreateDirectoryW relative to a HANDLE).
+        // sys.zig:829 mkdiratW — `openDirAtWindowsNtPath(dir, path,
+        // .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create })`
+        // then close the resulting handle on success.
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_str::strings::paths::to_nt_path(&mut wbuf, path.as_bytes());
-        super::windows::ntdll_mkdirat(dir, wpath)
+        let made = super::open_dir_at_windows_nt_path(
+            dir,
+            wpath,
+            super::WindowsOpenDirOptions {
+                iterable: false,
+                can_rename_or_delete: true,
+                op: super::WindowsOpenDirOp::OnlyCreate,
+                ..Default::default()
+            },
+        )?;
+        made.close();
+        Ok(())
     }
     pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
         // sys.zig:2572 — windows arm goes through renameAtW.
@@ -2648,7 +2666,8 @@ mod windows_impl {
         let fd = open(path, O::RDONLY, 0)?;
         let r = super::get_fd_path(fd, buf);
         let _ = close(fd);
-        r
+        // get_fd_path yields `&mut [u8]`; coerce to shared.
+        r.map(|s| &*s)
     }
     pub fn fcntl(_fd: Fd, _cmd: i32, _arg: isize) -> Maybe<isize> {
         // sys.zig:959 — `if (Environment.isWindows) @compileError("not implemented")`.
@@ -2845,10 +2864,14 @@ impl File {
     /// closed *before* `MoveFileEx`; on POSIX, close after `rename` so the
     /// fd stays valid for `move_file_z_with_handle`'s `fcopyfile` fallback.
     pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> core::result::Result<(), bun_core::Error> {
+        // Capture the handle *before* `close()` consumes `self` (Windows arm).
+        // On POSIX the handle stays open across the rename so the
+        // `fcopyfile` fallback in `move_file_z_with_handle` can use it.
+        let handle = self.handle;
         #[cfg(windows)]
         self.close();
         let cwd = Fd::cwd();
-        let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
+        let result = move_file_z_with_handle(handle, cwd, src, cwd, dest);
         #[cfg(unix)]
         let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
         result
@@ -2858,7 +2881,7 @@ impl File {
         #[cfg(unix)]
         { Ok(fstat(self.handle)?.st_size as usize) }
         #[cfg(windows)]
-        { Ok(fstat(self.handle)?.size as usize) }
+        { Ok(fstat(self.handle)?.st_size as usize) }
     }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns the borrowed slice.
@@ -6322,7 +6345,7 @@ pub fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]> {
             #[cfg(windows)]
             {
                 // uv_stat_t shape (Windows sys_uv path).
-                Some([st.mtim.sec as i64, st.mtim.nsec as i64, st.size as i64])
+                Some([st.mtim.sec as i64, st.mtim.nsec as i64, st.st_size as i64])
             }
         }
         Err(_) => None,

@@ -206,14 +206,15 @@ mod windows_impl {
             {
                 // The internal state of the DebugMutex needs to be handled here as well.
                 // TODO(port): std.Thread.getCurrentId() equivalent in bun_threading.
-                mutex.impl_.locking_thread.store(crate::get_current_thread_id(), Ordering::Relaxed);
+                mutex.impl_.locking_thread.store(crate::current_thread_id(), Ordering::Relaxed);
             }
 
             // Return TimeoutError::Timeout if we know the timeout elapsed correctly.
             if rc == windows::FALSE {
                 debug_assert!({
                     // SAFETY: GetLastError has no preconditions; reads thread-local last-error.
-                    unsafe { windows::GetLastError() == windows::Win32Error::TIMEOUT }
+                    // GetLastError returns DWORD; `Win32Error` is a u16 newtype — compare raw.
+                    unsafe { windows::GetLastError() == windows::Win32Error::TIMEOUT.0 as u32 }
                 });
                 if !timeout_overflowed {
                     return Err(TimeoutError::Timeout);

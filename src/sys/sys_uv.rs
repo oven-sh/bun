@@ -138,9 +138,12 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
     } else {
         // SAFETY: on success, req.ptr points to a uv_statfs_t (layout-compatible with StatFS).
         // Zig used `*align(1)` — read_unaligned to match.
-        let p = req.ptr_as::<StatFS>();
-        Result::Ok(StatFS::init(unsafe { core::ptr::read_unaligned(p) }))
-        // TODO(port): verify StatFS::init signature (Zig passes *align(1) StatFS by pointer)
+        // PORT: on Windows `StatFS == uv_statfs_t`, so the libuv result *is* the
+        // public type — no Zig-side `.init(*align(1) StatFS)` wrapper to call.
+        // SAFETY: libuv guarantees `req.ptr` points to a valid `uv_statfs_t`
+        // on success; we read it by value (Zig used `*align(1)` → unaligned).
+        let p = unsafe { req.ptr_as::<StatFS>() };
+        Result::Ok(unsafe { core::ptr::read_unaligned(p) })
     }
 }
 
@@ -232,7 +235,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
         let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
-                Error::new(E::NOENT as _, Tag::readlink).with_path(file_path.as_bytes()),
+                Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),
             );
         };
         // SAFETY: libuv guarantees req.ptr is a NUL-terminated string on success.
@@ -247,7 +250,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
                 BStr::new(slice)
             );
             return Result::Err(
-                Error::new(E::NAMETOOLONG as _, Tag::readlink).with_path(file_path.as_bytes()),
+                Error::new(E::NAMETOOLONG, Tag::readlink).with_path(file_path.as_bytes()),
             );
         }
         log!(
@@ -490,7 +493,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         }
 
         if let Some(e) = req.result.err_enum() {
-            return Result::Err(Error::new(e as _, Tag::read).with_fd(fd));
+            return Result::Err(Error::new(e, Tag::read).with_fd(fd));
         }
 
         let bytes_read: usize = usize::try_from(req.result.int()).expect("int cast");
@@ -569,7 +572,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         }
 
         if let Some(e) = req.result.err_enum() {
-            return Result::Err(Error::new(e as _, Tag::write).with_fd(fd));
+            return Result::Err(Error::new(e, Tag::write).with_fd(fd));
         }
 
         let bytes_written: usize = usize::try_from(req.result.int()).expect("int cast");

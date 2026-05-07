@@ -123,9 +123,15 @@ mod strings {
         if a.is_empty() {
             return true;
         }
-        // SAFETY: both slices are non-empty and equal length; strncasecmp reads
-        // at most `a.len()` bytes from each pointer.
-        unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
+        // SAFETY: both slices are non-empty and equal length; the libc compare
+        // reads at most `a.len()` bytes from each pointer.
+        // `strncasecmp` is POSIX-only; Windows MSVCRT spells it `_strnicmp`.
+        #[cfg(windows)]
+        unsafe extern "C" { fn _strnicmp(a: *const core::ffi::c_char, b: *const core::ffi::c_char, n: usize) -> core::ffi::c_int; }
+        #[cfg(windows)]
+        return unsafe { _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 };
+        #[cfg(not(windows))]
+        return unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 };
     }
 }
 

@@ -412,6 +412,18 @@ pub mod s {
     pub const IXOTH: i32 = 0o001;
     pub const IRWXO: i32 = 0o007;
 
+    // Upper-case spellings to match the POSIX `S` modules (`S::ISREG(mode)`) so
+    // cross-platform call sites don't need cfg arms. Take `u32` (== `Mode`)
+    // because POSIX callers feed `st_mode as u32`; the i32 versions below stay
+    // for windows-local code that already cast.
+    #[inline] pub const fn ISREG (m: u32) -> bool { (m as i32) & IFMT == IFREG  }
+    #[inline] pub const fn ISDIR (m: u32) -> bool { (m as i32) & IFMT == IFDIR  }
+    #[inline] pub const fn ISCHR (m: u32) -> bool { (m as i32) & IFMT == IFCHR  }
+    #[inline] pub const fn ISBLK (m: u32) -> bool { (m as i32) & IFMT == IFBLK  }
+    #[inline] pub const fn ISFIFO(m: u32) -> bool { (m as i32) & IFMT == IFIFO  }
+    #[inline] pub const fn ISLNK (m: u32) -> bool { (m as i32) & IFMT == IFLNK  }
+    #[inline] pub const fn ISSOCK(m: u32) -> bool { (m as i32) & IFMT == IFSOCK }
+
     #[inline]
     pub const fn is_reg(m: i32) -> bool {
         m & IFMT == IFREG

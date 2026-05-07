@@ -468,11 +468,16 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         set_socket_field: Option<impl FnOnce(&mut This, Self)>,
         is_ipc: bool,
     ) -> Option<Self> {
+        // `Fd::native()` is `c_int` on POSIX, `*mut c_void` (HANDLE) on
+        // Windows; `LIBUS_SOCKET_DESCRIPTOR` is `c_int` / `usize` (SOCKET)
+        // respectively — explicit cast for the Windows arm.
+        #[cfg(windows)] let fd_raw = handle.native() as crate::LIBUS_SOCKET_DESCRIPTOR;
+        #[cfg(not(windows))] let fd_raw = handle.native();
         let raw = g.from_fd(
             k,
             core::ptr::null_mut(),
             size_of::<Option<*mut This>>() as c_int,
-            handle.native(),
+            fd_raw,
             is_ipc,
         );
         if raw.is_null() {

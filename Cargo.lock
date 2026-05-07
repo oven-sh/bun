@@ -638,6 +638,7 @@ dependencies = [
  "bun_core",
  "bun_string",
  "bun_sys",
+ "bun_windows_sys",
  "bun_wyhash",
  "const_format",
  "enum-map",

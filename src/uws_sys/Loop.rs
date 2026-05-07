@@ -63,6 +63,11 @@ pub trait LoopHandler {
     const POST: Option<unsafe extern "C" fn(*mut Loop)> = None;
 }
 
+// `impl PosixLoop` is posix-only: every method calls into `c::*` whose
+// signatures are typed `*mut Loop`, and on Windows `Loop = WindowsLoop` so
+// `&mut PosixLoop` does not coerce. Windows callers go through the
+// `impl WindowsLoop` block below (same surface, different routing).
+#[cfg(not(windows))]
 impl PosixLoop {
     pub fn uncork(&mut self) {
         // SAFETY: self is a valid loop pointer

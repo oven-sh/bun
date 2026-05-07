@@ -1607,18 +1607,22 @@ pub struct uv_timeval64_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_stat_t {
-    pub dev: u64,
-    pub mode: u64,
-    pub nlink: u64,
-    pub uid: u64,
-    pub gid: u64,
-    pub rdev: u64,
-    pub ino: u64,
-    pub size: u64,
-    pub blksize: u64,
-    pub blocks: u64,
-    pub flags: u64,
-    pub r#gen: u64,
+    // Field names match libuv's `uv_stat_t` (uv.h) — `st_*`, not bare `mode` —
+    // so this is field-compatible with `libc::stat` for cross-platform code
+    // that does `stat.st_mode` / `stat.st_size`. Layout asserts at bottom of
+    // file lock the C ABI; only the Rust-side names changed (round 3).
+    pub st_dev: u64,
+    pub st_mode: u64,
+    pub st_nlink: u64,
+    pub st_uid: u64,
+    pub st_gid: u64,
+    pub st_rdev: u64,
+    pub st_ino: u64,
+    pub st_size: u64,
+    pub st_blksize: u64,
+    pub st_blocks: u64,
+    pub st_flags: u64,
+    pub st_gen: u64,
     pub atim: uv_timespec_t,
     pub mtim: uv_timespec_t,
     pub ctim: uv_timespec_t,

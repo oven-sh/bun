@@ -287,11 +287,13 @@ pub use byte_stream::ByteStream;
 pub use byte_blob_loader::ByteBlobLoader;
 
 // TODO: make this JSGlobalObject local for better security
-// Zig: `bun.ObjectPool(bun.Vec<u8>, null, true, 8)` — `null` init goes on
+// Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
 // `ObjectPoolType` (already impl'd for `Vec<u8>` in bun_collections), `true`
-// is THREADSAFE, `8` is MAX_COUNT. Storage param defaults to `UnwiredStorage`;
-// wire with `object_pool!` at first use site.
-pub type ByteListPool = bun_collections::pool::ObjectPool<Vec<u8>, true, 8>;
+// is THREADSAFE, `8` is MAX_COUNT. `object_pool!` wires the per-monomorphization
+// thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
+// default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`
+// from `streams::HTTPSServerWritable::send`.
+bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 // Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).

@@ -756,8 +756,26 @@ impl JSGlobalObject {
         // enabled)`). Rust can't rewrite the format string of an
         // already-captured `Arguments<'_>`, so render first, then run the
         // `<tag>` → ANSI/strip pass at runtime via `pretty_fmt_rt`.
+        //
+        // Zig routed through `createErrorInstance` which catches a mid-format
+        // `WriteFailed` (e.g. user `Symbol.toPrimitive` throws while
+        // stringifying the Received value). `pretty_fmt_rt` would `format!`
+        // into a `String`, and `format!` panics if a `Display` impl returns
+        // `fmt::Error` when the underlying writer didn't — so render via
+        // fallible `write!` here and mirror Zig's catch: clear the pending JS
+        // exception and throw with whatever was written so far.
         let enabled = Output::enable_ansi_colors_stderr();
-        let pretty = Output::pretty_fmt_rt(&args, enabled);
+        use core::fmt::Write;
+        let mut buf: Vec<u8> = Vec::with_capacity(2048);
+        if write!(WriteVec(&mut buf), "{}", args).is_err() {
+            // if an exception occurs in the middle of formatting the error
+            // message, it's better to just return what we have than an error
+            // about an error. Clear any pending JS exception (e.g. from
+            // Symbol.toPrimitive) so that throwValue doesn't hit
+            // assertNoException.
+            let _ = self.clear_exception_except_termination();
+        }
+        let pretty = Output::pretty_fmt_rt(buf.as_slice(), enabled);
         let instance = ZigString::init_utf8(&pretty).to_error_instance(self);
         if instance.is_empty() {
             debug_assert!(self.has_exception());

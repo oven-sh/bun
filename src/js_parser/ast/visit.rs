@@ -1537,10 +1537,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
             ctx.scan_stmts(p, stmts.as_mut_slice());
-            // SAFETY: BumpVec buffer lives in the 'a arena; `finalize` reads `Copy`
-            // elements and the old buffer is leaked into the arena (no double free).
+            // PORT NOTE: Zig's `stmts.* = ctx.finalize(p, stmts.items, ...)`
+            // overwrote the ArrayList struct without freeing the old buffer.
+            // `finalize` stores a sub-slice of that buffer as the lowered
+            // S.Try `body`, so the buffer must outlive the assignment. Leak
+            // the old buffer into the 'a arena via `into_bump_slice_mut`
+            // (reclaimed on arena reset) before installing the new list —
+            // dropping the old `Vec<_, &MimallocArena>` would `mi_free` it
+            // and leave the S.Try body dangling.
+            let allocator = p.allocator;
             let raw =
-                unsafe { core::slice::from_raw_parts_mut(stmts.as_mut_ptr(), stmts.len()) };
+                core::mem::replace(stmts, ListManaged::new_in(allocator)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
             *stmts = ctx.finalize(p, raw, parent_is_none);

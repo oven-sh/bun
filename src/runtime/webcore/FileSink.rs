@@ -1428,8 +1428,18 @@ impl FileSink {
 // `#[bun_jsc::host_fn]` proc-macro is not yet ported, so emit the
 // `callconv(jsc.conv)` shim by hand and export under the C symbol names the
 // C++ side expects.
+//
+// IMPORTANT: these MUST be exported as *function* symbols (not as `static`
+// function-pointer variables). C++ declares them via
+// `BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream)` and compares the
+// resulting symbol address against the handler passed to `JSValue::then` in
+// `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
+// exports the address of an 8-byte data slot, which never equals the shim's
+// code address → RELEASE_ASSERT_NOT_REACHED at runtime.
+//
 // TODO(port): gate on `export_cpp_apis` feature in Phase B; replace with
 // `#[bun_jsc::host_fn]` once the proc-macro lands.
+#[unsafe(export_name = "Bun__FileSink__onResolveStream")]
 unsafe extern "C" fn on_resolve_stream_shim(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
@@ -1440,6 +1450,7 @@ unsafe extern "C" fn on_resolve_stream_shim(
         Err(_) => JSValue::ZERO,
     }
 }
+#[unsafe(export_name = "Bun__FileSink__onRejectStream")]
 unsafe extern "C" fn on_reject_stream_shim(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
@@ -1450,10 +1461,6 @@ unsafe extern "C" fn on_reject_stream_shim(
         Err(_) => JSValue::ZERO,
     }
 }
-#[unsafe(no_mangle)]
-pub static Bun__FileSink__onResolveStream: bun_jsc::JSHostFn = on_resolve_stream_shim;
-#[unsafe(no_mangle)]
-pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream_shim;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

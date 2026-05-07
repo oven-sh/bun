@@ -358,15 +358,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         break 'tagger p.visit_expr(_tag);
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`;
-                        // `options.jsx.fragment: Box<[Box<[u8]>]>` — borrow each part
-                        // and erase to `'a` (options outlives the parser).
+                        // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
+                        // In Zig, `options.jsx.fragment: []const string` borrows from the
+                        // long-lived `transpiler.options.jsx`, so the strings outlive the
+                        // AST. Here, `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
+                        // `P` and dropped when `Parser::parse` returns — but the parts are
+                        // stored in symbols / `E::Dot.name` and read later by the printer.
+                        // Dupe each part into the arena (which backs the AST) to restore
+                        // the spec's lifetime invariant.
                         let parts: Vec<&'a [u8]> = p
                             .options
                             .jsx
                             .fragment
                             .iter()
-                            .map(|b| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(&b[..]) })
+                            .map(|b| -> &'a [u8] { p.allocator.alloc_slice_copy(b) })
                             .collect();
                         break 'tagger p
                             .jsx_strings_to_member_expression(expr.loc, &parts)
@@ -435,12 +440,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
+                        // PORT NOTE: see fragment note above — `options.jsx.factory` is
+                        // owned by `P` and freed when the parser drops; dupe each part
+                        // into the arena so the symbol/E::Dot names outlive the printer.
                         let parts: Vec<&'a [u8]> = p
                             .options
                             .jsx
                             .factory
                             .iter()
-                            .map(|b| unsafe { core::mem::transmute::<&[u8], &'a [u8]>(&b[..]) })
+                            .map(|b| -> &'a [u8] { p.allocator.alloc_slice_copy(b) })
                             .collect();
                         p.jsx_strings_to_member_expression(expr.loc, &parts)
                             .expect("unreachable")

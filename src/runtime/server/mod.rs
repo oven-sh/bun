@@ -1457,15 +1457,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             app.any(p, Some(trampoline::on_request::<SSL, DEBUG>), self_ptr as *mut c_void);
         }
 
-        // --- 5-8. Static routes / DevServer / plugins / chrome-devtools ---
-        // TODO(b2-blocked): apply_static_route + DevServer.set_routes +
-        // ServePlugins::init wiring (server_body.rs:3476-3641). Gated on
-        // StaticRouteLike impls for StaticRoute/FileRoute/HTMLBundle (the
-        // `apply_static_route` helper takes `&mut bun_uws::NewApp<SSL>` whereas
-        // this stub holds `*mut bun_uws_sys::NewApp<SSL>`) and DevServer route
-        // surface; the per-route uws registration shape is identical to the
-        // user-route loop above and slots in here once those land.
-        let _ = &self.config.static_routes;
+        // --- 5. Static routes ---
+        let any_server = AnyServer::from(self_ptr as *const Self);
+        for entry in &self.config.static_routes {
+            match &entry.route {
+                AnyRoute::Static(p) => server_config::apply_static_route::<SSL, StaticRoute>(
+                    any_server,
+                    app,
+                    p.as_ptr(),
+                    &entry.path,
+                    entry.method,
+                ),
+                AnyRoute::File(p) => server_config::apply_static_route::<SSL, FileRoute>(
+                    any_server,
+                    app,
+                    p.as_ptr(),
+                    &entry.path,
+                    entry.method,
+                ),
+                AnyRoute::Html(r) => server_config::apply_static_route::<SSL, html_bundle::Route>(
+                    any_server,
+                    app,
+                    r.data.as_ptr(),
+                    &entry.path,
+                    entry.method,
+                ),
+                AnyRoute::FrameworkRouter(_) => {}
+            }
+            // TODO(port): mirror to h3_app via apply_static_route_h3 once
+            // `Self::HAS_H3` paths are un-gated (server.zig:2893-2905), and
+            // feed `dev.html_router.put(path, route)` for `.Html` when a
+            // DevServer is attached.
+        }
+
+        // --- 6-8. DevServer / plugins / chrome-devtools ---
+        // TODO(port): DevServer.set_routes + ServePlugins::init + bun:info /
+        // chrome-devtools well-known routes (server_body.rs:3555-3641). Gated
+        // on DevServer route surface; the per-route uws registration shape is
+        // identical to the user-route loop above and slots in here.
         let _ = &self.dev_server;
         let _ = &self.plugins;
 
@@ -1933,12 +1962,15 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
-        // TODO(port): `NewServer::on_node_http_request` body
-        // (server_body.rs:3246-3433) needs `NodeHTTPResponse` + Socket FFI.
-        // The node:http compat path registers this only when
-        // `config.on_node_http_request` is set; until that body lands the
-        // plain `fetch` handler is the closest behavioural match.
-        on_request::<SSL, DEBUG>(res, req, user_data);
+        // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
+        // req/res are live uws handles for the duration of the callback.
+        // `uws_res` is the type-erased `Response<SSL>` opaque.
+        unsafe {
+            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_node_http_request(
+                &mut *req,
+                &mut *res.cast::<uws_sys::NewAppResponse<SSL>>(),
+            )
+        };
     }
 }
 
@@ -2238,7 +2270,12 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // SAFETY: app handle is live while AnyServer is held.
             Some(app) => unsafe { (*app).num_subscribers(topic) },
-            None => 0,
+            // PORT NOTE: Zig spec uses `app.?` (panic on null). Defensive 0
+            // here for the post-stop window; assert in debug to catch misuse.
+            None => {
+                debug_assert!(false, "num_subscribers on server with no app");
+                0
+            }
         })
     }
 

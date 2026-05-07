@@ -478,7 +478,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         let compress = if !matches!(options_compress, Compression::None) {
             options_compress
         } else {
-            archive.compress.clone_shallow()
+            archive.compress
             // TODO(port): Compression is not Copy due to Gzip payload struct; verify clone semantics
         };
         return start_write_task(global, WriteData::Store(archive.store.clone()), path_slice.slice(), compress);
@@ -619,14 +619,14 @@ impl Archive {
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub fn blob(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &this.store, this.compress.clone_shallow(), BlobOutputType::Blob)
+        start_blob_task(global, &this.store, this.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
     pub fn bytes(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &this.store, this.compress.clone_shallow(), BlobOutputType::Bytes)
+        start_blob_task(global, &this.store, this.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)

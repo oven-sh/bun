@@ -10,7 +10,7 @@ use bun_install::{
     Dependency, Lockfile, PackageID, PackageNameHash, INVALID_PACKAGE_ID,
     PackageManager,
 };
-use bun_install::dependency;
+use bun_install::dependency::{self, DependencyExt as _};
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
 use crate::lockfile::package::PackageListExt as _;

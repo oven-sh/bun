@@ -3,7 +3,7 @@ use core::cmp::Ordering;
 use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_install::{Lockfile, PackageManager, PackageNameHash};
-use bun_install::dependency::{self, Behavior, Dependency};
+use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use bun_logger as logger;
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::string::Builder as SemverBuilder;

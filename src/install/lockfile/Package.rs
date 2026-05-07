@@ -2044,7 +2044,11 @@ impl Package<u64> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // TODO(port): narrow error set
-        let mut string_builder = lockfile.string_builder();
+        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the dozens of
+        // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
+        // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
+        // must go through `string_builder.string_bytes` while it's live.
+        let mut string_builder = crate::string_builder!(lockfile);
         let mut total_dependencies_count: u32 = 0;
 
         self.meta.origin = if FEATURES.is_main {

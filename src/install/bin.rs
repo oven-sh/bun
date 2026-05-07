@@ -12,7 +12,7 @@ use bun_str::{strings, w, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
 use crate::bun_json::JsonExprView;
-use crate::dependency::Dependency;
+use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 

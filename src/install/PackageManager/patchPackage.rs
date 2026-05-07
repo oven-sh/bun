@@ -15,7 +15,7 @@ use crate::{
     buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 use crate::isolated_install::FileCopier;
-use crate::dependency::Dependency;
+use crate::dependency::{Dependency, DependencyExt as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
 use crate::lockfile_real::package::{Package, PackageListExt as _};
 use crate::lockfile_real::tree;

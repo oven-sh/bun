@@ -3,7 +3,7 @@ use std::io::Write as _;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::Error;
 use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency};
+use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 // PORT NOTE: `bun_install::lockfile` is the column-accessor stub used by the

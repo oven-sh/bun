@@ -13,7 +13,7 @@ use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask,
     Resolution, invalid_package_id, RunTasksCallbacks,
 };
-use crate::dependency::Tag as DependencyVersionTag;
+use crate::dependency::{Tag as DependencyVersionTag, DependencyExt as _};
 use crate::resolution::Tag as ResolutionTag;
 use crate::Subcommand;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;

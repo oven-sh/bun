@@ -28,6 +28,8 @@ use crate::resolution::{
     Value as ResolutionValue,
 };
 use crate::{dependency, ManifestLoad};
+use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
+use crate::repository_real::RepositoryExt as _;
 use crate::lockfile_real as Lockfile;
 use crate::lockfile::package::Package;
 use bun_install::NetworkTask;

@@ -35,6 +35,7 @@ use crate::{
 // so assignments at the two `.tag = Workspace` sites type-check.
 use bun_install_types::DependencyVersionTag;
 use crate::repository::RepositoryExt as _;
+use crate::dependency::DependencyExt as _;
 use crate::bin_real::ToJsonStyle;
 use crate::npm::Negatable;
 use crate::extract_tarball as ExtractTarball;

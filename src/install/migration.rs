@@ -8,7 +8,7 @@ use bun_str::strings;
 use bun_sys::{self, Fd, File, O};
 use bun_logger::js_ast::{E, Expr, ExprData};
 
-use crate::dependency::{self, Dependency, Behavior, Tag as DepTag, Value as DepValue, Version as DepVersion};
+use crate::dependency::{self, Dependency, DependencyExt as _, TagExt as _, Behavior, Tag as DepTag, Value as DepValue, Version as DepVersion};
 use crate::install::{self as Install, PackageID, PackageManager, ExternalStringList};
 use crate::npm::{self as Npm};
 use crate::bin::{self, Bin};

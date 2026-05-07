@@ -4,6 +4,7 @@ use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 // PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
 // but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into

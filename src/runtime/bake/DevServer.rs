@@ -2309,7 +2309,7 @@ impl DevServer {
         // Scalar copy — `route_bundles[i]` is otherwise only read (via
         // `generate_css_js_array`, which now takes `&RouteBundle`).
         let client_script_generation: u32 = unsafe {
-            (*this).route_bundles[route_bundle_index.get() as usize].client_script_generation
+            (&(*this).route_bundles)[route_bundle_index.get() as usize].client_script_generation
         };
 
         Ok(FrameworkRequestArgs {
@@ -2426,7 +2426,7 @@ impl DevServer {
                     // `keys` / `route` were all consumed in earlier arms).
                     let js = unsafe {
                         (*this).generate_css_js_array(
-                            &(*this).route_bundles[route_bundle_index.get() as usize],
+                            &(&(*this).route_bundles)[route_bundle_index.get() as usize],
                         )
                     }?;
                     framework_bundle.cached_css_file_array = jsc::StrongOptional::create(js, global);

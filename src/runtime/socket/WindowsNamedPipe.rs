@@ -944,6 +944,16 @@ impl Drop for WindowsNamedPipe {
     }
 }
 
+// Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
+// method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
+// raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
+// `#[uws_callback(export = …)]` on the inherent methods above.
+#[unsafe(no_mangle)]
+pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
+    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
+    unsafe { (*this.cast::<WindowsNamedPipe>()).ssl().unwrap_or(core::ptr::null_mut()) }
+}
+
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
     unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {

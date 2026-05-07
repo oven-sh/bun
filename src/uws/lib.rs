@@ -1587,6 +1587,7 @@ pub struct NewSocketHandler<const SSL: bool> {
 
 // ── FFI surface used by the method bodies below. Signatures verified against
 //    `src/uws_sys/us_socket_t.zig` / `ConnectingSocket.zig` `extern fn` blocks.
+#[allow(non_snake_case, dead_code)]
 mod sock_c {
     use super::{us_socket_t, us_bun_verify_error_t, ConnectingSocket, SocketGroup, LIBUS_SOCKET_DESCRIPTOR};
     use core::ffi::{c_int, c_uint, c_void};
@@ -1629,6 +1630,37 @@ mod sock_c {
         pub(crate) fn us_connecting_socket_ext(s: *mut ConnectingSocket) -> *mut c_void;
         pub(crate) fn us_connecting_socket_group(s: *mut ConnectingSocket) -> *mut SocketGroup;
         pub(crate) fn us_connecting_socket_get_error(s: *mut ConnectingSocket) -> i32;
+
+        // ── UpgradedDuplex (link-time dispatch into bun_runtime::socket) ────
+        // The real type lives in a higher tier; `InternalSocket::UpgradedDuplex`
+        // carries a type-erased `*mut c_void` and these symbols are exported by
+        // `src/runtime/socket/UpgradedDuplex.rs` via `#[uws_callback(export = …)]`.
+        pub(crate) fn UpgradedDuplex__ssl(this: *const c_void) -> *mut c_void;
+        pub(crate) fn UpgradedDuplex__ssl_error(this: *const c_void) -> us_bun_verify_error_t;
+        pub(crate) fn UpgradedDuplex__is_closed(this: *const c_void) -> bool;
+        pub(crate) fn UpgradedDuplex__is_shutdown(this: *const c_void) -> bool;
+        pub(crate) fn UpgradedDuplex__is_established(this: *const c_void) -> bool;
+        pub(crate) fn UpgradedDuplex__set_timeout(this: *mut c_void, seconds: c_uint);
+        pub(crate) fn UpgradedDuplex__flush(this: *mut c_void);
+        pub(crate) fn UpgradedDuplex__encode_and_write(this: *mut c_void, ptr: *const u8, len: usize) -> i32;
+        pub(crate) fn UpgradedDuplex__raw_write(this: *mut c_void, ptr: *const u8, len: usize) -> i32;
+        pub(crate) fn UpgradedDuplex__shutdown(this: *mut c_void);
+        pub(crate) fn UpgradedDuplex__shutdown_read(this: *mut c_void);
+        pub(crate) fn UpgradedDuplex__close(this: *mut c_void);
+
+        // ── WindowsNamedPipe (same link-time-dispatch pattern) ──────────────
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut c_void;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__ssl_error(this: *const c_void) -> us_bun_verify_error_t;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__is_closed(this: *const c_void) -> bool;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__is_shutdown(this: *const c_void) -> bool;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__is_established(this: *const c_void) -> bool;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__set_timeout(this: *mut c_void, seconds: c_uint);
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__flush(this: *mut c_void);
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__encode_and_write(this: *mut c_void, ptr: *const u8, len: usize) -> i32;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__raw_write(this: *mut c_void, ptr: *const u8, len: usize) -> i32;
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__shutdown(this: *mut c_void);
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__shutdown_read(this: *mut c_void);
+        #[cfg(windows)] pub(crate) fn WindowsNamedPipe__close(this: *mut c_void);
     }
 }
 
@@ -1658,11 +1690,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_closed(s) > 0 },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_closed(s) > 0 },
             InternalSocket::Detached => true,
-            // TODO(port): UpgradedDuplex/Pipe live in higher tiers (type-erased
-            // `*mut c_void` here); their `is_closed` dispatches via the owner.
-            InternalSocket::UpgradedDuplex(_) => false,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__is_closed(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => false,
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__is_closed(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => true,
         }
@@ -1674,10 +1705,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_shut_down(s) > 0 },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_shut_down(s) > 0 },
             InternalSocket::Detached => true,
-            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
-            InternalSocket::UpgradedDuplex(_) => false,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__is_shutdown(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => false,
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__is_shutdown(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => false,
         }
@@ -1687,10 +1718,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         match self.socket {
             // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_established(s) > 0 },
-            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
-            InternalSocket::UpgradedDuplex(_) => true,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__is_established(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => true,
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__is_established(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => false,
             InternalSocket::Connecting(_) | InternalSocket::Detached => false,
@@ -1702,10 +1733,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_shutdown_read(s) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_shutdown_read(s) },
-            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__shutdown_read(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__shutdown_read(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1719,10 +1750,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                 let _ = sock_c::us_socket_close(s, code as i32, core::ptr::null_mut());
             },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_close(s) },
-            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__close(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__close(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1737,10 +1768,14 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                 // SAFETY: `s` is a non-null FFI handle; data.as_ptr()/len describe a valid slice.
                 unsafe { sock_c::us_socket_write(s, data.as_ptr(), len) }
             }
-            // TODO(port): UpgradedDuplex/Pipe encodeAndWrite live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => 0,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe {
+                sock_c::UpgradedDuplex__encode_and_write(s, data.as_ptr(), data.len())
+            },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => 0,
+            InternalSocket::Pipe(s) => unsafe {
+                sock_c::WindowsNamedPipe__encode_and_write(s, data.as_ptr(), data.len())
+            },
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
@@ -1779,10 +1814,14 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                 // SAFETY: `s` is a non-null FFI handle; data.as_ptr()/len describe a valid slice.
                 unsafe { sock_c::us_socket_raw_write(s, data.as_ptr(), len) }
             }
-            // TODO(port): UpgradedDuplex/Pipe rawWrite live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => 0,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe {
+                sock_c::UpgradedDuplex__raw_write(s, data.as_ptr(), data.len())
+            },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => 0,
+            InternalSocket::Pipe(s) => unsafe {
+                sock_c::WindowsNamedPipe__raw_write(s, data.as_ptr(), data.len())
+            },
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
@@ -1793,10 +1832,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         match self.socket {
             // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_flush(s) },
-            // TODO(port): UpgradedDuplex/Pipe flush live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__flush(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__flush(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Connecting(_) | InternalSocket::Detached => {}
@@ -1808,10 +1847,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_shutdown(s) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_shutdown(s) },
-            // TODO(port): UpgradedDuplex/Pipe shutdown live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__shutdown(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__shutdown(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1824,10 +1863,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_timeout(s, seconds) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_timeout(s, seconds) },
-            // TODO(port): UpgradedDuplex/Pipe setTimeout live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__set_timeout(s, seconds) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__set_timeout(s, seconds) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1861,10 +1900,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                     }
                 }
             }
-            // TODO(port): UpgradedDuplex/Pipe setTimeout live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__set_timeout(s, seconds) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__set_timeout(s, seconds) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1887,10 +1926,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                     sock_c::us_connecting_socket_long_timeout(s, minutes);
                 }
             }
-            // TODO(port): UpgradedDuplex/Pipe setTimeout(minutes*60) live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => {}
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__set_timeout(s, minutes * 60) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => {}
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__set_timeout(s, minutes * 60) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1918,10 +1957,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         match self.socket {
             // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_verify_error(s) },
-            // TODO(port): UpgradedDuplex/Pipe sslError live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => us_bun_verify_error_t::default(),
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__ssl_error(s) },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => us_bun_verify_error_t::default(),
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__ssl_error(s) },
             #[cfg(not(windows))]
             InternalSocket::Pipe => us_bun_verify_error_t::default(),
             InternalSocket::Connecting(_) | InternalSocket::Detached => us_bun_verify_error_t::default(),
@@ -1933,10 +1972,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_error(s) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_error(s) },
-            // TODO(port): UpgradedDuplex/Pipe sslError().error_no live in higher tiers.
-            InternalSocket::UpgradedDuplex(_) => 0,
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) => unsafe { sock_c::UpgradedDuplex__ssl_error(s).error_no },
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => 0,
+            InternalSocket::Pipe(s) => unsafe { sock_c::WindowsNamedPipe__ssl_error(s).error_no },
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Detached => 0,
@@ -2139,8 +2178,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_native_handle(s) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_native_handle(s) },
-            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            // SAFETY: variant pointer is a non-null type-erased `*mut UpgradedDuplex`.
+            InternalSocket::UpgradedDuplex(s) if SSL => unsafe { sock_c::UpgradedDuplex__ssl(s) },
             InternalSocket::UpgradedDuplex(_) => return None,
+            #[cfg(windows)]
+            InternalSocket::Pipe(s) if SSL => unsafe { sock_c::WindowsNamedPipe__ssl(s) },
             #[cfg(windows)]
             InternalSocket::Pipe(_) => return None,
             #[cfg(not(windows))]

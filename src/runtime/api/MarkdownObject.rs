@@ -1,7 +1,5 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
-use core::ffi::c_void;
-
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 use bun_core::StackCheck;
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
@@ -455,23 +453,24 @@ impl Default for ParseStackEntry {
 }
 
 // PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
-// `Renderer` is a `&mut dyn RendererImpl`, so dispatch through the trait and
-// keep the `*_impl(ptr: *mut c_void, ..)` bodies below unchanged.
+// `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
+// `&mut self` — the `*_impl` bodies below are plain methods, no pointer
+// round-trip needed.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> md::types::JsResult<()> {
-        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags).map_err(js_to_parser_err)
+        self.enter_block_impl(block_type, data, flags).map_err(js_to_parser_err)
     }
     fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
-        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data).map_err(js_to_parser_err)
+        self.leave_block_impl(block_type, data).map_err(js_to_parser_err)
     }
     fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> md::types::JsResult<()> {
-        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail).map_err(js_to_parser_err)
+        self.enter_span_impl(span_type, detail).map_err(js_to_parser_err)
     }
     fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
-        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type).map_err(js_to_parser_err)
+        self.leave_span_impl(span_type).map_err(js_to_parser_err)
     }
     fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
-        Self::text_impl(self as *mut Self as *mut c_void, text_type, content).map_err(js_to_parser_err)
+        self.text_impl(text_type, content).map_err(js_to_parser_err)
     }
 }
 

@@ -31,13 +31,16 @@ type JsTerminatedResult<T> = jsc::JsResult<T>;
 /// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
 /// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
 /// / `resolve`); the other variants are unreachable on this path.
+// PORT NOTE: while `JsTerminatedResult` is widened to `JsResult` (see above),
+// this is effectively identity-with-OOM-crash. Once both aliases tighten to
+// `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
 #[inline]
 fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
     r.map_err(|e| match e {
-        jsc::JsError::Terminated => jsc::JsTerminated::JSTerminated,
+        jsc::JsError::Terminated => jsc::JsError::Terminated,
         jsc::JsError::OutOfMemory => bun_core::out_of_memory(),
         // valkey.rs never throws into JS from these paths; treat as terminal.
-        jsc::JsError::Thrown => jsc::JsTerminated::JSTerminated,
+        jsc::JsError::Thrown => jsc::JsError::Terminated,
     })
 }
 

@@ -1171,18 +1171,29 @@ impl<'a> Parser<'a> {
 
                 let mut remaining_stmts: &mut [Stmt] = all_stmts;
 
-                for deferred_import in p.imports_to_convert_from_require.as_slice() {
+                for i in 0..p.imports_to_convert_from_require.len() {
+                    // PORT NOTE: borrowck — copy out the three Copy fields so the
+                    // immutable borrow of `p.imports_to_convert_from_require`
+                    // ends before `p.module_scope_mut()` takes `&mut self`.
+                    let (ns_ref, ns_loc, import_record_id) = {
+                        let deferred_import = &p.imports_to_convert_from_require[i];
+                        (
+                            deferred_import.namespace.ref_.expect("infallible: ref bound"),
+                            deferred_import.namespace.loc,
+                            deferred_import.import_record_id,
+                        )
+                    };
                     let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
                     remaining_stmts = rest;
 
-                    VecExt::append(&mut p.module_scope_mut().generated, deferred_import.namespace.ref_.expect("infallible: ref bound"))
+                    VecExt::append(&mut p.module_scope_mut().generated, ns_ref)
                         .expect("oom");
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
-                            star_name_loc: Some(deferred_import.namespace.loc),
-                            import_record_index: deferred_import.import_record_id,
-                            namespace_ref: deferred_import.namespace.ref_.expect("infallible: ref bound"),
+                            star_name_loc: Some(ns_loc),
+                            import_record_index: import_record_id,
+                            namespace_ref: ns_ref,
                             default_name: None,
                             items: core::ptr::slice_from_raw_parts_mut(
                                 core::ptr::NonNull::<js_ast::ClauseItem>::dangling().as_ptr(),
@@ -1190,12 +1201,12 @@ impl<'a> Parser<'a> {
                             ),
                             is_single_line: false,
                         },
-                        deferred_import.namespace.loc,
+                        ns_loc,
                     );
                     let mut declared_symbols =
                         crate::DeclaredSymbolList::init_capacity(1).expect("unreachable");
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: deferred_import.namespace.ref_.expect("infallible: ref bound"),
+                        ref_: ns_ref,
                         is_top_level: true,
                     });
                     // PERF(port): was assume_capacity

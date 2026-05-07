@@ -829,8 +829,9 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // TODO(port): Zig used `fs.relativeTo(file_path)`; resolver's
-                            // inline `fs::FileSystem` doesn't expose `relative_to` yet.
+                            // PORT NOTE: `fs.relative_to(file_path)` would borrow `&*fs`
+                            // while `rfs = &mut fs.fs` is live; inline the body so the
+                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(fs.top_level_dir, file_path))
                         ));
                     }
@@ -1014,8 +1015,8 @@ where
                                 let changed_name: &[u8] = if IS_KQUEUE {
                                     affected_kqueue[i]
                                 } else {
-                                    // TODO(port): `bun.asByteSlice(changed_name_.?)`
-                                    affected_inotify[i].as_ref().unwrap().as_bytes()
+                                    // Zig: `bun.asByteSlice(changed_name_.?)`
+                                    affected_inotify[i].unwrap().as_bytes()
                                 };
                                 if changed_name.is_empty()
                                     || changed_name[0] == b'~'

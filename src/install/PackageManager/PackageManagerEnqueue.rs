@@ -153,7 +153,7 @@ pub fn enqueue_dependency_list(
             );
             // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
             // SAFETY: `this.log` is non-null after `PackageManager::init()`.
-            let log = unsafe { &mut *this.log };
+            let log = this.log_mut();
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log
                     .add_warning_with_note(
@@ -244,7 +244,7 @@ pub fn enqueue_tarball_for_reading(
     // `local_tarball` arm is the active union field. `string_bytes` is not
     // resized in this fn.
     let path =
-        unsafe { &*this_ptr }.lockfile.str(unsafe { &resolution.value.local_tarball });
+        unsafe { &*this_ptr }.lockfile.str(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
     let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
     if !task_queue.found_existing {
@@ -285,7 +285,7 @@ pub fn enqueue_git_for_checkout(
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
     // `*resolution` while `*this` is mutably reborrowed below.
-    let repository: Repository = *unsafe { &resolution.value.git };
+    let repository: Repository = *resolution.git();
     // PORT NOTE: reshaped for borrowck — `url`/`resolved` borrow
     // `this.lockfile.buffers.string_bytes`; route through a raw root.
     let this_ptr: *mut PackageManager = this;
@@ -688,11 +688,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if dependency.version.tag == dependency::version::Tag::Npm {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 // SAFETY: `tag == Npm` checked above; `npm` is the active arm.
-                let group = unsafe { &dependency.version.value.npm.version };
+                let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
                 let mut curr_list: Option<&Semver::semver_query::List> =
-                    Some(unsafe { &aliased.value.npm.version.head });
+                    Some(&aliased.npm().version.head);
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
@@ -700,7 +700,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             || group.satisfies(query.range.right.version, buf, buf)
                         {
                             // SAFETY: see above — npm arm.
-                            name = unsafe { aliased.value.npm.name };
+                            name = aliased.npm().name;
                             name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
                             break 'version aliased.clone();
                         }
@@ -719,7 +719,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if !dependency.behavior.is_workspace()
             && (dependency.version.tag != dependency::version::Tag::Npm
                 // SAFETY: short-circuit — this arm only evaluated when `tag == Npm`.
-                || !unsafe { dependency.version.value.npm.is_alias })
+                || !dependency.version.npm().is_alias)
         {
             if let Some(new) = this.lockfile.overrides.get(name_hash) {
                 bun_output::scoped_log!(
@@ -736,7 +736,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     if let Some(catalog_dep) = this.lockfile.catalogs.get(
                         &this.lockfile,
                         // SAFETY: `new.tag == Catalog` checked above.
-                        unsafe { new.value.catalog },
+                        *new.catalog(),
                         name,
                     ) {
                         let v = catalog_dep.version.clone();
@@ -758,7 +758,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
                     &this.lockfile,
                     // SAFETY: `tag == Catalog` checked above.
-                    unsafe { dependency.version.value.catalog },
+                    *dependency.version.catalog(),
                     name,
                 ) {
                     let v = catalog_dep.version.clone();
@@ -807,7 +807,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        unsafe { &mut *this.log }
+                                        this.log_mut()
                     .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
@@ -815,7 +815,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                     bstr::BStr::new(
-                                                        this.lockfile.str(unsafe { &version.value.dist_tag.tag })
+                                                        this.lockfile.str(&version.dist_tag().tag)
                                                     ),
                                                 ),
                                             )
@@ -828,7 +828,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        unsafe { &mut *this.log }
+                                        this.log_mut()
                     .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
@@ -850,20 +850,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
                                         if version.tag == dependency::version::Tag::DistTag {
-                                            unsafe { &mut *this.log }
+                                            this.log_mut()
                     .add_error_fmt(
                                                     None,
                                                     logger::Loc::EMPTY,
                                                     format_args!(
                                                         "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
                                                         bstr::BStr::new(this.lockfile.str(&name)),
-                                                        bstr::BStr::new(this.lockfile.str(unsafe { &version.value.dist_tag.tag })),
+                                                        bstr::BStr::new(this.lockfile.str(&version.dist_tag().tag)),
                                                         age_gate_ms / MS_PER_S,
                                                     ),
                                                 )
                                                 .expect("unreachable");
                                         } else {
-                                            unsafe { &mut *this.log }
+                                            this.log_mut()
                     .add_error_fmt(
                                                     None,
                                                     logger::Loc::EMPTY,
@@ -884,20 +884,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if version.tag == dependency::version::Tag::Folder {
-                                        unsafe { &mut *this.log }
+                                        this.log_mut()
                     .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
                                                     // SAFETY: `version.tag == Folder` checked above.
-                                                    bstr::BStr::new(this.lockfile.str(unsafe { &version.value.folder })),
+                                                    bstr::BStr::new(this.lockfile.str(version.folder())),
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                 ),
                                             )
                                             .expect("unreachable");
                                     } else {
-                                        unsafe { &mut *this.log }
+                                        this.log_mut()
                     .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
@@ -1065,14 +1065,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         // We can skip the network request, even if it's beyond the caching period
                                         if version.tag == dependency::version::Tag::Npm
                                             // SAFETY: `version.tag == Npm` checked above.
-                                            && unsafe { &version.value.npm }.version.is_exact()
+                                            && version.npm().version.is_exact()
                                         {
                                             if let Some(find_result) = loaded_manifest
                                                 .as_ref()
                                                 .unwrap()
                                                 .find_by_version(
                                                     // SAFETY: `version.tag == Npm` checked above.
-                                                    unsafe { &version.value.npm }
+                                                    version.npm()
                                                         .version.head.head.range.left.version,
                                                 )
                                             {
@@ -1091,7 +1091,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     {
                                                         let package_name = this.lockfile.str(&name);
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = unsafe { &mut *this.log }.add_error_fmt(
+                                                        let _ = this.log_mut().add_error_fmt(
                                                             None,
                                                             logger::Loc::EMPTY,
                                                             format_args!(
@@ -1209,7 +1209,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Git => {
             // SAFETY: `version.tag == Git` discriminates the union arm.
-            let dep: Repository = **unsafe { &version.value.git };
+            let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
             // First: see if we already loaded the git package in-memory
@@ -1250,7 +1250,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
                     unsafe { this.env.unwrap().as_mut() },
                     // SAFETY: `log` is set during init; raw `*mut Log` per LIFETIMES.tsv (BACKREF).
-                    unsafe { &mut *this.log },
+                    this.log_mut(),
                     bun_sys::Dir::from_fd(repo_fd),
                     alias,
                     this.lockfile.str(&dep.committish),
@@ -1332,7 +1332,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Github => {
             // SAFETY: `version.tag == Github` discriminates the union arm.
-            let dep: &Repository = unsafe { &version.value.github };
+            let dep: &Repository = version.github();
             let res = Resolution::init(ResolutionTagged::Github(*dep));
 
             // First: see if we already loaded the github package in-memory
@@ -1489,7 +1489,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if dependency.behavior.is_required() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    unsafe { &mut *this.log }
+                    this.log_mut()
                     .add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
@@ -1502,7 +1502,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         )
                         .expect("unreachable");
                 } else {
-                    unsafe { &mut *this.log }
+                    this.log_mut()
                     .add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
@@ -1516,7 +1516,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if this.options.log_level.is_verbose() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    unsafe { &mut *this.log }
+                    this.log_mut()
                     .add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
@@ -1528,7 +1528,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         )
                         .expect("unreachable");
                 } else {
-                    unsafe { &mut *this.log }
+                    this.log_mut()
                     .add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
@@ -1545,7 +1545,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             // SAFETY: `version.tag == Tarball` discriminates the union arm.
-            let tarball = unsafe { &version.value.tarball };
+            let tarball = version.tarball();
             let res: Resolution = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => {
                     Resolution::init(ResolutionTagged::LocalTarball(*path))
@@ -1904,7 +1904,7 @@ fn enqueue_local_tarball(
         // Normally tarball paths are always relative to the root directory, but if a
         // workspace depends on a tarball path, it should be relative to the workspace.
         // SAFETY: `workspace_res.tag == Workspace` checked above.
-        let workspace_str = unsafe { workspace_res.value.workspace };
+        let workspace_str = *workspace_res.workspace();
         let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
         let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
             FileSystem::instance().top_level_dir(),
@@ -2084,7 +2084,7 @@ fn get_or_put_resolved_package_with_find_result(
         unsafe { &mut *this_ptr },
         unsafe { &mut *(*this_ptr).lockfile },
         // SAFETY: `this.log` is non-null after `PackageManager::init()`.
-        unsafe { &mut *this.log },
+        this.log_mut(),
         manifest,
         find_result.version,
         find_result.package,
@@ -2136,7 +2136,7 @@ fn get_or_put_resolved_package_with_find_result(
             let task_id = Task::Id::for_npm_package(
                 this.lockfile.str(&name),
                 // SAFETY: `package.resolution.tag == Npm` for the npm install path.
-                unsafe { package.resolution.value.npm }.version,
+                package.resolution.npm().version,
             );
             debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
@@ -2230,7 +2230,7 @@ fn get_or_put_resolved_package(
                                 && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package = this.lockfile.packages.get(existing_id as usize);
-                            unsafe { &mut *this.log }
+                            this.log_mut()
                     .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
@@ -2281,7 +2281,7 @@ fn get_or_put_resolved_package(
                         {
                             let existing_package_id = list[0];
                             let existing_package = this.lockfile.packages.get(existing_package_id as usize);
-                            unsafe { &mut *this.log }
+                            this.log_mut()
                     .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
@@ -2329,7 +2329,7 @@ fn get_or_put_resolved_package(
                     let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
                     // SAFETY: `version.tag == Npm` checked above; `npm` is the active arm.
-                    let npm_group = unsafe { &version.value.npm.version };
+                    let npm_group = &version.npm().version;
                     if this.options.link_workspace_packages
                         && ((workspace_version.is_some()
                             && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
@@ -2406,13 +2406,13 @@ fn get_or_put_resolved_package(
             let version_result: Npm::FindVersionResult = match version.tag {
                 // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
-                    this.lockfile.str(unsafe { &version.value.dist_tag.tag }),
+                    this.lockfile.str(&version.dist_tag().tag),
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
                 ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     // SAFETY: `version.tag == Npm`.
-                    unsafe { &version.value.npm.version },
+                    &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
@@ -2434,7 +2434,7 @@ fn get_or_put_resolved_package(
                                     // SAFETY: `version.tag == DistTag`.
                                     let tag_str = this
                                         .lockfile
-                                        .str(unsafe { &version.value.dist_tag.tag });
+                                        .str(&version.dist_tag().tag);
                                     Output::pretty_errorln(format_args!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
@@ -2447,7 +2447,7 @@ fn get_or_put_resolved_package(
                                 dependency::version::Tag::Npm => {
                                     // SAFETY: `version.tag == Npm`.
                                     let version_str =
-                                        unsafe { &version.value.npm.version }.fmt(manifest_buf);
+                                        &version.npm().version.fmt(manifest_buf);
                                     Output::pretty_errorln(format_args!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
@@ -2552,7 +2552,7 @@ fn get_or_put_resolved_package(
 
         dependency::version::Tag::Folder => {
             // SAFETY: `version.tag == Folder` discriminates the union arm.
-            let folder = unsafe { version.value.folder };
+            let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
@@ -2660,7 +2660,7 @@ fn get_or_put_resolved_package(
                 .workspace_paths
                 .get(&name_hash)
                 .copied()
-                .unwrap_or(unsafe { version.value.workspace });
+                .unwrap_or(*version.workspace());
             // PORT NOTE: reshaped for borrowck — `workspace_path` may borrow
             // `string_bytes`; route through a raw root so the
             // `&mut PackageManager` for `get_or_put` is reachable.
@@ -2716,7 +2716,7 @@ fn get_or_put_resolved_package(
                     &mut *this_ptr
                 })),
                 version.clone(),
-                unsafe { &*this_ptr }.lockfile.str(unsafe { &version.value.symlink }),
+                unsafe { &*this_ptr }.lockfile.str(version.symlink()),
                 unsafe { &mut *this_ptr },
             );
 
@@ -2752,21 +2752,19 @@ fn resolution_satisfies_dependency(
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
         // SAFETY: tags checked above discriminate both unions.
-        return unsafe { &dependency.value.npm }
+        return dependency.npm()
             .version
-            .satisfies(unsafe { resolution.value.npm }.version, buf, buf);
+            .satisfies(resolution.npm().version, buf, buf);
     }
 
     if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
-        // SAFETY: tags checked above discriminate both unions.
-        return unsafe { resolution.value.git.eql(&dependency.value.git, buf, buf) };
+        return resolution.git().eql(dependency.git(), buf, buf);
     }
 
     if resolution.tag == ResolutionTag::Github
         && dependency.tag == dependency::version::Tag::Github
     {
-        // SAFETY: tags checked above discriminate both unions.
-        return unsafe { resolution.value.github.eql(&dependency.value.github, buf, buf) };
+        return resolution.github().eql(dependency.github(), buf, buf);
     }
 
     false

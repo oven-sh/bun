@@ -672,6 +672,48 @@ impl PackageManager {
         unsafe { VERBOSE_INSTALL }
     }
 
+    /// Reborrow the externally-owned [`logger::Log`].
+    ///
+    /// `log` is `*mut Log` (not `&'a mut Log`) only because `PackageManager` is
+    /// a leaked `'static` singleton stored in a global; threading the borrow
+    /// lifetime through `static INSTANCE` is deferred (see field comment). The
+    /// `Log` itself outlives the manager — it's the CLI-scope log allocated in
+    /// `Command::init` before the manager exists.
+    ///
+    /// The returned lifetime is **decoupled** from `&self`: callers routinely
+    /// hold a borrow into `self.lockfile`/`self.options` while appending an
+    /// error, and the `Log` is a disjoint allocation. This mirrors Zig's
+    /// `*PackageManager` field-aliasing; it is the caller's responsibility not
+    /// to alias the returned `&mut Log` (single-threaded by construction —
+    /// only the main install loop touches `log`).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut<'a>(&self) -> &'a mut logger::Log {
+        let p = self.log;
+        // SAFETY: `self.log` is non-null for the manager's lifetime (set in
+        // `init`, never cleared) and the pointee is the CLI-scope `Log`, which
+        // outlives every `'a` a caller can name. Exclusive access is upheld by
+        // single-threaded use; see doc comment.
+        unsafe { &mut *p }
+    }
+
+    /// Reborrow the active progress download node (`self.progress.root`-rooted).
+    /// Panics if no download node is active — callers gate on
+    /// `options.log_level.show_progress()`, which is the same condition that
+    /// populates `downloads_node`. Lifetime is decoupled from `&self` for the
+    /// same reason as [`log_mut`]: `Progress` is a stable allocation on the
+    /// leaked-singleton manager and callers interleave node updates with
+    /// disjoint `&mut self.X` field writes.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
+        let p = self.downloads_node.expect("downloads_node active");
+        // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
+        // `Progress` is pinned for the manager's lifetime (leaked singleton)
+        // and the node is set before any caller reaches this path.
+        unsafe { &mut *p }
+    }
+
     /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
     /// the global singleton accessor. Associated-fn spelling that forwards to
     /// the free [`get`] so callers can write `PackageManager::get()` (the Zig
@@ -795,7 +837,7 @@ impl PackageManager {
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
             // that no `&mut logger::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = unsafe { &*self.log }.print(Output::error_writer() as *mut _);
+            let _ = self.log_mut().print(Output::error_writer() as *mut _);
         }
         Global::crash();
     }

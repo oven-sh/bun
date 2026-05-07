@@ -317,6 +317,28 @@ impl ZStr {
         // SAFETY: caller-supplied literal ends in NUL; lifetime is 'static.
         unsafe { Self::from_raw(s.as_ptr(), s.len() - 1) }
     }
+    /// Borrow `buf[..len]` as a `&ZStr`, where `buf[len] == 0`. This is the
+    /// safe-surface form of [`from_raw`] for the dominant call shape in the
+    /// install pipeline: a stack `PathBuffer` filled to `len` with a NUL
+    /// written at `buf[len]`. The slice bound proves `buf[..=len]` is in the
+    /// same allocation; the NUL is debug-asserted.
+    #[inline]
+    pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
+        debug_assert!(len < buf.len(), "ZStr::from_buf: NUL must lie within buf");
+        debug_assert_eq!(buf[len], 0, "ZStr::from_buf: missing NUL at buf[len]");
+        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; release
+        // relies on caller upholding the documented `buf[len] == 0`
+        // precondition, same contract as Zig `[:0]const u8` slicing).
+        unsafe { Self::from_raw(buf.as_ptr(), len) }
+    }
+    /// Mutable variant of [`from_buf`].
+    #[inline]
+    pub fn from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr {
+        debug_assert!(len < buf.len());
+        debug_assert_eq!(buf[len], 0);
+        // SAFETY: see `from_buf`.
+        unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
+    }
     #[inline] pub const fn as_bytes(&self) -> &[u8] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
     #[inline] pub const fn is_empty(&self) -> bool { self.0.is_empty() }

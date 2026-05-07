@@ -812,7 +812,7 @@ impl Lockfile {
                                 // PORT NOTE: Zig's `switch (exact_versions) { else => |exact| ... }` is just a
                                 // way to capture a comptime-ish bool; in Rust we use it directly.
                                 // SAFETY: tag checked == .npm above; `npm` is the active union field.
-                                let npm_ver = unsafe { res.value.npm.version };
+                                let npm_ver = res.npm().version;
                                 let len = bun_core::fmt::count(format_args!(
                                     "{}{}",
                                     if exact_versions { "" } else { "^" },
@@ -867,7 +867,7 @@ impl Lockfile {
                                 // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                                 // SAFETY: tag checked == .npm above; `npm` is the active union field.
-                                let npm_ver = unsafe { res.value.npm.version };
+                                let npm_ver = res.npm().version;
                                 let buf = {
                                     let mut cursor: &mut [u8] = &mut temp_buf[..];
                                     let start_len = cursor.len();
@@ -934,7 +934,7 @@ impl Lockfile {
         }
 
         // SAFETY: tag checked == .catalog above; `catalog` is the active union field.
-        let catalog_name = unsafe { dep.version.value.catalog };
+        let catalog_name = *dep.version.catalog();
         let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
         Some(catalog_dep.version)
@@ -1552,7 +1552,7 @@ impl Lockfile {
                     };
 
                     // SAFETY: tag checked == .npm above; `npm` is the active union field.
-                    let npm_ver = unsafe { pkg_res.value.npm.version };
+                    let npm_ver = pkg_res.npm().version;
                     let Some(pkg) = manifest.find_by_version(npm_ver) else {
                         continue;
                     };
@@ -2058,7 +2058,7 @@ impl Lockfile {
         // borrow is sound; Zig's by-value copy is replaced with a `&Group`.
         let npm_version = match &version {
             // SAFETY: tag checked == .npm; `npm` is the active union field.
-            Some(v) if v.tag == dependency::Tag::Npm => Some(unsafe { &v.value.npm.version }),
+            Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
             _ => None,
         };
         let buf = self.buffers.string_bytes.as_slice();
@@ -2076,7 +2076,7 @@ impl Lockfile {
                 if resolutions[*id as usize].tag == ResolutionTag::Npm {
                     if let Some(npm_v) = npm_version {
                         // SAFETY: tag checked == .npm above; `npm` is the active union field.
-                        let res_ver = unsafe { resolutions[*id as usize].value.npm.version };
+                        let res_ver = resolutions[*id as usize].npm().version;
                         if npm_v.satisfies(res_ver, buf, buf) {
                             return Some(*id);
                         }
@@ -2096,7 +2096,7 @@ impl Lockfile {
                     if resolutions[id as usize].tag == ResolutionTag::Npm {
                         if let Some(npm_v) = npm_version {
                             // SAFETY: tag checked == .npm above; `npm` is the active union field.
-                            let res_ver = unsafe { resolutions[id as usize].value.npm.version };
+                            let res_ver = resolutions[id as usize].npm().version;
                             if npm_v.satisfies(res_ver, buf, buf) {
                                 return Some(id);
                             }
@@ -3029,7 +3029,7 @@ impl Lockfile {
                 // SAFETY: tag checked == .npm above; `npm` is the active
                 // `dependency::Value` union field. Same for `Resolution.value`
                 // below — Zig reads `.npm` unconditionally on this path.
-                let npm_group = unsafe { &version.value.npm.version };
+                let npm_group = &version.npm().version;
                 match entry {
                     PackageIndexEntry::Id(id) => {
                         let resolutions = self.packages.items_resolution();
@@ -3037,7 +3037,7 @@ impl Lockfile {
                         if cfg!(debug_assertions) {
                             debug_assert!((*id as usize) < resolutions.len());
                         }
-                        let res_ver = unsafe { resolutions[*id as usize].value.npm.version };
+                        let res_ver = resolutions[*id as usize].npm().version;
                         if npm_group.satisfies(res_ver, buf, buf) {
                             return Some(*id);
                         }
@@ -3049,7 +3049,7 @@ impl Lockfile {
                             if cfg!(debug_assertions) {
                                 debug_assert!((id as usize) < resolutions.len());
                             }
-                            let res_ver = unsafe { resolutions[id as usize].value.npm.version };
+                            let res_ver = resolutions[id as usize].npm().version;
                             if npm_group.satisfies(res_ver, buf, buf) {
                                 return Some(id);
                             }

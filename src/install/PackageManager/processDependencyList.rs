@@ -58,7 +58,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
         // `process_extracted_tarball_package`); both store a `Repository`.
-        let mut repo = unsafe { self.resolution.value.github };
+        let mut repo = *self.resolution.github();
         repo.resolved = builder.append::<SemverString>(self.resolved);
         Ok(ResolutionType::init(match self.resolution.tag {
             ResolutionTag::Git => TaggedValue::Git(repo),
@@ -302,7 +302,7 @@ impl PackageManager {
                     initialize_store();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run (mirrors Zig's non-optional `*logger.Log`).
-                    let log = unsafe { &mut *self.log };
+                    let log = self.log_mut();
                     let bump = bun_alloc::Arena::new();
                     let json_root = match json::parse_package_json_utf8(
                         package_json_source,

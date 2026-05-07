@@ -852,9 +852,9 @@ impl AsyncModule {
             // PORT NOTE: Zig peeks at the tagged-union via
             // `result.version.tag == .npm and
             // result.version.value.npm.version.isExact()`. The Rust
-            // `Version::npm()` accessor performs the tag guard and yields
-            // the `NpmInfo` (whose `.version` is the semver query group).
-            let npm = result.version.npm();
+            // `Version::try_npm()` performs the tag guard and yields the
+            // `NpmInfo` (whose `.version` is the semver query group).
+            let npm = result.version.try_npm();
             let prefix: &[u8] = if e == bun_core::err!("NoMatchingVersion")
                 && npm.map(|n| n.version.is_exact()).unwrap_or(false)
             {

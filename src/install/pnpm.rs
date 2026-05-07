@@ -659,7 +659,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             } else {
                 let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
                 // SAFETY: tag == Workspace for ids in [1, workspace_pkgs_end).
-                let ws = unsafe { workspace_res.value.workspace };
+                let ws = *workspace_res.workspace();
                 workspace_path_buf = ws.slice(string_bytes!(lockfile)).to_vec();
                 &workspace_path_buf
             };
@@ -744,7 +744,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     dependency::VersionTag::Symlink => {
                         // SAFETY: tag == Symlink → `value.symlink` active.
                         if !strings::is_npm_package_name(
-                            unsafe { dep.version.value.symlink }
+                            dep.version.symlink()
                                 .slice(string_bytes!(lockfile)),
                         ) {
                             log.add_warning_fmt(
@@ -894,11 +894,11 @@ pub fn migrate_pnpm_lockfile<'a>(
                             name.slice(string_bytes!(lockfile)),
                         ),
                         // SAFETY: tag == Npm → `value.npm` active.
-                        unsafe { res.value.npm }.version,
+                        res.npm().version,
                         string_bytes!(lockfile),
                     )?;
                     // SAFETY: tag == Npm.
-                    unsafe { &mut res.value.npm }.url = sbuf!(lockfile).append(url)?;
+                    res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 }
 
                 let mut pkg = lockfile::Package {
@@ -986,7 +986,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             // implicit workspace dependencies
             if dep.behavior.is_workspace() {
                 // SAFETY: tag == Workspace.
-                let ws = unsafe { dep.version.value.workspace };
+                let ws = *dep.version.workspace();
                 let workspace_path = ws.slice(string_buf);
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 path_buf.join(&[workspace_path]);
@@ -1048,7 +1048,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
         // SAFETY: tag == Workspace for ids in [workspace_pkgs_off, workspace_pkgs_end).
-        let ws = unsafe { workspace_res.value.workspace };
+        let ws = *workspace_res.workspace();
         let workspace_path = ws.slice(string_bytes!(lockfile));
 
         let Some(importer_versions) = importer_dep_res_versions.get(workspace_path) else {

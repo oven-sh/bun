@@ -412,7 +412,7 @@ pub mod entry {
                 crate::resolution::Tag::Folder => {
                     // SAFETY: tag was matched as Folder; reads the union field
                     // corresponding to that tag.
-                    let folder = unsafe { pkg_res.value.folder };
+                    let folder = *pkg_res.folder();
                     write!(
                         f,
                         "{}@file+{}",

@@ -813,8 +813,8 @@ pub fn install_isolated_packages(
 
                             // SAFETY: tag was checked == .Npm directly above for both
                             // `peer_dep.version` and `res`.
-                            let peer_dep_version = unsafe { &peer_dep.version.value.npm.version };
-                            let res_version = unsafe { &res.value.npm.version };
+                            let peer_dep_version = &peer_dep.version.npm().version;
+                            let res_version = &res.npm().version;
 
                             if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
                                 // TODO: add warning!
@@ -2208,27 +2208,27 @@ pub fn install_isolated_packages(
                         ResolutionTag::Npm => package_manager::cached_npm_package_folder_name(
                             manager,
                             pkg_name.slice(string_buf),
-                            unsafe { pkg_res.value.npm }.version,
+                            pkg_res.npm().version,
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
                             manager,
-                            unsafe { &pkg_res.value.git },
+                            pkg_res.git(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Github => package_manager::cached_github_folder_name(
                             manager,
-                            unsafe { &pkg_res.value.github },
+                            pkg_res.github(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
                             manager,
-                            unsafe { pkg_res.value.local_tarball },
+                            *pkg_res.local_tarball(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::RemoteTarball => package_manager::cached_tarball_folder_name(
                             manager,
-                            unsafe { pkg_res.value.remote_tarball },
+                            *pkg_res.remote_tarball(),
                             patch_info.contents_hash(),
                         ),
 
@@ -2295,8 +2295,8 @@ pub fn install_isolated_packages(
                                 dep_id,
                                 pkg_id,
                                 // SAFETY: pkg_res_tag == Npm guarantees `value.npm` is active.
-                                unsafe { pkg_res.value.npm }.version,
-                                unsafe { pkg_res.value.npm }.url.slice(string_buf),
+                                pkg_res.npm().version,
+                                pkg_res.npm().url.slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),
                             ) {
@@ -2336,7 +2336,7 @@ pub fn install_isolated_packages(
                         ResolutionTag::Github => {
                             // SAFETY: pkg_res_tag == Github; `git`/`github` arms share the
                             // same `Repository` layout (Zig also reads `.git` here).
-                            let url = manager.alloc_github_url(unsafe { &pkg_res.value.git });
+                            let url = manager.alloc_github_url(pkg_res.git());
                             // (Drop frees url)
                             match manager.enqueue_tarball_for_download(
                                 dep_id,
@@ -2382,7 +2382,7 @@ pub fn install_isolated_packages(
                                 dep_id,
                                 pkg_id,
                                 // SAFETY: pkg_res_tag == RemoteTarball.
-                                unsafe { pkg_res.value.remote_tarball }.slice(string_buf),
+                                pkg_res.remote_tarball().slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),
                             ) {

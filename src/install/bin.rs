@@ -413,6 +413,36 @@ impl Bin {
             value: Value::init_none(),
         }
     }
+
+    // ── Tag-checked union accessors ────────────────────────────────────────
+    // `Value` is a `Copy` POD union (largest member `ExternalStringList` is two
+    // `u32`s); reading the wrong variant is well-defined garbage. Tag is
+    // debug-asserted so misuse trips in debug; release matches Zig's unchecked
+    // field read. Accessors borrow (not copy) so callers can deref or project.
+    #[inline]
+    pub fn file(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::File);
+        // SAFETY: tag-guarded `Copy` union read.
+        unsafe { &*core::ptr::addr_of!(self.value.file) }
+    }
+    #[inline]
+    pub fn named_file(&self) -> &[String; 2] {
+        debug_assert_eq!(self.tag, Tag::NamedFile);
+        // SAFETY: tag-guarded `Copy` union read.
+        unsafe { &*core::ptr::addr_of!(self.value.named_file) }
+    }
+    #[inline]
+    pub fn dir(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::Dir);
+        // SAFETY: tag-guarded `Copy` union read.
+        unsafe { &*core::ptr::addr_of!(self.value.dir) }
+    }
+    #[inline]
+    pub fn map(&self) -> &ExternalStringList {
+        debug_assert_eq!(self.tag, Tag::Map);
+        // SAFETY: tag-guarded `Copy` union read.
+        unsafe { &*core::ptr::addr_of!(self.value.map) }
+    }
 }
 
 #[derive(core::marker::ConstParamTy, PartialEq, Eq)]
@@ -560,7 +590,7 @@ impl<'a> NamesIterator<'a> {
         }
         if self.dir_iterator.is_none() {
             // SAFETY: tag == Dir checked by caller
-            let dir_str = unsafe { self.bin.value.dir };
+            let dir_str = *self.bin.dir();
             let mut target = dir_str.slice(self.string_buffer);
             if strings::has_prefix(target, b"./") || strings::has_prefix(target, b".\\") {
                 target = &target[2..];
@@ -615,7 +645,7 @@ impl<'a> NamesIterator<'a> {
                 self.i += 1;
                 self.done = true;
                 // SAFETY: tag == NamedFile
-                let named = unsafe { self.bin.value.named_file };
+                let named = *self.bin.named_file();
                 let base = path::basename(named[0].slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
                     return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
@@ -626,7 +656,7 @@ impl<'a> NamesIterator<'a> {
             Tag::Dir => self.next_in_dir(),
             Tag::Map => {
                 // SAFETY: tag == Map
-                let map = unsafe { self.bin.value.map };
+                let map = *self.bin.map();
                 if self.i >= map.len as usize {
                     return Ok(None);
                 }

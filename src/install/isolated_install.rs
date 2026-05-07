@@ -194,18 +194,9 @@ impl<'a, 'b> Wait<'a, 'b> {
         // to the manager so the `&mut Installer` arg doesn't alias.
         let pkg_manager: *mut PackageManager = self.installer.manager;
         let log_level = unsafe { (*pkg_manager).options.log_level };
-        if let Err(err) = unsafe { &mut *pkg_manager }.run_tasks(
+        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
+            unsafe { &mut *pkg_manager },
             self.installer,
-            // TODO(port): Zig passed an anon struct of callbacks; modeled as a
-            // value-level `RunTasksCallbacks` struct (lib.rs).
-            RunTasksCallbacks {
-                on_extract: store::Installer::on_package_extracted,
-                on_resolve: (),
-                on_package_manifest_error: (),
-                on_package_download_error: store::Installer::on_package_download_error,
-                progress_bar: false,
-                manifests_only: false,
-            },
             true,
             log_level,
         ) {
@@ -247,7 +238,7 @@ pub fn install_isolated_packages(
     // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
-    let lockfile: *mut Lockfile = &mut manager.lockfile;
+    let lockfile: *mut Lockfile = &mut *manager.lockfile;
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
@@ -1187,7 +1178,7 @@ pub fn install_isolated_packages(
         };
     };
 
-    let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store {
+    let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
             let entries = store.entries.slice();
             // PORT NOTE: disjoint-column raw views (see above).
@@ -1979,7 +1970,7 @@ pub fn install_isolated_packages(
             supported_backend: std::sync::atomic::AtomicU8::new(PackageInstall::supported_method() as u8),
             // TODO(port): .init(PackageInstall.supported_method) — verify atomic enum init
             is_new_bun_modules,
-            global_store_path: global_store_path.as_deref().map(|b| {
+            global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_str::ZStr {
                 // SAFETY: `global_store_path` was built with a trailing NUL above.
                 unsafe { bun_str::ZStr::from_raw(b.as_ptr(), b.len() - 1) }
             }),
@@ -2129,7 +2120,7 @@ pub fn install_isolated_packages(
                         }
                     };
 
-                    let needs_install = manager.options.enable.force_install
+                    let needs_install = manager.options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and

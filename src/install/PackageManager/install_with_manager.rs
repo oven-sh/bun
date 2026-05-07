@@ -86,7 +86,7 @@ pub fn install_with_manager(
         lockfile::LoadResult::NotFound
     };
 
-    update_lockfile_if_needed(manager, load_result)?;
+    update_lockfile_if_needed(manager, &load_result)?;
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);

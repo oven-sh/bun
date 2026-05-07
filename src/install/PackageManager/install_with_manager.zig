@@ -646,9 +646,8 @@ pub fn installWithManager(
         manager.verifyResolutions(log_level);
 
         if (manager.options.enable.block_exotic_subdeps) {
-            if (try block_exotic_subdeps.enforceBlockExoticSubdeps(manager)) {
-                Global.exit(1);
-            }
+            const violations = try block_exotic_subdeps.enforceBlockExoticSubdeps(manager);
+            if (violations > 0) Global.exit(1);
         }
 
         if (manager.options.security_scanner != null) {

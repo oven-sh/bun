@@ -279,12 +279,22 @@ pub use resolve_path::{Platform, PlatformT, platform};
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place,
+    dirname_w,
+    is_drive_letter,
+    is_drive_letter_t,
+    is_sep_any,
+    is_sep_any_t,
     join_abs_string_buf_z,
     join_string_buf_wz,
     path_to_posix_buf,
     relative_to_common_path_buf,
     windows_volume_name_len,
 };
+// `bun.os_path_buffer_pool.get()` in Zig is a namespace call, not a value.
+// Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
+// resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
+// POSIX).
+pub use path_buffer_pool::os_path_buffer_pool;
 #[path = "Path.rs"] pub mod path;
 pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
 

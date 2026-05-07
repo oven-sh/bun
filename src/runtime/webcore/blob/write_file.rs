@@ -541,6 +541,7 @@ mod windows_impl {
     use bun_aio::{self as aio, KeepAlive};
     use bun_jsc::{ConcurrentTask, EventLoop, ManagedTask};
     use bun_sys::windows::libuv as uv;
+    use bun_sys::ReturnCodeExt as _;
 
     pub struct WriteFileWindows {
         pub io_request: uv::fs_t,
@@ -687,7 +688,7 @@ mod windows_impl {
             };
 
             // libuv always returns 0 when a callback is specified
-            if let Some(err) = rc.err_enum() {
+            if let Some(err) = rc.err_enum_e() {
                 debug_assert!(err != sys::E::NOENT);
 
                 return Err(self.throw(sys::Error {
@@ -733,7 +734,7 @@ mod windows_impl {
                 rc
             );
 
-            if let Some(err) = rc.err_enum() {
+            if let Some(err) = rc.err_enum_e() {
                 if err == sys::E::NOENT && this.mkdirp_if_not_exists {
                     // cleanup the request so we can reuse it later.
                     // SAFETY: req points to this.io_request (valid uv_fs_t); libuv permits cleanup

@@ -1821,6 +1821,11 @@ impl uv_stat_t {
     #[inline] pub fn mtime(&self) -> uv_timespec_t { self.mtim }
     #[inline] pub fn ctime(&self) -> uv_timespec_t { self.ctim }
     #[inline] pub fn birthtime(&self) -> uv_timespec_t { self.birthtim }
+    // Un-prefixed accessors so cross-platform code that pattern-matches on
+    // POSIX `stat.mode`/`stat.size` (Zig: `st.mode`, `st.size`) can call
+    // through without `cfg` arms.
+    #[inline] pub fn mode(&self) -> u64 { self.st_mode }
+    #[inline] pub fn size(&self) -> u64 { self.st_size }
 }
 
 #[repr(C)]
@@ -2106,6 +2111,10 @@ impl ReturnCode {
     /// `bun_sys::windows::translate_uv_error_to_e` (layering).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> { self.errno() }
+    /// Layer-free `< 0` check (Zig: `Maybe(void).isErr()` after `.toError`).
+    /// For the tagged `bun_sys::Error` use [`ReturnCodeExt::to_error`].
+    #[inline]
+    pub const fn is_err(self) -> bool { self.0 < 0 }
 }
 impl fmt::Debug for ReturnCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

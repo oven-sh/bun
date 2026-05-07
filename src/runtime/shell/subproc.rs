@@ -514,6 +514,7 @@ impl ShellSubprocess {
             windows: WindowsOptions {
                 hide_window: true,
                 loop_: event_loop,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1582,7 +1583,7 @@ impl CapturedWriter {
     pub fn r#loop(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            self.parent().event_loop.r#loop().uv_loop
+            self.parent().event_loop.uv_loop()
         }
         #[cfg(not(windows))]
         {
@@ -2127,7 +2128,7 @@ impl PipeReader {
     pub fn r#loop(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            self.event_loop.r#loop().uv_loop
+            self.event_loop.uv_loop()
         }
         #[cfg(not(windows))]
         {

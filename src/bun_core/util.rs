@@ -525,6 +525,9 @@ impl core::ops::Deref for WStr {
 impl core::ops::DerefMut for WStr {
     #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
 }
+impl AsRef<[u16]> for WStr {
+    #[inline] fn as_ref(&self) -> &[u16] { &self.0 }
+}
 
 /// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time
 /// ASCII→UTF-16LE widening for Windows path / API literals; mirrors Zig

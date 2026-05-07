@@ -221,8 +221,9 @@ impl<'a> ProcessHandle<'a> {
     pub fn loop_(&self) -> *mut bun_aio::Loop {
         #[cfg(windows)]
         {
-            // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-            return unsafe { (*(*self.state).event_loop).loop_.uv_loop };
+            // SAFETY: state backref valid; event_loop is the live MiniEventLoop
+            // singleton. Two derefs: MiniEventLoop → uws WindowsLoop → uv_loop.
+            return unsafe { (*(*(*self.state).event_loop).loop_).uv_loop };
         }
         #[cfg(not(windows))]
         {
@@ -932,7 +933,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&script.package_json_path).into(),
                 #[cfg(windows)]
-                windows: spawn::WindowsOptions { loop_: EventLoopHandle::init(event_loop) },
+                windows: spawn::WindowsOptions { loop_: EventLoopHandle::init_mini(event_loop), ..Default::default() },
                 stream: true,
                 ..Default::default()
                 // TODO(port): SpawnOptions remaining fields

@@ -2054,6 +2054,13 @@ fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
 
 pub mod sync {
     use super::*;
+    // `Options.windows` is `WindowsOptions` on Windows; surface it under the
+    // `…::process::sync` path (the Zig namespace shape). A `pub use super::…`
+    // re-export trips E0365 here because the `use super::*` glob has already
+    // bound the name privately and rustc treats the explicit re-export as
+    // re-exporting that private binding; a type alias sidesteps the conflict.
+    #[cfg(windows)]
+    pub type WindowsOptions = super::WindowsOptions;
 
     pub struct Options {
         pub stdin: SyncStdio,

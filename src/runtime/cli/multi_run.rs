@@ -1127,7 +1127,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init(event_loop),
+                    loop_: EventLoopHandle::init_mini(event_loop),
+                    ..Default::default()
                 },
                 stream: true,
                 ..Default::default()

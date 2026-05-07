@@ -389,6 +389,13 @@ pub mod kernel32 {
         pub fn GetFileSizeEx(hFile: HANDLE, lpFileSize: *mut LARGE_INTEGER) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
+        /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
+        pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `SetConsoleCtrlHandler` — install/uninstall a console ctrl handler.
+        pub fn SetConsoleCtrlHandler(
+            HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
+            Add: BOOL,
+        ) -> BOOL;
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves
     // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.
@@ -505,6 +512,23 @@ pub mod ws2_32 {
             res: *mut *mut addrinfo,
         ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
+        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
+        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
+    }
+
+    /// `WSADATA` (`winsock2.h`, 64-bit layout — `szDescription`/`szSystemStatus`
+    /// precede `iMaxSockets` on Win64). Only ever read back from `WSAStartup`;
+    /// callers zero-initialise and never project fields beyond `wVersion`.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSADATA {
+        pub wVersion: u16,
+        pub wHighVersion: u16,
+        pub szDescription: [u8; 257],
+        pub szSystemStatus: [u8; 129],
+        pub iMaxSockets: u16,
+        pub iMaxUdpDg: u16,
+        pub lpVendorInfo: *mut u8,
     }
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.

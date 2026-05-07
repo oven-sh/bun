@@ -378,7 +378,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ipc: ipc_fd,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(
+                loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         Some(unsafe { &mut *(env as *mut _) }),
                         None,
@@ -2167,7 +2167,7 @@ impl RunCommand {
             use_execve_on_macos: silent,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(
+                loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase

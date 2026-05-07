@@ -544,6 +544,26 @@ impl bun_core::output::ErrName for &Error {
 pub trait ReturnCodeExt: Sized {
     /// `Some(err)` (with `from_libuv = true`) when negative; `None` on success.
     fn to_error(self, syscall_tag: Tag) -> Option<Error>;
+    /// `Maybe(void)`-shape adapter: `Ok(())` on success, `Err` on negative rc.
+    /// Mirrors Zig's libuv wrappers (`Pipe.init` etc.) that hand back
+    /// `bun.sys.Maybe(void)` directly — `bun_libuv_sys` returns the raw
+    /// `ReturnCode` for layering, this trait promotes it.
+    #[inline]
+    fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
+        match self.to_error(syscall_tag) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    /// Alias for [`to_error`]; spelling used by call sites that mirror Zig's
+    /// `Maybe(void).asErr()`.
+    #[inline]
+    fn as_err(self, syscall_tag: Tag) -> Option<Error> { self.to_error(syscall_tag) }
+    /// Zig: `rc.errEnum()` — translate the negative libuv errno to `bun.sys.E`.
+    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
+    /// (layering: it can't name `E`); this overlay is what call sites that
+    /// mirror Zig's `req.result.errEnum()` actually want.
+    fn err_enum_e(self) -> Option<crate::E>;
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
@@ -551,11 +571,27 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
         Error::from_uv_rc(self, syscall_tag)
     }
+    #[inline]
+    fn err_enum_e(self) -> Option<crate::E> {
+        if self.int() < 0 {
+            Some(crate::windows::translate_uv_error_to_e(self.int()))
+        } else {
+            None
+        }
+    }
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
         Error::from_uv_rc64(self, syscall_tag)
+    }
+    #[inline]
+    fn err_enum_e(self) -> Option<crate::E> {
+        if self.int() < 0 {
+            Some(crate::windows::translate_uv_error_to_e(self.int() as core::ffi::c_int))
+        } else {
+            None
+        }
     }
 }

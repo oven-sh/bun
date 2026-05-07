@@ -26,6 +26,8 @@ use bun_uws as uws;
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 use super::frame;
 
@@ -203,7 +205,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // SAFETY: uv::Pipe is #[repr(C)] POD; all-zero is a valid value
             // (matches Zig `std.mem.zeroes(uv.Pipe)`).
             let mut pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
-            if let Err(e) = pipe.init(uv::Loop::get(), true).unwrap_result() {
+            if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name(),
@@ -211,7 +213,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 drop(pipe);
                 return false;
             }
-            if let Err(e) = pipe.open(fd).unwrap_result() {
+            if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
@@ -374,7 +376,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 self as *mut Self,
                 WindowsHandlers::<Owner>::on_write,
             )
-            .unwrap_result()
             .is_err()
         {
             self.backend.inflight.clear();
@@ -649,7 +650,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         if self_.done {
             return;
         }
-        if status.to_error(uv::SyscallTag::Write).is_some() {
+        if status.is_err() {
             self_.mark_done();
             return;
         }

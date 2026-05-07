@@ -338,6 +338,13 @@ pub mod posix {
     use super::SystemErrno;
     pub type mode_t = i32;
 
+    /// Zig: `std.posix.E` — alias to the platform errno enum so cross-platform
+    /// `posix::E::FOO` paths resolve on Windows too.
+    pub type E = super::E;
+    /// Zig: `std.posix.S` — file-mode bits. Re-export the local `s` module so
+    /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.
+    pub use super::s as S;
+
     pub const ACCES: i32 = SystemErrno::EACCES as i32;
     pub const AGAIN: i32 = SystemErrno::EAGAIN as i32;
     pub const BADF: i32 = SystemErrno::EBADF as i32;

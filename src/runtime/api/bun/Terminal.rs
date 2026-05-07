@@ -1805,7 +1805,7 @@ impl Terminal {
     pub fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            self.event_loop_handle.r#loop().uv_loop
+            self.event_loop_handle.uv_loop()
         }
         #[cfg(not(windows))]
         {
@@ -1941,7 +1941,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_uv::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.loop_().uv_loop }
+        unsafe { (*this).event_loop_handle.uv_loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_.

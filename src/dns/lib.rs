@@ -385,8 +385,12 @@ impl GetAddrInfoResult {
             return None;
         }
         Some(GetAddrInfoResult {
-            // SAFETY: ai_addr is non-null and points to a valid sockaddr per getaddrinfo contract
-            address: unsafe { Address::init_posix(sockaddr) },
+            // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
+            // getaddrinfo's contract. `.cast()` erases the nominal-type
+            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
+            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
+            // ws2def.h `SOCKADDR`.
+            address: unsafe { Address::init_posix(sockaddr.cast()) },
             // no TTL in POSIX getaddrinfo()
             ttl: 0,
         })

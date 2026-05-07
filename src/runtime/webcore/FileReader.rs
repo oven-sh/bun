@@ -280,7 +280,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
         #[cfg(windows)]
         {
-            ev.r#loop().uv_loop
+            ev.uv_loop()
         }
         #[cfg(not(windows))]
         {
@@ -317,7 +317,7 @@ impl FileReader {
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
         #[cfg(windows)]
         {
-            self.event_loop().r#loop().uv_loop
+            self.event_loop().uv_loop()
         }
         #[cfg(not(windows))]
         {

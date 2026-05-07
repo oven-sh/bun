@@ -612,6 +612,21 @@ impl EventLoopHandle {
         self.r#loop()
     }
 
+    /// Windows convenience: skip the `WindowsLoop` wrapper and return the
+    /// embedded `uv_loop_t*` directly. Exists because `loop_()` returns a raw
+    /// pointer and Rust forbids field access (`.uv_loop`) on `*mut T` without
+    /// an explicit deref — which would push every Windows call site into an
+    /// `unsafe` block just to project a field that is set once at loop
+    /// creation and never changes.
+    #[cfg(windows)]
+    #[inline]
+    pub fn uv_loop(self) -> *mut bun_aio::Loop {
+        // SAFETY: `r#loop()` returns the live us_loop allocated by
+        // `us_create_loop`; `uv_loop` is initialised in C before any Rust
+        // caller can observe the handle and is immutable thereafter.
+        unsafe { (*self.r#loop()).uv_loop }
+    }
+
     /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
     /// Zig `[]u8`). Same `Copy`-handle aliasing concern as [`file_polls`].
     pub fn pipe_read_buffer(self) -> *mut [u8] {

@@ -33,21 +33,36 @@ use bun_cares_sys::c_ares_draft as c_ares;
 use super::cares_jsc::error_to_deferred;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 
-// `sockaddr_storage` / `addrinfo` are absent from `libc` on Windows; route
-// through the libuv-sys ws2 mirror there. Layout is identical to the C side
-// (`ADDRINFOA` / 128-byte 8-aligned `sockaddr_storage`).
+// `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
+// the MSVC target; route through a single `netc` shim so call sites stay
+// target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
+// (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
-type SockaddrStorage = libc::sockaddr_storage;
+mod netc {
+    pub use libc::{
+        addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
+        AF_INET, AF_INET6, AF_UNSPEC, AI_ADDRCONFIG, EAI_NONAME, SOCK_STREAM,
+    };
+}
 #[cfg(windows)]
-type SockaddrStorage = bun_libuv_sys::sockaddr_storage;
-#[cfg(not(windows))]
-type AddrInfo = libc::addrinfo;
-#[cfg(windows)]
-type AddrInfo = bun_libuv_sys::addrinfo;
-#[cfg(not(windows))]
-type Sockaddr = libc::sockaddr;
-#[cfg(windows)]
-type Sockaddr = bun_libuv_sys::sockaddr;
+mod netc {
+    use core::ffi::c_int;
+    pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    pub const AF_UNSPEC: c_int = 0;
+    pub const AF_INET: c_int = 2;
+    pub const AF_INET6: c_int = 23;
+    pub const SOCK_STREAM: c_int = 1;
+    /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
+    /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
+    /// leave `ai_flags = 0` (matches dns.zig — `addrconfig = is_posix`).
+    pub const AI_ADDRCONFIG: c_int = 0x0000_0400;
+    /// `WSAHOST_NOT_FOUND` — value `getaddrinfo` returns on Windows for
+    /// EAI_NONAME (Zig: `std.os.windows.ws2_32.EAI_NONAME`).
+    pub const EAI_NONAME: c_int = 11001;
+}
+type SockaddrStorage = netc::sockaddr_storage;
+type AddrInfo = netc::addrinfo;
+type Sockaddr = netc::sockaddr;
 
 /// Platform `freeaddrinfo` for the [`AddrInfo`] alias above. On Windows the
 /// list comes from `ws2_32!getaddrinfo` (see `work_pool_callback`), so it must
@@ -2176,7 +2191,7 @@ pub mod internal {
     fn default_hints() -> AddrInfo {
         // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
         let mut h: AddrInfo = unsafe { core::mem::zeroed() };
-        h.ai_family = libc::AF_UNSPEC;
+        h.ai_family = netc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
         // https://bugzilla.mozilla.org/show_bug.cgi?id=467497
@@ -2185,20 +2200,20 @@ pub mod internal {
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
         #[cfg(unix)]
-        { h.ai_flags = libc::AI_ADDRCONFIG; }
-        h.ai_socktype = libc::SOCK_STREAM;
+        { h.ai_flags = netc::AI_ADDRCONFIG; }
+        h.ai_socktype = netc::SOCK_STREAM;
         h
     }
 
     pub fn get_hints() -> AddrInfo {
         let mut hints_copy = default_hints();
         if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get().unwrap_or(false) {
-            hints_copy.ai_flags &= !libc::AI_ADDRCONFIG;
+            hints_copy.ai_flags &= !netc::AI_ADDRCONFIG;
         }
         if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV6.get().unwrap_or(false) {
-            hints_copy.ai_family = libc::AF_INET;
+            hints_copy.ai_family = netc::AF_INET;
         } else if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV4.get().unwrap_or(false) {
-            hints_copy.ai_family = libc::AF_INET6;
+            hints_copy.ai_family = netc::AF_INET6;
         }
         hints_copy
     }
@@ -2299,12 +2314,12 @@ pub mod internal {
                 let entry = results[i].as_mut_ptr();
                 (*entry).info = *info_;
                 if !(*info_).ai_addr.is_null() {
-                    if (*info_).ai_family == libc::AF_INET {
-                        let addr_in = &mut (*entry).addr as *mut _ as *mut libc::sockaddr_in;
-                        *addr_in = *((*info_).ai_addr as *const libc::sockaddr_in);
-                    } else if (*info_).ai_family == libc::AF_INET6 {
-                        let addr_in = &mut (*entry).addr as *mut _ as *mut libc::sockaddr_in6;
-                        *addr_in = *((*info_).ai_addr as *const libc::sockaddr_in6);
+                    if (*info_).ai_family == netc::AF_INET {
+                        let addr_in = &mut (*entry).addr as *mut _ as *mut netc::sockaddr_in;
+                        *addr_in = *((*info_).ai_addr as *const netc::sockaddr_in);
+                    } else if (*info_).ai_family == netc::AF_INET6 {
+                        let addr_in = &mut (*entry).addr as *mut _ as *mut netc::sockaddr_in6;
+                        *addr_in = *((*info_).ai_addr as *const netc::sockaddr_in6);
                     }
                 } else {
                     // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
@@ -2319,13 +2334,13 @@ pub mod internal {
         let mut results: Box<[ResultEntry]> = unsafe { core::mem::transmute(results) };
 
         // sort (interleave ipv4 and ipv6)
-        let mut want = libc::AF_INET6 as usize;
+        let mut want = netc::AF_INET6 as usize;
         'outer: for idx in 0..count {
             if results[idx].info.ai_family as usize == want { continue; }
             for j in (idx + 1)..count {
                 if results[j].info.ai_family as usize == want {
                     results.swap(idx, j);
-                    want = if want == libc::AF_INET6 as usize { libc::AF_INET as usize } else { libc::AF_INET6 as usize };
+                    want = if want == netc::AF_INET6 as usize { netc::AF_INET as usize } else { netc::AF_INET6 as usize };
                 }
             }
             // PORT NOTE: Zig's inner `for ... else { break }` has no `break` in its body,
@@ -2429,8 +2444,8 @@ pub mod internal {
             let mut err = libc::getaddrinfo(host_ptr, service, &hints, &mut addrinfo);
 
             // optional fallback
-            if err == libc::EAI_NONAME && (hints.ai_flags & libc::AI_ADDRCONFIG) != 0 {
-                hints.ai_flags &= !libc::AI_ADDRCONFIG;
+            if err == netc::EAI_NONAME && (hints.ai_flags & netc::AI_ADDRCONFIG) != 0 {
+                hints.ai_flags &= !netc::AI_ADDRCONFIG;
                 (*req).can_retry_for_addrconfig = false;
                 err = libc::getaddrinfo(host_ptr, service, &hints, &mut addrinfo);
             }
@@ -2512,7 +2527,7 @@ pub mod internal {
         let status_int: c_int = status;
         'retry: {
             unsafe {
-                if status == libc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
+                if status == netc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
                     (*req).can_retry_for_addrconfig = false;
                     let mut service_buf = [0u8; U16_PORT_BUF_LEN];
                     let service: *const c_char = if (*req).key.port > 0 {
@@ -2533,7 +2548,7 @@ pub mod internal {
                     };
                     let mut machport: mach_port = 0;
                     let mut hints = get_hints();
-                    hints.ai_flags &= !libc::AI_ADDRCONFIG;
+                    hints.ai_flags &= !netc::AI_ADDRCONFIG;
 
                     let errno = getaddrinfo_async_start_(
                         &mut machport,
@@ -4110,7 +4125,7 @@ impl Resolver {
             let poll_entry = self.polls.get_or_put(fd);
             if !poll_entry.found_existing {
                 let poll = UvDnsPoll::new(self, fd);
-                if unsafe { uv::uv_poll_init_socket(Loop::get().uv_loop, &mut (*poll).poll, fd as _) } < 0 {
+                if unsafe { uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*poll).poll, fd as _) } < 0 {
                     UvDnsPoll::destroy(poll);
                     let _ = self.polls.swap_remove(&fd);
                     return;
@@ -4621,7 +4636,7 @@ impl Resolver {
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size]).to_js(global_this)?)?;
-            } else if family == libc::AF_INET6 {
+            } else if family == netc::AF_INET6 {
                 buf[0] = b'[';
                 buf[size] = b']';
                 use std::io::Write;
@@ -4786,7 +4801,7 @@ impl Resolver {
             let _ = strings::copy(&mut address_buffer, &address_slice);
             address_buffer[address_slice.len()] = 0;
 
-            let af: c_int = if family == 4 { libc::AF_INET } else { libc::AF_INET6 };
+            let af: c_int = if family == 4 { netc::AF_INET } else { netc::AF_INET6 };
 
             // SAFETY: all-zero is a valid `struct_ares_addr_port_node` (POD: ptr, ints,
             // and the in_addr/in6_addr union). Public fields written below; the private

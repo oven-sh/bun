@@ -47,6 +47,8 @@ use bun_str::{strings, ZigString, ZStr};
 use bun_sys::c;
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv};
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
@@ -1125,10 +1127,10 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             // Compute the CIDR suffix; returns null if the netmask cannot
             //  be converted to a CIDR suffix
             // SAFETY: union read tagged by family
-            let family = unsafe { iface.address.address4.family } as c_int;
+            let family = unsafe { iface.address.address4.sin_family } as c_int;
             let maybe_suffix: Option<u8> = match family {
-                bun_sys::posix::AF::INET => netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.addr }),
-                bun_sys::posix::AF::INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe { iface.netmask.netmask6.addr })),
+                bun_sys::posix::AF::INET => netmask_to_cidr_suffix(u32::from_ne_bytes(unsafe { iface.netmask.netmask4.sin_addr })),
+                bun_sys::posix::AF::INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe { iface.netmask.netmask6.sin6_addr })),
                 _ => None,
             };
 
@@ -1175,7 +1177,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
         }
         // family
         // SAFETY: union read tagged by family
-        let family = unsafe { iface.address.address4.family } as c_int;
+        let family = unsafe { iface.address.address4.sin_family } as c_int;
         interface.put(global_this, b"family", match family {
             bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
             bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
@@ -1209,7 +1211,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
         // scopeid
         if family == bun_sys::posix::AF::INET6 {
             // SAFETY: union read; family == INET6
-            interface.put(global_this, b"scopeid", JSValue::js_number(unsafe { iface.address.address6.scope_id } as f64));
+            interface.put(global_this, b"scopeid", JSValue::js_number(unsafe { iface.address.address6.sin6_scope_id } as f64));
         }
 
         // Does this entry already exist?

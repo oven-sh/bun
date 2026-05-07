@@ -987,6 +987,26 @@ impl bun_io::pipe_writer::PosixBufferedWriterParent for IOWriter {
 }
 
 #[cfg(windows)]
+impl bun_io::pipe_writer::WindowsWriterParent for IOWriter {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+        // SAFETY: BACKREF set via set_parent; shared-only read of `evtloop`.
+        // `EventLoopHandle::loop_()` returns the uws `WindowsLoop*`, which owns
+        // the libuv loop via its `uv_loop` field.
+        unsafe { (*(*this).evtloop().loop_()).uv_loop }
+    }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: `this` is the `Arc::as_ptr` stashed via `writer.set_parent`;
+        // bump the shared count to balance the `deref` the BufferedWriter
+        // issues after an async write completes.
+        unsafe { std::sync::Arc::increment_strong_count(this as *const Self) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see ref_. May drop the last strong ref.
+        unsafe { std::sync::Arc::decrement_strong_count(this as *const Self) };
+    }
+}
+
+#[cfg(windows)]
 impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
     unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
         // SAFETY: BACKREF set via set_parent; re-enter via `&self` (UnsafeCell model).
@@ -996,6 +1016,7 @@ impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
         // SAFETY: see on_write.
         unsafe { (*this).on_error(err) };
     }
+    const HAS_ON_CLOSE: bool = true;
     unsafe fn on_close(this: *mut Self) {
         // SAFETY: see on_write.
         unsafe { (*this).on_close() };
@@ -1004,10 +1025,7 @@ impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
         // SAFETY: see on_write.
         unsafe { (*this).get_buffer() }
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write.
-        unsafe { (*this).io_evtloop() }
-    }
+    const HAS_ON_WRITABLE: bool = false;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

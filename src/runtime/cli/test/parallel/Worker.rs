@@ -203,7 +203,7 @@ impl Worker {
                 stderr: Stdio::Buffer(Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
                 extra_fds: &mut this.extra_fd_stdio,
                 cwd: coord.cwd,
-                windows: spawn::WindowsOptions { loop_: jsc::EventLoopHandle::init(coord.vm) },
+                windows: spawn::WindowsOptions { loop_: jsc::EventLoopHandle::init(coord.vm), ..Default::default() },
                 stream: true,
                 ..Default::default()
             };

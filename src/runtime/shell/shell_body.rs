@@ -443,8 +443,9 @@ impl<'a> GlobalMini<'a> {
         // Spec shell.zig GlobalMini.platformEventLoop → MiniVM.platformEventLoop:
         //   posix: `mini.loop`; windows: `mini.loop.uv_loop`.
         #[cfg(windows)]
-        // SAFETY: `loop_` is the live C-owned uws loop; uv_loop is its embedded libuv loop.
-        unsafe { return &*(*self.mini.loop_).uv_loop(); }
+        // SAFETY: `loop_` is the live C-owned uws loop; `uv_loop` is its
+        // embedded libuv loop, set once by `us_create_loop` and immutable.
+        unsafe { return &*(*self.mini.loop_).uv_loop; }
         #[cfg(not(windows))]
         // SAFETY: `loop_` is set in MiniEventLoop::init() and outlives 'a.
         unsafe { &*self.mini.loop_ }

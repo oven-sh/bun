@@ -97,6 +97,29 @@ pub type JsHostFunctionTypeWithContext<C> =
 pub type JsHostFunctionTypeWithContext<C> =
     unsafe extern "C" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
+/// Expand to the JSC host-function ABI string for the current target. Rust
+/// forbids macros in `extern "<abi>"` position, but *does* accept them as the
+/// whole `extern` token sequence inside an item — so callers spell:
+///
+/// ```ignore
+/// bun_jsc::jsc_host_abi! {
+///     unsafe fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue { … }
+/// }
+/// ```
+///
+/// and get `extern "sysv64"` on Windows-x64, `extern "C"` elsewhere. Use this
+/// for inline thunks that can't carry the `#[bun_jsc::host_call]` proc-macro
+/// (e.g. inside `macro_rules!` expansions).
+#[macro_export]
+macro_rules! jsc_host_abi {
+    ($(#[$m:meta])* $vis:vis unsafe fn $name:ident($($args:tt)*) -> $ret:ty $body:block) => {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        $(#[$m])* $vis unsafe extern "sysv64" fn $name($($args)*) -> $ret $body
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        $(#[$m])* $vis unsafe extern "C" fn $name($($args)*) -> $ret $body
+    };
+}
+
 // Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
 // PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the
 // crate-root re-export in lib.rs) use the Zig spelling that both must resolve.

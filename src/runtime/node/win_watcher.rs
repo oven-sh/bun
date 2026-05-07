@@ -14,6 +14,7 @@ use bun_paths::PathBuffer;
 use bun_str::{self as strings, String as BunString, ZStr};
 use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
+use bun_sys::ReturnCodeExt as _;
 
 use super::path_watcher::EventType;
 // TODO(port): confirm exact module path for the node fs.Watcher (Zig: `bun.jsc.Node.fs.Watcher`).

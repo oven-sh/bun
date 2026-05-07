@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_io::{self, WriteResult, WriteStatus};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult, Strong, Task};
 use crate::webcore::{self, streams, AutoFlusher, Blob, PathOrFileDescriptor};
@@ -196,23 +198,26 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for FileSink {
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: BACKREF set via set_parent; unique access for callback duration.
-        FileSink::on_close(unsafe { &mut *this })
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+        // SAFETY: BACKREF set via set_parent; shared-only read of
+        // `event_loop_handle`.
+        unsafe { (*this).event_loop_handle.uv_loop() }
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_close.
-        unsafe { (*this).io_evtloop() }
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_. Intrusive single-thread refcount bump.
+        unsafe { &*this }.ref_()
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: see on_close.
-        unsafe { (*this).event_loop_handle.loop_().uv_loop }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_. May free `this`.
+        unsafe { FileSink::deref(this) }
     }
 }
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for FileSink {
-    const HAS_ON_READY: bool = true;
+    // Zig: `onReady = FileSink.onReady` — the Windows StreamingWriter calls this
+    // hook `onWritable`; map FileSink's `on_ready` onto it.
+    const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: BACKREF set via set_parent; unique access for callback duration.
         FileSink::on_write(unsafe { &mut *this }, amount, status)
@@ -221,9 +226,13 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for FileSink {
         // SAFETY: see on_write.
         FileSink::on_error(unsafe { &mut *this }, err)
     }
-    unsafe fn on_ready(this: *mut Self) {
+    unsafe fn on_writable(this: *mut Self) {
         // SAFETY: see on_write.
         FileSink::on_ready(unsafe { &mut *this })
+    }
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        FileSink::on_close(unsafe { &mut *this })
     }
 }
 
@@ -655,7 +664,7 @@ impl FileSink {
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
         #[cfg(windows)]
         {
-            self.event_loop_handle.r#loop().uv_loop
+            self.event_loop_handle.uv_loop()
         }
         #[cfg(not(windows))]
         {

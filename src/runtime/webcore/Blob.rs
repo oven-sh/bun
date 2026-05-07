@@ -1369,6 +1369,8 @@ impl BlobExt for Blob {
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe { (*sink).writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)) };
 
+                #[cfg(windows)]
+                use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start_sync(fd, false) } {
@@ -5480,6 +5482,17 @@ pub extern "C" fn Blob__fromMmapWithType(
 
 
 
+/// `stat.{st_mtime, st_mtime_nsec}` → JS epoch ms. `bun_sys::Stat` is
+/// `libc::stat` on POSIX (fields) and `uv_stat_t` on Windows (`mtim` timespec);
+/// cfg-split here so the call sites stay shared.
+#[inline]
+fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
+    #[cfg(not(windows))]
+    { jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize) }
+    #[cfg(windows)]
+    { jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize) }
+}
+
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &StoreRef) {
     // SAFETY: `StoreRef::as_ptr()` yields the original `Box::into_raw` pointer; the
@@ -5497,7 +5510,7 @@ fn resolve_file_stat(store: &StoreRef) {
                     };
                     file.mode = stat.st_mode as bun_sys::Mode;
                     file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize);
+                    file.last_modified = stat_to_js_mtime(&stat);
                 }
                 // the file may not exist yet. That's okay.
                 _ => {}
@@ -5513,7 +5526,7 @@ fn resolve_file_stat(store: &StoreRef) {
                     };
                     file.mode = stat.st_mode as bun_sys::Mode;
                     file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize);
+                    file.last_modified = stat_to_js_mtime(&stat);
                 }
                 _ => {}
             }

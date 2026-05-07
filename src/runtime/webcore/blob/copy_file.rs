@@ -17,6 +17,8 @@ use crate::node::types::PathLikeExt as _;
 use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
@@ -1616,7 +1618,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = unsafe { (*req).result };
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum() {
+    if let Some(errno) = rc.err_enum_e() {
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
             // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
             unsafe { (*req).deinit() };
@@ -1650,7 +1652,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     }
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `statbuf` for a successful uv_fs_copyfile.
-    let size = unsafe { (*req).statbuf.size };
+    let size = unsafe { (*req).statbuf.size() };
     this.on_complete(size);
 }
 
@@ -1670,7 +1672,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
     let rc = unsafe { (*req).result };
-    if let Some(errno) = rc.err_enum() {
+    if let Some(errno) = rc.err_enum_e() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {

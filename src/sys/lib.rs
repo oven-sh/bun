@@ -1010,7 +1010,7 @@ pub fn last_errno() -> i32 {
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
 #[cfg(windows)]
-#[inline] fn last_errno() -> i32 {
+#[inline] pub fn last_errno() -> i32 {
     // Zig: `std.c._errno().*` (sys.zig). The Windows CRT exposes the
     // thread-local errno via `_errno()`; libuv-backed paths that need the
     // Win32 `GetLastError()` go through `bun_sys::windows::get_last_errno`
@@ -3473,6 +3473,18 @@ pub mod c {
         unsafe extern "C" { fn _errno() -> *mut c_int; }
         unsafe { _errno() }
     }
+    // Win32 file APIs frequently spelled `bun.C.*` in Zig (windows.zig flattens
+    // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
+    // reaches via `sys::c::*` so the call sites stay target-neutral.
+    #[cfg(windows)]
+    pub use crate::windows::{
+        CopyFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        INVALID_FILE_ATTRIBUTES,
+    };
+    #[cfg(windows)]
+    pub use bun_windows_sys::kernel32::{
+        FlushFileBuffers, GetFileAttributesW, SetConsoleCtrlHandler,
+    };
 
     /// `bun.c.kevent` — raw BSD kqueue event syscall (Darwin/FreeBSD only).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -5085,6 +5097,40 @@ pub mod posix {
     use core::ffi::{c_int, c_void};
     pub use bun_errno::posix::*;
 
+    // ── address families (Zig: `std.posix.AF`) ──
+    // `libc` does not expose `AF_*` on `x86_64-pc-windows-msvc`; route through
+    // ws2def.h values there. INET6 is *not* portable (10 on Linux, 30 on
+    // Darwin/BSD, 23 on Windows) — keep the `libc` symbol on POSIX.
+    pub mod AF {
+        use core::ffi::c_int;
+        #[cfg(windows)] pub const UNSPEC: c_int = 0;
+        #[cfg(windows)] pub const UNIX:   c_int = 1;
+        #[cfg(windows)] pub const INET:   c_int = 2;
+        #[cfg(windows)] pub const INET6:  c_int = 23;
+        #[cfg(unix)]    pub const UNSPEC: c_int = libc::AF_UNSPEC;
+        #[cfg(unix)]    pub const UNIX:   c_int = libc::AF_UNIX;
+        #[cfg(unix)]    pub const INET:   c_int = libc::AF_INET;
+        #[cfg(unix)]    pub const INET6:  c_int = libc::AF_INET6;
+    }
+
+    // ── sockaddr family (Zig: `std.posix.sockaddr`) ──
+    #[cfg(unix)]
+    pub use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    // Route through `bun_libuv_sys` (not `bun_windows_sys::ws2_32`) so types
+    // returned by libuv APIs (`uv_interface_address_t`, `uv_udp_*`) are the
+    // *same* nominal type callers see via `bun_sys::posix::sockaddr_*` — Rust
+    // doesn't structurally unify two identical-layout `#[repr(C)]` structs.
+    #[cfg(windows)]
+    pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+
+    // ── access(2) mode bits (Zig: `std.posix.F_OK` etc.) ──
+    // POSIX-standard values; libuv re-uses the same numbers on Windows
+    // (`uv/win.h`), so these are target-invariant.
+    pub const F_OK: c_int = 0;
+    pub const R_OK: c_int = 4;
+    pub const W_OK: c_int = 2;
+    pub const X_OK: c_int = 1;
+
     // ── stat mode-kind tests (Zig: `std.posix.S.ISLNK` etc.) ──
     #[cfg(unix)]
     #[inline] pub const fn s_islnk(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFLNK }
@@ -5227,7 +5273,11 @@ pub mod net {
     }
     #[cfg(windows)]
     mod sock {
-        pub use bun_windows_sys::ws2_32::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, AF_INET, AF_INET6};
+        // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
+        // so `Address::init_posix` accepts pointers callers cast through that
+        // path. AF_* values come from ws2def.h.
+        pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+        pub use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
     }
     use sock::*;
 
@@ -5285,7 +5335,13 @@ pub mod net {
                 AF_INET => {
                     // SAFETY: family checked.
                     let v4 = unsafe { &*(self.as_sockaddr().cast::<sockaddr_in>()) };
-                    let octets = v4.sin_addr.s_addr.to_ne_bytes();
+                    // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
+                    // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
+                    // raw octets so both shapes resolve.
+                    // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+                    let octets: [u8; 4] = unsafe {
+                        *(core::ptr::addr_of!(v4.sin_addr) as *const [u8; 4])
+                    };
                     write!(f, "{}.{}.{}.{}:{}", octets[0], octets[1], octets[2], octets[3], u16::from_be(v4.sin_port))
                 }
                 _ => write!(f, "<addr family={}>", self.family()),

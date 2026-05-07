@@ -18,7 +18,7 @@ use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;
 use crate::bun_json::JsonExprView as _;
-use crate::dependency::{self, Dependency};
+use crate::dependency::{self, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};

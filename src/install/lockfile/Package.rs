@@ -1871,7 +1871,10 @@ impl Package<u64> {
                     dependency_version.value.workspace = path;
                 } else {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
-                    let workspace = unsafe { dependency_version.value.workspace }.slice(buf);
+                    // Bind the (Copy) union field first so `slice()`'s `&self`
+                    // borrow has a named place to point at.
+                    let workspace_str = unsafe { dependency_version.value.workspace };
+                    let workspace = workspace_str.slice(buf);
                     let path = string_builder.append::<String>(if workspace == b"*" {
                         b"*"
                     } else {

@@ -44,7 +44,6 @@ pub use bun_install_types::resolver_hooks::{
     Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag as Tag,
     DependencyVersionValue as Value, NpmInfo, TagInfo, TarballInfo, URI,
 };
-pub use crate::Features;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]

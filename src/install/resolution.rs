@@ -12,7 +12,7 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 use bun_string::strings;
 
-use crate::dependency::{self, Dependency};
+use crate::dependency;
 use crate::repository::{Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 
@@ -151,7 +151,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 Repository::parse_append_github(res_str, string_buf)?,
             ))),
             dependency::VersionTag::Tarball => {
-                if Dependency::is_remote_tarball(res_str) {
+                if dependency::is_remote_tarball(res_str) {
                     return Ok(Self::init(TaggedValue::RemoteTarball(
                         string_buf.append(res_str)?,
                     )));
@@ -264,7 +264,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 Repository::parse_append_github(res_str, string_buf)?,
             ))),
             dependency::VersionTag::Tarball => {
-                if Dependency::is_remote_tarball(res_str) {
+                if dependency::is_remote_tarball(res_str) {
                     return Ok(Resolution::init(TaggedValue::RemoteTarball(
                         string_buf.append(res_str)?,
                     )));

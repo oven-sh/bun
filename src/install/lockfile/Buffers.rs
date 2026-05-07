@@ -157,17 +157,19 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     Ok(misaligned.to_vec())
 }
 
-pub fn write_array<S, W, T>(
+pub fn write_array<S, T>(
     stream: &mut S,
-    writer: &mut W,
     array: &[T],
     type_name: &'static str,
     size: usize,
     align: usize,
 ) -> Result<(), bun_core::Error>
 where
-    S: lockfile::PositionalStream,
-    W: bun_io::Write,
+    // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over the
+    // same buffer. Two `&mut` to one object is UB in Rust regardless of access
+    // order, so the port collapses both roles onto one type — `StreamType` impls
+    // both `PositionalStream` (get_pos/pwrite) and `bun_io::Write` (append).
+    S: lockfile::PositionalStream + bun_io::Write,
     // TODO(port): narrow error set
 {
     // TODO(port): comptime `assertNoUninitializedPadding(@TypeOf(array))` — needs
@@ -184,8 +186,8 @@ where
     };
 
     let start_pos = stream.get_pos()?;
-    writer.write_int_le::<u64>(0xDEAD_BEEF)?;
-    writer.write_int_le::<u64>(0xDEAD_BEEF)?;
+    stream.write_int_le::<u64>(0xDEAD_BEEF)?;
+    stream.write_int_le::<u64>(0xDEAD_BEEF)?;
 
     // PORT NOTE: Zig built this with `std.fmt.comptimePrint` over
     // `@typeName/@sizeOf/@alignOf(std.meta.Child(ArrayList))`. `@typeName` has no
@@ -196,13 +198,14 @@ where
     // for migration compat (call sites currently pass Rust-spelled names).
     let prefix = format!("\n<{}> {} sizeof, {} alignof\n", type_name, size, align);
     // PERF(port): was `comptimePrint` (zero-cost &'static str) — profile in Phase B
-    writer.write_all(prefix.as_bytes())?;
+    stream.write_all(prefix.as_bytes())?;
 
     if !bytes.is_empty() {
-        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, writer, stream.get_pos()? as u64)?;
+        let pos = stream.get_pos()? as u64;
+        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, &mut *stream, pos)?;
 
         let real_start_pos = stream.get_pos()? as u64;
-        writer.write_all(bytes)?;
+        stream.write_all(bytes)?;
         let real_end_pos = stream.get_pos()? as u64;
         let positioned: [u64; 2] = [real_start_pos, real_end_pos];
         // SAFETY: `[u64; 2]` is POD; viewing as 16 bytes matches `std.mem.asBytes`.
@@ -226,15 +229,15 @@ where
     Ok(())
 }
 
-pub fn save<S, W>(
+pub fn save<S>(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
     stream: &mut S,
-    writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
-    S: lockfile::PositionalStream,
-    W: bun_io::Write,
+    // PORT NOTE: see `write_array` — Zig's separate stream/writer aliased one
+    // buffer; collapsed to a single bound to avoid two `&mut` to the same object.
+    S: lockfile::PositionalStream + bun_io::Write,
 {
     let buffers = &lockfile.buffers;
 
@@ -260,7 +263,6 @@ where
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             write_array(
                 stream,
-                writer,
                 clone.as_slice(),
                 // TODO(port): @typeName parity — Zig emits fully-qualified name
                 stringify!($elem),
@@ -359,7 +361,6 @@ where
 
         write_array(
             stream,
-            writer,
             to_clone.as_slice(),
             // TODO(port): @typeName parity — Zig emits fully-qualified name
             "Dependency.External",

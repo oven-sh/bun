@@ -3075,7 +3075,7 @@ pub mod serializer {
         writer.write_int_le::<u64>(0)?;
 
         // TODO(port): Aligner.write needs the bytes-pointer alignment type.
-        let _ = Aligner::write::<*mut u8, _>(writer, stream.get_pos()?)?;
+        let _ = Aligner::write::<*mut u8, _>(writer, stream.get_pos()? as u64)?;
 
         let really_begin_at = stream.get_pos()?;
         let sliced = list.slice();
@@ -3140,11 +3140,16 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    pub fn load<SemverIntType: VersionInt>(
+    // PORT NOTE: Zig parameterised on `SemverIntType`, but the v2-migration arm
+    // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
+    // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
+    // instead of carrying a phantom generic that can't typecheck the migrate arm.
+    pub fn load(
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
-    ) -> Result<PackagesLoadResult<SemverIntType>, bun_core::Error> {
+    ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
+        type SemverIntType = u64;
         // TODO(port): narrow error set
         let mut reader = stream.reader();
 

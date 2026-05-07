@@ -83,7 +83,7 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
     // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
     // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(unsafe { (*global.bun_vm()).main })
+    str.eql_utf8(unsafe { (*global.bun_vm()).main() })
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,

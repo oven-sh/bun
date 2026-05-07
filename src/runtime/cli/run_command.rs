@@ -737,13 +737,10 @@ impl RunCommand {
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
         // TODO(port): `VirtualMachine::main` is still `&'static [u8]`; it should
         // be `Box<[u8]>` so ownership transfers (PORTING.md §Forbidden patterns).
-        // Until that field is retyped (out of this file's scope), park the bytes
-        // in the process-lifetime `runner_arena()` instead of `Box::leak`
-        // (PORTING.md §Forbidden bars per-call `Box::leak`). The arena is never
-        // reset and the process exits via `globalExit`/`exit(1)`, matching Zig's
+        // `vm.main` is a BACKREF (`*const [u8]`); `entry_path: Box<[u8]>` is
+        // process-lifetime here (the runner never returns), matching Zig's
         // `allocator.dupe` + no-free.
-        let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(&entry_path);
-        vm.main = entry_path;
+        vm.set_main(&entry_path);
 
         // ctx → transpiler/resolver option mapping (bun.js.zig:110-170).
         // TODO(port): `serve_plugins`/`bunfig_path`/`macros` map shapes still

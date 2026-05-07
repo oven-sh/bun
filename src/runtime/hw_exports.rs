@@ -230,32 +230,53 @@ pub extern "C" fn Bun__SSLContextCache__getOrCreateOpts(
 }
 
 /// `SSLConfig::fromJS` — parse a JS TLS-options object into the runtime
-/// `SSLConfig`. Returns `false` on JS exception (already thrown).
+/// `SSLConfig`. Returns a heap-allocated `SSLConfig` (ownership transfers to
+/// the caller — released via [`Bun__SSLConfig__free`]), or null on `None` /
+/// JS exception (caller distinguishes via `has_exception()`).
+///
+/// LAYERING: `bun_sql_jsc` cannot name `crate::socket::SSLConfig` (cycle), so
+/// it holds the result as an opaque `*mut c_void` and reads scalar fields via
+/// [`Bun__SSLConfig__serverName`] / [`Bun__SSLConfig__rejectUnauthorized`].
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__SSLConfig__fromJS(
     global: *mut JSGlobalObject,
     value: JSValue,
-    out: *mut c_void,
-) -> bool {
-    // SAFETY: `global` is the live per-thread global; `out` is a caller stack
-    // `SSLConfig` (sql_jsc passes `&mut SSLConfig as *mut c_void`).
+) -> *mut c_void {
+    // SAFETY: `global` is the live per-thread global.
     let global = unsafe { &*global };
     match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value) {
-        Ok(Some(cfg)) => {
-            // SAFETY: `out` is a caller stack `crate::socket::SSLConfig` slot;
-            // the previous value is the zeroed default (no Drop side-effects).
-            unsafe { (out as *mut crate::socket::SSLConfig).write(cfg) };
-            true
-        }
-        // `None` → no TLS config present; caller distinguishes via
-        // `has_exception()` for the throw path.
-        Ok(None) => false,
+        Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)) as *mut c_void,
+        Ok(None) => core::ptr::null_mut(),
         Err(bun_jsc::JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory();
-            false
+            core::ptr::null_mut()
         }
-        Err(_) => false,
+        Err(_) => core::ptr::null_mut(),
     }
+}
+
+/// Drop a `Bun__SSLConfig__fromJS`-allocated `SSLConfig`. No-op on null.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLConfig__free(this: *mut c_void) {
+    if this.is_null() { return; }
+    // SAFETY: `this` was produced by `Box::into_raw` in `Bun__SSLConfig__fromJS`.
+    drop(unsafe { Box::from_raw(this as *mut crate::socket::SSLConfig) });
+}
+
+/// `SSLConfig.server_name` — borrow the SNI C-string (null if unset). The
+/// returned pointer is valid until `Bun__SSLConfig__free(this)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLConfig__serverName(this: *const c_void) -> *const core::ffi::c_char {
+    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`.
+    let this = unsafe { &*(this as *const crate::socket::SSLConfig) };
+    this.server_name.as_deref().map_or(core::ptr::null(), |s| s.as_ptr())
+}
+
+/// `SSLConfig.reject_unauthorized` (0/1).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SSLConfig__rejectUnauthorized(this: *const c_void) -> i32 {
+    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`.
+    unsafe { (*(this as *const crate::socket::SSLConfig)).reject_unauthorized }
 }
 
 /// `SSLConfig::asUSockets` — project the runtime `SSLConfig` to the C-ABI
@@ -265,8 +286,8 @@ pub extern "C" fn Bun__SSLConfig__asUSocketsClient(
     this: *const c_void,
     out: *mut bun_uws::SocketContext::BunSocketContextOptions,
 ) {
-    // SAFETY: `this` is a live `SSLConfig` (sql_jsc stack local); `out` is a
-    // caller stack out-param.
+    // SAFETY: `this` is a live boxed `SSLConfig` from `Bun__SSLConfig__fromJS`;
+    // `out` is a caller stack out-param.
     let this = unsafe { &*(this as *const crate::socket::SSLConfig) };
     unsafe { *out = this.as_usockets_for_client_verification() };
 }

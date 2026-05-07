@@ -881,16 +881,16 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     'use_resolved_path: {
         if vm.main_resolved_path.is_empty() {
             // If it's from eval, don't try to resolve it.
-            if strings::ends_with(vm.main, b"[eval]") {
+            if strings::ends_with(vm.main(), b"[eval]") {
                 break 'use_resolved_path;
             }
-            if strings::ends_with(vm.main, b"[stdin]") {
+            if strings::ends_with(vm.main(), b"[stdin]") {
                 break 'use_resolved_path;
             }
 
             let Ok(fd) = sys::openat_a(
                 if cfg!(windows) { Fd::INVALID } else { Fd::cwd() },
-                vm.main,
+                vm.main(),
                 // Open with the minimum permissions necessary for resolving the file path.
                 if cfg!(target_os = "linux") {
                     sys::O::PATH
@@ -933,7 +933,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .unwrap_or(JSValue::ZERO);
     }
 
-    ZigString::init(vm.main).to_js(global_this)
+    ZigString::init(vm.main()).to_js(global_this)
 }
 
 pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {

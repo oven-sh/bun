@@ -160,6 +160,41 @@ impl SystemError {
     }
 }
 
+/// `uws.us_bun_verify_error_t.toJS` — wrap a uSockets handshake-verify error
+/// (`{code,reason}` C strings) as a JS `SystemError`.
+///
+/// LAYERING: lives here (not `bun_runtime::socket::uws_jsc`) so both
+/// `bun_runtime` and `bun_sql_jsc` import the single canonical body — both
+/// crates already depend on `bun_jsc` + `bun_uws`, and the body touches
+/// nothing higher-tier. Spec: `src/runtime/socket/uws_jsc.zig`.
+pub fn verify_error_to_js(
+    err: &bun_uws::us_bun_verify_error_t,
+    global: &JSGlobalObject,
+) -> crate::JsResult<JSValue> {
+    let code: &[u8] = if err.code.is_null() {
+        b""
+    } else {
+        // SAFETY: non-null `code` is a NUL-terminated C string owned by
+        // uSockets for the duration of the handshake callback.
+        unsafe { core::ffi::CStr::from_ptr(err.code) }.to_bytes()
+    };
+    let reason: &[u8] = if err.reason.is_null() {
+        b""
+    } else {
+        // SAFETY: non-null `reason` is a NUL-terminated C string owned by
+        // uSockets for the duration of the handshake callback.
+        unsafe { core::ffi::CStr::from_ptr(err.reason) }.to_bytes()
+    };
+
+    let fallback = SystemError {
+        code: String::clone_utf8(code),
+        message: String::clone_utf8(reason),
+        ..Default::default()
+    };
+
+    Ok(fallback.to_error_instance(global))
+}
+
 impl fmt::Display for SystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that

@@ -1321,6 +1321,21 @@ pub struct RuntimeHooks {
     /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
     pub timer_remove:
         unsafe fn(vm: *mut VirtualMachine, timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer),
+    /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
+    /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
+    /// supply explicit options. The storage slot lives in `RareData`
+    /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
+    /// (`bun_runtime`, b2-cycle); spec rare_data.zig:741.
+    pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
+    /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
+    /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
+    /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
+    /// `bun_runtime::RuntimeState` (b2-cycle).
+    pub ssl_ctx_cache_get_or_create: unsafe fn(
+        vm: *mut VirtualMachine,
+        opts: uws::SocketContext::BunSocketContextOptions,
+        err: &mut uws::create_bun_socket_error_t,
+    ) -> Option<*mut uws::SslCtx>,
     /// `Node.fs.NodeFS{ .vm = … }` lazy creation (spec VirtualMachine.zig:827).
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
@@ -1979,7 +1994,7 @@ impl VirtualMachine {
             Ok(promise)
         } else {
             let global = self.global;
-            let main_str = bun_string::String::from_bytes(self.main);
+            let main_str = bun_string::String::from_bytes(self.main());
             let promise =
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
                     .map(NonNull::as_ptr)
@@ -2923,7 +2938,7 @@ impl VirtualMachine {
         if !self.is_watcher_enabled() {
             return;
         }
-        let main = self.main;
+        let main = self.main();
         if main.is_empty() {
             return;
         }
@@ -3011,7 +3026,10 @@ impl VirtualMachine {
         }
         // reload_entry_point() stores into pending_internal_promise on every return path.
         let main = self.main;
-        if self.reload_entry_point(main).is_err() {
+        // SAFETY: see `main()` accessor — `main` is a non-null BACKREF slice.
+        // PORT NOTE: reshaped for borrowck — re-derive via raw ptr to avoid
+        // overlapping `&self`/`&mut self` borrows.
+        if self.reload_entry_point(unsafe { &*main }).is_err() {
             panic!("Failed to reload");
         }
     }
@@ -3964,7 +3982,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:2195 `clearEntryPoint`.
     pub fn clear_entry_point(&mut self) -> JsResult<()> {
-        if self.main.is_empty() {
+        if self.main().is_empty() {
             return Ok(());
         }
         let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
@@ -4016,7 +4034,7 @@ impl VirtualMachine {
 
         // PORT NOTE: reshaped for borrowck.
         let global = self.global;
-        let main_str = bun_string::String::from_bytes(self.main);
+        let main_str = bun_string::String::from_bytes(self.main());
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
             .map(NonNull::as_ptr)
             .ok_or_else(|| bun_core::err!("JSError"))?;
@@ -4184,7 +4202,7 @@ impl VirtualMachine {
             self.pending_internal_promise = None;
         }
         self.has_patched_run_main = false;
-        self.main = b"";
+        self.set_main(b"");
         self.main_hash = 0;
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_string::String::empty();

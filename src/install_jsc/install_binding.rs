@@ -113,17 +113,11 @@ pub mod bun_install_js_bindings {
             emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
-        if let Err(e) = json_stringify(&lockfile_, &mut w) {
-            // `jsonStringify` only surfaces the underlying writer's error; the
-            // `Vec<u8>` writer is infallible, so this is unreachable in
-            // practice. Mirror Zig's `bun.handleOom` (crash on the impossible
-            // alloc failure) rather than swallowing.
-            bun_jsc::__macro_support::out_of_memory();
-            #[allow(unreachable_code)]
-            {
-                let _ = e;
-            }
-        }
+        // `jsonStringify` only surfaces the underlying writer's error; the
+        // `Vec<u8>` writer is infallible. Zig wraps the whole `allocPrint` in
+        // `bun.handleOom` (crash on the impossible alloc failure) — mirror that
+        // with an `expect` rather than swallowing.
+        json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
         let mut str = BunString::clone_utf8(&stringified);

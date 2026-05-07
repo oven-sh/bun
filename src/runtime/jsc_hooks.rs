@@ -156,6 +156,26 @@ pub unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::S
     rare.default_client_ssl_ctx.unwrap()
 }
 
+/// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
+/// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
+/// on BoringSSL rejection (`err` populated). Spec rare_data.zig
+/// `sslCtxCache().getOrCreateOpts`.
+///
+/// # Safety
+/// `vm` must be the live per-thread VM; called only from the JS thread.
+unsafe fn ssl_ctx_cache_get_or_create(
+    _vm: *mut VirtualMachine,
+    opts: bun_uws::SocketContext::BunSocketContextOptions,
+    err: &mut bun_uws::create_bun_socket_error_t,
+) -> Option<*mut bun_uws::SslCtx> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "ssl_ctx_cache_get_or_create before init_runtime_state");
+    // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
+    // address for the VM's lifetime and is only touched from the JS thread.
+    let cache = unsafe { &mut (*state).ssl_ctx_cache };
+    cache.get_or_create_opts(opts, err)
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // RuntimeHooks bodies
 // ════════════════════════════════════════════════════════════════════════════
@@ -1184,6 +1204,8 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    default_client_ssl_ctx,
+    ssl_ctx_cache_get_or_create,
     create_node_fs,
     init_request_body_value,
     has_blob_url,

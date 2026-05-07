@@ -725,7 +725,7 @@ impl TranspilerJob {
         let mut input_file_fd: Fd = Fd::INVALID;
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
-        let (vm_main, vm_main_hash) = unsafe { ((*vm).main, (*vm).main_hash) };
+        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
         let is_main = vm_main.len() == path.text.len()
             && vm_main_hash == hash
             && strings::eql_long(vm_main, path.text, false);

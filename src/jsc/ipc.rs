@@ -8,11 +8,7 @@ use bun_core::Output;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::StreamBuffer;
 use crate as jsc;
-// PORT NOTE: `crate::json_line_buffer` is gated behind `cfg(any())` in lib.rs;
-// pull the file in directly so the type is available to ipc.rs.
-#[path = "JSONLineBuffer.rs"]
-mod json_line_buffer;
-use json_line_buffer::JSONLineBuffer;
+use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Task, ZigString,
@@ -1692,39 +1688,7 @@ impl SendQueue {
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#_write len {}", data.len());
                 if let Some(fd_unwrapped) = fd {
-                    // `NewSocketHandler` doesn't expose `write_fd`; reach the
-                    // underlying `us_socket_t` directly via the C symbol the
-                    // SCM_RIGHTS path uses (`us_socket_ipc_write_fd`).
-                    unsafe extern "C" {
-                        fn us_socket_ipc_write_fd(
-                            s: *mut bun_uws::us_socket_t,
-                            data: *const u8,
-                            length: i32,
-                            fd: i32,
-                        ) -> i32;
-                    }
-                    match socket.socket {
-                        bun_uws::InternalSocket::Connected(s) => {
-                            // SAFETY: `s` is a live us_socket_t (socket == .open
-                            // checked above); data is a valid slice for the call.
-                            unsafe {
-                                us_socket_ipc_write_fd(
-                                    s,
-                                    data.as_ptr(),
-                                    i32::try_from(data.len()).unwrap_or(i32::MAX),
-                                    fd_unwrapped.native(),
-                                )
-                            }
-                        }
-                        // Mirror Zig `socket.writeFd`: duplex/pipe fall back to
-                        // a plain write (the fd is silently dropped); connecting
-                        // /detached report 0 bytes written so the queue waits
-                        // for writable instead of hard-closing the channel.
-                        bun_uws::InternalSocket::UpgradedDuplex(_)
-                        | bun_uws::InternalSocket::Pipe => socket.write(data),
-                        bun_uws::InternalSocket::Connecting(_)
-                        | bun_uws::InternalSocket::Detached => 0,
-                    }
+                    socket.write_fd(data, fd_unwrapped)
                 } else {
                     socket.write(data)
                 }

@@ -3104,10 +3104,10 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"NotAnything".len());
+                this.amf_add_for_new_line(b"NotAnything".len());
                 writer.write_all(b"NotAnything");
             } else {
-                this.add_for_new_line(b"Anything".len());
+                this.amf_add_for_new_line(b"Anything".len());
                 writer.write_all(b"Anything");
             }
         } else if let Some(matcher) = value.as_::<expect::ExpectAny>() {
@@ -3120,23 +3120,23 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"NotAny<".len());
+                this.amf_add_for_new_line(b"NotAny<".len());
                 writer.write_all(b"NotAny<");
             } else {
-                this.add_for_new_line(b"Any<".len());
+                this.amf_add_for_new_line(b"Any<".len());
                 writer.write_all(b"Any<");
             }
 
-            let mut class_name = ZigString::init(&name_buf);
-            constructor_value.get_class_name(this.global_this, &mut class_name)?;
-            this.add_for_new_line(class_name.len);
+            let mut class_name = ZigString::init(name_buf);
+            constructor_value.get_class_name(this.amf_global_this(), &mut class_name)?;
+            this.amf_add_for_new_line(class_name.len);
             writer.print(format_args!(
                 "{}{}{}",
                 pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>"),
                 class_name,
                 pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
             ));
-            this.add_for_new_line(1);
+            this.amf_add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_::<expect::ExpectCloseTo>() {
             let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
@@ -3155,10 +3155,10 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"NumberNotCloseTo".len());
+                this.amf_add_for_new_line(b"NumberNotCloseTo".len());
                 writer.write_all(b"NumberNotCloseTo");
             } else {
-                this.add_for_new_line(b"NumberCloseTo ".len());
+                this.amf_add_for_new_line(b"NumberCloseTo ".len());
                 writer.write_all(b"NumberCloseTo ");
             }
             writer.print(format_args!(
@@ -3178,14 +3178,14 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"ObjectNotContaining ".len());
+                this.amf_add_for_new_line(b"ObjectNotContaining ".len());
                 writer.write_all(b"ObjectNotContaining ");
             } else {
-                this.add_for_new_line(b"ObjectContaining ".len());
+                this.amf_add_for_new_line(b"ObjectContaining ".len());
                 writer.write_all(b"ObjectContaining ");
             }
-            this.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                writer.ctx, object_value, JSType::Object,
+            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
@@ -3198,14 +3198,14 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"StringNotContaining ".len());
+                this.amf_add_for_new_line(b"StringNotContaining ".len());
                 writer.write_all(b"StringNotContaining ");
             } else {
-                this.add_for_new_line(b"StringContaining ".len());
+                this.amf_add_for_new_line(b"StringContaining ".len());
                 writer.write_all(b"StringContaining ");
             }
-            this.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                writer.ctx, substring_value, JSType::String,
+            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringMatching>() {
             let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
@@ -3217,25 +3217,25 @@ impl JestPrettyFormat {
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
-                this.add_for_new_line(b"StringNotMatching ".len());
+                this.amf_add_for_new_line(b"StringNotMatching ".len());
                 writer.write_all(b"StringNotMatching ");
             } else {
-                this.add_for_new_line(b"StringMatching ".len());
+                this.amf_add_for_new_line(b"StringMatching ".len());
                 writer.write_all(b"StringMatching ");
             }
 
-            let original_quote_strings = this.quote_strings;
+            let original_quote_strings = *this.amf_quote_strings();
             if test_value.is_reg_exp() {
-                this.quote_strings = false;
+                *this.amf_quote_strings() = false;
             }
-            this.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                writer.ctx, test_value, JSType::String,
+            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
             )?;
-            this.quote_strings = original_quote_strings;
+            *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
             // SAFETY: `as_` returns the live m_ctx payload owned by `value`.
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                unsafe { &*instance }, value, this.global_this, writer.ctx, true,
+                unsafe { &*instance }, value, this.amf_global_this(), &mut *writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {
@@ -3252,18 +3252,18 @@ impl JestPrettyFormat {
                 else {
                     return Ok(true);
                 };
-                let matcher_name = matcher_fn.get_name(this.global_this)?;
+                let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
 
                 Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
                 if flags.not() {
-                    this.add_for_new_line(b"not ".len());
+                    this.amf_add_for_new_line(b"not ".len());
                     writer.write_all(b"not ");
                 }
-                this.add_for_new_line(matcher_name.length() + 1);
+                this.amf_add_for_new_line(matcher_name.length() + 1);
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
-                this.print_as::<W, { Tag::Array }, ENABLE_ANSI_COLORS>(
-                    writer.ctx, args_value, JSType::Array,
+                this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
                 )?;
             }
         } else {

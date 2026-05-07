@@ -904,7 +904,8 @@ fn print_source_at_address(
         do_llint,
     )?;
     if do_llint {
-        let desc = frame.describe_frame();
+        // SAFETY: see above — address is inside the JSC LLInt range, so fp is a JSC CallFrame.
+        let desc = unsafe { &*frame }.describe_frame();
         write!(out_stream, "    {}\n    ", bstr::BStr::new(desc))?;
         tty_config.set_color(out_stream, Color::Green)?;
         out_stream.extend_from_slice(b"^");
@@ -1028,7 +1029,7 @@ fn print_line_from_file_any_os(
     // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
     // forbids std::fs; using bun_sys here. Phase B: confirm bun_sys::File is safe to call
     // from inside a crash handler / lldb (must not re-enter event loop).
-    let mut f = bun_sys::File::open_at(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
+    let f = bun_sys::File::open_at(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
         .map_err(Into::<Error>::into)?;
     // defer f.close() — handled by Drop
     // TODO fstat and make sure that the file has the correct size

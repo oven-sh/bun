@@ -1882,7 +1882,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: A,
     ) -> core::result::Result<&[u8], AllocError> {
         let _guard = self.mutex.lock();
-        self.do_append(value)
+        let (ptr, len) = self.do_append(value)?;
+        // SAFETY: `ptr` points into storage owned by `*self` (backing_buf or a
+        // process-lifetime mimalloc region); we hold `&mut self` so it's exclusive,
+        // and reborrowing as shared is always sound.
+        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
 
     pub fn append_lower_case(
@@ -1895,30 +1899,34 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
                 const { core::cell::RefCell::new([0u8; 4096]) };
         }
-        LOWERCASE_BUF.with_borrow_mut(|buf| {
+        let (ptr, len) = LOWERCASE_BUF.with_borrow_mut(|buf| {
             for (i, &c) in value.iter().enumerate() {
                 buf[i] = c.to_ascii_lowercase();
             }
             // `do_append` only reads `slice` via `BSSAppendable::copy_into`
             // (copies into `self.backing_buf` / a fresh heap alloc) and returns
-            // a borrow of that owned storage, not of `slice` — so the
-            // thread-local borrow does not escape the closure. PORTING.md
-            // §Forbidden: no `&*(p as *const _)` lifetime extension.
+            // raw parts pointing at that owned storage, not at `slice` — so the
+            // thread-local borrow does not escape the closure.
             let slice: &[u8] = &buf[..value.len()];
             self.do_append(slice)
-        })
+        })?;
+        // SAFETY: see `append`.
+        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
 
+    /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
+    /// where `ptr` carries write provenance (`out.as_mut_ptr()`). Callers reconstruct a
+    /// `&[u8]` (`append`) or `&mut [u8]` (`append_mutable`) from it; returning raw parts
+    /// avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict and the
+    /// `&[u8] → &mut [u8]` provenance laundering Zig's `@constCast` would imply.
     #[inline]
     fn do_append<A: BSSAppendable>(
         &mut self,
         value: A,
-    ) -> core::result::Result<&[u8], AllocError> {
+    ) -> core::result::Result<(*mut u8, usize), AllocError> {
         let value_len: usize = value.total_len() + 1;
 
-        // SAFETY: returned slice points into `self.backing_buf` or a leaked heap alloc;
-        // `&mut ZStr` then `&[u8]` reborrow matches Zig `[:0]u8` → `[]const u8`.
-        let out: &mut [u8];
+        let (out_ptr, out_len): (*mut u8, usize);
         if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
             let start = self.backing_buf_used as usize;
             self.backing_buf_used += value_len as u64;
@@ -1927,19 +1935,24 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             value.copy_into(&mut self.backing_buf[start..end - 1]);
             self.backing_buf[end - 1] = 0;
 
-            out = &mut self.backing_buf[start..end - 1];
+            let out = &mut self.backing_buf[start..end - 1];
+            (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
         } else {
-            // Zig: self.allocator.alloc(u8, value_len) — route through mimalloc directly
-            // (PORTING.md forbids `Box::leak`). BSSStringList never frees overflow
-            // allocations (matches Zig); the singleton lives for process lifetime.
+            // Zig: `var value_buf = try self.allocator.alloc(u8, value_len);` — propagate OOM.
+            // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
+            // never frees overflow allocations (matches Zig); the singleton lives for
+            // process lifetime.
             // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥value_len bytes.
             let ptr = unsafe { mimalloc::mi_malloc(value_len) } as *mut u8;
-            assert!(!ptr.is_null(), "OOM");
+            if ptr.is_null() {
+                return Err(AllocError);
+            }
             // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
             let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
             value_buf[value_len - 1] = 0;
-            out = &mut value_buf[..value_len - 1];
+            let out = &mut value_buf[..value_len - 1];
+            (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
         }
 
         let mut result = IndexType::new(u32::MAX >> 1, self.slice_buf_used as usize > Self::MAX_INDEX);
@@ -1951,10 +1964,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             self.slice_buf_used += 1;
         }
 
-        // SAFETY: `out` borrows self.backing_buf or a leaked alloc, both live for 'static
-        // (singleton). Zig stores it as `[]const u8` with no lifetime tracking.
+        // SAFETY: `out_ptr` addresses self.backing_buf or a process-lifetime alloc, both
+        // outliving 'static (singleton). Zig stores it as `[]const u8` with no lifetime
+        // tracking.
         let stored: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) };
+            unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
@@ -1962,11 +1976,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             } else {
                 *self.overflow_list.at_index_mut(result) = stored;
             }
-            Ok(stored)
         } else {
             self.slice_buf[result.index() as usize] = stored;
-            Ok(self.slice_buf[result.index() as usize])
         }
+        Ok((out_ptr, out_len))
     }
 }
 
@@ -2297,12 +2310,15 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
             slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
         } else {
-            // Zig: allocator.dupe(u8, key). Route through mimalloc directly (PORTING.md
-            // forbids `Box::leak`) so the size-agnostic `mi_free` below stays valid even
-            // after `trim_right` shortens the stored slice.
+            // Zig: `slice = try self.map.allocator.dupe(u8, key);` — propagate OOM. Route
+            // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
+            // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
+            // the stored slice.
             // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥key.len() bytes.
             let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) } as *mut u8;
-            assert!(!ptr.is_null(), "OOM");
+            if ptr.is_null() {
+                return Err(AllocError);
+            }
             // SAFETY: `ptr` is a fresh allocation of `key.len()` bytes with no other alias.
             unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
             // SAFETY: allocation is owned by this singleton for process lifetime (or until

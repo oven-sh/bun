@@ -786,6 +786,12 @@ impl WebWorker {
         // stays stable for `vm.arena = NonNull::from(...)`.
         // SAFETY: worker-thread only field; no other thread reads `arena`.
         unsafe { *self.arena.get() = Some(Box::new(Arena::new())) };
+        // SAFETY: worker-thread only; arena initialised on the line above.
+        // Raw `*const Arena` so the borrow checker doesn't tie `map`/`loader`
+        // lifetimes to a local `&Arena` (they outlive this fn — owned by the
+        // arena, bulk-freed in `shutdown()` after `vm.destroy()`).
+        let arena_ptr: *const Arena =
+            unsafe { (*self.arena.get()).as_deref().unwrap() } as *const Arena;
 
         // Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage. We need a consistent snapshot of
@@ -796,19 +802,33 @@ impl WebWorker {
         // state.
         let mut temp_proxy_storage = jsc::rare_data::ProxyEnvStorage::default();
 
-        let map = Box::leak(Box::new(bun_dotenv::Map::init()));
+        // Zig `try allocator.create(DotEnv.Map)` — arena-owned, bulk-freed in
+        // `shutdown()`. bumpalo doesn't run Drop, matching Zig's arena bulk-
+        // free which also skips per-value deinit.
+        // SAFETY: arena_ptr valid (see above); `alloc(&self)` is sound to call
+        // through a raw deref.
+        let map: *mut bun_dotenv::Map =
+            unsafe { (*arena_ptr).alloc(bun_dotenv::Map::init()) } as *mut _;
         {
             let parent_storage = &parent.proxy_env_storage;
             let _g = parent_storage.lock.lock();
             temp_proxy_storage.clone_from(parent_storage);
             // SAFETY: `parent.transpiler.env` is the live per-thread
-            // `*mut Loader` set in `init()`; never null after init.
-            *map = unsafe { (*parent.transpiler.env).map.clone_with_allocator()? };
+            // `*mut Loader` set in `init()`; never null after init. `map`
+            // points into the worker arena (just allocated above).
+            unsafe { *map = (*parent.transpiler.env).map.clone_with_allocator()? };
         }
         // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_storage.sync_into(map);
+        // SAFETY: `map` valid arena allocation; sole ref on this thread.
+        temp_proxy_storage.sync_into(unsafe { &mut *map });
 
-        let loader = Box::leak(Box::new(bun_dotenv::Loader::init(map)));
+        // Zig `try allocator.create(DotEnv.Loader)` — arena-owned.
+        // SAFETY: `map` lives in `self.arena`, freed in `shutdown()` strictly
+        // after `vm.destroy()`; erase to `'static` to match
+        // `Options.env_loader: NonNull<Loader<'static>>` (BACKREF — the arena
+        // is the real owner).
+        let loader: *mut bun_dotenv::Loader<'static> =
+            unsafe { (*arena_ptr).alloc(bun_dotenv::Loader::init(&mut *map)) } as *mut _;
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
         // VM. If terminateAllAndWait() fired while we were cloning the env

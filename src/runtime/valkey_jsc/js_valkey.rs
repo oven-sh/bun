@@ -145,22 +145,6 @@ mod codegen_js {
             Gen::onclose_set_cached(this, global, val)
         }
     }
-
-    cached_slot!(onconnect_get_cached, onconnect_set_cached,
-        RedisClientPrototype__onconnectGetCachedValue,
-        RedisClientPrototype__onconnectSetCachedValue);
-    cached_slot!(onclose_get_cached, onclose_set_cached,
-        RedisClientPrototype__oncloseGetCachedValue,
-        RedisClientPrototype__oncloseSetCachedValue);
-    cached_slot!(connection_promise_get_cached, connection_promise_set_cached,
-        RedisClientPrototype__connectionPromiseGetCachedValue,
-        RedisClientPrototype__connectionPromiseSetCachedValue);
-    cached_slot!(hello_get_cached, hello_set_cached,
-        RedisClientPrototype__helloGetCachedValue,
-        RedisClientPrototype__helloSetCachedValue);
-    cached_slot!(subscription_callback_map_get_cached, subscription_callback_map_set_cached,
-        RedisClientPrototype__subscriptionCallbackMapGetCachedValue,
-        RedisClientPrototype__subscriptionCallbackMapSetCachedValue);
 }
 
 impl SubscriptionCtx {

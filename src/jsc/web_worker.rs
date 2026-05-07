@@ -1245,15 +1245,14 @@ impl WebWorker {
 
         // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
         // Rust we MUST NOT — glibc's `pthread_exit` throws a `__forced_unwind`
-        // C++ exception to run destructors, and unwinding that out of the
-        // `extern "C"` `holdAPILock` callback (a `nounwind` ABI boundary)
-        // makes Rust abort the whole process. Instead return normally:
-        // `shutdown()` → `spin()` → trampoline → C++ `holdAPILock` (releases
-        // its `JSLockHolder` via normal return) → `thread_main` → the
-        // `std::thread` spawn closure, which then exits the thread cleanly.
-        // No `this.*` is touched past `dispatchExit` above, so the
-        // `this`-may-be-freed contract still holds across the unwind-free
-        // return path.
+        // C++ exception to run destructors, and unwinding that across an
+        // `extern "C"` (`nounwind`) Rust frame on the way out to
+        // `std::thread`'s entry point makes Rust abort the whole process.
+        // Instead return normally: `shutdown()` → `spin()` → `thread_main`
+        // (which `forget`s the API-lock guard) → the `std::thread` spawn
+        // closure, which then exits the thread cleanly. No `this.*` is
+        // touched past `dispatchExit` above, so the `this`-may-be-freed
+        // contract still holds across the unwind-free return path.
     }
 
     /// process.exit() inside the worker. Worker-thread only.

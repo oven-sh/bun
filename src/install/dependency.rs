@@ -98,6 +98,13 @@ impl Dependency {
         is_tarball(dependency)
     }
 
+    /// Forwards to the module-level free fn (Zig file-struct method:
+    /// `Dependency.splitNameAndMaybeVersion`).
+    #[inline]
+    pub fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+        split_name_and_maybe_version(str)
+    }
+
     /// Zig: `Dependency.unscopedPackageName`. Strips a leading `@scope/` if present.
     pub fn unscoped_package_name(name: &[u8]) -> &[u8] {
         if name.is_empty() || name[0] != b'@' {

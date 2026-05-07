@@ -771,7 +771,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             return Err(global.throw_error(err, generic_action));
         }
         if let Err(err) = framework.init_transpiler(
-            options.arena,
+            arena,
             log,
             bake::Mode::Development,
             bake::Graph::Client,
@@ -782,7 +782,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
         if separate_ssr_graph {
             if let Err(err) = framework.init_transpiler(
-                options.arena,
+                arena,
                 log,
                 bake::Mode::Development,
                 bake::Graph::Ssr,
@@ -978,7 +978,16 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         let mut types: Vec<framework_router::Type> =
             Vec::with_capacity(dev.framework.file_system_router_types.len());
 
-        for (i, fsr) in dev.framework.file_system_router_types.iter().enumerate() {
+        // PORT NOTE: the loop body mutates `server_transpiler.resolver`,
+        // `server_graph`, `client_graph`, and `route_lookup` while iterating
+        // `framework.file_system_router_types` by shared ref. All five fields
+        // are disjoint; reborrow them through `dev_ptr` so the shared
+        // `framework` iter does not lock `*dev`.
+        for (i, fsr) in unsafe { &(*dev_ptr).framework }
+            .file_system_router_types
+            .iter()
+            .enumerate()
+        {
             let mut buf = paths::path_buffer_pool::get();
             let joined_root =
                 paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -986,16 +995,17 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                     &mut buf[..],
                     &[&fsr.root],
                 );
-            let Some(entry) = dev
-                .server_transpiler_mut()
+            // SAFETY: `server_transpiler` was fully initialized by `init_transpiler`
+            // above; `.resolver` is disjoint from `framework`.
+            let Some(entry) = unsafe { (*dev_ptr).server_transpiler.assume_init_mut() }
                 .resolver
                 .read_dir_info_ignore_error(joined_root)
             else {
                 continue;
             };
 
-            let server_file = dev
-                .server_graph
+            // SAFETY: `server_graph` is disjoint from `framework`.
+            let server_file = unsafe { &mut (*dev_ptr).server_graph }
                 .insert_stale_extra(&fsr.entry_server, false, true)?;
 
             types.push(framework_router::Type {
@@ -1018,7 +1028,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
                     to_opaque_file_id::<{ bake::Side::Client }>(
-                        dev.client_graph.insert_stale(client, false)?,
+                        // SAFETY: `client_graph` is disjoint from `framework`.
+                        unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
                     )
                     .to_optional()
                 } else {
@@ -1027,7 +1038,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 server_file_string: jsc::StrongOptional::empty(),
             });
 
-            dev.route_lookup.put(
+            // SAFETY: `route_lookup` is disjoint from `framework`.
+            unsafe { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(
                     framework_router::RouteIndex::init(u32::try_from(i).unwrap()),

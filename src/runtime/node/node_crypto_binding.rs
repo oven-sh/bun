@@ -81,11 +81,6 @@ impl JSValueCryptoExt for JSValue {
 // ExternCryptoJob — Zig `fn ExternCryptoJob(comptime name: []const u8) type`.
 // This does token-pasting to form C symbol names (`Bun__<name>Ctx__runTask`
 // etc.), so a `macro_rules!` is the correct port shape per PORTING.md.
-//
-// Type defs (`Ctx`, `Job`) are un-gated; the `extern "C"` decls, `impl Job`
-// bodies and `#[export_name]` shims stay gated until `bun_jsc` method surface
-// (`.bun_vm()`, `Strong::create`, `AnyTask::new`, `ConcurrentTask::create`)
-// and attribute-position `concat!` (or `paste!`) land.
 // ───────────────────────────────────────────────────────────────────────────
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
@@ -464,8 +459,6 @@ pub mod random {
         }
     }
 
-    // ─── host fns: gated on `bun_jsc` method surface + `validators` arity ──
-    
     mod _hostfns {
     use super::*;
     use crate::node::util::validators;

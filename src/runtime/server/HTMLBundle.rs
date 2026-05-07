@@ -3,7 +3,6 @@
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 
 use core::cell::Cell;
-use core::fmt::Write as _;
 use core::mem;
 use core::ptr::NonNull;
 
@@ -836,74 +835,6 @@ impl PendingResponse {
             route.pending_responses.remove(index);
             // SAFETY: matches the ref taken when this entry was pushed in on_any_request.
             unsafe { RefCount::<Route>::deref(route_ptr) };
-        }
-    }
-}
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-/// `OutputFile.toBlob` — runtime-side port of `bundler_jsc/output_file_jsc.zig`.
-/// LAYERING: the upstream extension trait returns `bun_jsc::webcore::Blob`
-/// (the lower-tier stub); HTMLBundle needs the full `bun_runtime::webcore::Blob`
-/// so the conversion lives here.
-fn output_file_to_blob(
-    of: &mut OutputFile,
-    global_this: &JSGlobalObject,
-) -> Result<webcore::Blob, bun_core::AllocError> {
-    use webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
-    use crate::node::types::{PathLike, PathOrFileDescriptor};
-    use bun_string::PathString;
-
-    match &of.value {
-        OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
-            panic!("Unexpected pending output file")
-        }
-        OutputFileValue::Noop => panic!("Cannot convert noop output file to blob"),
-        _ => {}
-    }
-
-    let value = mem::replace(&mut of.value, OutputFileValue::Buffer { bytes: Box::default() });
-    let mime = of
-        .loader
-        .to_mime_type(&[of.dest_path.as_ref(), of.src_path.text.as_ref()]);
-
-    match value {
-        OutputFileValue::Copy(copy) => {
-            let file_blob = BlobStore::init_file(
-                if copy.fd.is_valid() {
-                    PathOrFileDescriptor::Fd(copy.fd)
-                } else {
-                    PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                        Box::<[u8]>::from(copy.pathname.as_ref()),
-                    )))
-                },
-                Some(&mime),
-            )?;
-            Ok(webcore::Blob::init_with_store(file_blob, global_this))
-        }
-        OutputFileValue::Saved(_) => {
-            let file_blob = BlobStore::init_file(
-                PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                    Box::<[u8]>::from(of.src_path.text.as_ref()),
-                ))),
-                Some(&mime),
-            )?;
-            Ok(webcore::Blob::init_with_store(file_blob, global_this))
-        }
-        OutputFileValue::Buffer { bytes } => {
-            let bytes_len = bytes.len();
-            let mut blob = webcore::Blob::init(bytes, global_this);
-            if let Some(store) = blob.store {
-                // SAFETY: freshly-allocated store, uniquely owned by `blob`.
-                unsafe { (*store.as_ptr()).set_mime_type(&mime) };
-            }
-            blob.content_type = mime.value;
-            blob.size = bytes_len as BlobSizeType;
-            Ok(blob)
-        }
-        OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {
-            // SAFETY: filtered out by the early-out match above.
-            unreachable!()
         }
     }
 }

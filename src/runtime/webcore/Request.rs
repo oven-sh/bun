@@ -1304,9 +1304,11 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Url) {
+                        // `Response::url()` already returns a `dupeRef`'d clone
+                        // (Zig: `response.url.dupeRef()`), so move it directly.
                         let url = response.url();
                         if !url.is_empty() {
-                            req.url = url.dupe_ref();
+                            req.url = url;
                             fields.insert(Fields::Url);
                         }
                     }

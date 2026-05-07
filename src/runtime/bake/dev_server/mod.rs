@@ -1126,7 +1126,10 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             // `DevServerHandle::put_or_overwrite_asset` call site.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
             let path = unsafe { &*(path as *const bun_resolver::fs::Path<'_>) };
-            dev.put_or_overwrite_asset(path, contents, content_hash)
+            // PORT NOTE: vtable boundary erased the `AnyBlob` to its byte slice;
+            // re-wrap as an owned blob (Zig spec transferred ownership of the bytes).
+            let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
+            dev.put_or_overwrite_asset(path, &blob, content_hash)
         },
         track_resolution_failure: |p, import_source, specifier, renderer, loader| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
@@ -1363,11 +1366,11 @@ impl DirectoryWatchStore {
                         // If this directory doesn't exist, a watcher should be placed
                         // on the parent directory. Then, if this directory is later
                         // created, the watcher can be properly initialized.
-                        bun_sys::E::NOENT => {
+                        bun_sys::E::ENOENT => {
                             // TODO: implement that. for now it ignores (BUN-10968)
                             return Err(DirectoryWatchInsertError::Ignore);
                         }
-                        bun_sys::E::NOTDIR => return Err(DirectoryWatchInsertError::Ignore),
+                        bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
                         _ => bun_core::todo_panic!("log watcher error"),
                     },
                 }

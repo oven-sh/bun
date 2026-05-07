@@ -68,6 +68,63 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 
 type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 
+// ─────────────────── wrapInstanceMethod arg-decode helpers ───────────────
+//
+// PORT NOTE: Zig's `host_fn.wrapInstanceMethod` is a comptime
+// type-directed argument decoder (see host_fn.zig:493-648). The
+// `#[bun_jsc::host_fn(method)]` proc-macro that will eventually replace it
+// hasn't landed, so the per-type decode arms used by HTMLRewriter
+// (`ZigString`, `?ContentOptions`, `JSValue`) are open-coded here as small
+// helpers. They mirror the Zig branches exactly: same error messages, same
+// undefined/null handling, same eat order.
+
+/// `wrapInstanceMethod` arm for `jsc.ZigString` — eat next arg, throw
+/// "Missing argument" if absent, "Expected string" if undefined/null,
+/// otherwise `getZigString`.
+fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigString> {
+    let Some(value) = iter.next_eat() else {
+        return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+    };
+    if value.is_undefined_or_null() {
+        return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+    }
+    Ok(ZigString::from(value.get_zig_string(global)?))
+}
+
+/// `wrapInstanceMethod` arm for `jsc.JSValue` (required) — eat next arg or
+/// throw "Missing argument".
+fn eat_js_value(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<JSValue> {
+    iter.next_eat()
+        .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
+}
+
+/// `wrapInstanceMethod` arm for `?ContentOptions` — peek next arg, read
+/// `.html` and coerce to bool. `None` if no arg or no `.html` property.
+fn eat_content_options(
+    iter: &mut ArgumentsSlice<'_>,
+    global: &JSGlobalObject,
+) -> JsResult<Option<ContentOptions>> {
+    let Some(arg) = iter.next_eat() else { return Ok(None) };
+    match arg.get(global, "html")? {
+        Some(html_val) => Ok(Some(ContentOptions { html: html_val.to_boolean() })),
+        None => Ok(None),
+    }
+}
+
+/// Common `(content: ZigString, contentOptions: ?ContentOptions)` pair —
+/// every `before/after/replace/append/prepend/setInnerContent` wrapper
+/// decodes exactly this shape.
+fn eat_content_args(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+) -> JsResult<(ZigString, Option<ContentOptions>)> {
+    let args = call_frame.arguments_old::<2>();
+    let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+    let content = eat_zig_string(&mut iter, global)?;
+    let opts = eat_content_options(&mut iter, global)?;
+    Ok((content, opts))
+}
+
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────
 
 pub struct LOLHTMLContext {
@@ -314,10 +371,31 @@ impl HTMLRewriter {
         Err(global.throw_invalid_arguments(format_args!("Expected Response or Body")))
     }
 
-    // TODO(port): host_fn.wrapInstanceMethod codegen — `on`, `onDocument`,
-    // `transform` are produced by `#[bun_jsc::host_fn(method)]` wrappers
-    // around `on_`, `on_document_`, `transform_` (argument extraction is
-    // handled by the macro).
+    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
+    // Zig: `pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false)`
+    // etc. — see arg-decode helpers at top of file.
+
+    pub fn on(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let args = call_frame.arguments_old::<2>();
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let selector_name = eat_zig_string(&mut iter, global)?;
+        let listener = eat_js_value(&mut iter, global)?;
+        self.on_(global, selector_name, call_frame, listener)
+    }
+
+    pub fn on_document(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let args = call_frame.arguments_old::<1>();
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let listener = eat_js_value(&mut iter, global)?;
+        self.on_document_(global, listener, call_frame)
+    }
+
+    pub fn transform(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let args = call_frame.arguments_old::<1>();
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let response_value = eat_js_value(&mut iter, global)?;
+        self.transform_(global, response_value)
+    }
 }
 
 // ─────────────────────── HTMLRewriterLoader ──────────────────────────────
@@ -1870,9 +1948,9 @@ impl Comment {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.comment.is_null() {
-            return Ok(true);
+            return Ok(());
         }
         let text = value.to_slice(global)?;
         // SAFETY: self.comment is non-null (checked above) and valid for the
@@ -1880,7 +1958,7 @@ impl Comment {
         if unsafe { lolhtml::Comment::set_text(self.comment, text.slice()) }.is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
-        Ok(true)
+        Ok(())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2055,9 +2133,9 @@ impl EndTag {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.end_tag.is_null() {
-            return Ok(true);
+            return Ok(());
         }
         let text = value.to_slice(global)?;
         // SAFETY: self.end_tag is non-null (checked above) and valid for the
@@ -2065,7 +2143,7 @@ impl EndTag {
         if unsafe { lolhtml::EndTag::set_name(self.end_tag, text.slice()) }.is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
-        Ok(true)
+        Ok(())
     }
 }
 
@@ -2467,9 +2545,9 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.element.is_null() {
-            return Ok(true);
+            return Ok(());
         }
         let text = value.to_slice(global)?;
         // SAFETY: self.element is non-null (checked above) and valid for the
@@ -2477,7 +2555,7 @@ impl Element {
         if unsafe { lolhtml::Element::set_tag_name(self.element, text.slice()) }.is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
-        Ok(true)
+        Ok(())
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -1,6 +1,6 @@
 use bun_core::{err, Error, Output, Timespec, TimespecMockMode};
 use bun_paths::{resolve_path, AutoAbsPath, PathBuffer};
-use bun_string::String as BunString;
+use bun_string::{OwnedString, String as BunString};
 use bun_sys::{self as sys, Fd, FdDirExt, E};
 
 use crate::VM;
@@ -21,14 +21,15 @@ unsafe extern "C" {
 }
 
 pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Result<(), Error> {
-    let profile_string = if config.text_format {
-        // SAFETY: vm is a valid &mut VM; FFI returns an owned bun_string::String.
+    // `defer profile_string.deref()` — `bun_string::String` is `Copy` (no Drop);
+    // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
+    let profile_string = OwnedString::new(if config.text_format {
+        // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
         unsafe { Bun__generateHeapProfile(vm as *mut VM) }
     } else {
-        // SAFETY: vm is a valid &mut VM; FFI returns an owned bun_string::String.
+        // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
         unsafe { Bun__generateHeapSnapshotV8(vm as *mut VM) }
-    };
-    // `defer profile_string.deref()` — handled by Drop on bun_string::String.
+    });
 
     if profile_string.is_empty() {
         // No profile data generated

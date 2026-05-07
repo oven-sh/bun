@@ -1304,7 +1304,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Url) {
-                        let url = response.get_url();
+                        let url = response.url();
                         if !url.is_empty() {
                             req.url = url.dupe_ref();
                             fields.insert(Fields::Url);

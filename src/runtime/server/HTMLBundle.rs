@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 
 use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
+use bun_bundler::output_file::Value as OutputFileValue;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_logger::Log;
@@ -22,12 +22,12 @@ use crate::api::js_bundle_completion_task::{
     create_and_schedule_completion_task, JSBundleCompletionTask,
 };
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
+use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
-use crate::webcore::{self, AnyBlob};
-use crate::webcore::BlobExt as _;
+use crate::webcore::AnyBlob;
 
 // `bun.Output.scoped(.HTMLBundle, .hidden)` — wrapped in a sub-module so the
 // `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`

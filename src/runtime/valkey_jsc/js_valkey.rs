@@ -1987,7 +1987,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Self::fail_handshake(this, vm, err);
                 }
             }
-            this.client.start()?;
+            narrow_terminated(this.client.start())?;
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
@@ -2035,7 +2035,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.flags.is_manually_closed = true;
         let this_ptr = this as *mut JSValkeyClient;
         let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client.close() });
-        this.client.fail_with_js_value(this.global_object, err_value)
+        narrow_terminated(this.client.fail_with_js_value(this.global_object, err_value))
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`
@@ -2094,7 +2094,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             (*p).deref();
         });
 
-        this.client.on_close()
+        narrow_terminated(this.client.on_close())
     }
 
     pub fn on_timeout(this: &mut JSValkeyClient, socket: SocketType<SSL>) {

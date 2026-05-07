@@ -1605,6 +1605,7 @@ unsafe extern "C" {
     fn Zig__GlobalObject__resetModuleRegistryMap(global: *const JSGlobalObject, map: *mut c_void) -> bool;
 
     fn ScriptExecutionContextIdentifier__forGlobalObject(global: *const JSGlobalObject) -> u32;
+    fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

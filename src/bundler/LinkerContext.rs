@@ -1028,15 +1028,6 @@ impl From<LinkError> for BunError {
     fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
 }
 
-unsafe fn noop_task_callback(_: *mut ThreadPoolLib::Task) {
-    // PORTING.md §Forbidden: silent no-op. Spec `LinkerContext.zig:101` defaults
-    // the task callback to `&runLineOffset`; the real bodies are gated below
-    // (`SourceMapDataTask::run_line_offset` / `run_quoted_source_contents`).
-    // Fail loudly so a scheduled-but-unwired task can't deadlock the wait-group
-    // by silently doing nothing and never calling `finish()`.
-    unreachable!("b2-blocked: SourceMapData task callback (run_line_offset / run_quoted_source_contents are gated with crate::thread_pool::Worker)")
-}
-
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
     /// CYCLEBREAK §Dispatch: jsc::{CachedBytecode, initialize, VirtualMachine}
@@ -1123,18 +1114,14 @@ impl Default for SourceMapDataTask {
         Self {
             ctx: core::ptr::null_mut(),
             source_index: 0,
-            // TODO(b2-blocked): real callback is `Self::run_line_offset`
-            // (gated below with `crate::thread_pool::Worker`).
+            // Spec `LinkerContext.zig:101`: default task callback is `&runLineOffset`.
             thread_task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
-                callback: noop_task_callback,
+                callback: Self::run_line_offset,
             },
         }
     }
 }
-
-// TODO(b2-blocked): bodies depend on `crate::thread_pool::Worker`, `BundleV2.linker`
-// container_of, and `LinkerGraph` SoA accessors. Un-gates with `ThreadPool.rs`.
 
 impl SourceMapDataTask {
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {

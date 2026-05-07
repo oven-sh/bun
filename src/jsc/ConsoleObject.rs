@@ -386,15 +386,17 @@ fn message_with_type_and_level_(
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
     // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
-    // Capture the raw pointer (Copy) so no `&mut ConsoleObject` is held across
-    // the body; dereference only at scope-exit.
-    scopeguard::defer! {
+    // Capture the raw pointer (Copy) by `move` so no borrow of the local is
+    // held across the body; dereference only at scope-exit.
+    let is_start_group = message_type == MessageType::StartGroup;
+    let _indent_guard = scopeguard::guard(console, move |console| {
+        // SAFETY: see `vm_console` — points at the live boxed
+        // `ConsoleObject` for this VM; JS-thread-only.
         unsafe {
-            (*console).default_indent = (*console)
-                .default_indent
-                .saturating_add((message_type == MessageType::StartGroup) as u16);
+            (*console).default_indent =
+                (*console).default_indent.saturating_add(is_start_group as u16);
         }
-    }
+    });
 
     if message_type == MessageType::StartGroup && len == 0 {
         // undefined is printed if passed explicitly.
@@ -4737,7 +4739,7 @@ pub mod formatter {
                         let mut props_i: usize = 0;
                         while let Some(prop) = props_iter.next()? {
                             props_i += 1;
-                            if prop.eql_comptime(b"children") {
+                            if prop.eql_comptime("children") {
                                 continue;
                             }
 

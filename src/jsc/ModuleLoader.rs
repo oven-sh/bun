@@ -25,13 +25,14 @@ pub use bun_resolver::node_fallbacks;
 pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 
 // Spec ModuleLoader.zig:4 — `pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;`
-// Mounted as a sub-module here (rather than from `lib.rs`) so the Phase-B
-// un-gate touches only the two files this slice owns; `lib.rs` already
-// re-exports `module_loader as ModuleLoader`, so `jsc::ModuleLoader::AsyncModule`
-// resolves identically to the Zig path.
-#[path = "AsyncModule.rs"]
-pub mod async_module;
-pub use async_module::{AsyncModule, Queue as AsyncModuleQueue};
+// LAYERING: re-export from the crate-level mount (`crate::async_module`)
+// instead of `#[path]`-mounting `AsyncModule.rs` a second time. A duplicate
+// mount compiles two distinct `Queue` types — `VirtualMachine.modules` is
+// typed against `crate::async_module::Queue`, so a second copy here would be
+// a different (incompatible) type and double-emits the
+// `Bun__onFulfillAsyncModule` extern.
+pub use crate::async_module;
+pub use crate::async_module::{AsyncModule, Queue as AsyncModuleQueue};
 
 bun_core::declare_scope!(ModuleLoader, hidden);
 

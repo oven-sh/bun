@@ -386,7 +386,9 @@ impl HmrSocket {
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
 pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
-    pub owner: *const DevServer,
+    /// `*mut` (not `*const`) because `run` mutates the owning DevServer; Zig
+    /// declares `owner: *DevServer`.
+    pub owner: *mut DevServer,
     pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,

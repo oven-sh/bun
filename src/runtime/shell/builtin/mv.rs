@@ -190,7 +190,7 @@ impl Mv {
                     // Trying to move multiple files into a non-directory.
                     if maybe_fd.is_none() && n_sources > 1 {
                         let target = match &Self::state_mut(interp, cmd).state {
-                            MvState::CheckTarget(t) => t.target.clone(),
+                            MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
                             _ => unreachable!(),
                         };
                         let buf = Builtin::fmt_error_arena(
@@ -213,7 +213,7 @@ impl Mv {
                     };
                     let tgt_ptr = Builtin::of(interp, cmd).args_slice()[target_idx];
                     // SAFETY: argv entries are NUL-terminated.
-                    let target = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes().to_vec();
+                    let target = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes();
 
                     let mut tasks: Vec<Box<ShellMvBatchedTask>> =
                         Vec::with_capacity(task_count);
@@ -224,13 +224,13 @@ impl Mv {
                         for j in start..end {
                             let p = Builtin::of(interp, cmd).args_slice()[j];
                             // SAFETY: argv entries are NUL-terminated.
-                            srcs.push(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec());
+                            srcs.push(ZBox::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes()));
                         }
                         tasks.push(Box::new(ShellMvBatchedTask {
                             cmd,
                             idx: i,
                             sources: srcs,
-                            target: target.clone(),
+                            target: ZBox::from_bytes(target),
                             target_fd: maybe_fd,
                             cwd,
                             error_signal: core::ptr::null(),

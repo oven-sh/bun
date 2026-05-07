@@ -467,11 +467,9 @@ impl ServerWebSocket {
 
         if !handler.on_close.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
-            let loop_ = vm.event_loop();
 
             // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
             if let Some(sig) = signal {
                 // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
@@ -514,11 +512,8 @@ impl ServerWebSocket {
                 return;
             }
         } else if let Some(sig) = signal {
-            let loop_ = vm.event_loop();
-
             // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
             // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
             let sig = unsafe { sig.as_ref() };

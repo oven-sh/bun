@@ -1307,8 +1307,7 @@ impl<'a> BunTest<'a> {
 
 impl<'a> Drop for BunTest<'a> {
     fn drop(&mut self) {
-        group_begin!();
-        debug::group::end();
+        let _g = group_begin!();
 
         if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)

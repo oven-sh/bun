@@ -475,6 +475,14 @@ impl EventLoop {
     }
 }
 
+/// RAII guard returned by [`EventLoop::entered`]; calls `exit()` on drop.
+pub struct EventLoopGuard<'a>(&'a EventLoop);
+impl Drop for EventLoopGuard<'_> {
+    fn drop(&mut self) {
+        self.0.exit();
+    }
+}
+
 /// `bun_jsc::api::Timer::All` — heap of `EventLoopTimer`. Opaque on this side;
 /// `insert`/`remove` forward to the Zig impl (Timer.zig:63/86).
 #[repr(C)]

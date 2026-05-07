@@ -1519,18 +1519,14 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                self.entries_mutex.lock();
-            }
-            // PORT NOTE: defer entries_mutex.unlock() — using scopeguard via raw-ptr so the
-            // guard doesn't borrow `&self` (Zig: `defer self.entries_mutex.unlock()`).
-            let mutex_ptr = core::ptr::addr_of!(self.entries_mutex);
-            let _unlock_guard = scopeguard::guard((), move |_| {
-                if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                    // SAFETY: `mutex_ptr` points into `*self`, which outlives this guard.
-                    unsafe { (*mutex_ptr).unlock() };
-                }
-            });
+            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
+            // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
+            // borrowed across the body below.
+            let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
+                Some(self.entries_mutex.lock_guard())
+            } else {
+                None
+            };
 
             let mut in_place: Option<*mut DirEntry> = None;
 

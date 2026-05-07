@@ -690,6 +690,26 @@ impl PackageManager {
         unsafe { VERBOSE_INSTALL }
     }
 
+    /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
+    /// the global singleton accessor. Associated-fn spelling that forwards to
+    /// the free [`get`] so callers can write `PackageManager::get()` (the Zig
+    /// `PackageManager.get()` call shape).
+    ///
+    /// Returns `&'static` (shared) — NOT `&'static mut`. Thread-pool workers
+    /// (`Repository` git ops, npm `SaveTask`, `UninstallTask::run`) call this
+    /// concurrently with the main thread; a shared ref is the only sound
+    /// shape. Mutating accessors (`increment_pending_tasks`, `wake`, …) take
+    /// `&self` and use interior atomics. For exclusive in-place mutation use
+    /// the raw [`get`] free fn with field projection (see its doc).
+    #[inline]
+    pub fn get() -> &'static PackageManager {
+        // SAFETY: `holder::RAW_PTR` is written once on the main thread by
+        // `allocate_package_manager()` before any caller of `get()` (asserted
+        // by Zig's `Holder.ptr = undefined` → init ordering); the singleton
+        // lives for the process. Shared `&` aliases freely across threads.
+        unsafe { &*get() }
+    }
+
     /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
     /// Associated-fn spelling that forwards to the free [`init`] so callers
     /// can write `PackageManager::init(ctx, cli, subcommand)` (the Zig

@@ -765,9 +765,10 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub fn complete_remaining_scripts(&mut self, log_level: Options::LogLevel) {
-        // PORT NOTE: reshaped for borrowck — drain by index since loop body needs &mut self.manager.
-        for idx in 0..self.pending_lifecycle_scripts.len() {
-            let entry = &self.pending_lifecycle_scripts[idx];
+        // PORT NOTE: reshaped for borrowck — drain by move since loop body needs `&mut
+        // self.manager` and `spawn_package_lifecycle_scripts` consumes the list. Zig
+        // iterated by struct copy and never re-read `pending_lifecycle_scripts` after.
+        for entry in core::mem::take(&mut self.pending_lifecycle_scripts) {
             let package_name: Box<[u8]> = entry.list.package_name.clone();
             // .monotonic is okay because this value isn't modified from any other thread.
             // (Scripts are spawned on this thread.)
@@ -779,12 +780,9 @@ impl<'a> PackageInstaller<'a> {
 
             let optional = entry.optional;
             let output_in_foreground = false;
-            // TODO(port): entry.list is borrowed from self.pending_lifecycle_scripts; clone or
-            // restructure to move it out before calling spawn (which needs &mut self.manager).
-            let list = entry.list.clone();
             if let Err(err) = self.manager.spawn_package_lifecycle_scripts(
                 self.command_ctx,
-                list,
+                entry.list,
                 optional,
                 output_in_foreground,
                 None,

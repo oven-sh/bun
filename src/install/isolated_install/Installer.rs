@@ -238,23 +238,25 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
-        let mut patch_task = install::PatchTask::new_apply_patch_hash(
+        let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
             self.manager,
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // patch_task dropped at end of scope
-        patch_task.apply();
+        // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
+        // sole ownership lives in this scope. Mirrors Zig `defer patch_task.deinit()`.
+        let _guard = scopeguard::guard((), |_| unsafe {
+            install::PatchTask::destroy(patch_task_ptr);
+        });
+        // SAFETY: exclusive owner — see above.
+        let patch_task = unsafe { &mut *patch_task_ptr };
+        bun_core::handle_oom(patch_task.apply());
 
-        if patch_task.callback.apply.logger.has_errors() {
-            bun_core::handle_oom(
-                patch_task
-                    .callback
-                    .apply
-                    .logger
-                    .clone_to_with_recycled(log, true),
-            );
+        if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
+            if apply.logger.has_errors() {
+                bun_core::handle_oom(apply.logger.clone_to_with_recycled(log, true));
+            }
         }
     }
 
@@ -371,7 +373,7 @@ impl<'a> Installer<'a> {
             _ => {}
         }
 
-        if self.manager.options.enable.fail_early {
+        if self.manager.options.enable.fail_early() {
             Global::exit(1);
         }
 
@@ -468,7 +470,7 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            let dep = self.lockfile.buffers.dependencies[dep_id as usize];
+            let dep = &self.lockfile.buffers.dependencies[dep_id as usize];
 
             if dep.behavior.is_workspace() {
                 break 'state (node_id, CompleteState::Skipped);
@@ -936,28 +938,32 @@ impl Task {
                             // SAFETY: read-only access to `PackageManager`; see top-of-fn note.
                             let manager = unsafe { &*manager_ptr };
                             match tag {
-                                ResolutionTag::Npm => manager.cached_npm_package_folder_name(
+                                ResolutionTag::Npm => directories::cached_npm_package_folder_name(
+                                    manager,
                                     pkg_name.slice(string_buf),
                                     pkg_res.value.npm.version,
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::Git => manager.cached_git_folder_name(
+                                ResolutionTag::Git => directories::cached_git_folder_name(
+                                    manager,
                                     &pkg_res.value.git,
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::Github => manager.cached_github_folder_name(
+                                ResolutionTag::Github => directories::cached_github_folder_name(
+                                    manager,
                                     &pkg_res.value.github,
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::LocalTarball => manager.cached_tarball_folder_name(
+                                ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
+                                    manager,
                                     pkg_res.value.local_tarball,
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::RemoteTarball => manager
-                                    .cached_tarball_folder_name(
-                                        pkg_res.value.remote_tarball,
-                                        patch_info.contents_hash(),
-                                    ),
+                                ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
+                                    manager,
+                                    pkg_res.value.remote_tarball,
+                                    patch_info.contents_hash(),
+                                ),
 
                                 _ => {
                                     if Environment::CI_ASSERT {
@@ -983,7 +989,7 @@ impl Task {
                     // is a data-level race the once-init guards, not an aliasing
                     // violation here because no long-lived `&mut PackageManager` exists.
                     let (cache_dir, cache_dir_path) =
-                        unsafe { &mut *manager_ptr }.get_cache_directory_and_abs_path();
+                        directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
 
                     let mut dest_subpath = OsAutoPath::init();
                     installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
@@ -1414,7 +1420,7 @@ impl Task {
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
                     // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                    if !unsafe { &*manager_ptr }.options.do_.run_scripts
+                    if !unsafe { &*manager_ptr }.options.do_.contains(Do::RUN_SCRIPTS)
                         || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
@@ -1638,6 +1644,14 @@ impl Task {
                         );
                     }
 
+                    // PORT NOTE: `target_node_modules_path` intentionally aliases
+                    // `node_modules_path` in the common (no-replacement) case —
+                    // mirrors the Zig `*AbsPath` aliasing. The Linker field is a
+                    // raw `*const AbsPath` for exactly this reason.
+                    let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
+                        Some(p) => p,
+                        None => &node_modules_path,
+                    };
                     let mut bin_linker = bin_real::Linker {
                         bin,
                         // SAFETY: read-only `PackageManager` access; see top-of-fn note.
@@ -1646,16 +1660,14 @@ impl Task {
                         target_package_name,
                         string_buf,
                         extern_string_buf: installer.lockfile.buffers.extern_strings.as_slice(),
-                        seen: &mut seen,
-                        target_node_modules_path: target_node_modules_path
-                            .as_mut()
-                            .map(|p| p as *mut _)
-                            .unwrap_or(&mut node_modules_path),
+                        seen: Some(&mut seen),
+                        target_node_modules_path: target_nm_ptr,
                         node_modules_path: &mut node_modules_path,
                         abs_target_buf: &mut *abs_target_buf,
                         abs_dest_buf: &mut *abs_dest_buf,
                         rel_buf: &mut *rel_buf,
-                        ..Default::default()
+                        err: None,
+                        skipped_due_to_missing_bin: false,
                     };
 
                     bin_linker.link(false);
@@ -1665,7 +1677,7 @@ impl Task {
                     {
                         target_node_modules_path = None;
 
-                        bin_linker.target_node_modules_path = &mut node_modules_path;
+                        bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name = strings::StringOrTinyString::init(dep_name);
 
                         // SAFETY: read-only `PackageManager` access; see top-of-fn note.
@@ -1698,7 +1710,7 @@ impl Task {
                 Step::RunPostInstallAndPrePostPrepare => {
                     let current_step = Step::RunPostInstallAndPrePostPrepare;
                     // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                    if !unsafe { &*manager_ptr }.options.do_.run_scripts
+                    if !unsafe { &*manager_ptr }.options.do_.contains(Do::RUN_SCRIPTS)
                         || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
@@ -2235,7 +2247,7 @@ impl<'a> Installer<'a> {
                 // tree. Without --force, the existing entry came from a
                 // concurrent install and is content-identical — keep it and
                 // discard ours.
-                if self.manager.options.enable.force_install {
+                if self.manager.options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
                     old.append(self.global_store_path.as_ref().unwrap().as_bytes());
                     old.append_fmt(format_args!(
@@ -2495,7 +2507,7 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.value.workspace.slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                let symlink_dir_path = self.manager.global_link_dir_path();
+                let symlink_dir_path = directories::global_link_dir_path(self.manager);
 
                 buf.clear();
                 buf.append(symlink_dir_path);

@@ -764,7 +764,13 @@ pub struct Linker<'a> {
 
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
-    pub target_node_modules_path: &'a AbsPath,
+    ///
+    /// PORT NOTE: Zig uses `*bun.AbsPath(.{})` and intentionally aliases this
+    /// with `node_modules_path` (the common case). A `&'a AbsPath` would
+    /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
+    /// keep it as a raw pointer; the only read site dereferences it under a
+    /// SAFETY note in `build_target_package_dir`.
+    pub target_node_modules_path: *const AbsPath,
 
     /// Usually will be the same as `package_name`.
     /// Used to support native bin linking.
@@ -1329,8 +1335,12 @@ impl<'a> Linker<'a> {
 
     /// uses `self.abs_target_buf`
     pub fn build_target_package_dir(&mut self) -> &[u8] {
+        // SAFETY: `target_node_modules_path` is set at construction to either
+        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
+        // both outlive `self` and are not mutated for the duration of this
+        // read (mirrors Zig's aliasing `*AbsPath`).
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(self.target_node_modules_path.slice());
+            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 
         // PORT NOTE: reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;

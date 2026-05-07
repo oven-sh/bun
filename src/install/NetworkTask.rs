@@ -60,7 +60,10 @@ pub struct NetworkTask {
     pub package_manager: *const PackageManager,
     pub callback: Callback,
     /// Key in patchedDependencies in package.json
-    pub apply_patch_task: Option<Box<PatchTask>>,
+    // PORT NOTE: `'static` because NetworkTask is stored lifetime-less in
+    // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
+    // `&PackageManager` that outlives the task.
+    pub apply_patch_task: Option<Box<PatchTask<'static>>>,
     pub next: *mut NetworkTask,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
@@ -69,7 +72,10 @@ pub struct NetworkTask {
     pub tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    pub streaming_extract_task: *mut Task,
+    // PORT NOTE: `'static` matches `PreallocatedTaskStore =
+    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
+    // and returned to (`discard_unused_streaming_state`).
+    pub streaming_extract_task: *mut Task<'static>,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -250,8 +256,13 @@ impl NetworkTask {
             // streaming support.
         }
 
-        // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &*(this.package_manager as *mut PackageManager) };
+        // BACKREF — PackageManager owns this task and outlives it. `notify`
+        // runs on the HTTP thread, so we never materialize a `&mut
+        // PackageManager` here (the main thread may hold one concurrently);
+        // field access goes through `addr_of!` and the cross-thread
+        // `wake_raw` path, mirroring `TarballStream::finish` /
+        // `isolated_install::Installer::Task::callback`.
+        let pm = this.package_manager as *mut PackageManager;
         // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
 
@@ -277,8 +288,12 @@ impl NetworkTask {
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }
-        pm.async_network_task_queue.push(this);
-        pm.wake();
+        // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
+        // internally synchronized (`UnboundedQueue::push` takes `&self`).
+        unsafe {
+            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this);
+            PackageManager::wake_raw(pm);
+        }
     }
 }
 
@@ -362,6 +377,9 @@ impl NetworkTask {
     ) -> Result<(), ForManifestError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
         let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
+        // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
+        // was constructed with; Zig dereferences `this.package_manager.log`.
+        let log = unsafe { &mut *pm.log };
 
         self.url_buf = 'blk: {
             // Not all registries support scoped package names when fetching the manifest.
@@ -385,7 +403,7 @@ impl NetworkTask {
 
             if tmp.tag() == bun_str::Tag::Dead {
                 if !is_optional {
-                    pm.log_mut().add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -395,7 +413,7 @@ impl NetworkTask {
                         ),
                     )?;
                 } else {
-                    pm.log_mut().add_warning_fmt(
+                    log.add_warning_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -410,7 +428,7 @@ impl NetworkTask {
 
             if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
                 if !is_optional {
-                    pm.log_mut().add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -419,7 +437,7 @@ impl NetworkTask {
                         ),
                     )?;
                 } else {
-                    pm.log_mut().add_warning_fmt(
+                    log.add_warning_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -660,7 +678,10 @@ impl NetworkTask {
         };
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
-            pm.log_mut().add_error_fmt(
+            // SAFETY: `pm.log` is the long-lived `*mut Log` the package
+            // manager was constructed with; Zig dereferences
+            // `this.package_manager.log`.
+            unsafe { &mut *pm.log }.add_error_fmt(
                 None,
                 logger::Loc::EMPTY,
                 format_args!(
@@ -814,7 +835,7 @@ impl NetworkTask {
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
         package_manager: *const PackageManager,
-        apply_patch_task: Option<Box<PatchTask>>,
+        apply_patch_task: Option<Box<PatchTask<'static>>>,
     ) {
         use core::ptr::addr_of_mut;
         unsafe {

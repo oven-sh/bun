@@ -343,6 +343,21 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 // PORT NOTE: Zig `UserRoute.deinit()` only freed `self.route`; RouteDeclaration
 // drops automatically, so an explicit `impl Drop` would double-free.
 
+/// Const-generic adapter: `AnyResponse: From<*mut Response<SSL>>` is only
+/// implemented for the two concrete `SSL` values (overlap rules forbid a
+/// blanket impl alongside them), so dispatch at the call boundary.
+#[inline]
+fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -> uws::AnyResponse {
+    // PORT NOTE: `*mut Response<SSL>` and `*mut Response<true|false>` are
+    // distinct types to rustc; route through `.cast()` (the underlying handle
+    // is opaque and layout-identical for both instantiations).
+    if SSL {
+        uws::AnyResponse::SSL(resp.cast())
+    } else {
+        uws::AnyResponse::TCP(resp.cast())
+    }
+}
+
 /// HTTP/1 `RequestContext` for a given server monomorphization (Zig:
 /// `RequestContext = NewRequestContext(ssl_enabled, debug_mode, ThisServer)`).
 pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -393,7 +408,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
             js_request: jsc::StrongOptional::create(self.js_request, global),
             request: self.request_object,
             ctx: AnyRequestContext::init(self.ctx),
-            response: uws::AnyResponse::init(resp),
+            response: any_response_from::<SSL>(resp),
         }
     }
 }
@@ -553,7 +568,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ctx_uninit,
             this,
             req as *mut uws_sys::Request as *mut c_void,
-            uws::AnyResponse::init(resp),
+            any_response_from::<SSL>(resp),
             should_deinit_context,
             method,
         );

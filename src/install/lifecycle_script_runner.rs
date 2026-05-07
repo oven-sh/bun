@@ -484,11 +484,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
         } else if let Some(scripts_node) = (*manager).scripts_node {
             let scripts_node = scripts_node.as_ptr();
-            (*manager).set_node_name(
-                &*scripts_node,
+            (*manager).set_node_name::<true>(
+                scripts_node,
                 &(*this).package_name,
-                ProgressStrings::SCRIPT_EMOJI,
-                true,
+                ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );
             // .monotonic is okay because because this value is only used by hoisted installs, which
             // only use this type on the main thread.

@@ -479,7 +479,6 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             options_compress
         } else {
             archive.compress
-            // TODO(port): Compression is not Copy due to Gzip payload struct; verify clone semantics
         };
         return start_write_task(global, WriteData::Store(archive.store.clone()), path_slice.slice(), compress);
     }
@@ -643,17 +642,6 @@ impl Archive {
         }
 
         start_files_task(global, &this.store, glob_patterns)
-    }
-}
-
-impl Compression {
-    // TODO(port): helper to mimic Zig's struct copy semantics; replace with #[derive(Clone, Copy)]
-    // once GzipOptions is confirmed Copy-safe across the crate.
-    fn clone_shallow(&self) -> Self {
-        match self {
-            Compression::None => Compression::None,
-            Compression::Gzip(o) => Compression::Gzip(*o),
-        }
     }
 }
 
@@ -1375,7 +1363,7 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)
-fn is_safe_path(pathname: &[u8]) -> bool {
+pub fn is_safe_path(pathname: &[u8]) -> bool {
     // Reject empty paths
     if pathname.is_empty() {
         return false;
@@ -1411,7 +1399,7 @@ fn is_safe_path(pathname: &[u8]) -> bool {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1628,12 +1616,9 @@ fn extract_to_disk_filtered(
     Ok(count)
 }
 
-} // mod _jsc_gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/Archive.zig (1146 lines)
 //   confidence: medium
-//   todos:      10
 //   notes:      AsyncTask @typeInfo reflection collapsed into TaskContext trait; Arc<BlobStore> used per LIFETIMES.tsv but BlobStore is intrusive-refcounted in Zig — verify; libarchive Archive handle treated as &mut via FFI guards; start_write_task store-ref moved to caller (Arc::clone into WriteData::Store).
 // ──────────────────────────────────────────────────────────────────────────

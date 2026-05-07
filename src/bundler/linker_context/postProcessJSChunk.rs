@@ -24,11 +24,17 @@ use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}}
 #[allow(dead_code)]
 type IndexInt = u32;
 
-/// Helper: get printed code from a `PrintResult` (Zig: `result.result.code`).
-fn print_result_code(r: &PrintResult) -> &[u8] {
+/// Consume a `PrintResult`, taking ownership of its code buffer.
+///
+/// Mirrors Zig `j.push(result.code, allocator)` ownership-transfer: the
+/// `StringJoiner` may outlive this function (when `breakOutputIntoPieces`
+/// returns `.joiner` instead of running `j.done()` eagerly), so any code
+/// from a stack-local `PrintResult` must be moved into the joiner, not
+/// borrowed.
+fn print_result_into_code(r: PrintResult) -> Box<[u8]> {
     match r {
-        PrintResult::Result(ok) => &ok.code,
-        PrintResult::Err(_) => b"",
+        PrintResult::Result(ok) => ok.code,
+        PrintResult::Err(_) => Box::default(),
     }
 }
 
@@ -536,11 +542,16 @@ pub fn post_process_js_chunk(
     }
 
     {
-        let code = print_result_code(&cross_chunk_prefix);
+        // Zig: `j.push(cross_chunk_prefix.result.code, worker.allocator)` —
+        // transfers ownership of the buffer to the joiner. The joiner may be
+        // returned as `IntermediateOutput::Joiner` and concatenated *after*
+        // this function returns (and `cross_chunk_prefix` has been dropped),
+        // so borrowing here is a use-after-free.
+        let code = print_result_into_code(cross_chunk_prefix);
         if !code.is_empty() {
             newline_before_comment = true;
-            line_offset.advance(code);
-            j.push(code);
+            line_offset.advance(&code);
+            j.push_owned(code);
         }
     }
 
@@ -670,22 +681,32 @@ pub fn post_process_js_chunk(
         newline_before_comment = !compile_result.code().is_empty();
     }
 
-    let tail_code = entry_point_tail.code();
+    // Zig: `j.push(tail_code, worker.allocator)` — ownership transfer.
+    // `entry_point_tail` is a stack local; if `breakOutputIntoPieces` returns
+    // `.joiner` (no unique-key references in the chunk), `j.done()` runs in
+    // `IntermediateOutput::code()` after this frame has unwound and the
+    // `Box<[u8]>` here has been freed. Move the buffer into the joiner.
+    let tail_code: Box<[u8]> = match entry_point_tail {
+        CompileResult::Javascript { result, .. } => print_result_into_code(result),
+        _ => Box::default(),
+    };
     if !tail_code.is_empty() {
         // Stick the entry point tail at the end of the file. Deliberately don't
         // include any source mapping information for this because it's automatically
         // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code);
+        j.push_owned(tail_code);
     }
 
     // Put the cross-chunk suffix inside the IIFE
     {
-        let code = print_result_code(&cross_chunk_suffix);
+        // Zig: `j.push(cross_chunk_suffix.result.code, worker.allocator)` —
+        // ownership transfer (same lifetime hazard as `cross_chunk_prefix`).
+        let code = print_result_into_code(cross_chunk_suffix);
         if !code.is_empty() {
             if newline_before_comment {
                 j.push_static(b"\n");
             }
-            j.push(code);
+            j.push_owned(code);
         }
     }
 

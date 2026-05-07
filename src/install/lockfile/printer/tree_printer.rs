@@ -9,12 +9,11 @@ use bun_install::{
     PackageNameHash, Resolution, INVALID_PACKAGE_ID,
 };
 use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
-// PORT NOTE: `Printer.lockfile` is now the canonical `crate::Lockfile`
-// (column-vec stub) so it matches `PackageManager.lockfile`; the stub
-// `PackageList::slice()` returns `&PackageList` with inherent `items_*`
-// accessors, so the `PackageSliceExt` trait (typed against the
-// `MultiArrayList<Package>` slice) is no longer needed here.
+// PORT NOTE: Zig `slice.items(.field)` → trait-provided `items_<field>()`
+// accessors on `MultiArrayList<Package>` / its `Slice`.
+use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
 use crate::package_manager_real::TrackInstalledBin;
+use bun_sys::{Dir as SysDir, Fd};
 
 type Bitset = DynamicBitSet;
 
@@ -39,11 +38,14 @@ where
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     // PORT NOTE: Zig `slice.items(.field)` → derive(MultiArrayElement)-generated `items_<field>()`.
-    let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
-    let names = packages_slice.items_name();
-    let pkg_metas = packages_slice.items_meta();
-    debug_assert!(workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root);
-    let resolutions_list = packages_slice.items_resolutions();
+    // PORT NOTE: reshaped for borrowck — Zig's `MultiArrayList.Slice.items(.field)`
+    // hands out independent column slices; the Rust trait borrows `&packages_slice`
+    // for each, so we can't hold multiple typed-slice locals concurrently. Index
+    // per-use instead (same memory access pattern, just no aliased borrows).
+    debug_assert!({
+        let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
+        workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root
+    });
     let mut printed_section_header = false;
     let mut printed_update = false;
 

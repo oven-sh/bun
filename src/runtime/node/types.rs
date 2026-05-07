@@ -1252,18 +1252,6 @@ impl PathLikeExt for PathLike {
             Ok(Self::EncodedSlice(utf8))
         }
     }
-            // a real ref-bump belongs here once those types expose `dupe()`.
-            // TODO(port): switch to `b.dupe()` / `s.dupe_ref()` when available.
-            Self::Buffer(b) => Self::Buffer(unsafe { core::ptr::read(b) }),
-            Self::SliceWithUnderlyingString(s) => {
-                Self::SliceWithUnderlyingString(unsafe { core::ptr::read(s) })
-            }
-            Self::ThreadsafeString(s) => {
-                Self::ThreadsafeString(unsafe { core::ptr::read(s) })
-            }
-            Self::EncodedSlice(s) => Self::EncodedSlice(unsafe { core::ptr::read(s) }),
-        }
-    }
 }
 
 
@@ -1478,24 +1466,6 @@ impl PathOrFileDescriptorSerializeTag {
 
 
 impl PathOrFdExt for PathOrFileDescriptor {
-    #[inline]
-    fn dupe(&self) -> Self {
-        match self {
-            Self::Fd(fd) => Self::Fd(*fd),
-            Self::Path(p) => Self::Path(p.dupe()),
-        }
-    }
-    /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's
-    /// `pathlike.path` direct field access, which is only used after the
-    /// caller has matched on the tag).
-    #[inline]
-
-    /// Unwrap the `Fd` arm. Panics on `Path` (mirrors Zig's
-    /// `pathlike.fd` direct field access).
-    #[inline]
-
-
-
     /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
     fn deinit(&self) {
         if let Self::Path(path) = self { path.deinit(); }

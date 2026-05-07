@@ -11,7 +11,7 @@ use bun_string::{strings, String as BunString};
 // (`enum(u8) { …, _ }`) and the FFI caller may hand us discriminants outside
 // the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct ApiLoader(pub u8);
 impl ApiLoader {
     /// schema.zig:326 — `_none = 254`.

@@ -562,16 +562,21 @@ impl WebWorker {
         // worker whose thread is already running.
         live_workers::register(worker);
 
-        // PORT NOTE: `worker` is `*mut WebWorker` (not `Send` itself); send the
-        // pointer as `usize` and cast back on the worker thread. The struct is
-        // `Sync` (see `unsafe impl` above).
-        let worker_addr = worker as usize;
+        // `*mut WebWorker` is not `Send` on its own; wrap it so the closure
+        // captures a `Send` value without erasing pointer provenance through
+        // an `as usize` round-trip. `WebWorker` is `Sync` (see `unsafe impl`
+        // above) and the pointee is owned by C++ `WebCore::Worker` for the
+        // lifetime of the thread, so moving the pointer across threads is sound.
+        struct SendPtr(*const WebWorker);
+        // SAFETY: see comment above — pointee is `Sync`, ownership is external.
+        unsafe impl Send for SendPtr {}
+        let worker_ptr = SendPtr(worker);
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
-                // SAFETY: `worker_addr` is the `Box::into_raw` ptr from above;
+                // SAFETY: `worker_ptr.0` is the `Box::into_raw` ptr from above;
                 // owned by C++ `WebCore::Worker` for the lifetime of the thread.
-                let this = unsafe { &*(worker_addr as *const WebWorker) };
+                let this = unsafe { &*worker_ptr.0 };
                 this.thread_main();
             });
         match spawn {
@@ -1394,10 +1399,21 @@ fn resolve_entry_point_specifier(
                     &[str],
                 )
                 .len();
-                let extname = bun_paths::extension(&pathbuf[..base_len]);
+                // PORT NOTE: Zig held `extname` as a sub-slice of `pathbuf`
+                // while overwriting `pathbuf` in-place. In Rust that would be
+                // an immutable borrow live across a mutable one — NLL accepts
+                // each branch today only because every then-body diverges. To
+                // keep this robust under future edits, capture the extension
+                // by length and copy its bytes into a small stack buffer; all
+                // comparisons below use the copy, leaving `pathbuf` unborrowed.
+                let ext_len = bun_paths::extension(&pathbuf[..base_len]).len();
+                let mut ext_buf = [0u8; 4];
+                ext_buf[..ext_len.min(4)]
+                    .copy_from_slice(&pathbuf[base_len - ext_len.min(4)..base_len]);
+                let extname = &ext_buf[..ext_len.min(4)];
 
                 // ./foo -> ./foo.js
-                if extname.is_empty() {
+                if ext_len == 0 {
                     pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
                     if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
                         // SAFETY: graph is `&'static`; returned slice borrows it.
@@ -1409,7 +1425,7 @@ fn resolve_entry_point_specifier(
                 }
 
                 // ./foo.ts -> ./foo.js
-                if extname == b".ts" {
+                if ext_len == 3 && extname == b".ts" {
                     pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
                     if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
                         // SAFETY: graph is `&'static`.
@@ -1420,7 +1436,7 @@ fn resolve_entry_point_specifier(
                     break 'try_from_extension;
                 }
 
-                if extname.len() == 4 {
+                if ext_len == 4 {
                     const EXTS: [&[u8]; 6] =
                         [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
                     // PERF(port): was `inline for` — profile in Phase B.

@@ -7,7 +7,7 @@
 // BunClientData.cpp); this test exercises each of its branches so a
 // regression in that function shows up as a crash or GC corruption rather
 // than silently wrong behavior in some rarely-allocated class.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("IsoSubspace lazy init survives GC across all HeapCellType branches", async () => {

@@ -209,77 +209,11 @@ pub fn stem(p: &[u8]) -> &[u8] {
     }
 }
 
-// TODO(port): Zig's `std.fs.max_path_bytes` is platform-derived; values below mirror Zig std.
-#[cfg(target_family = "wasm")]
-pub const MAX_PATH_BYTES: usize = 1024;
-#[cfg(target_os = "linux")]
-pub const MAX_PATH_BYTES: usize = 4096;
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
-pub const MAX_PATH_BYTES: usize = 1024;
-#[cfg(windows)]
-pub const MAX_PATH_BYTES: usize = PATH_MAX_WIDE * 3 + 1;
-
-/// `[MAX_PATH_BYTES]u8`. Newtype (not a bare alias) so callers get `PathBuffer::uninit()` /
-/// `PathBuffer::ZEROED` per PORTING.md type/idiom map.
-#[repr(transparent)]
-pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
-
-impl PathBuffer {
-    pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
-    #[inline]
-    pub fn uninit() -> Self {
-        // SAFETY: all-zero is a valid [u8; N].
-        unsafe { core::mem::zeroed() }
-    }
-    /// Explicit `&mut [u8]` view (callers that need a sized borrow without
-    /// going through `DerefMut`).
-    #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0[..] }
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] { &self.0[..] }
-}
-impl Default for PathBuffer {
-    #[inline]
-    fn default() -> Self { Self::ZEROED }
-}
-impl core::ops::Deref for PathBuffer {
-    type Target = [u8];
-    #[inline]
-    fn deref(&self) -> &[u8] { &self.0 }
-}
-impl core::ops::DerefMut for PathBuffer {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] { &mut self.0 }
-}
-
-/// Mirrors Zig `std.os.windows.PATH_MAX_WIDE` (32767).
-pub const PATH_MAX_WIDE: usize = 32767;
-
-/// `[PATH_MAX_WIDE]u16`. Same newtype shape as `PathBuffer` so `OSPathBuffer::uninit()` works on Windows.
-#[repr(transparent)]
-pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
-
-impl WPathBuffer {
-    pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
-    #[inline]
-    pub fn uninit() -> Self {
-        // SAFETY: all-zero is a valid [u16; N].
-        unsafe { core::mem::zeroed() }
-    }
-}
-impl Default for WPathBuffer {
-    #[inline]
-    fn default() -> Self { Self::ZEROED }
-}
-impl core::ops::Deref for WPathBuffer {
-    type Target = [u16];
-    #[inline]
-    fn deref(&self) -> &[u16] { &self.0 }
-}
-impl core::ops::DerefMut for WPathBuffer {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
-}
+// LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
+// are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
+// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_core::which`
+// etc. accept a buffer obtained from this crate without a pointer cast.
+pub use bun_core::{PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE};
 
 #[cfg(windows)]
 pub type OSPathChar = u16;

@@ -2601,8 +2601,9 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
-            pretty_errorln!(
-                "<r><red>error<r>: Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl."
+            Output::err_generic(
+                "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+                (),
             );
             Global::exit(1);
         }

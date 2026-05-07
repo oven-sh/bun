@@ -213,7 +213,11 @@ pub mod help_command {
     ];
 
     // the spacing between commands here is intentional
-    pub const CLI_HELPTEXT_FMT: &str = "\
+    //
+    // PORT NOTE: defined as a macro (not a `const`) so the literal can be fed
+    // to `format_args!`/`concat!` for the seven `{:<16}` substitutions below;
+    // Rust's `format_args!` requires a *literal* token, not a `&'static str`.
+    macro_rules! cli_helptext_fmt { () => { "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
 
 <b>Commands:<r>

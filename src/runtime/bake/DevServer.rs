@@ -132,51 +132,18 @@ fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framew
 
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
-    /// `memory_cost_detailed`.
+    /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost_body`
+    /// (mirrors Zig `pub const memoryCost = MemoryCost.memoryCost;`).
+    #[inline]
     pub fn memory_cost(&self) -> usize {
-        let cost = self.memory_cost_detailed();
-        cost.incremental_graph_client
-            + cost.incremental_graph_server
-            + cost.js_code
-            + cost.source_maps
-            + cost.assets
-            + cost.other
+        crate::bake::dev_server::memory_cost_body::memory_cost(self)
     }
 
-    fn memory_cost_detailed(&self) -> MemoryCost {
-        let mut other: usize = ::core::mem::size_of::<DevServer>();
-        other += self.root.len();
-        other += self.router.memory_cost();
-        for bundle in &self.route_bundles {
-            other += bundle.memory_cost();
-        }
-        let (igs_meta, igs_js, igs_sm) = self.server_graph.memory_cost_detailed();
-        let (igc_meta, igc_js, igc_sm) = self.client_graph.memory_cost_detailed();
-        let assets = self.assets.memory_cost();
-        for (key, _) in self.route_lookup.iter() {
-            other += ::core::mem::size_of_val(key);
-        }
-        for failure in self.bundling_failures.values() {
-            other += failure.data.len();
-        }
-        other += self.incremental_result.memory_cost();
-        if let Some(h) = &self.has_tailwind_plugin_hack {
-            for k in h.keys() {
-                other += k.len();
-            }
-        }
-        // current_bundle / next_bundle / source_maps / directory_watchers /
-        // active_websocket_connections / html_router / barrel_* — counted in
-        // their owning sub-stores or considered ephemeral; matches Zig's
-        // `useAllFields` `= {}` no-op entries.
-        MemoryCost {
-            incremental_graph_client: igc_meta,
-            incremental_graph_server: igs_meta,
-            js_code: igs_js + igc_js,
-            source_maps: igs_sm + igc_sm,
-            assets,
-            other,
-        }
+    /// `DevServer.memoryCostDetailed` — body lives in
+    /// `dev_server::memory_cost_body` (free fn ported from `memory_cost.zig`).
+    #[inline]
+    pub fn memory_cost_detailed(&self) -> MemoryCost {
+        crate::bake::dev_server::memory_cost_body::memory_cost_detailed(self)
     }
 
     /// Recover `&VirtualMachine` from the JSC_BORROW `vm` field.

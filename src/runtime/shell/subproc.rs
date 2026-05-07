@@ -1037,6 +1037,7 @@ impl Readable {
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
         result: StdioResult,
+        interp: *mut crate::shell::interpreter::Interpreter,
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
@@ -1669,6 +1670,7 @@ impl PipeReader {
         result: StdioResult,
         capture: Option<Arc<IOWriter>>,
         out_type: OutKind,
+        interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
         // Allocate directly into the Arc so the address is stable BEFORE we
         // hand it to `reader.set_parent` / @fieldParentPtr consumers.
@@ -1683,10 +1685,7 @@ impl PipeReader {
             state: PipeReaderState::Pending,
             captured_writer: CapturedWriter::default(),
             buffered_output: BufferedOutput::default(),
-            // TODO(port): wire `interp` from the spawning Cmd (Zig threaded it
-            // implicitly via Base.interpreter). Null until Readable::init/Cmd
-            // pass it through.
-            interp: core::ptr::null_mut(),
+            interp,
         });
         let this_ptr: *mut PipeReader = Arc::as_ptr(&arc).cast_mut();
         // SAFETY: `arc` is uniquely held; no other `&`/`&mut` to the payload

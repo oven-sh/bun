@@ -213,8 +213,7 @@ fn js_socket_type<const SSL: bool>() {
 /// its `arg` is shared across every accepted connection — using it for a
 /// per-connection `*TLSSocket` is a UAF when handshakes overlap. Read the
 /// socket back from the per-SSL ex_data slot set in `onOpen` instead.
-#[unsafe(no_mangle)]
-pub extern "C" fn select_alpn_callback(
+extern "C" fn select_alpn_callback(
     ssl: *mut bun_boringssl_sys::SSL,
     out: *mut *const u8,
     outlen: *mut u8,

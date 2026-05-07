@@ -264,6 +264,38 @@ impl Value {
         }
     }
 
+    /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
+    /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
+    /// callback (zero-copy). Caller guarantees `self` outlives every use of the
+    /// returned string.
+    ///
+    /// This is the faithful port of Zig's `Value.toBunString` as called from
+    /// `bake/production.zig` (`pt.bundled_outputs[i].value.toBunString()`): Zig
+    /// passes the union by value so the slice is aliased in place, and
+    /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
+    /// phase. The consuming [`Self::to_bun_string`] cannot be used there
+    /// because the Rust `Vec<OutputFile>` is only borrowed.
+    pub fn to_bun_string_ref(&self) -> BunString {
+        match self {
+            Value::Noop => BunString::EMPTY,
+            Value::Buffer { bytes } => {
+                if bytes.is_empty() {
+                    return BunString::EMPTY;
+                }
+                extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: u32) {}
+                // latin1 = true (matches Zig).
+                BunString::create_external::<*mut c_void>(
+                    bytes,
+                    true,
+                    core::ptr::null_mut::<c_void>(),
+                    noop,
+                )
+            }
+            Value::Pending(_) => unreachable!(),
+            other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
+        }
+    }
+
     pub fn kind(&self) -> Kind {
         match self {
             Value::Move(_) => Kind::Move,

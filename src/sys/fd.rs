@@ -446,7 +446,33 @@ pub unsafe fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         // strlen the result.
         unsafe { libc::strlen(buf.cast()) as isize }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "freebsd")]
+    {
+        // No procfs on FreeBSD; fcntl(F_KINFO) fills a kinfo_file with kf_path.
+        // libc's struct has private padding fields, so build it via zeroed
+        // MaybeUninit + addr_of_mut! instead of a struct literal.
+        use core::ptr::{addr_of, addr_of_mut};
+        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
+        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
+        unsafe {
+            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
+                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
+        }
+        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
+        if rc < 0 {
+            let e = sys::last_errno();
+            return if e == sys::E::ENOENT as i32 || e == sys::E::EBADF as i32 { -1 } else { 0 };
+        }
+        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
+        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
+        let len = unsafe { libc::strlen(path.cast()) };
+        let n = len.min(cap);
+        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
+        n as isize
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     { let _ = (fd, buf, cap); 0 }
 }
 

@@ -199,7 +199,6 @@ pub fn copy_file_with_state(
         // FreeBSD 13+ has copy_file_range(2). Unlike Linux, we don't need
         // kernel-version probing — our minimum is 14.0.
         loop {
-            // TODO(port): exact binding for libc::copy_file_range on FreeBSD
             // SAFETY: FFI call; fds are valid, offset ptrs are null (kernel uses file position)
             let rc = unsafe {
                 libc::copy_file_range(

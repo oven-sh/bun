@@ -1050,8 +1050,18 @@ impl Darwin {
     /// `FSEventsWatcher.deinit()` → `unregisterWatcher()` blocks on the FSEvents loop
     /// mutex, which `_events_cb` holds for the whole dispatch; once this returns no
     /// further `onFSEvent` calls will arrive for `watcher`.
-    fn remove_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) {
-        if let Some(fse) = watcher.platform.fsevents.take() {
+    ///
+    /// Takes a raw `*mut PathWatcher`: while we block on the FSEvents loop mutex
+    /// inside `deinit`, the CF thread may concurrently take `manager.mutex` and
+    /// raw-read `(*watcher).manager` (to bail on `None`). Holding a `&mut PathWatcher`
+    /// across that would be aliased-`&mut` UB under Stacked Borrows; Zig's pointer
+    /// model has no such restriction.
+    fn remove_watch(_: &'static PathWatcherManager, watcher: *mut PathWatcher) {
+        // SAFETY: caller is the sole logical owner (last handler detached, watcher
+        // unlinked from the dedup map, `manager` already nulled). Project only the
+        // `platform.fsevents` sub-place via the raw pointer; the CF thread's
+        // concurrent raw read targets the disjoint `manager` field.
+        if let Some(fse) = unsafe { (*watcher).platform.fsevents.take() } {
             // SAFETY: fse was returned by `FSEvents.watch` and not yet deinit'd.
             unsafe { fsevents::FSEventsWatcher::deinit(fse) };
         }
@@ -1068,14 +1078,23 @@ impl Darwin {
     /// `watcher.manager == null` check catches the window where detach has already
     /// unlinked us but hasn't yet called `fse.deinit()`.
     fn on_fs_event(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-        // SAFETY: ctx is the *mut PathWatcher passed in add_watch above.
-        let watcher: &mut PathWatcher = unsafe { &mut *(ctx.unwrap() as *mut PathWatcher) };
+        // SAFETY: ctx is the *mut PathWatcher passed in add_watch above. Keep it raw
+        // until `manager.mutex` is held and the `manager.is_none()` bail-out has run:
+        // `detach()` on the JS thread may concurrently be between its `unlock()` and
+        // `remove_watch()` (blocked on the FSEvents loop mutex we hold), with the
+        // watcher already unlinked. Forming `&mut *ctx` here before that check would
+        // alias detach's access; raw-ptr reads have no exclusivity assertion.
+        let watcher_ptr = ctx.unwrap() as *mut PathWatcher;
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();
-        if watcher.manager.is_none() {
+        // SAFETY: raw read under manager.mutex; see above.
+        if unsafe { (*watcher_ptr).manager.is_none() } {
             return;
         }
+        // SAFETY: holding manager.mutex with `manager` still set → detach() has not
+        // yet unlinked us, so no other `&mut PathWatcher` exists for this allocation.
+        let watcher = unsafe { &mut *watcher_ptr };
         match event {
             Event::Rename(path) => watcher.emit(EventType::Rename, &path, is_file),
             Event::Change(path) => watcher.emit(EventType::Change, &path, is_file),
@@ -1085,15 +1104,17 @@ impl Darwin {
     }
 
     fn on_fs_event_flush(ctx: Option<*mut c_void>) {
-        // SAFETY: ctx is the *mut PathWatcher passed in add_watch above.
-        let watcher: &mut PathWatcher = unsafe { &mut *(ctx.unwrap() as *mut PathWatcher) };
-        // SAFETY: see on_fs_event.
+        // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
+        let watcher_ptr = ctx.unwrap() as *mut PathWatcher;
+        // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
         let _g = manager.mutex.lock_guard();
-        if watcher.manager.is_none() {
+        // SAFETY: raw read under manager.mutex.
+        if unsafe { (*watcher_ptr).manager.is_none() } {
             return;
         }
-        watcher.flush();
+        // SAFETY: holding manager.mutex with `manager` still set; exclusive.
+        unsafe { (*watcher_ptr).flush() };
     }
 }
 

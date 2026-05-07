@@ -1152,10 +1152,13 @@ impl CommandLineReporter {
         // dispatch on enum value. Demoted to runtime match.
         // PERF(port): was comptime monomorphization — profile in Phase B
         let result = sequence.result;
+        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write provenance
+        // from `enter_file`'s `&mut`; single-threaded; reporter outlives every BunTest.
+        let reporter_ref: Option<&CommandLineReporter> =
+            buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
             let basic = result.basic_result();
-            let dots_branch = buntest.reporter.is_some()
-                && buntest.reporter.as_ref().unwrap().reporters.dots
+            let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(basic, bun_test::BasicResult::Pass | bun_test::BasicResult::Skip | bun_test::BasicResult::Todo | bun_test::BasicResult::Pending);
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
@@ -1167,9 +1170,9 @@ impl CommandLineReporter {
                     bun_test::BasicResult::Pending => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors)); }
                     bun_test::BasicResult::Fail => { let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors)); }
                 }
-                buntest.reporter.as_ref().unwrap().last_printed_dot.set(true);
+                reporter_ref.unwrap().last_printed_dot.set(true);
             } else if basic != bun_test::BasicResult::Fail
-                && (buntest.reporter.is_some() && buntest.reporter.as_ref().unwrap().reporters.only_failures)
+                && reporter_ref.is_some_and(|r| r.reporters.only_failures)
             {
                 // when using --only-failures, only print failures
             } else {
@@ -1199,19 +1202,17 @@ impl CommandLineReporter {
         Self::maybe_print_junit_line(result, buntest, sequence, test_entry, elapsed_ns);
 
         let formatted_line = &output_buf[initial_length..];
-        if buntest.reporter.is_some() && buntest.reporter.as_ref().unwrap().worker_ipc_file_idx.is_some() {
-            ParallelRunner::worker_emit_test_done(buntest.reporter.as_ref().unwrap().worker_ipc_file_idx.unwrap(), formatted_line);
+        if let Some(idx) = reporter_ref.and_then(|r| r.worker_ipc_file_idx) {
+            ParallelRunner::worker_emit_test_done(idx, formatted_line);
         } else {
             let _ = err_w().write_all(formatted_line);
         }
 
         let Some(this) = buntest.reporter else { return; }; // command line reporter is missing! uh oh!
-        // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
-        // shared borrow is treated as a raw pointer here (single-threaded test
-        // runner, sole writer for the duration of this completion callback).
-        #[allow(invalid_reference_casting)]
-        let this: &mut CommandLineReporter =
-            unsafe { &mut *(core::ptr::from_ref(this) as *mut CommandLineReporter) };
+        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+        // provenance from `enter_file`'s `&mut`; single-threaded test runner,
+        // sole writer for the duration of this completion callback.
+        let this: &mut CommandLineReporter = unsafe { &mut *this.as_ptr() };
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {

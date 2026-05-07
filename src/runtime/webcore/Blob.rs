@@ -2008,11 +2008,11 @@ impl BlobExt for Blob {
                 // `StoreRef`; single-threaded JS event loop ⇒ no concurrent writers.
                 let last_modified = unsafe { (*store_ptr).data.as_file() }.last_modified;
                 // last_modified can be already set during read.
-                if last_modified == jsc::INIT_TIMESTAMP as f64 && !self.is_s3() {
+                if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
                     resolve_file_stat(store);
                 }
                 // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(unsafe { (*store_ptr).data.as_file() }.last_modified);
+                return JSValue::js_number(unsafe { (*store_ptr).data.as_file() }.last_modified as f64);
             }
         }
 
@@ -3979,7 +3979,7 @@ fn write_file_with_empty_source_to_destination(
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
-                    path: file.pathlike.dupe(),
+                    path: file.pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,
                 },
@@ -4444,7 +4444,7 @@ pub fn write_file_internal(
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
         if let store::Data::File(ref mut file) = *blob_store.data_mut() {
-            file.last_modified = jsc::INIT_TIMESTAMP as f64;
+            file.last_modified = jsc::INIT_TIMESTAMP;
         }
     }
 
@@ -5508,7 +5508,7 @@ fn resolve_file_stat(store: &StoreRef) {
                     };
                     file.mode = stat.st_mode as bun_sys::Mode;
                     file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize) as f64;
+                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize);
                 }
                 // the file may not exist yet. That's okay.
                 _ => {}
@@ -5524,7 +5524,7 @@ fn resolve_file_stat(store: &StoreRef) {
                     };
                     file.mode = stat.st_mode as bun_sys::Mode;
                     file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize) as f64;
+                    file.last_modified = jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize);
                 }
                 _ => {}
             }

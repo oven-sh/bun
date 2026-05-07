@@ -957,8 +957,12 @@ impl CompletionStruct for JSBundleCompletionTask {
             transpiler.options.compile = false;
             config.compile = None;
         }
-        transpiler.options.banner = config.banner.list.as_slice().into();
-        transpiler.options.footer = config.footer.list.as_slice().into();
+        // PORT NOTE: `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`;
+        // Zig assigned a borrow into `*JSBundleCompletionTask` (`this.config`
+        // outlives the build). Clone into Owned so the static bound holds
+        // without tying `&mut self` to `'a`.
+        transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
+        transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
         transpiler.options.metafile = config.metafile;
         transpiler.options.metafile_json_path =

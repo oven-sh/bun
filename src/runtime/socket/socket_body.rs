@@ -3292,10 +3292,6 @@ pub enum EventState {
 }
 
 impl DuplexUpgradeContext {
-    pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
-    }
-
     /// Local shim: `bun_uws::NewSocketHandler` has no `from_duplex` (the
     /// `UpgradedDuplex` type is higher-tier and type-erased there). Wrap the
     /// pointer in the `InternalSocket::UpgradedDuplex` variant.
@@ -3665,39 +3661,70 @@ pub fn js_upgrade_duplex_to_tls(
     // `DuplexUpgradeContext.owned_ctx` below; defuse the errdefer.
     let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
-    let duplex_context = DuplexUpgradeContext::new(DuplexUpgradeContext {
-        // TODO(port): in-place init — Zig `undefined`, assigned below after we
-        // have `duplex_context` (self-referential ctx ptr). `zeroed()` is UB if
-        // `UpgradedDuplex` has NonNull/fn-ptr fields; Phase B: allocate via
-        // `Box::<MaybeUninit<Self>>::new_uninit()` and field-write.
-        #[allow(invalid_value)]
-        upgrade: unsafe { core::mem::MaybeUninit::zeroed().assume_init() },
-        // SAFETY: `tls` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
-        tls: Some(unsafe { IntrusiveRc::from_raw(tls) }),
-        // SAFETY: `bun_vm()` returns the live per-global VM; lives for the program.
-        vm: VirtualMachine::get(),
-        // Zig `undefined`, assigned below after we have `duplex_context`.
-        // `AnyTask::default()` is a safe sentinel (panics if run before overwrite).
-        task: AnyTask::default(),
-        task_event: EventState::StartTLS,
+    // `DuplexUpgradeContext` is self-referential: `task.ctx` and
+    // `upgrade.handlers.ctx` both point at the containing allocation, and
+    // `UpgradedDuplex` has fn-ptr-niched fields plus a `Drop` impl, so it
+    // cannot be value-constructed with a placeholder and assigned later
+    // (`=` would Drop the placeholder; `zeroed()` is an invalid value).
+    // Allocate uninit, leak to a raw pointer for the stable address, then
+    // field-write everything in place — `upgrade` last, once the address is
+    // known. Mirrors Zig `bun.new(...)` then `.upgrade = .from(...)`.
+    let duplex_context: *mut DuplexUpgradeContext = Box::into_raw(Box::new(
+        core::mem::MaybeUninit::<DuplexUpgradeContext>::uninit(),
+    ))
+    .cast();
+    // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
+    // below before any read or `&mut DuplexUpgradeContext` is formed.
+    unsafe {
+        ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
+        ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
+        // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
+        // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
+        // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.
+        ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
+            ctx: NonNull::new(duplex_context as *mut c_void),
+            callback: |p| {
+                // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
+                unsafe { (&mut *(p as *mut DuplexUpgradeContext)).run_event() };
+                Ok(())
+            },
+        });
+        ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
         // legacy build path.
-        ssl_config: if owned_ctx_taken.is_none() {
+        ptr::addr_of_mut!((*duplex_context).ssl_config).write(if owned_ctx_taken.is_none() {
             ssl_opts.take()
         } else {
             None
-        },
-        owned_ctx: owned_ctx_taken,
-        is_open: false,
-        mode: if is_server {
+        });
+        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(owned_ctx_taken);
+        ptr::addr_of_mut!((*duplex_context).is_open).write(false);
+        ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
         } else {
             SocketMode::Client
-        },
-    });
-    // SAFETY: just allocated via Box::into_raw.
+        });
+        ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
+            global_static,
+            duplex,
+            UpgradedDuplexHandlers {
+                on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },
+                on_data: |c, d| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_data(d) },
+                on_handshake: |c, ok, err| unsafe {
+                    (&mut *(c as *mut DuplexUpgradeContext)).on_handshake(ok, err)
+                },
+                on_close: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_close() },
+                on_end: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_end() },
+                on_writable: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_writable() },
+                on_error: |c, e| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_error(e) },
+                on_timeout: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_timeout() },
+                ctx: duplex_context as *mut (),
+            },
+        ));
+    }
+    // SAFETY: every field initialized above.
     let dc = unsafe { &mut *duplex_context };
     // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
     // otherwise it was only used for protos/server_name and is freed here.
@@ -3709,35 +3736,6 @@ pub fn js_upgrade_duplex_to_tls(
     // freed again on a later throw.
     let _ = ssl_opts;
     tls_ref.ref_();
-
-    // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`. Rust's
-    // `AnyTask::New` can't take a comptime callback (see AnyTask.rs PORT NOTE),
-    // so we hand-write the `*mut c_void → run_event` shim and fill the struct.
-    dc.task = AnyTask {
-        ctx: NonNull::new(duplex_context as *mut c_void),
-        callback: |p| {
-            // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
-            unsafe { (&mut *(p as *mut DuplexUpgradeContext)).run_event() };
-            Ok(())
-        },
-    };
-    dc.upgrade = UpgradedDuplex::from(
-        global_static,
-        duplex,
-        UpgradedDuplexHandlers {
-            on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },
-            on_data: |c, d| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_data(d) },
-            on_handshake: |c, ok, err| unsafe {
-                (&mut *(c as *mut DuplexUpgradeContext)).on_handshake(ok, err)
-            },
-            on_close: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_close() },
-            on_end: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_end() },
-            on_writable: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_writable() },
-            on_error: |c, e| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_error(e) },
-            on_timeout: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_timeout() },
-            ctx: duplex_context as *mut (),
-        },
-    );
 
     tls_ref.socket = SocketHandler::<true>::from_duplex(&mut dc.upgrade);
     tls_ref.mark_active();

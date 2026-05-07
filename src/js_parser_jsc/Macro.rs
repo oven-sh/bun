@@ -29,7 +29,7 @@ use bun_jsc::{
 };
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
-    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine,
+    runtime_hooks, InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine,
 };
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::{BuildMessage, ResolveMessage};

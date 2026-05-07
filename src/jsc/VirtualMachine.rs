@@ -1316,6 +1316,14 @@ pub struct RuntimeHooks {
     /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
     /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: unsafe fn(blob_id: &[u8]) -> bool,
+    /// `Response::get_blob_without_call_frame` /
+    /// `Request::get_blob_without_call_frame` — spec Macro.zig:331-334. If
+    /// `value` downcasts to a `Response` or `Request` (both live in
+    /// `bun_runtime::webcore`), return its body Blob wrapped in a resolved
+    /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
+    /// `ResolveMessage` arms in `Macro::Run::coerce`.
+    pub body_mixin_get_blob:
+        unsafe fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
     /// The static `VmLoaderVTable` instance for [`fetch_without_on_load_plugins`]
     /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
     /// (`bun_runtime::webcore`), so the high tier supplies the table.
@@ -1495,7 +1503,7 @@ pub fn set_runtime_hooks(hooks: &'static RuntimeHooks) {
 }
 
 #[inline]
-pub(crate) fn runtime_hooks() -> Option<&'static RuntimeHooks> {
+pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
     let p = RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
     // SAFETY: `p` was stored from a `&'static RuntimeHooks` (or is null).
     unsafe { p.as_ref() }
@@ -2433,7 +2441,6 @@ unsafe extern "C" {
     );
     fn Bun__noSideEffectsToString(vm: *mut VM, global: *mut JSGlobalObject, reason: JSValue) -> JSValue;
     fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
-    fn JSC__JSGlobalObject__reload(this: *mut JSGlobalObject);
 }
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: u32) {
@@ -2878,15 +2885,10 @@ impl VirtualMachine {
         }
 
         // TODO(b2-cycle): `bun_runtime::api::cron::CronJob::clear_all_for_vm(self, .reload)`.
-        // SAFETY: `global` valid for VM lifetime; FFI drains microtasks +
-        // collects async + clears the JSC module loader registry.
-        // PORT NOTE: `JSGlobalObject::reload` lives in the gated
-        // JSGlobalObject.rs sibling; inline its body here.
-        unsafe {
-            // TODO(b2): `vm().drain_microtasks()` — gated in VM.rs.
-            (*self.global).vm().collect_async();
-            JSC__JSGlobalObject__reload(self.global);
-        }
+        // SAFETY: `global` valid for VM lifetime; `JSGlobalObject::reload`
+        // drains microtasks + collects async + clears the JSC module loader
+        // registry.
+        unsafe { &*self.global }.reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {

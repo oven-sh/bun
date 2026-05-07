@@ -968,6 +968,32 @@ unsafe fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+/// `Response::get_blob_without_call_frame` /
+/// `Request::get_blob_without_call_frame` — spec Macro.zig:331-334. Downcasts
+/// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
+/// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
+/// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
+/// `Blob`/`BuildMessage`/`ResolveMessage` arms in `Macro::Run::coerce`.
+///
+/// # Safety
+/// `value` is a live encoded `JSValue`; `global` is the live per-thread global.
+unsafe fn body_mixin_get_blob(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> bun_jsc::JsResult<Option<JSValue>> {
+    use crate::webcore::body::BodyMixin as _;
+    if let Some(resp) = value.as_::<crate::webcore::Response>() {
+        // SAFETY: `as_` returned the live `m_ctx` payload of a JS-heap
+        // `Response` cell pinned by `value` for the duration of this call.
+        return Ok(Some(unsafe { (*resp).get_blob_without_call_frame(global) }?));
+    }
+    if let Some(req) = value.as_::<crate::webcore::Request>() {
+        // SAFETY: see above.
+        return Ok(Some(unsafe { (*req).get_blob_without_call_frame(global) }?));
+    }
+    Ok(None)
+}
+
 /// `bun.api.node.process.exit(global, code)` — Spec
 /// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker it
 /// returns and the caller `panic!`s.
@@ -1161,6 +1187,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     create_node_fs,
     init_request_body_value,
     has_blob_url,
+    body_mixin_get_blob,
     vm_loader_vtable: &VM_LOADER_VTABLE,
     process_exit,
     handle_ipc_internal_child,

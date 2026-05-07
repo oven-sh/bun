@@ -42,10 +42,12 @@ use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
 use crate::websocket_client::ErrorCode;
 
-// CYCLEBREAK: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
+// LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
-// JSC-dependent `from_js` constructor stays in bun_runtime; see
-// `Bun__WebSocket__parseSSLConfig` body-level gate below.
+// JSC-dependent `from_js` constructor stays in bun_runtime; the C-ABI
+// `Bun__WebSocket__parseSSLConfig` export therefore lives in
+// bun_runtime::socket::SSLConfig and bridges to this lower-tier type via
+// `into_http()`.
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::declare_scope!(WebSocketUpgradeClient, visible);

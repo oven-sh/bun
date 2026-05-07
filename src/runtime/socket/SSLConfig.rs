@@ -1066,6 +1066,57 @@ impl SSLConfig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
+//
+// LAYERING: ground truth is `src/http_jsc/websocket_client/
+// WebSocketUpgradeClient.zig::parseSSLConfig`, but `SSLConfig::from_js`
+// dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
+// this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
+// the cycle without an opaque stub. The boxed payload is the lower-tier
+// `bun_http::ssl_config::SSLConfig` (what `HTTPClient::connect` consumes),
+// bridged via `into_http()`. C++ (JSWebSocket.cpp) links by symbol name only.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Parse SSLConfig from a JavaScript TLS options object.
+/// This function is exported for C++ to call from JSWebSocket.cpp.
+/// Returns null if parsing fails (an exception will be set on globalThis).
+/// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__WebSocket__parseSSLConfig(
+    global_this: &JSGlobalObject,
+    tls_value: JSValue,
+) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
+    // SAFETY: `bun_vm()` returns the live VM for this global; the WebSocket
+    // constructor only runs on the JS thread with an initialized VM.
+    let vm = unsafe { &*global_this.bun_vm() };
+    // Use SSLConfig::from_js for clean and safe parsing
+    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+        Ok(c) => c,
+        // Exception is already set on globalThis
+        Err(_) => return None,
+    };
+    // No TLS options provided or all defaults → null
+    let config = config_opt?;
+    // Allocate on heap and return pointer (ownership transferred to caller).
+    Some(Box::new(config.into_http()))
+}
+
+/// Free an SSLConfig previously returned by `parseSSLConfig`.
+/// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
+/// WebSocket.cpp can release ownership without leaking the heap allocation
+/// (and all duped cert/key/CA strings inside it) when `connect()` never
+/// hands the pointer off to a Zig upgrade client.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
+    config: *mut bun_http::ssl_config::SSLConfig,
+) {
+    // SAFETY: `config` was produced by `Box::into_raw` (via `Option<Box<_>>`
+    // FFI niche) in `Bun__WebSocket__parseSSLConfig`; caller transfers
+    // ownership back. `bun_http::SSLConfig::drop` runs `deinit()`.
+    drop(unsafe { Box::from_raw(config) });
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/socket/SSLConfig.zig (577 lines)
 //   confidence: high

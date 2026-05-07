@@ -810,7 +810,7 @@ impl JSGlobalObject {
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
-        message: &ZigString,
+        message: &bun_string::ZigString,
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
@@ -1546,7 +1546,7 @@ unsafe extern "C" {
         global: *const JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: *const ZigString,
+        message: *const bun_string::ZigString,
     ) -> JSValue;
     fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: *const JSGlobalObject,

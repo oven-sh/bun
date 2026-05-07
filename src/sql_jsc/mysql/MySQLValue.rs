@@ -61,22 +61,21 @@ pub fn field_type_from_js(
 
         // Ban these types:
         if tag == JSType::NumberObject {
-            return Err(global_object.throw_invalid_arguments(
-                "Cannot bind NumberObject to query parameter. Use a primitive number instead.",
-            ));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Cannot bind NumberObject to query parameter. Use a primitive number instead."
+            )));
         }
 
         if tag == JSType::BooleanObject {
-            return Err(global_object.throw_invalid_arguments(
-                "Cannot bind BooleanObject to query parameter. Use a primitive boolean instead.",
-            ));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Cannot bind BooleanObject to query parameter. Use a primitive boolean instead."
+            )));
         }
 
         // It's something internal
         if !tag.is_indexable() {
-            return Err(
-                global_object.throw_invalid_arguments("Cannot bind this type to query parameter")
-            );
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("Cannot bind this type to query parameter")));
         }
 
         // We will JSON.stringify anything else.
@@ -432,7 +431,7 @@ impl Value {
                     if blob.needs_to_read_file() {
                         return Err(js_error_to_mysql(
                             global_object
-                                .throw_invalid_arguments("File blobs are not supported"),
+                                .throw_invalid_arguments(format_args!("File blobs are not supported")),
                         ));
                     }
                     // Blob byte stores are immutable from JS (no detach),
@@ -453,7 +452,7 @@ impl Value {
 
                 Err(js_error_to_mysql(
                     global_object
-                        .throw_invalid_arguments("Expected a string, blob, or array buffer"),
+                        .throw_invalid_arguments(format_args!("Expected a string, blob, or array buffer")),
                 ))
             }
 
@@ -583,17 +582,13 @@ impl DateTime {
 
     pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
         global_object.gregorian_date_time_to_ms(
-            self.year,
-            self.month,
-            self.day,
-            self.hour,
-            self.minute,
-            self.second,
-            if self.microsecond > 0 {
-                u32::try_from(self.microsecond / 1000).unwrap()
-            } else {
-                0
-            },
+            i32::from(self.year),
+            i32::from(self.month),
+            i32::from(self.day),
+            i32::from(self.hour),
+            i32::from(self.minute),
+            i32::from(self.second),
+            if self.microsecond > 0 { (self.microsecond / 1000) as i32 } else { 0 },
         )
     }
 
@@ -646,7 +641,7 @@ impl DateTime {
         }
 
         Err(js_error_to_mysql(
-            global_object.throw_invalid_arguments("Expected a date or number"),
+            global_object.throw_invalid_arguments(format_args!("Expected a date or number")),
         ))
     }
 }
@@ -676,7 +671,7 @@ impl Time {
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
             Err(js_error_to_mysql(
-                global_object.throw_invalid_arguments("Expected a date or number"),
+                global_object.throw_invalid_arguments(format_args!("Expected a date or number")),
             ))
         }
     }

@@ -214,31 +214,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
         unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()) as *mut VirtualMachine }
     }
 
-    fn gregorian_date_time_to_ms(
-        &self,
-        year: u16,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
-        millisecond: u32,
-    ) -> JsResult<f64> {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args by value.
-        Ok(unsafe {
-            Bun__gregorianDateTimeToMS(
-                self.as_mut_ptr(),
-                year as c_int,
-                month as c_int,
-                day as c_int,
-                hour as c_int,
-                minute as c_int,
-                second as c_int,
-                millisecond as c_int,
-                true,
-            )
-        })
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -951,17 +926,6 @@ unsafe extern "C" {
 
     // JSGlobalObject
     fn JSC__JSGlobalObject__bunVM(this: *mut JSGlobalObject) -> *mut c_void;
-    fn Bun__gregorianDateTimeToMS(
-        global: *mut JSGlobalObject,
-        year: c_int,
-        month: c_int,
-        day: c_int,
-        hour: c_int,
-        minute: c_int,
-        second: c_int,
-        millisecond: c_int,
-        local_time: bool,
-    ) -> f64;
 
     // MarkedArgumentBuffer
     fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));

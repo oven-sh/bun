@@ -1163,22 +1163,21 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     is_user_require_resolve: bool,
 ) -> JsResult<JSValue> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
-    let mut query_string = BunString::empty();
-    // query_string derefs on Drop
+    let mut query_string = scopeguard::guard(BunString::empty(), |s| s.deref());
 
-    let specifier_decoded = if strings::has_prefix(specifier.byte_slice(), b"file://") {
+    let specifier_decoded = if specifier.has_prefix_comptime(b"file://") {
         jsc::URL::path_from_file_url(specifier)
     } else {
         specifier.dupe_ref()
     };
-    // specifier_decoded derefs on Drop
+    let specifier_decoded = scopeguard::guard(specifier_decoded, |s| s.deref());
 
     VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         &mut errorable,
         ctx,
-        specifier_decoded,
+        *specifier_decoded,
         from,
-        Some(&mut query_string),
+        Some(&mut *query_string),
         is_esm,
         is_user_require_resolve,
     )?;
@@ -1187,21 +1186,19 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
         return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
     }
-    // errorable.result.value derefs on Drop (TODO(port): confirm ErrorableString Drop semantics)
+    // SAFETY: success → `value` arm of the #[repr(C)] union is active.
+    let result_value = scopeguard::guard(unsafe { errorable.result.value }, |s| s.deref());
 
     if !query_string.is_empty() {
         // PERF(port): was stack-fallback
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
-        // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-        let value = unsafe { errorable.result.value };
         // Vec<u8> writes are infallible.
-        let _ = write!(&mut arraylist, "{}{}", value, query_string);
+        let _ = write!(&mut arraylist, "{}{}", *result_value, *query_string);
 
         return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
     }
 
-    // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-    unsafe { errorable.result.value }.to_js(ctx)
+    result_value.to_js(ctx)
 }
 
 #[bun_jsc::host_fn]
@@ -1239,12 +1236,14 @@ pub extern "C" fn Bun__resolve(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
+    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
-    let value = match do_resolve_with_args::<true>(global, specifier_str, source_str, is_esm, false)
+    let value = match do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, false)
     {
         Ok(v) => v,
         Err(_) => {

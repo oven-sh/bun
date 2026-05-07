@@ -1280,6 +1280,128 @@ mod posix_impl {
         check_p!(unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) }, Tag::lstat, path);
         Ok(unsafe { st.assume_init() })
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // statx (Linux ≥4.11) — sys.zig:614-791. Exposes `birthtime` for node:fs
+    // `Stats`. On non-Linux these are absent (callers gate on `cfg(linux)`).
+    // ──────────────────────────────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
+
+    /// `STATX_*` request mask covering every field `node:fs Stats` consumes
+    /// (sys.zig:614 `StatxField` — all variants OR'd, the only mask the Zig
+    /// callers ever pass).
+    #[cfg(target_os = "linux")]
+    pub const STATX_MASK_FOR_STATS: u32 = libc::STATX_TYPE
+        | libc::STATX_MODE
+        | libc::STATX_NLINK
+        | libc::STATX_UID
+        | libc::STATX_GID
+        | libc::STATX_ATIME
+        | libc::STATX_MTIME
+        | libc::STATX_CTIME
+        | libc::STATX_BTIME
+        | libc::STATX_INO
+        | libc::STATX_SIZE
+        | libc::STATX_BLOCKS;
+
+    /// Linux kernel makedev encoding (glibc sys/sysmacros.h / <linux/kdev_t.h>).
+    #[cfg(target_os = "linux")]
+    #[inline]
+    const fn statx_makedev(major: u32, minor: u32) -> u64 {
+        let maj: u64 = (major & 0xFFF) as u64;
+        let min: u64 = (minor & 0xFFFFF) as u64;
+        (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn statx_fallback(fd: Fd, path: Option<&ZStr>, flags: c_int) -> Maybe<PosixStat> {
+        if let Some(p) = path {
+            let r = if flags & libc::AT_SYMLINK_NOFOLLOW != 0 { lstat(p) } else { stat(p) };
+            r.map(|s| PosixStat::init(&s))
+        } else {
+            fstat(fd).map(|s| PosixStat::init(&s))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
+        use core::sync::atomic::Ordering;
+        let mut buf = core::mem::MaybeUninit::<libc::statx>::uninit();
+        let pathname: *const c_char = match path {
+            Some(p) => p.as_ptr(),
+            None => b"\0".as_ptr().cast(),
+        };
+        loop {
+            // SAFETY: `pathname` is NUL-terminated; `buf` is a valid out-param.
+            let rc = unsafe {
+                libc::statx(fd.native(), pathname, flags, mask, buf.as_mut_ptr())
+            };
+
+            // On some setups (QEMU user-mode, S390 RHEL docker), statx returns a
+            // positive value other than 0 with errno unset — neither a normal
+            // success (0) nor a kernel -errno. Treat as "not implemented".
+            // See nodejs/node#27275 and libuv/libuv src/unix/fs.c.
+            if rc > 0 {
+                SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                return statx_fallback(fd, path, flags);
+            }
+            if rc < 0 {
+                let errno = errno::errno();
+                // Retry on EINTR.
+                if errno == E::EINTR { continue; }
+                // Fall back on the same errnos libuv does (deps/uv/src/unix/fs.c):
+                //   ENOSYS:     kernel < 4.11
+                //   EOPNOTSUPP: filesystem doesn't support it
+                //   EPERM:      seccomp filter rejects statx (libseccomp < 2.3.3,
+                //               docker < 18.04, various CI sandboxes)
+                //   EINVAL:     old Android builds
+                if matches!(errno, E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL) {
+                    SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
+                    return statx_fallback(fd, path, flags);
+                }
+                return Err(Error { errno: errno as _, syscall: Tag::statx, ..Default::default() });
+            }
+
+            // SAFETY: rc == 0 ⇒ kernel populated the buffer.
+            let buf = unsafe { buf.assume_init() };
+            return Ok(PosixStat {
+                dev: statx_makedev(buf.stx_dev_major, buf.stx_dev_minor),
+                ino: buf.stx_ino,
+                mode: buf.stx_mode as u64,
+                nlink: buf.stx_nlink as u64,
+                uid: buf.stx_uid as u64,
+                gid: buf.stx_gid as u64,
+                rdev: statx_makedev(buf.stx_rdev_major, buf.stx_rdev_minor),
+                size: buf.stx_size,
+                blksize: buf.stx_blksize as u64,
+                blocks: buf.stx_blocks,
+                atim: Timespec { sec: buf.stx_atime.tv_sec, nsec: buf.stx_atime.tv_nsec as i64 },
+                mtim: Timespec { sec: buf.stx_mtime.tv_sec, nsec: buf.stx_mtime.tv_nsec as i64 },
+                ctim: Timespec { sec: buf.stx_ctime.tv_sec, nsec: buf.stx_ctime.tv_nsec as i64 },
+                birthtim: if buf.stx_mask & libc::STATX_BTIME != 0 {
+                    Timespec { sec: buf.stx_btime.tv_sec, nsec: buf.stx_btime.tv_nsec as i64 }
+                } else {
+                    Timespec { sec: 0, nsec: 0 }
+                },
+            });
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
+        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
+        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), libc::AT_SYMLINK_NOFOLLOW, mask)
+    }
+
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> {
         check_p!(unsafe { libc::mkdir(path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
     }

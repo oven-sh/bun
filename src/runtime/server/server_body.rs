@@ -297,6 +297,7 @@ pub trait RespLike {
     fn end_without_body(&mut self, close_connection: bool);
     fn timeout(&mut self, seconds: u8);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
+    fn to_any_response(&mut self) -> uws::AnyResponse;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::NewAppResponse::<SSL>::write_status(self, s) }
@@ -307,6 +308,16 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         // generic `Fn(*mut U, &mut Response<SSL>)` shape can be expressed without
         // capturing the const-generic ThisServer in the ZST closure type.
     }
+    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse {
+        // SAFETY: NewAppResponse<true>/NewAppResponse<false> are the only two
+        // monomorphizations; cast through the matching `From` arm. The const
+        // bool is checked at compile time so only one branch is reachable.
+        if SSL {
+            uws::AnyResponse::from(self as *mut Self as *mut uws_sys::NewAppResponse<true>)
+        } else {
+            uws::AnyResponse::from(self as *mut Self as *mut uws_sys::NewAppResponse<false>)
+        }
+    }
 }
 impl RespLike for uws_sys::h3::Response {
     #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::h3::Response::write_status(self, s) }
@@ -315,6 +326,7 @@ impl RespLike for uws_sys::h3::Response {
     #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
         // TODO(port): wire H3::Response::on_timeout once warn handler is generic.
     }
+    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse { uws::AnyResponse::from(self as *mut Self) }
 }
 
 // Local shim: `SystemError` lives upstream and lacks `Default`; this builds the

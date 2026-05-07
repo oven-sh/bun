@@ -1452,23 +1452,40 @@ impl Lockfile {
         }
 
         let pkgs = self.packages.slice();
+        let len = pkgs.len;
 
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
-        let pkg_bins = pkgs.items_bin_mut();
-        // TODO(port): MultiArrayList simultaneous mutable column access
-
-        // PORT NOTE: Zig has two near-identical loops gated by `update_os_cpu`. We branch
-        // on the const generic but cannot conditionally bind `pkg_metas` to `undefined`, so
-        // we use Option.
-        let pkg_metas = if UPDATE_OS_CPU {
-            Some(pkgs.items_meta_mut())
+        // PORT NOTE: reshaped for borrowck — Zig takes `pkgs.items(.bin)` and
+        // `pkgs.items(.meta)` as simultaneous mutable column views. `items_*_mut`
+        // each borrow `&mut pkgs`, so go through `Slice::items_raw` (raw column
+        // pointers) and form disjoint `&mut [_]`s — distinct columns never alias
+        // (contiguous SoA layout).
+        // SAFETY: `Bin`/`Meta` are the exact column types; `len` rows are
+        // initialized; the two columns are non-overlapping allocations.
+        let pkg_bins: &mut [crate::bin::Bin] = unsafe {
+            core::slice::from_raw_parts_mut(
+                pkgs.items_raw::<crate::bin::Bin>(self::package::PackageField::Bin),
+                len,
+            )
+        };
+        // PORT NOTE: Zig has two near-identical loops gated by `update_os_cpu`;
+        // collapse to one loop and bind `pkg_metas` as an empty slice when the
+        // const generic is false (Zig left it `undefined`).
+        let pkg_metas: &mut [self::package::meta::Meta] = if UPDATE_OS_CPU {
+            // SAFETY: see above — disjoint column, `len` initialized rows.
+            unsafe {
+                core::slice::from_raw_parts_mut(
+                    pkgs.items_raw::<self::package::meta::Meta>(self::package::PackageField::Meta),
+                    len,
+                )
+            }
         } else {
-            None
+            &mut []
         };
 
-        for i in 0..pkg_names.len() {
+        for i in 0..len {
             let pkg_name = pkg_names[i];
             let pkg_name_hash = pkg_name_hashes[i];
             let pkg_res = pkg_resolutions[i];

@@ -129,7 +129,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
     // SAFETY: see on_close.
     let udp_socket: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
     let Some(this_value) = udp_socket.this_value.try_get() else { return };
-    let Some(callback) = UDPSocket::js().gc.on_data.get(this_value) else { return };
+    let Some(callback) = js::on_data_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
         return;
     }
@@ -610,7 +610,7 @@ impl UDPSocket {
         } else {
             this_value_
         };
-        let callback = Self::js().gc.on_error.get(this_value).unwrap_or(JSValue::ZERO);
+        let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
         // SAFETY: global_this stored at construction; VM outlives socket.
         let global_this = unsafe { &*self.global_this };
         let vm = global_this.bun_vm();
@@ -1529,8 +1529,8 @@ impl UDPSocket {
         }
         this.connect_info = Some(ConnectInfo { port });
 
-        Self::js().address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
-        Self::js().remote_address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
+        js::address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
+        js::remote_address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
 
         Ok(JSValue::UNDEFINED)
     }

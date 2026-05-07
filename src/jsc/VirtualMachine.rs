@@ -4032,9 +4032,7 @@ impl VirtualMachine {
             }
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
-            let _guard = rare.listening_sockets_for_watch_mode_lock.lock();
-            rare.listening_sockets_for_watch_mode.clear();
-            drop(_guard);
+            rare.listening_sockets_for_watch_mode.lock().clear();
         }
         // SAFETY: `event_loop` is a self-pointer into this VM.
         let _ = unsafe { (*self.event_loop()).drain_microtasks() };

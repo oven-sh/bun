@@ -24,6 +24,13 @@ pub use bun_uws_sys::{
     us_socket_t, us_socket_stream_buffer_t, ConnectingSocket, ListenSocket, Request, Timer,
     uws_res, RawWebSocket, AnyWebSocket, WebSocketBehavior, BodyReaderMixin, NewApp,
 };
+
+/// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
+/// thunk that recovers `Self` from `*mut c_void`, lowers `&[T]` params to
+/// `(ptr, len)` pairs, and guards the body with `catch_unwind` → abort. See
+/// `bun_jsc_macros::uws_callback` for the full contract; the runtime panic
+/// barrier lives in `bun_core::ffi::catch_unwind_ffi`.
+pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;

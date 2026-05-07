@@ -366,12 +366,18 @@ pub fn assert_stdio_result(result: StdioResult) {
     let _ = result;
 }
 
-pub extern "C" fn on_abort_signal(subprocess_ctx: *mut c_void, _reason: JSValue) {
-    // SAFETY: subprocess_ctx was registered as `this` when the abort listener was attached.
-    let this: &mut Subprocess = unsafe { &mut *(subprocess_ctx.cast::<Subprocess>()) };
-    this.clear_abort_signal();
-    let _ = this.try_kill(this.kill_signal);
+impl Subprocess<'_> {
+    #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
+    fn handle_abort_signal(&mut self, _reason: JSValue) {
+        self.clear_abort_signal();
+        let _ = self.try_kill(self.kill_signal);
+    }
 }
+
+/// Module-level re-export so callers in `js_bun_spawn_bindings` (which alias the
+/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal` path.
+pub const on_abort_signal: unsafe extern "C" fn(*mut c_void, JSValue) =
+    Subprocess::on_abort_signal_c;
 
 /// Static vtable wired into `Process.set_exit_handler` so the low-tier
 /// `Process` can call back into this JSC-aware owner without a direct upward

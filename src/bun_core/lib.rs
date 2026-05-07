@@ -806,6 +806,51 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
     }
 }
 
+/// FFI panic barrier used by `#[uws_callback]` (see `bun_jsc_macros`).
+///
+/// Unwinding out of an `extern "C"` callback into a C++ uWS / uSockets frame
+/// is UB (the C++ side has no landing pads, and with `panic=unwind` rustc's
+/// implicit abort shim fires *after* the foreign frame has been corrupted on
+/// some targets). Every macro-generated thunk routes its body through
+/// `catch_unwind_ffi`, which catches the panic, prints the payload, and
+/// hard-aborts — same end state as Zig `@panic` → `bun.crash_handler`, but
+/// without the UB window.
+///
+/// `AssertUnwindSafe` is sound here for the same reason as in
+/// `bun_jsc::host_fn::catch_panic`: the closure only borrows the
+/// caller-supplied `&mut Self` and FFI scalars; a torn `Self` is no worse than
+/// the Zig path (process is about to abort anyway), and the alternative — UB —
+/// is strictly worse.
+pub mod ffi {
+    #[inline]
+    pub fn catch_unwind_ffi<R>(f: impl FnOnce() -> R) -> R {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(v) => v,
+            Err(payload) => abort_on_panic(payload),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub fn abort_on_panic(
+        payload: std::boxed::Box<dyn core::any::Any + Send + 'static>,
+    ) -> ! {
+        let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
+            s
+        } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
+            s.as_str()
+        } else {
+            "<non-string panic payload>"
+        };
+        // Best-effort write to stderr; ignore errors (we're about to abort).
+        let _ = std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("panic in extern \"C\" callback (aborting): {msg}\n").as_bytes(),
+        );
+        std::process::abort()
+    }
+}
+
 pub mod asan {
     #[inline] pub unsafe fn poison(_: *const u8, _: usize) {}
     #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}

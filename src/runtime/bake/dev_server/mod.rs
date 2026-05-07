@@ -34,10 +34,10 @@ use crate::server::StaticRoute;
  #[path = "../DevServer/HmrSocket.rs"]           pub(crate) mod hmr_socket_body;
  #[path = "../DevServer/HotReloadEvent.rs"]      pub(crate) mod hot_reload_event_body;
  #[path = "../DevServer/IncrementalGraph.rs"]    pub(crate) mod incremental_graph_body;
- #[path = "../DevServer/PackedMap.rs"]           pub(crate) mod packed_map_body;
+ // PackedMap body draft dissolved into `packed_map.rs`.
  #[path = "../DevServer/RouteBundle.rs"]         pub(crate) mod route_bundle_body;
  // SerializedFailure body draft dissolved into `serialized_failure.rs`.
- #[path = "../DevServer/SourceMapStore.rs"]      pub(crate) mod source_map_store_body;
+ // SourceMapStore body draft dissolved into `source_map_store.rs`.
  #[path = "../DevServer/WatcherAtomics.rs"]      pub(crate) mod watcher_atomics_body;
  #[path = "../DevServer/memory_cost.rs"]         pub(crate) mod memory_cost_body;
 

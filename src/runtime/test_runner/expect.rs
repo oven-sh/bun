@@ -19,24 +19,6 @@ use super::jest::FileListExt as _;
 #[allow(unused_imports)]
 use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
 
-// Local shim: upstream `bun_jsc::AnyPromise` (lib.rs) lacks `.result()`; only
-// the per-file `jsc::any_promise::AnyPromise<'a>` has it. Hand-dispatch here.
-trait AnyPromiseResultExt {
-    fn result(self, vm: &bun_jsc::VM) -> JSValue;
-}
-impl AnyPromiseResultExt for bun_jsc::AnyPromise {
-    #[inline]
-    fn result(self, vm: &bun_jsc::VM) -> JSValue {
-        match self {
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-            bun_jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            // `JSInternalPromise` is a transparent alias for `JSPromise`
-            // (JSInternalPromise.rs), so the same `result()` applies.
-            bun_jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
-        }
-    }
-}
-
 // `bun_core::deprecated::js_error_to_write_error` is ``-gated
 // (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.
 // Display impls return `fmt::Error`; the JS exception, if any, remains on the VM.
@@ -1431,18 +1413,16 @@ impl Expect {
     ) -> JsError {
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
 
-        const FMT: &str = concat!(
-            "Unexpected return from matcher function `{f}`.\n",
-            "Matcher functions should return an object in the following format:\n",
-            "  {{message?: string | function, pass: boolean}}\n",
-            "'{f}' was returned",
-        );
-        // PERF(port): was comptime bool dispatch — profile in Phase B
-        // TODO(port): create_error_instance Zig-style fmt-template+args; collapsed to single Display.
-        let _ = FMT;
-        let err = global_this.create_error_instance(
-            format_args!("{} {}", matcher_name, result.to_fmt(&mut formatter)),
-        );
+        // PERF(port): was comptime bool dispatch on `Output.enable_ansi_colors_stderr` —
+        // template has no `<tag>` markers so the runtime branch is a no-op anyway.
+        let err = global_this.create_error_instance(format_args!(
+            "Unexpected return from matcher function `{}`.\n\
+             Matcher functions should return an object in the following format:\n  \
+             {{message?: string | function, pass: boolean}}\n\
+             '{}' was returned",
+            matcher_name,
+            result.to_fmt(&mut formatter),
+        ));
         // TODO(port): handle JsResult from toJS in throw path
         err.put(
             global_this,

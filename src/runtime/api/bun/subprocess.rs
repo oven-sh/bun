@@ -20,10 +20,11 @@ use enumset::{EnumSet, EnumSetType};
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
 // platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
-use crate::api::bun_process::{
-    self as spawn_process, ExtraPipe, PosixSpawnResult, Process, Rusage, Status,
-    WindowsSpawnResult, WindowsStdioResult,
-};
+use crate::api::bun_process::{self as spawn_process, Process, Rusage, Status};
+#[cfg(not(windows))]
+use crate::api::bun_process::ExtraPipe;
+#[cfg(windows)]
+use crate::api::bun_process::WindowsStdioResult;
 use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;

@@ -30,6 +30,7 @@ bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
+bun_resolver.workspace = true
 bun_sourcemap.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

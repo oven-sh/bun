@@ -1296,11 +1296,14 @@ impl Run {
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
                             PromiseStatus::Pending => {
+                                // PORT NOTE: `#[host_fn(export = "Bun__on…")]` emits
+                                // its C-ABI shim under the Rust ident
+                                // `__jsc_host_<fn>`; the export name is link-only.
                                 result.then2(
                                     vm.global(),
                                     JSValue::UNDEFINED,
-                                    crate::hw_exports::on_resolve_entry_point_result,
-                                    crate::hw_exports::on_reject_entry_point_result,
+                                    crate::hw_exports::__jsc_host_on_resolve_entry_point_result,
+                                    crate::hw_exports::__jsc_host_on_reject_entry_point_result,
                                 );
                                 vm.tick();
                                 vm.auto_tick_active();

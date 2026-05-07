@@ -1473,7 +1473,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd = unsafe { (*(*global_this.bun_vm()).transpiler.fs).top_level_dir };
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = unsafe { (*global_this.bun_vm()).main };
+                let main = unsafe { (*global_this.bun_vm()).main() };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                     cwd,
                     &mut path_buf,
@@ -1533,7 +1533,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if !(url.is_http() || url.is_https() || url.is_s3()) {
             let err = global_this.to_type_error(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
-                "protocol must be http:, https: or s3:",
+                format_args!("protocol must be http:, https: or s3:"),
             );
             is_error = true;
             return Ok(
@@ -1548,7 +1548,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
-            FETCH_ERROR_UNEXPECTED_BODY,
+            format_args!("{FETCH_ERROR_UNEXPECTED_BODY}"),
         );
         is_error = true;
         return Ok(
@@ -1560,7 +1560,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
-        headers = Some(Headers::from(
+        headers = Some(HeadersExt::from(
             None,
             HeadersOptions {
                 body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
@@ -1599,7 +1599,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let rejected_value =
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
-                    global_this.create_error_instance("Failed to start s3 stream"),
+                    global_this.create_error_instance(format_args!("Failed to start s3 stream")),
                 );
             drop(body);
             return Ok(rejected_value);
@@ -1790,9 +1790,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
-                        global_this.create_error_instance(
-                            "Only POST and PUT do support body when using S3",
-                        ),
+                        global_this.create_error_instance(format_args!(
+                            "Only POST and PUT do support body when using S3"
+                        )),
                     ),
                 );
             }

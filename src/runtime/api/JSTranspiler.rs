@@ -819,7 +819,7 @@ impl<'a> TransformTask<'a> {
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
-            macro_js_ctx: core::ptr::null_mut(),
+            macro_js_ctx: MacroJSCtx::ZERO,
             file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -1301,14 +1301,14 @@ impl JSTranspiler {
         let _ast_scope = ast_memory_allocator.enter();
 
         let parse_result =
-            self.get_parse_result(&arena, code, loader, core::ptr::null_mut());
+            self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
         // SAFETY: `transpiler.log` was just set to `&mut log` above.
         let log_ref = unsafe { &mut *self.transpiler.log };
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
             }
-            return Err(global.throw("Failed to parse"));
+            return Err(global.throw(format_args!("Failed to parse")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {

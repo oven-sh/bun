@@ -1408,7 +1408,7 @@ unsafe fn retroactively_report_discovered_tests(
     }
 
     // Get the file path for source location info.
-    use crate::test_runner::jest::FileListExt as _;
+    use crate::test_runner::jest::FileColumns as _;
     let file_path = runner.files.items_source()[active_file.file_id as usize]
         .path
         .text();
@@ -1883,7 +1883,7 @@ fn transpile_source_code_inner(
             let mut fd: Option<bun_sys::Fd> = None;
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                use bun_watcher::{WatchItemColumns as _, WatchItemField};
+                use bun_watcher::{WatchItemColumns as _};
                 // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher`
                 // set during VM init (BACKREF); cast recovers the concrete type.
                 let import_watcher: *mut bun_jsc::ImportWatcher =
@@ -1899,9 +1899,7 @@ fn transpile_source_code_inner(
                             // SAFETY: column `PackageJson` is
                             // `Option<&'static PackageJSON>` per WatchItem layout.
                             package_json = unsafe {
-                                watchlist.items::<Option<&'static bun_watcher::PackageJSON>>(
-                                    WatchItemField::PackageJson,
-                                )[index as usize]
+                                watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
                             };
                         }
                     }

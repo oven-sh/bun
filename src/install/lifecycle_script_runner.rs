@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_core::{Global, Output};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::isolated_install::store::{entry, EntryListExt};
+use crate::isolated_install::store::{entry, EntryColumns};
 use crate::isolated_install::installer::{Installer, Step, CompleteState};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;

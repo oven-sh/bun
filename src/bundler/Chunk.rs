@@ -1,3 +1,4 @@
+use crate::mal_prelude::*;
 use core::fmt;
 use std::io::Write as _;
 
@@ -22,9 +23,7 @@ use crate::bun_renamer;
 
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
-use crate::Graph::{Graph, InputFileListExt as _};
-use crate::linker_graph::FileListExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{
     cheap_prefix_normalizer, AdditionalFile, CompileResult, CrossChunkImport, LinkerContext,
     LinkerGraph, PartRange, PathTemplate,
@@ -489,7 +488,7 @@ impl IntermediateOutput {
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // B-2 second pass: un-gated. `Graph.input_files` SoA accessors are now
-        // real (`Graph::InputFileListExt`); `LinkerGraph.files` SoA
+        // real (`Graph::InputFileColumns`); `LinkerGraph.files` SoA
         // (`items_entry_point_chunk_index`) lands with the LinkerGraph un-gate.
         // `bun_paths` / `bun_core::fmt::count` / `bun_alloc::alloc_slice`
         // surfaces are tracked upstream.

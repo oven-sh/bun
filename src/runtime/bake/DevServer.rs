@@ -10,6 +10,7 @@
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
+use bun_bundler::mal_prelude::*;
 use ::core::ffi::c_void;
 use ::core::mem::offset_of;
 use std::io::Write as _;
@@ -22,11 +23,7 @@ use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StringJsc as _,
 };
-use bun_bundler::Graph::InputFileListExt as _;
-use bun_bundler::linker_graph::FileListExt as _;
 use bun_bundler::options_impl::TargetExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
-use bun_js_parser::ast::server_component_boundary::ServerComponentBoundarySliceExt as _;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
@@ -3515,7 +3512,6 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
 pub fn finalize_bundle(
@@ -3646,10 +3642,10 @@ pub fn finalize_bundle(
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
         .list
-        .source_index()
+        .items_source_index()
         .iter()
-        .zip(scbs.list.ssr_source_index())
-        .zip(scbs.list.reference_source_index())
+        .zip(scbs.list.items_ssr_source_index())
+        .zip(scbs.list.items_reference_source_index())
     {
         scb_bitset.set(*source_index as usize);
         scb_bitset.set(*ref_index as usize);
@@ -4210,7 +4206,7 @@ pub fn finalize_bundle(
             // Send CSS mutations
             let asset_values = dev.assets.files.values();
             w_int!(u32, u32::try_from(css_chunks.len()).unwrap());
-            use bun_bundler::Graph::InputFileListExt as _;
+            use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks {
                 let key = sources[chunk.entry_point.source_index() as usize]
@@ -4413,7 +4409,7 @@ pub fn finalize_bundle(
             let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
                     Some(dev.relative_path(&mut *buf, {
-                        use bun_bundler::Graph::InputFileListExt as _;
+                        use bun_bundler::Graph::InputFileColumns as _;
                         &bv2.graph.input_files.items_source()
                             [bv2.graph.entry_points[0].get() as usize]
                             .path
@@ -5672,7 +5668,7 @@ impl DevServer {
         let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
         // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
         let counts: *mut [u32] =
-            unsafe { slice.items_mut::<u32>(bun_watcher::WatchItemField::Count) };
+            unsafe { slice.items_mut::<"count", u32>() };
         let kinds: *const [bun_watcher::Kind] = slice.items_kind();
         // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
         // by `watchlist`, which outlives this fn; reborrow as slices for indexing.

@@ -5,7 +5,7 @@ use core::mem::size_of;
 use bun_aio::Closer;
 use bun_http::headers::{AnyBlobRef, AnyBlobVTable, Options as HeadersFromOptions};
 use bun_http::{Headers, HeadersExt, Method};
-use bun_http_types::ETag::{HeaderEntryField, StringPointer};
+use bun_http_types::ETag::{StringPointer};
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
 use bun_str::String as BunString;
@@ -102,7 +102,6 @@ fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_>
 // (an `AnyBlob`); here we erase `&Blob` directly — `Any::content_type`/
 // `Any::has_content_type_from_user` for the `.Blob` arm just forward to the
 // same Blob methods.
-
 
 unsafe fn blob_has_content_type_from_user(owner: *const ()) -> bool {
     // SAFETY: `owner` is `&Blob` erased via `blob_body_ref`.
@@ -276,9 +275,9 @@ impl FileRoute {
         let entries = self.headers.entries.slice();
         // SAFETY: HeaderEntry stores two StringPointer columns; field tag matches type.
         let names: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Name) };
+            unsafe { entries.items::<"name", StringPointer>() };
         let values: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
+            unsafe { entries.items::<"value", StringPointer>() };
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());

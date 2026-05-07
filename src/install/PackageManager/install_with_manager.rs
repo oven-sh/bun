@@ -20,7 +20,7 @@ use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>` (Zig: `packages.items(.field)`).
-use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
+use crate::lockfile_real::package::{PackageColumns as _, PackageColumns as _};
 use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};

@@ -1,3 +1,4 @@
+use crate::test_runner::jest::FileColumns as _;
 use core::fmt;
 
 use bun_core::Output;
@@ -15,7 +16,6 @@ use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::jest::FileListExt as _;
 #[allow(unused_imports)]
 use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
 
@@ -804,7 +804,6 @@ impl Expect {
         this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())))
     }
 }
-
 
 pub struct TrimResult<'a> {
     pub trimmed: &'a [u8],

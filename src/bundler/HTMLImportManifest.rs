@@ -33,6 +33,7 @@
 //! The manifest is generated during the linking phase and serialized as a JSON string
 //! that gets embedded directly into the JavaScript output.
 
+use crate::mal_prelude::*;
 use core::fmt;
 
 use bun_collections::AutoBitSet;
@@ -43,9 +44,8 @@ use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
 use bun_string::strings;
 
-use crate::Graph::{Graph, InputFileListExt as _};
+use crate::Graph::{Graph, InputFileColumns as _};
 use crate::chunk::{Content, Flags};
-use crate::linker_graph::FileListExt as _;
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};

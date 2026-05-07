@@ -563,11 +563,19 @@ impl core::fmt::Display for EscapedNamespace<'_> {
 }
 
 /// `bundle_v2.zig:CompileResultForSourceMap`.
-#[derive(bun_collections::MultiArrayElement)]
+
 pub struct CompileResultForSourceMap {
     pub source_map_chunk: bun_sourcemap::Chunk,
     pub generated_offset: bun_sourcemap::LineColumnOffset,
     pub source_index: u32,
+}
+
+bun_collections::multi_array_columns! {
+    pub trait CompileResultForSourceMapColumns for CompileResultForSourceMap {
+        source_map_chunk: bun_sourcemap::Chunk,
+        generated_offset: bun_sourcemap::LineColumnOffset,
+        source_index: u32,
+    }
 }
 
 /// `bundle_v2.zig:ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
@@ -807,7 +815,7 @@ pub mod entry_point {
     use bun_collections::MultiArrayList;
     use bun_string::PathString;
 
-    #[derive(Default, bun_collections::MultiArrayElement)]
+    #[derive(Default)]
     pub struct EntryPoint {
         /// This may be an absolute path or a relative path. If absolute, it will
         /// eventually be turned into a relative path by computing the path
@@ -824,6 +832,14 @@ pub mod entry_point {
     }
 
     pub type List = MultiArrayList<EntryPoint>;
+
+    bun_collections::multi_array_columns! {
+        pub trait EntryPointColumns for EntryPoint {
+            output_path: PathString,
+            source_index: crate::IndexInt,
+            output_path_was_auto_generated: bool,
+        }
+    }
 
     /// `bundle_v2.zig:EntryPoint.Kind` — inherent associated type so
     /// `EntryPoint::Kind` resolves at every use-site (the explicit struct
@@ -912,7 +928,7 @@ pub mod js_meta {
     /// `JSMeta.Wrap` alias used by `linker_context/` submodules.
     pub use crate::WrapKind as Wrap;
 
-    #[derive(Default, bun_collections::MultiArrayElement)]
+    #[derive(Default)]
     pub struct JSMeta {
         pub probably_typescript_type: ArrayHashMap<Ref, ()>,
         pub imports_to_bind: RefImportData,
@@ -926,6 +942,21 @@ pub mod js_meta {
         pub flags: Flags,
     }
 
+    bun_collections::multi_array_columns! {
+        pub trait JSMetaColumns for JSMeta {
+            probably_typescript_type: ArrayHashMap<Ref, ()>,
+            imports_to_bind: RefImportData,
+            resolved_exports: ResolvedExports,
+            resolved_export_star: ExportData,
+            sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+            top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
+            cjs_export_copies: Box<[Ref]>,
+            wrapper_part_index: Index,
+            entry_point_part_index: Index,
+            flags: Flags,
+        }
+    }
+
     /// Inherent associated types so `JSMeta::Flags` / `JSMeta::Wrap` resolve
     /// (Zig nests them under the struct). A sibling `pub mod JSMeta` would
     /// collide with the struct re-export (E0255).
@@ -935,23 +966,20 @@ pub mod js_meta {
     }
 }
 pub use js_meta::{
-    ExportData, ImportData, JSMeta, JSMetaField, JSMetaListExt, JSMetaSliceExt, RefImportData,
-    ResolvedExports, TopLevelSymbolToParts,
+    ExportData, ImportData, JSMeta, JSMetaColumns, RefImportData, ResolvedExports,
+    TopLevelSymbolToParts,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gate surface for `bundle_v2.rs::on_parse_task_complete`.
-// `#[derive(MultiArrayElement)]` now emits `InputFileListExt` with the full
+// `` now emits `InputFileColumns` with the full
 // `items_<field>()` / `items_<field>_mut()` set; this alias keeps the old
-// `InputFileListExtMut` import in `bundle_v2.rs` resolving without method
 // ambiguity (same trait, two names).
 // ──────────────────────────────────────────────────────────────────────────
-pub use crate::Graph::InputFileListExt as InputFileListExtMut;
 
-/// Re-exports of the `#[derive(MultiArrayElement)]`-generated SoA accessor
-/// traits so callers can `use crate::ungate_support::FooListExt as _;` without
-/// reaching into the defining submodule.
-pub use entry_point::{EntryPointListExt, EntryPointSliceExt, EntryPointField};
+/// Re-export of the SoA accessor trait so callers can
+/// `use crate::ungate_support::EntryPointColumns as _;`.
+pub use entry_point::EntryPointColumns;
 
 /// `bundle_v2.zig` aliased `EventLoop = bun.jsc.AnyEventLoop`; the bundler only
 /// stores it on `LinkerContext.loop` (already typed there as

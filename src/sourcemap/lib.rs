@@ -27,7 +27,7 @@ pub mod vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
-pub use line_offset_table::{LineOffsetTable, ListExt as LineOffsetTableListExt};
+pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::{Mapping, Lookup as MappingLookup};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 

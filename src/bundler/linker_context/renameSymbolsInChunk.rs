@@ -1,6 +1,7 @@
+use crate::mal_prelude::*;
 use core::cmp::Ordering;
 
-use bun_js_parser::ast::bundled_ast::{BundledAstField as AstField, Flags as AstFlags};
+use bun_js_parser::ast::bundled_ast::{Flags as AstFlags};
 use bun_js_parser::ast::symbol;
 use bun_js_parser::ast::{CharFreq, Scope, StmtData};
 use bun_js_parser::{Part, PartList, Ref, SlotCounts};
@@ -9,7 +10,7 @@ use bun_options_types::import_record;
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
-use crate::ungate_support::js_meta::{self, JSMetaField};
+use crate::ungate_support::js_meta;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
@@ -31,11 +32,11 @@ pub fn rename_symbols_in_chunk(
     // raw column pointers are valid for the whole body and may be dereferenced
     // alongside other `&c.graph.*` borrows.
     macro_rules! col_ptr {
-        ($slice:ident, $field_enum:ident :: $field:ident, $ty:ty) => {{
+        ($slice:ident, $field:ident, $ty:ty) => {{
             let len = $slice.len();
             // SAFETY: `$ty` is exactly the column type for `$field`; the derive
             // guarantees the field-enum ↔ type pairing.
-            let p: *mut $ty = unsafe { $slice.items_raw::<$ty>($field_enum::$field) };
+            let p: *mut $ty = unsafe { $slice.items_raw::<{ ::core::stringify!($field) }, $ty>() };
             core::ptr::slice_from_raw_parts_mut(p, len)
         }};
     }
@@ -57,12 +58,12 @@ pub fn rename_symbols_in_chunk(
     let ast = c.graph.ast.slice();
     let meta = c.graph.meta.slice();
 
-    let all_module_scopes: *mut [Scope] = col_ptr!(ast, AstField::module_scope, Scope);
-    let all_flags: *mut [js_meta::Flags] = col_ptr!(meta, JSMetaField::flags, js_meta::Flags);
-    let all_parts: *mut [PartList] = col_ptr!(ast, AstField::parts, PartList);
-    let all_wrapper_refs: *mut [Ref] = col_ptr!(ast, AstField::wrapper_ref, Ref);
+    let all_module_scopes: *mut [Scope] = col_ptr!(ast, module_scope, Scope);
+    let all_flags: *mut [js_meta::Flags] = col_ptr!(meta, flags, js_meta::Flags);
+    let all_parts: *mut [PartList] = col_ptr!(ast, parts, PartList);
+    let all_wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
     let all_import_records: *mut [import_record::List] =
-        col_ptr!(ast, AstField::import_records, import_record::List);
+        col_ptr!(ast, import_records, import_record::List);
 
     // PORT NOTE: `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
     // (slice header) by value. Build a non-owning shallow view via
@@ -127,7 +128,7 @@ pub fn rename_symbols_in_chunk(
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             let nested_scope_slot_counts: *mut [SlotCounts] =
-                col_ptr!(ast, AstField::nested_scope_slot_counts, SlotCounts);
+                col_ptr!(ast, nested_scope_slot_counts, SlotCounts);
             for &i in files_in_order {
                 slots.union_max(col!(nested_scope_slot_counts)[i as usize].clone());
             }
@@ -142,11 +143,11 @@ pub fn rename_symbols_in_chunk(
 
         let stable_source_indices = c.graph.stable_source_indices.slice();
         let mut freq = CharFreq { freqs: [0i32; 64] };
-        let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, AstField::flags, AstFlags);
+        let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, flags, AstFlags);
 
         let mut capacity = sorted_imports_from_other_chunks.len();
         {
-            let char_freqs: *mut [CharFreq] = col_ptr!(ast, AstField::char_freq, CharFreq);
+            let char_freqs: *mut [CharFreq] = col_ptr!(ast, char_freq, CharFreq);
 
             for &source_index in files_in_order {
                 if col!(ast_flags_list)[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
@@ -155,9 +156,9 @@ pub fn rename_symbols_in_chunk(
             }
         }
 
-        let exports_ref_list: *mut [Ref] = col_ptr!(ast, AstField::exports_ref, Ref);
-        let module_ref_list: *mut [Ref] = col_ptr!(ast, AstField::module_ref, Ref);
-        let parts_list: *mut [PartList] = col_ptr!(ast, AstField::parts, PartList);
+        let exports_ref_list: *mut [Ref] = col_ptr!(ast, exports_ref, Ref);
+        let module_ref_list: *mut [Ref] = col_ptr!(ast, module_ref, Ref);
+        let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
 
         for &source_index in files_in_order {
             let ast_flags = col!(ast_flags_list)[source_index as usize];

@@ -7,15 +7,15 @@
 //! barrels are known. When a barrel later loads, applyBarrelOptimization reads
 //! `requested_exports` to see what's already been requested. No graph scan needed.
 
+use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_js_parser::ast::bundled_ast as JSAst;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_options_types::{import_record, ImportKind};
 
 use crate::bundle_v2::BundleV2;
 use crate::parse_task;
-use crate::Graph::{InputFileFlags, InputFileListExt as _};
+use crate::Graph::{InputFileFlags, InputFileColumns as _};
 
 bun_core::declare_scope!(barrel, hidden);
 

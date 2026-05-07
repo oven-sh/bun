@@ -1,6 +1,5 @@
-use core::mem::{align_of, size_of};
+use core::mem::size_of;
 
-use bun_collections::multi_array_list::{MultiArrayElement, Slice as MalSlice};
 use bun_collections::{ByteList, MultiArrayList};
 use bun_core::{declare_scope, err, scoped_log};
 use bun_logger::Loc;
@@ -12,99 +11,8 @@ use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourc
 
 declare_scope!(SourceMap, visible);
 
-// ── manual MultiArrayElement impls (derive macro not yet available) ───────
-// `Mapping` and `MappingWithoutName` have all-`Copy` fields with the same
-// alignment (LineColumnOffset is two c_ints → align 4; i32 align 4), so the
-// size-sorted order is identity.
-
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum MappingField {
-    Generated = 0,
-    Original = 1,
-    SourceIndex = 2,
-    NameIndex = 3,
-}
-
-impl MultiArrayElement for Mapping {
-    type Field = MappingField;
-    const FIELD_COUNT: usize = 4;
-    const ALIGN: usize = align_of::<LineColumnOffset>();
-    const SIZES_BYTES: &'static [usize] = &[
-        size_of::<LineColumnOffset>(),
-        size_of::<LineColumnOffset>(),
-        size_of::<i32>(),
-        size_of::<i32>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2, 3];
-    #[inline] fn field_index(f: Self::Field) -> usize { f as usize }
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], i: usize) {
-        // SAFETY: caller guarantees valid columns with capacity > i.
-        unsafe {
-            ptrs[0].cast::<LineColumnOffset>().add(i).write(self.generated);
-            ptrs[1].cast::<LineColumnOffset>().add(i).write(self.original);
-            ptrs[2].cast::<i32>().add(i).write(self.source_index);
-            ptrs[3].cast::<i32>().add(i).write(self.name_index);
-        }
-    }
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], i: usize) -> Self {
-        // SAFETY: caller guarantees valid columns with len > i.
-        unsafe {
-            Mapping {
-                generated: ptrs[0].cast::<LineColumnOffset>().add(i).read(),
-                original: ptrs[1].cast::<LineColumnOffset>().add(i).read(),
-                source_index: ptrs[2].cast::<i32>().add(i).read(),
-                name_index: ptrs[3].cast::<i32>().add(i).read(),
-            }
-        }
-    }
-}
-
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum MappingWithoutNameField {
-    Generated = 0,
-    Original = 1,
-    SourceIndex = 2,
-}
-
-impl MultiArrayElement for MappingWithoutName {
-    type Field = MappingWithoutNameField;
-    const FIELD_COUNT: usize = 3;
-    const ALIGN: usize = align_of::<LineColumnOffset>();
-    const SIZES_BYTES: &'static [usize] = &[
-        size_of::<LineColumnOffset>(),
-        size_of::<LineColumnOffset>(),
-        size_of::<i32>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2];
-    #[inline] fn field_index(f: Self::Field) -> usize { f as usize }
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], i: usize) {
-        // SAFETY: caller guarantees valid columns with capacity > i.
-        unsafe {
-            ptrs[0].cast::<LineColumnOffset>().add(i).write(self.generated);
-            ptrs[1].cast::<LineColumnOffset>().add(i).write(self.original);
-            ptrs[2].cast::<i32>().add(i).write(self.source_index);
-        }
-    }
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], i: usize) -> Self {
-        // SAFETY: caller guarantees valid columns with len > i.
-        unsafe {
-            MappingWithoutName {
-                generated: ptrs[0].cast::<LineColumnOffset>().add(i).read(),
-                original: ptrs[1].cast::<LineColumnOffset>().add(i).read(),
-                source_index: ptrs[2].cast::<i32>().add(i).read(),
-            }
-        }
-    }
-}
-
-// Typed SoA column accessors — what `#[derive(MultiArrayElement)]` would emit.
-// Implemented locally on `MultiArrayList<T>` via `Slice::items::<F>`.
+// Typed SoA column accessors — thin wrappers over the reflection-backed
+// `MultiArrayList::items::<"field", T>()` so callers don't repeat the type.
 trait MappingColumns {
     fn items_generated(&self) -> &[LineColumnOffset];
     fn items_original(&self) -> &[LineColumnOffset];
@@ -112,30 +20,24 @@ trait MappingColumns {
 }
 impl MappingColumns for MultiArrayList<MappingWithoutName> {
     fn items_generated(&self) -> &[LineColumnOffset] {
-        // SAFETY: column 0 is `LineColumnOffset` per MultiArrayElement impl above.
-        unsafe { &*(self.slice().items::<LineColumnOffset>(MappingWithoutNameField::Generated) as *const [_]) }
+        self.items::<"generated", LineColumnOffset>()
     }
     fn items_original(&self) -> &[LineColumnOffset] {
-        // SAFETY: column 1 is `LineColumnOffset`.
-        unsafe { &*(self.slice().items::<LineColumnOffset>(MappingWithoutNameField::Original) as *const [_]) }
+        self.items::<"original", LineColumnOffset>()
     }
     fn items_source_index(&self) -> &[i32] {
-        // SAFETY: column 2 is `i32`.
-        unsafe { &*(self.slice().items::<i32>(MappingWithoutNameField::SourceIndex) as *const [_]) }
+        self.items::<"source_index", i32>()
     }
 }
 impl MappingColumns for MultiArrayList<Mapping> {
     fn items_generated(&self) -> &[LineColumnOffset] {
-        // SAFETY: column 0 is `LineColumnOffset` per MultiArrayElement impl above.
-        unsafe { &*(self.slice().items::<LineColumnOffset>(MappingField::Generated) as *const [_]) }
+        self.items::<"generated", LineColumnOffset>()
     }
     fn items_original(&self) -> &[LineColumnOffset] {
-        // SAFETY: column 1 is `LineColumnOffset`.
-        unsafe { &*(self.slice().items::<LineColumnOffset>(MappingField::Original) as *const [_]) }
+        self.items::<"original", LineColumnOffset>()
     }
     fn items_source_index(&self) -> &[i32] {
-        // SAFETY: column 2 is `i32`.
-        unsafe { &*(self.slice().items::<i32>(MappingField::SourceIndex) as *const [_]) }
+        self.items::<"source_index", i32>()
     }
 }
 trait MappingNameColumn {
@@ -143,8 +45,7 @@ trait MappingNameColumn {
 }
 impl MappingNameColumn for MultiArrayList<Mapping> {
     fn items_name_index(&self) -> &[i32] {
-        // SAFETY: column 3 is `i32`.
-        unsafe { &*(self.slice().items::<i32>(MappingField::NameIndex) as *const [_]) }
+        self.items::<"name_index", i32>()
     }
 }
 
@@ -308,12 +209,24 @@ impl List {
         // is detached from `list`.
         match &self.r#impl {
             ListValue::WithoutNames(list) => {
-                let slice = list.slice();
-                list.sort(SortContext { slice, field: MappingWithoutNameField::Generated as usize });
+                // SAFETY: column borrow is read-only; `sort` swaps via raw ptrs.
+                let generated = unsafe {
+                    core::slice::from_raw_parts(
+                        list.items_raw::<"generated", LineColumnOffset>(),
+                        list.len(),
+                    )
+                };
+                list.sort(SortContext { generated });
             }
             ListValue::WithNames(list) => {
-                let slice = list.slice();
-                list.sort(SortContext { slice, field: MappingField::Generated as usize });
+                // SAFETY: see above.
+                let generated = unsafe {
+                    core::slice::from_raw_parts(
+                        list.items_raw::<"generated", LineColumnOffset>(),
+                        list.len(),
+                    )
+                };
+                list.sort(SortContext { generated });
             }
         }
     }
@@ -418,27 +331,14 @@ impl List {
     }
 }
 
-struct SortContext<T: MultiArrayElement> {
-    slice: MalSlice<T>,
-    field: usize,
+struct SortContext<'a> {
+    generated: &'a [LineColumnOffset],
 }
 
-impl<T: MultiArrayElement> SortContext<T> {
-    #[inline]
-    fn generated(&self, index: usize) -> LineColumnOffset {
-        // SAFETY: `field` is the `Generated` column index for `T` (set in
-        // `List::sort` above), whose element type is `LineColumnOffset`.
-        unsafe {
-            let f: T::Field = core::mem::transmute_copy(&self.field);
-            self.slice.items::<LineColumnOffset>(f)[index]
-        }
-    }
-}
-
-impl<T: MultiArrayElement> bun_collections::multi_array_list::SortContext for SortContext<T> {
+impl<'a> bun_collections::multi_array_list::SortContext for SortContext<'a> {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        let a = self.generated(a_index);
-        let b = self.generated(b_index);
+        let a = self.generated[a_index];
+        let b = self.generated[b_index];
 
         if a.lines.zero_based() != b.lines.zero_based() {
             return a.lines.zero_based() < b.lines.zero_based();

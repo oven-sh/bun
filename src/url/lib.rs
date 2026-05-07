@@ -823,7 +823,7 @@ pub struct Param {
 // PERF(port): Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column
 // scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
 // (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
-// revisit once `#[derive(MultiArrayElement)]` lands.
+// revisit once `` lands.
 // TODO(b2-blocked): bun_collections::MultiArrayList derive
 pub type ParamList = Vec<Param>;
 

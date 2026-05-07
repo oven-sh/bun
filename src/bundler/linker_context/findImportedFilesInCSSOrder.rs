@@ -1,3 +1,4 @@
+use crate::mal_prelude::*;
 use bstr::BStr;
 use bun_alloc::ArenaVecExt as _;
 
@@ -12,9 +13,8 @@ use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::bun_fs;
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context::LinkerCtx;
-use crate::Graph::{Graph, InputFileListExt as _};
+use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{Index, LinkerContext};
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::Index as AstIndex;
 
 // `debug` in the Zig is `LinkerContext.debug`, a scoped Output log.

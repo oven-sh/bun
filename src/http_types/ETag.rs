@@ -118,54 +118,6 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
-// does not exist yet (TODO in bun_collections). Two same-size/align fields, so
-// the size-sorted order is identity.
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum HeaderEntryField {
-    Name = 0,
-    Value = 1,
-}
-
-impl bun_collections::multi_array_list::MultiArrayElement for HeaderEntry {
-    type Field = HeaderEntryField;
-    const FIELD_COUNT: usize = 2;
-    const ALIGN: usize = core::mem::align_of::<StringPointer>();
-    const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<StringPointer>(),
-        core::mem::size_of::<StringPointer>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1];
-
-    #[inline]
-    fn field_index(field: Self::Field) -> usize {
-        field as usize
-    }
-
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
-        // SAFETY: caller guarantees `ptrs[0..2]` are valid `StringPointer`
-        // columns with capacity > `index`.
-        unsafe {
-            ptrs[0].cast::<StringPointer>().add(index).write(self.name);
-            ptrs[1].cast::<StringPointer>().add(index).write(self.value);
-        }
-    }
-
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
-        // SAFETY: caller guarantees `ptrs[0..2]` are valid `StringPointer`
-        // columns with `len > index`.
-        unsafe {
-            HeaderEntry {
-                name: ptrs[0].cast::<StringPointer>().add(index).read(),
-                value: ptrs[1].cast::<StringPointer>().add(index).read(),
-            }
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct Headers {
     pub entries: HeaderEntryList,
@@ -194,13 +146,8 @@ impl Headers {
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
         let entries = self.entries.slice();
-        // PORT NOTE: derive-generated typed accessors don't exist yet; call
-        // `Slice::items` directly with the correct column type.
-        // SAFETY: both columns are `StringPointer`; field enum matches.
-        let names: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Name) };
-        let values: &[StringPointer] =
-            unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
+        let names: &[StringPointer] = entries.items::<"name", StringPointer>();
+        let values: &[StringPointer] = entries.items::<"value", StringPointer>();
         for (i, name_ptr) in names.iter().enumerate() {
             if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
                 return Some(self.as_str(values[i]));

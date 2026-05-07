@@ -77,11 +77,11 @@ fn expr_str(e: &Expr) -> Option<&'static [u8]> {
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
 //
-// PORT NOTE: `#[derive(MultiArrayElement)]` cannot be used here — the derive
+// PORT NOTE: `` cannot be used here — the derive
 // emits a `PackageField` enum with snake_case variants and an inherent
 // `__MAL_SIZES` const that fail to const-eval through the defaulted
-// `SemverIntType` param. The trait impl, field enum, and `PackageListExt` /
-// `PackageSliceExt` accessor traits are therefore expanded by hand below
+// `SemverIntType` param. The trait impl, field enum, and `PackageColumns` /
+// `PackageColumns` accessor traits are therefore expanded by hand below
 // (mirroring Zig's `MultiArrayList(Package).items(.field)`).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -200,13 +200,9 @@ impl ResolverContext for () {
     }
 }
 
-// ─── MultiArrayElement ───────────────────────────────────────────────────────
-//
-// Zig got per-field metadata via `@typeInfo(Package)`; the Rust
-// `MultiArrayList` requires the `MultiArrayElement` trait. The derive macro
-// can't be used here because `Package` is generic over `SemverIntType`, so
-// expand it by hand. Field order matches struct declaration; alignment-sorted
-// indices computed at first use by the serializer.
+/// Field tags for the binary lockfile serializer (`bun.lockb`). The
+/// reflection-backed `MultiArrayList` no longer needs an enum, but the
+/// serializer iterates fields by tag to write column blobs in a fixed order.
 #[repr(usize)]
 #[derive(Copy, Clone)]
 pub enum PackageField {
@@ -246,141 +242,18 @@ impl PackageField {
     }
 }
 
-impl<SemverIntType: VersionInt> bun_collections::MultiArrayElement for Package<SemverIntType> {
-    type Field = PackageField;
-    const FIELD_COUNT: usize = 8;
-    const ALIGN: usize = mem::align_of::<Package<SemverIntType>>();
-    // TODO(port): SIZES_BYTES/SIZES_FIELDS must be alignment-sorted per
-    // `std.MultiArrayList`. Const-evaluating that sort is awkward in stable
-    // Rust; the binary lockfile serializer recomputes sizes itself, so use
-    // declaration order here and revisit once `Serializer` lands.
-    const SIZES_BYTES: &'static [usize] = &[
-        mem::size_of::<String>(),
-        mem::size_of::<PackageNameHash>(),
-        mem::size_of::<ResolutionType<SemverIntType>>(),
-        mem::size_of::<DependencySlice>(),
-        mem::size_of::<PackageIDSlice>(),
-        mem::size_of::<Meta>(),
-        mem::size_of::<Bin>(),
-        mem::size_of::<Scripts>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2, 3, 4, 5, 6, 7];
-
-    #[inline]
-    fn field_index(field: Self::Field) -> usize { field as usize }
-
-    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
-        unsafe {
-            (ptrs[0] as *mut String).add(index).write(self.name);
-            (ptrs[1] as *mut PackageNameHash).add(index).write(self.name_hash);
-            (ptrs[2] as *mut ResolutionType<SemverIntType>).add(index).write(self.resolution);
-            (ptrs[3] as *mut DependencySlice).add(index).write(self.dependencies);
-            (ptrs[4] as *mut PackageIDSlice).add(index).write(self.resolutions);
-            (ptrs[5] as *mut Meta).add(index).write(self.meta);
-            (ptrs[6] as *mut Bin).add(index).write(self.bin);
-            (ptrs[7] as *mut Scripts).add(index).write(self.scripts);
-        }
-    }
-
-    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
-        unsafe {
-            Self {
-                name: (ptrs[0] as *const String).add(index).read(),
-                name_hash: (ptrs[1] as *const PackageNameHash).add(index).read(),
-                resolution: (ptrs[2] as *const ResolutionType<SemverIntType>).add(index).read(),
-                dependencies: (ptrs[3] as *const DependencySlice).add(index).read(),
-                resolutions: (ptrs[4] as *const PackageIDSlice).add(index).read(),
-                meta: (ptrs[5] as *const Meta).add(index).read(),
-                bin: (ptrs[6] as *const Bin).add(index).read(),
-                scripts: (ptrs[7] as *const Scripts).add(index).read(),
-            }
-        }
+bun_collections::multi_array_columns! {
+    pub trait PackageColumns [SemverIntType: VersionInt] for Package<SemverIntType> {
+        name: String,
+        name_hash: PackageNameHash,
+        resolution: ResolutionType<SemverIntType>,
+        dependencies: DependencySlice,
+        resolutions: PackageIDSlice,
+        meta: Meta,
+        bin: Bin,
+        scripts: Scripts,
     }
 }
-
-// ─── PackageListExt / PackageSliceExt ────────────────────────────────────────
-//
-// Hand-expansion of what `#[derive(MultiArrayElement)]` would emit (see PORT
-// NOTE on the struct above). Both `MultiArrayList<Package<_>>` and its
-// `Slice<Package<_>>` get the same `items_<field>{,_mut}()` surface — Zig's
-// `list.items(.field)` / `slice.items(.field)` are spelled identically and
-// callers (bun.lock.rs, Tree.rs, migrators) use both forms interchangeably.
-macro_rules! pkg_ext_trait {
-    ($trait_name:ident for $target:ty) => {
-        #[allow(dead_code)]
-        pub trait $trait_name<SemverIntType: VersionInt> {
-            fn items_name(&self) -> &[String];
-            fn items_name_mut(&mut self) -> &mut [String];
-            fn items_name_hash(&self) -> &[PackageNameHash];
-            fn items_name_hash_mut(&mut self) -> &mut [PackageNameHash];
-            fn items_resolution(&self) -> &[ResolutionType<SemverIntType>];
-            fn items_resolution_mut(&mut self) -> &mut [ResolutionType<SemverIntType>];
-            fn items_dependencies(&self) -> &[DependencySlice];
-            fn items_dependencies_mut(&mut self) -> &mut [DependencySlice];
-            fn items_resolutions(&self) -> &[PackageIDSlice];
-            fn items_resolutions_mut(&mut self) -> &mut [PackageIDSlice];
-            fn items_meta(&self) -> &[Meta];
-            fn items_meta_mut(&mut self) -> &mut [Meta];
-            fn items_bin(&self) -> &[Bin];
-            fn items_bin_mut(&mut self) -> &mut [Bin];
-            fn items_scripts(&self) -> &[Scripts];
-            fn items_scripts_mut(&mut self) -> &mut [Scripts];
-        }
-        #[allow(dead_code)]
-        impl<SemverIntType: VersionInt> $trait_name<SemverIntType> for $target {
-            #[inline] fn items_name(&self) -> &[String] {
-                unsafe { self.items::<String>(PackageField::Name) }
-            }
-            #[inline] fn items_name_mut(&mut self) -> &mut [String] {
-                unsafe { self.items_mut::<String>(PackageField::Name) }
-            }
-            #[inline] fn items_name_hash(&self) -> &[PackageNameHash] {
-                unsafe { self.items::<PackageNameHash>(PackageField::NameHash) }
-            }
-            #[inline] fn items_name_hash_mut(&mut self) -> &mut [PackageNameHash] {
-                unsafe { self.items_mut::<PackageNameHash>(PackageField::NameHash) }
-            }
-            #[inline] fn items_resolution(&self) -> &[ResolutionType<SemverIntType>] {
-                unsafe { self.items::<ResolutionType<SemverIntType>>(PackageField::Resolution) }
-            }
-            #[inline] fn items_resolution_mut(&mut self) -> &mut [ResolutionType<SemverIntType>] {
-                unsafe { self.items_mut::<ResolutionType<SemverIntType>>(PackageField::Resolution) }
-            }
-            #[inline] fn items_dependencies(&self) -> &[DependencySlice] {
-                unsafe { self.items::<DependencySlice>(PackageField::Dependencies) }
-            }
-            #[inline] fn items_dependencies_mut(&mut self) -> &mut [DependencySlice] {
-                unsafe { self.items_mut::<DependencySlice>(PackageField::Dependencies) }
-            }
-            #[inline] fn items_resolutions(&self) -> &[PackageIDSlice] {
-                unsafe { self.items::<PackageIDSlice>(PackageField::Resolutions) }
-            }
-            #[inline] fn items_resolutions_mut(&mut self) -> &mut [PackageIDSlice] {
-                unsafe { self.items_mut::<PackageIDSlice>(PackageField::Resolutions) }
-            }
-            #[inline] fn items_meta(&self) -> &[Meta] {
-                unsafe { self.items::<Meta>(PackageField::Meta) }
-            }
-            #[inline] fn items_meta_mut(&mut self) -> &mut [Meta] {
-                unsafe { self.items_mut::<Meta>(PackageField::Meta) }
-            }
-            #[inline] fn items_bin(&self) -> &[Bin] {
-                unsafe { self.items::<Bin>(PackageField::Bin) }
-            }
-            #[inline] fn items_bin_mut(&mut self) -> &mut [Bin] {
-                unsafe { self.items_mut::<Bin>(PackageField::Bin) }
-            }
-            #[inline] fn items_scripts(&self) -> &[Scripts] {
-                unsafe { self.items::<Scripts>(PackageField::Scripts) }
-            }
-            #[inline] fn items_scripts_mut(&mut self) -> &mut [Scripts] {
-                unsafe { self.items_mut::<Scripts>(PackageField::Scripts) }
-            }
-        }
-    };
-}
-pkg_ext_trait!(PackageListExt for MultiArrayList<Package<SemverIntType>>);
-pkg_ext_trait!(PackageSliceExt for bun_collections::multi_array_list::Slice<Package<SemverIntType>>);
 
 impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
     fn default() -> Self {
@@ -3087,7 +2960,7 @@ pub mod serializer {
         // PERF(port): comptime @Vector reduce — profile in Phase B.
         let len = list.len();
         let mut sum: usize = 0;
-        for &sz in <Package<SemverIntType> as bun_collections::MultiArrayElement>::SIZES_BYTES {
+        for fi in 0..FIELD_COUNT { let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(fi);
             sum += sz * len;
         }
         sum
@@ -3124,7 +2997,7 @@ pub mod serializer {
         let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
         let really_begin_at = stream.get_pos()?;
-        let sliced = list.slice();
+        let mut sliced = list.slice();
 
         // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
         for field in PackageField::ALL {
@@ -3133,9 +3006,8 @@ pub mod serializer {
             // address the column as raw bytes for serialisation.
             let bytes: &[u8] = unsafe {
                 let n = list.len();
-                let sz = <Package<SemverIntType> as bun_collections::MultiArrayElement>
-                    ::SIZES_BYTES[field as usize];
-                core::slice::from_raw_parts(sliced.items_raw::<u8>(field), n * sz)
+                let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(field as usize);
+                { let _ = sz; &*sliced.column_bytes_mut(field as usize) }
             };
             #[cfg(debug_assertions)]
             {
@@ -3152,7 +3024,7 @@ pub mod serializer {
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
-                    unsafe { sliced.items::<Resolution<SemverIntType>>(field) };
+                    unsafe { sliced.items::<"resolution", Resolution<SemverIntType>>() };
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member,
@@ -3335,13 +3207,12 @@ pub mod serializer {
 
         // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
         for field in PackageField::ALL {
-            let sz = <Package<SemverIntType> as bun_collections::MultiArrayElement>
-                ::SIZES_BYTES[field as usize];
+            let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(field as usize);
             // SAFETY: `items_raw` returns a column pointer with `n` elements of
             // `sz` bytes each; the byte view is used solely for memcpy from the
             // serialised lockfile stream.
             let bytes: &mut [u8] = unsafe {
-                core::slice::from_raw_parts_mut(sliced.items_raw::<u8>(field), n * sz)
+                { let _ = sz; sliced.column_bytes_mut(field as usize) }
             };
             // TODO(port): assert_no_uninitialized_padding once a typed accessor lands.
             let end_pos = stream.pos + bytes.len();
@@ -3353,7 +3224,7 @@ pub mod serializer {
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
                     let metas: &mut [Meta] =
-                        unsafe { sliced.items_mut::<Meta>(field) };
+                        unsafe { sliced.items_mut::<"meta", Meta>() };
                     for meta in metas {
                         if meta.needs_update() {
                             *needs_update = true;

@@ -13,10 +13,10 @@ use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
 use super::base::IndexInt;
 use super::use_directive::UseDirective;
 
-// `#[derive(MultiArrayElement)]` generates `ServerComponentBoundaryField` +
+// `` generates `ServerComponentBoundaryField` +
 // `ServerComponentBoundary{Slice,List}Ext` (`source_index()`,
 // `items_reference_source_index()`, …) used by the bundler.
-#[derive(Clone, Copy, bun_collections::MultiArrayElement)]
+#[derive(Clone, Copy)]
 pub struct ServerComponentBoundary {
     pub use_directive: UseDirective,
 
@@ -34,6 +34,15 @@ pub struct ServerComponentBoundary {
     //
     // TODO: Is this used for server actions.
     pub ssr_source_index: IndexInt,
+}
+
+bun_collections::multi_array_columns! {
+    pub trait ServerComponentBoundaryColumns for ServerComponentBoundary {
+        use_directive: UseDirective,
+        source_index: IndexInt,
+        reference_source_index: IndexInt,
+        ssr_source_index: IndexInt,
+    }
 }
 
 /// The requirements for this data structure is to have reasonable lookup
@@ -71,7 +80,7 @@ impl List {
         // the adapter just the `source_index` column it needs.
         let gop = self.map.get_or_put_adapted(
             source_index,
-            Adapter { source_indices: self.list.items_source_index() },
+            Adapter { source_indices: self.list.items::<"source_index", IndexInt>() },
         )?;
         debug_assert!(!gop.found_existing);
         Ok(())
@@ -81,7 +90,7 @@ impl List {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
-            Adapter { source_indices: self.list.items_source_index() },
+            Adapter { source_indices: self.list.items::<"source_index", IndexInt>() },
         )
     }
 
@@ -101,19 +110,19 @@ impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
-            Adapter { source_indices: self.list.source_index() },
+            Adapter { source_indices: self.list.items::<"source_index", IndexInt>() },
         )
     }
 
     pub fn get_reference_source_index(&self, real_source_index: IndexInt) -> Option<u32> {
         let i = self.map.get_index_adapted(
             &real_source_index,
-            Adapter { source_indices: self.list.source_index() },
+            Adapter { source_indices: self.list.items::<"source_index", IndexInt>() },
         )?;
         // Zig: `bun.unsafeAssert(l.list.capacity > 0)` — optimization hint for
         // `MultiArrayList.Slice.items`. The Rust `items()` already short-circuits
         // on `capacity == 0`, so the assert is dropped.
-        Some(self.list.reference_source_index()[i])
+        Some(self.list.items::<"reference_source_index", IndexInt>()[i])
     }
 
     pub fn bit_set(
@@ -121,7 +130,7 @@ impl<'a> Slice<'a> {
         input_file_count: usize,
     ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
         let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
-        for &source_index in self.list.source_index() {
+        for &source_index in self.list.items::<"source_index", IndexInt>() {
             scb_bitset.set(source_index as usize);
         }
         Ok(scb_bitset)

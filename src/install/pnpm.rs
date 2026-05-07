@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -22,7 +23,6 @@ use crate::dependency::{self, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
-use crate::lockfile_real::package::PackageListExt as _;
 use crate::npm::{self, Negatable};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};

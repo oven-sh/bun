@@ -11,7 +11,7 @@ use bun_paths::{self, PathBuffer, SEP};
 use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
-use bun_watcher::{ChangedFilePath, Op as WatchOp, WatchItemField, Watcher};
+use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
 use bun_event_loop::task_tag;
 use crate::Task as JscTask;
@@ -755,7 +755,7 @@ where
         // this column for the loop's duration and no other `&` to it is live.
         let counts: &mut [u32] = unsafe {
             core::slice::from_raw_parts_mut(
-                slice.items_raw::<u32>(WatchItemField::Count),
+                slice.items_raw::<"count", u32>(),
                 slice.len(),
             )
         };

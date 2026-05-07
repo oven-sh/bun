@@ -278,7 +278,6 @@ pub struct GetOrPutFileResult {
     pub file_id: FileId,
 }
 
-#[derive(bun_collections::MultiArrayElement)]
 pub struct File {
     pub source: logger::Source,
     pub log: logger::Log,
@@ -295,6 +294,13 @@ impl Default for File {
 
 pub type FileList = MultiArrayList<File>;
 pub type FileId = u32;
+
+bun_collections::multi_array_columns! {
+    pub trait FileColumns for File {
+        source: logger::Source,
+        log: logger::Log,
+    }
+}
 // PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
 pub type FileMap = ArrayHashMap<u32, u32>;
 

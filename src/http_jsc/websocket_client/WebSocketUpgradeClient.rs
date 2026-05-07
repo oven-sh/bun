@@ -1917,14 +1917,14 @@ fn build_connect_request(
 
     // Custom proxy headers
     if let Some(hdrs) = proxy_headers {
-        use bun_http_types::ETag::{HeaderEntryField, StringPointer as HeaderStringPointer};
+        use bun_http_types::ETag::{StringPointer as HeaderStringPointer};
         let slice = hdrs.entries.slice();
         // SAFETY: column type for both fields is `StringPointer` (see
         // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
         let names: &[HeaderStringPointer] =
-            unsafe { slice.items::<HeaderStringPointer>(HeaderEntryField::Name) };
+            unsafe { slice.items::<"name", HeaderStringPointer>() };
         let values: &[HeaderStringPointer] =
-            unsafe { slice.items::<HeaderStringPointer>(HeaderEntryField::Value) };
+            unsafe { slice.items::<"value", HeaderStringPointer>() };
         debug_assert_eq!(names.len(), values.len());
         for (idx, name_ptr) in names.iter().enumerate() {
             // Skip Proxy-Authorization if user provided one (we already added it)

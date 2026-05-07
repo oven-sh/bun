@@ -93,7 +93,7 @@ impl<'a> AnyBlobRef<'a> {
 // same type. This crate adds the constructors that pull in T5 deps
 // (`picohttp`, `FetchHeadersRef`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
-use bun_http_types::ETag::HeaderEntryField;
+
 
 // PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
 // deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
@@ -193,9 +193,9 @@ impl HeadersExt for Headers {
         // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
         // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
         let names_ptr: *mut api::StringPointer =
-            unsafe { sliced.items_raw::<api::StringPointer>(HeaderEntryField::Name) };
+            unsafe { sliced.items_raw::<"name", api::StringPointer>() };
         let values_ptr: *mut api::StringPointer =
-            unsafe { sliced.items_raw::<api::StringPointer>(HeaderEntryField::Value) };
+            unsafe { sliced.items_raw::<"value", api::StringPointer>() };
         if let Some(headers_ref) = fetch_headers_ref {
             headers_ref.copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr());
         }

@@ -31,13 +31,13 @@ pub type TopLevelSymbolToParts = ast::TopLevelSymbolToParts;
 // PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
 // `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
 // (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
-// `#[derive(MultiArrayElement)]` generates the `BundledAstField` enum +
-// `BundledAstSliceExt`/`BundledAstListExt` (`items_named_imports()`,
+// `` generates the `BundledAstField` enum +
+// `BundledAstColumns`/`BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) that those callers expect at
 // `bun_js_parser::ast::bundled_ast::*`.
 //
 // 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
-#[derive(bun_collections::MultiArrayElement)]
+
 pub struct BundledAst<'arena> {
     pub approximate_newline_count: u32,
     pub nested_scope_slot_counts: SlotCounts,
@@ -92,6 +92,37 @@ pub struct BundledAst<'arena> {
     pub ts_enums: ast::TsEnumsMap,
 
     pub flags: Flags,
+}
+
+bun_collections::multi_array_columns! {
+    pub trait BundledAstColumns ['arena] for BundledAst<'arena> {
+        approximate_newline_count: u32,
+        nested_scope_slot_counts: SlotCounts,
+        exports_kind: ExportsKind,
+        import_records: import_record::List,
+        hashbang: crate::StoreStr,
+        parts: part::List,
+        css: Option<*mut BundlerStyleSheet>,
+        url_for_css: &'arena [u8],
+        symbols: symbol::List,
+        module_scope: Scope,
+        char_freq: CharFreq,
+        exports_ref: Ref,
+        module_ref: Ref,
+        wrapper_ref: Ref,
+        require_ref: Ref,
+        top_level_await_keyword: logger::Range,
+        tla_check: TlaCheck,
+        named_imports: NamedImports,
+        named_exports: NamedExports,
+        export_star_import_records: Box<[u32]>,
+        top_level_symbols_to_parts: TopLevelSymbolToParts,
+        commonjs_named_exports: CommonJSNamedExports,
+        redirect_import_record_index: u32,
+        target: bun_options_types::Target,
+        ts_enums: ast::TsEnumsMap,
+        flags: Flags,
+    }
 }
 
 bitflags::bitflags! {

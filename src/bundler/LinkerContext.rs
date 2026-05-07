@@ -1,5 +1,6 @@
 //! Port of src/bundler/LinkerContext.zig
 
+use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::mem::offset_of;
 
@@ -127,7 +128,7 @@ macro_rules! debug_tree_shake {
 }
 
 // Re-exports from sibling modules in `linker_context/`.
-// `LinkerGraph` SoA accessors are real now (`#[derive(MultiArrayElement)]` on
+// `LinkerGraph` SoA accessors are real now (`` on
 // `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
 // declarations live in `lib.rs::linker_context` — each re-export below is
 // gated alongside its module declaration so partial un-gates compile.
@@ -252,7 +253,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
-        use crate::linker_graph::FileListExt as _;
+        use crate::linker_graph::FileColumns as _;
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize].is_entry_point()
@@ -284,11 +285,8 @@ impl<'a> LinkerContext<'a> {
 pub mod EntryPoint {
     pub use crate::ungate_support::entry_point::Kind;
 }
-use crate::Graph::{InputFileListExt as _, SideEffects as _GraphSideEffects};
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use crate::ungate_support::{EntryPointListExt as _, CompileResultForSourceMapListExt as _};
-use crate::linker_graph::FileListExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::Graph::{InputFileColumns as _, SideEffects as _GraphSideEffects};
+use crate::ungate_support::{EntryPointColumns as _, CompileResultForSourceMapColumns as _};
 use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
 use crate::ungate_support::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = js_ast::DeclaredSymbolList;
@@ -412,13 +410,13 @@ impl<'a> LinkerContext<'a> {
             // reallocate for the duration of this loop.
             let exports_kind: &mut [ExportsKind] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    ast_slice.items_raw::<ExportsKind>(js_ast::ast::bundled_ast::BundledAstField::exports_kind),
+                    ast_slice.items_raw::<"exports_kind", ExportsKind>(),
                     ast_len,
                 )
             };
             let ast_flags_list: &mut [AstFlags] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    ast_slice.items_raw::<AstFlags>(js_ast::ast::bundled_ast::BundledAstField::flags),
+                    ast_slice.items_raw::<"flags", AstFlags>(),
                     ast_len,
                 )
             };
@@ -1217,7 +1215,6 @@ impl SourceMapData {
     /// task writes only `graph.files[source_index].line_offset_table`
     /// (disjoint by `source_index`); all other access is read-only.
     pub fn compute_line_offsets(this: *mut LinkerContext, alloc: &Bump, source_index: crate::IndexInt) {
-        use crate::linker_graph::FileField;
         debug!("Computing LineOffsetTable: {}", source_index);
         // SAFETY: `this` is a backref to `BundleV2.linker`, valid for the link
         // step. We only take transient `&` (autoref) to read SoA column base
@@ -1227,7 +1224,7 @@ impl SourceMapData {
         // disjoint across concurrent tasks.
         let line_offset_table: *mut SourceMap::line_offset_table::List = unsafe {
             (*this).graph.files.slice()
-                .items_raw::<SourceMap::line_offset_table::List>(FileField::line_offset_table)
+                .items_raw::<"line_offset_table", SourceMap::line_offset_table::List>()
                 .add(source_index as usize)
         };
 
@@ -1262,14 +1259,13 @@ impl SourceMapData {
     /// Runs concurrently across the worker pool — see `compute_line_offsets`
     /// for the raw-pointer aliasing contract.
     pub fn compute_quoted_source_contents(this: *mut LinkerContext, _alloc: &Bump, source_index: crate::IndexInt) {
-        use crate::linker_graph::FileField;
         debug!("Computing Quoted Source Contents: {}", source_index);
         // SAFETY: see `compute_line_offsets` — transient `&` to read the SoA
         // column base, then raw-ptr offset to the per-source_index slot. Sole
         // writer to this slot (disjoint across concurrent tasks).
         let quoted_source_contents = unsafe {
             &mut *(*this).graph.files.slice()
-                .items_raw::<Option<Box<[u8]>>>(FileField::quoted_source_contents)
+                .items_raw::<"quoted_source_contents", Option<Box<[u8]>>>()
                 .add(source_index as usize)
         };
         *quoted_source_contents = None;
@@ -2098,7 +2094,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 // B-2 second pass: un-gated tree-shaking primitives. These reach into
 // `LinkerGraph` SoA columns (`files_live`, `meta.items_flags()`) and the
-// `Graph::InputFileListExt` accessors. `LinkerGraph` real fields land via the
+// `Graph::InputFileColumns` accessors. `LinkerGraph` real fields land via the
 // concurrent `LinkerGraph.rs` un-gate; until lib.rs flips its module gate the
 // stub `LinkerGraph(())` will surface here — expected and tracked.
 // ══════════════════════════════════════════════════════════════════════════

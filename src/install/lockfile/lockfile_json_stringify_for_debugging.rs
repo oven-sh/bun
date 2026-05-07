@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
 use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
@@ -11,7 +12,6 @@ use crate::bin::Tag as BinTag;
 use crate::integrity::Tag as IntegrityTag;
 
 use super::{package_index, tree, FormatVersion, Lockfile, Package};
-use super::package::PackageListExt as _;
 use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
 

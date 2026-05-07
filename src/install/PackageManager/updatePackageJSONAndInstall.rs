@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -14,8 +15,6 @@ use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File};
-
-use crate::lockfile_real::package::PackageListExt as _;
 
 use super::{
     attempt_to_create_package_json, install_with_manager, patch_package, Command, PackageManager,

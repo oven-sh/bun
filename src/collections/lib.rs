@@ -1,10 +1,18 @@
 //! bun_collections — crate root.
 //! Thin re-export hub mirroring `src/collections/collections.zig`.
 
+#![feature(
+    type_info,
+    adt_const_params,
+    unsized_const_params,
+    const_cmp,
+    const_trait_impl,
+    core_intrinsics,
+    allocator_api
+)]
+#![allow(incomplete_features, internal_features)]
 #![allow(unused, non_snake_case, clippy::all)]
 
-// Let `#[derive(MultiArrayElement)]` expansions name this crate as
-// `bun_collections::…` even from inside it (tests, internal element types).
 extern crate self as bun_collections;
 
 pub mod multi_array_list;
@@ -26,8 +34,9 @@ pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
-pub use multi_array_list::{MultiArrayList, MultiArrayElement};
-pub use bun_collections_macros::MultiArrayElement;
+pub use multi_array_list::MultiArrayList;
+#[doc(hidden)]
+pub use paste::paste as __mal_paste;
 pub use baby_list::{BabyList, ByteList, OffsetByteList};
 pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;

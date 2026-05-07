@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
@@ -20,7 +21,6 @@ use crate::_folder_resolver::{
     PackageWorkspaceSearchPathFormatter,
 };
 use crate::patch_install::{Callback as PatchCallback, EnqueueAfterState};
-use crate::lockfile::package::PackageListExt as _;
 use crate::lockfile::PackageIndexEntry;
 use crate::network_task::Authorization;
 use crate::resolution::{

@@ -2928,7 +2928,6 @@ enum TransformOutstream {
     Dir(bun_sys::Fd),
 }
 
-
 /// Port of `transpiler.zig:374 BuildResolveResultPair`.
 pub struct BuildResolveResultPair {
     pub written: usize,

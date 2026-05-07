@@ -27,10 +27,9 @@
 //!    then we don't need to do any allocations or extra work to get the output
 //!    file for a chunk.
 
+use crate::mal_prelude::*;
 use crate::options::{self, Format, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
-use crate::Graph::InputFileListExt as _;
-
 pub struct OutputFileList {
     pub output_files: Vec<options::OutputFile>,
     pub index_for_chunk: u32,

@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use core::cmp::Ordering;
 
 use bun_collections::HashMap;
@@ -15,7 +16,6 @@ use crate::lockfile_real::package::Alphabetizer;
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (Zig's `slice.items(.field)` is
 // comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
-use crate::lockfile_real::package::PackageSliceExt as _;
 use crate::lockfile_real::Printer;
 use crate::integrity;
 

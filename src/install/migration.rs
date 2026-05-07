@@ -17,7 +17,7 @@ use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
 use crate::repository::Repository;
 use crate::lockfile::{self, Lockfile, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Format as LockfileFormat, Migrated, PackageListEntry};
-use crate::lockfile_real::package::{PackageField, PackageListExt as _};
+use crate::lockfile_real::package::{PackageField, PackageColumns as _};
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::external_slice::ExternalSlice;
 use crate::yarn;
@@ -808,12 +808,12 @@ pub fn migrate_npm_lockfile<'a>(
     // PORT NOTE: MultiArrayList simultaneous mutable column access — split via raw ptrs.
     // SAFETY: distinct columns alias-free; capacity fixed (no further append until end of fn).
     let pkg_slice = this.packages.slice();
-    let resolutions_col: *mut Resolution = unsafe { pkg_slice.items_raw::<Resolution>(PackageField::Resolution) };
-    let metas_col: *mut lockfile::Meta = unsafe { pkg_slice.items_raw::<lockfile::Meta>(PackageField::Meta) };
+    let resolutions_col: *mut Resolution = unsafe { pkg_slice.items_raw::<"resolution", Resolution>() };
+    let metas_col: *mut lockfile::Meta = unsafe { pkg_slice.items_raw::<"meta", lockfile::Meta>() };
     let dependencies_list_col: *mut ExternalSlice<Dependency> =
-        unsafe { pkg_slice.items_raw::<ExternalSlice<Dependency>>(PackageField::Dependencies) };
+        unsafe { pkg_slice.items_raw::<"dependencies", ExternalSlice<Dependency>>() };
     let resolution_list_col: *mut ExternalSlice<PackageID> =
-        unsafe { pkg_slice.items_raw::<ExternalSlice<PackageID>>(PackageField::Resolutions) };
+        unsafe { pkg_slice.items_raw::<"resolutions", ExternalSlice<PackageID>>() };
     let pkg_count = this.packages.len();
 
     #[cfg(debug_assertions)]

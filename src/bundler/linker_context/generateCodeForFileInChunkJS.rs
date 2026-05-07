@@ -1,11 +1,7 @@
+use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use crate::Graph::InputFileListExt as _;
-use crate::linker_graph::FileListExt as _;
-use crate::ungate_support::EntryPointListExt as _;
 use bun_collections::{BabyList, BoundedArray};
 use bun_logger as logger;
 

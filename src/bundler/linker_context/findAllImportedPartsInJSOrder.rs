@@ -1,3 +1,4 @@
+use crate::mal_prelude::*;
 use bun_collections::{AutoBitSet, BabyList, DynamicBitSet, HashMap};
 use bun_options_types::{ImportKind, ImportRecord};
 
@@ -5,10 +6,8 @@ use crate::{
     Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,
     chunk::{self, EntryPoint, Order},
     js_meta::Wrap,
-    linker_graph::{FileField, FileListExt as _},
+    linker_graph::FileColumns as _,
 };
-use crate::ungate_support::js_meta::JSMetaListExt as _;
-use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::js_ast;
 use bun_core::perf;
 
@@ -84,9 +83,9 @@ pub fn find_imported_parts_in_js_order(
         let files = this.graph.files.slice();
         let len = files.len();
         // SAFETY: `u32` is exactly the column type for
-        // `FileField::entry_point_chunk_index`; the derive guarantees the
+        // `entry_point_chunk_index`; the derive guarantees the
         // field-enum ↔ type pairing.
-        let p: *mut u32 = unsafe { files.items_raw::<u32>(FileField::entry_point_chunk_index) };
+        let p: *mut u32 = unsafe { files.items_raw::<"entry_point_chunk_index", u32>() };
         core::ptr::slice_from_raw_parts_mut(p, len)
     };
 
@@ -277,7 +276,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         if is_file_in_chunk {
             if WITH_SCB && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
                 // SAFETY: `entry_point_chunk_indices` is the raw column pointer
-                // for `FileField::entry_point_chunk_index` (distinct from every
+                // for `entry_point_chunk_index` (distinct from every
                 // column read through `self.c` / `self.flags` / `self.parts`),
                 // valid for `graph.files.len()` writes for the duration of the
                 // link step. No `&` to this column is live here.

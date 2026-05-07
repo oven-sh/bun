@@ -54,7 +54,7 @@ use super::{
     Package,
     tree,
 };
-use super::package::{Meta, PackageListExt as _, PackageSliceExt as _};
+use super::package::{Meta, PackageColumns as _, PackageColumns as _};
 use super::PackageIDSlice;
 
 /// `core::fmt::Write` → `bun_io::Write` bridge for callees that take

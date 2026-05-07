@@ -1,6 +1,5 @@
 use core::sync::atomic::Ordering;
 
-
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -33,7 +32,7 @@ use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::{self as lockfile, DependencySlice, Tree};
 use crate::lockfile_real::package::{
-    self as Package, scripts::Scripts as PackageScripts, PackageListExt, PackageSliceExt,
+    self as Package, scripts::Scripts as PackageScripts, PackageColumns,
 };
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};

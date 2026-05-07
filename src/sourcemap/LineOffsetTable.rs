@@ -1,5 +1,4 @@
 use bun_alloc::AllocError;
-use bun_collections::multi_array_list::MultiArrayElement;
 use bun_collections::{BabyList, MultiArrayList};
 use bun_logger::Loc;
 use bun_str::strings;
@@ -28,85 +27,20 @@ pub type List = MultiArrayList<LineOffsetTable>;
 /// Mirrors Zig `list.items(.byte_offset_to_start_of_line)`. Can't be an
 /// inherent impl (orphan rules — `MultiArrayList` lives in `bun_collections`),
 /// so it's an extension trait; same pattern as `mapping::MappingColumns`.
-pub trait ListExt {
+pub trait LineOffsetTableColumns {
     fn items_byte_offset_to_start_of_line(&self) -> &[u32];
     fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
 }
 
-impl ListExt for List {
+impl LineOffsetTableColumns for List {
     #[inline]
     fn items_byte_offset_to_start_of_line(&self) -> &[u32] {
-        // SAFETY: column 2 of `LineOffsetTable`'s `MultiArrayElement` layout is
-        // `u32` (`byte_offset_to_start_of_line`). `Slice::items` returns the
-        // column at the requested field index typed `&mut [F]`; we narrow it to
-        // a shared borrow tied to `self` via the raw-pointer round-trip (same
-        // pattern as `mapping::MappingColumns::items_generated`).
-        unsafe {
-            &*(self
-                .slice()
-                .items::<u32>(LineOffsetTableField::ByteOffsetToStartOfLine)
-                as *const [_])
-        }
+        self.items::<"byte_offset_to_start_of_line", u32>()
     }
 
     #[inline]
     fn items_byte_offset_to_first_non_ascii(&self) -> &[u32] {
-        // SAFETY: column 1 is `u32` (`byte_offset_to_first_non_ascii`).
-        unsafe {
-            &*(self
-                .slice()
-                .items::<u32>(LineOffsetTableField::ByteOffsetToFirstNonAscii)
-                as *const [_])
-        }
-    }
-}
-
-// Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
-// does not exist yet (see bun_collections TODO). Fields sorted by alignment
-// descending: BabyList<i32> (align 8, size 16) first, then the two u32s.
-#[repr(usize)]
-#[derive(Copy, Clone)]
-pub enum LineOffsetTableField {
-    ColumnsForNonAscii = 0,
-    ByteOffsetToFirstNonAscii = 1,
-    ByteOffsetToStartOfLine = 2,
-}
-
-impl MultiArrayElement for LineOffsetTable {
-    type Field = LineOffsetTableField;
-    const FIELD_COUNT: usize = 3;
-    const ALIGN: usize = core::mem::align_of::<BabyList<i32>>();
-    // sorted by alignment descending (BabyList has ptr → align 8; u32 align 4)
-    const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<BabyList<i32>>(),
-        core::mem::size_of::<u32>(),
-        core::mem::size_of::<u32>(),
-    ];
-    const SIZES_FIELDS: &'static [usize] = &[0, 1, 2];
-
-    #[inline]
-    fn field_index(field: Self::Field) -> usize { field as usize }
-
-    #[inline]
-    unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
-        // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with capacity > `index`.
-        unsafe {
-            ptrs[0].cast::<BabyList<i32>>().add(index).write(self.columns_for_non_ascii);
-            ptrs[1].cast::<u32>().add(index).write(self.byte_offset_to_first_non_ascii);
-            ptrs[2].cast::<u32>().add(index).write(self.byte_offset_to_start_of_line);
-        }
-    }
-
-    #[inline]
-    unsafe fn gather(ptrs: &[*mut u8], index: usize) -> Self {
-        // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with len > `index`.
-        unsafe {
-            LineOffsetTable {
-                columns_for_non_ascii: ptrs[0].cast::<BabyList<i32>>().add(index).read(),
-                byte_offset_to_first_non_ascii: ptrs[1].cast::<u32>().add(index).read(),
-                byte_offset_to_start_of_line: ptrs[2].cast::<u32>().add(index).read(),
-            }
-        }
+        self.items::<"byte_offset_to_first_non_ascii", u32>()
     }
 }
 

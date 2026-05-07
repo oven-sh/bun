@@ -1,3 +1,4 @@
+use crate::lockfile::package::PackageColumns as _;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -25,7 +26,6 @@ use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::lockfile::package::PackageSliceExt as _;
 use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 

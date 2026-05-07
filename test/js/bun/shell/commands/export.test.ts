@@ -13,6 +13,9 @@ describe("export", () => {
       process.stdout.write(stdout);
     `;
 
+    // Note: Windows treats environment variable names case-insensitively
+    // (src/shell/EnvMap.zig), so the lowercase probe must not case-fold onto
+    // any of the uppercase keys.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: {
@@ -20,7 +23,7 @@ describe("export", () => {
         ZEBRA: "1",
         MANGO: "2",
         APPLE: "3",
-        mango: "4",
+        aardwolf: "4",
         BANANA: "5",
         AARDVARK: "6",
       },
@@ -33,14 +36,14 @@ describe("export", () => {
 
     const lines = stdout.split("\n").filter(Boolean);
     // Every variable we set must appear exactly once.
-    for (const key of ["ZEBRA", "MANGO", "APPLE", "mango", "BANANA", "AARDVARK"]) {
+    for (const key of ["ZEBRA", "MANGO", "APPLE", "aardwolf", "BANANA", "AARDVARK"]) {
       expect(lines.filter(l => l.startsWith(`${key}=`))).toHaveLength(1);
     }
     // The full listing must be byte-wise sorted (uppercase letters sort before
-    // lowercase in ASCII, so "ZEBRA" < "mango").
+    // lowercase in ASCII, so "ZEBRA" < "aardwolf").
     expect(lines).toEqual([...lines].sort());
     expect(lines.indexOf("AARDVARK=6")).toBeLessThan(lines.indexOf("ZEBRA=1"));
-    expect(lines.indexOf("ZEBRA=1")).toBeLessThan(lines.indexOf("mango=4"));
+    expect(lines.indexOf("ZEBRA=1")).toBeLessThan(lines.indexOf("aardwolf=4"));
 
     expect(exitCode).toBe(0);
   });

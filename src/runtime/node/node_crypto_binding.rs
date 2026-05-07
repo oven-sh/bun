@@ -492,34 +492,40 @@ pub mod random {
         let max: i64 = max_value.as_number().trunc() as i64;
 
         if max <= min {
-            return Err(validators::throw_range_error(
-                global,
-                format_args!(
-                    "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
-                    min, max
-                ),
-            ));
+            return Err(global
+                .err(
+                    jsc::ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
+                        min, max
+                    ),
+                )
+                .throw());
         }
 
         if max - min > MAX_RANGE {
             if min_specified {
-                return Err(validators::throw_range_error(
-                    global,
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::OUT_OF_RANGE,
+                        format_args!(
+                            "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
+                            MAX_RANGE,
+                            max - min
+                        ),
+                    )
+                    .throw());
+            }
+            return Err(global
+                .err(
+                    jsc::ErrorCode::OUT_OF_RANGE,
                     format_args!(
-                        "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
+                        "The value of \"max\" is out of range. It must be <= {}. Received {}",
                         MAX_RANGE,
                         max - min
                     ),
-                ));
-            }
-            return Err(validators::throw_range_error(
-                global,
-                format_args!(
-                    "The value of \"max\" is out of range. It must be <= {}. Received {}",
-                    MAX_RANGE,
-                    max - min
-                ),
-            ));
+                )
+                .throw());
         }
 
         // Zig: `std.crypto.random.intRangeLessThan(i64, min, max)` — port of

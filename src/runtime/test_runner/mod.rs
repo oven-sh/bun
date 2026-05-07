@@ -248,9 +248,10 @@ pub mod expect {
         }
         #[inline]
         fn is_big_int32(self) -> bool {
-            // TODO(port): JSC has a packed BigInt32 representation; until the FFI lands,
-            // treat any BigInt as the heap kind (matchers only branch on parity).
-            false
+            // Inherent FFI predicate (`JSC__JSValue__isBigInt32`) — JSC packs
+            // small BigInts as immediates; toBeOdd/toBeEven branch on this
+            // before the heap-BigInt arm.
+            JSValue::is_big_int32(self)
         }
         #[inline]
         fn is_constructor(self) -> bool {

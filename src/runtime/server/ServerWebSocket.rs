@@ -14,8 +14,6 @@ use crate::server::jsc::{
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::server::WebSocketServerHandler;
 
-bun_core::declare_scope!(WebSocketServer, visible);
-
 bun_output::declare_scope!(WebSocketServer, visible);
 
 // PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper

@@ -2875,6 +2875,16 @@ impl DevServer {
         let ast_memory_allocator = heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
         let _ast_scope = ast_memory_allocator.enter();
 
+        // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
+        // by value; the Rust bundler instead stores
+        // `Option<NonNull<AnyEventLoop<'static>>>`. Park the value in `heap`
+        // — bumpalo chunks are heap-allocated, so the address is stable across
+        // the move of `heap` into `bv2.graph.heap` and lives exactly as long
+        // as `bv2`.
+        let event_loop: bundler::EventLoop = Some(::core::ptr::NonNull::from(
+            heap.alloc(bun_event_loop::AnyEventLoop::js_current()),
+        ));
+
         // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
         // `alloc: &Arena` derived from it. Zig's `heap.allocator()` is a
         // `Copy` vtable handle that survives the move; in Rust the `Bump` is
@@ -4691,7 +4701,7 @@ impl DevServer {
             route_bundle::UnresolvedIndex::Html(html) => {
                 // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
                 // allocation; single-threaded (uws JS-thread callback).
-                unsafe { core::ptr::addr_of_mut!((*html).dev_server_id) }
+                unsafe { ::core::ptr::addr_of_mut!((*html).dev_server_id) }
             }
         };
         // SAFETY: index_location points into self/html which outlive this fn
@@ -5119,7 +5129,7 @@ impl DevServer {
         // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
         // `timer` is an embedded `timer::All` at a stable address. JS-thread
         // exclusive access — same contract as Zig `dev.vm.timer`.
-        unsafe { &mut *core::ptr::addr_of_mut!((*state).timer) }
+        unsafe { &mut *::core::ptr::addr_of_mut!((*state).timer) }
     }
 
     pub fn emit_memory_visualizer_message_timer(timer: &mut EventLoopTimer, _: &bun_core::Timespec) {

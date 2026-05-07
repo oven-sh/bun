@@ -187,6 +187,18 @@ impl<'a> AnyEventLoop<'a> {
         AnyEventLoop::Mini(MiniEventLoop::init())
     }
 
+    /// Construct the `Js` variant wrapping a specific erased
+    /// `*mut jsc::EventLoop`. Mirrors Zig's `.{ .js = vm.eventLoop() }`
+    /// literal — callers that already hold a VM pointer use this instead of
+    /// the thread-local lookup in [`js_current`].
+    #[inline]
+    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop<'static> {
+        AnyEventLoop::Js {
+            owner: js_event_loop,
+            vtable: js_vtable(),
+        }
+    }
+
     /// Construct the `Js` variant for the current thread's JS event loop.
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).

@@ -3719,8 +3719,13 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
+                    // Zig heap-allocates `path` and hands the allocation to
+                    // the store via `PathString.init(path)` (freed by
+                    // `Store.deinit`). `init_owned` consumes the Vec so the
+                    // store adopts the same allocation; borrowing here would
+                    // drop `path` at scope end and leave the store dangling.
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_str::PathString::init(&path),
+                        bun_str::PathString::init_owned(path),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,

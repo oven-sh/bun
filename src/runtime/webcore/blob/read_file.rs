@@ -59,14 +59,14 @@ pub trait ReadFileToJs {
 
 pub struct NewReadFileHandler<'a, F: ReadFileToJs> {
     pub context: Blob,
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     _f: PhantomData<F>,
 }
 
 impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     pub fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
-        Self { context, promise: JSPromise::Strong::default(), global_this, _f: PhantomData }
+        Self { context, promise: JSPromiseStrong::default(), global_this, _f: PhantomData }
     }
 
     pub fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
@@ -166,7 +166,7 @@ pub struct ReadFile {
     pub read_eof: bool,
     pub size: SizeType,
     pub buffer: Vec<u8>,
-    pub task: ThreadPool::Task,
+    pub task: WorkPoolTask,
     pub system_error: Option<SystemError>,
     pub errno: Option<Error>,
     pub on_complete_ctx: *mut c_void,
@@ -231,7 +231,8 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
-            task: ThreadPool::Task::default(), // TODO(port): was `undefined`
+            // TODO(port): was `undefined` — overwritten before first schedule.
+            task: WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task },
             system_error: None,
             errno: None,
             on_complete_ctx: on_read_file_context,
@@ -330,40 +331,35 @@ impl ReadFile {
         WorkPool::schedule(&mut self.task);
     }
 
-    pub fn on_request_readable(request: *mut io::Request) -> io::Action {
+    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
+    fn on_io_error_thunk(ctx: *mut (), err: bun_sys::Error) {
+        // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
+        unsafe { (*(ctx as *mut ReadFile)).on_io_error(err) }
+    }
+
+    pub fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
         bloblog!("ReadFile.onRequestReadable");
-        // SAFETY: caller passes a live *mut io::Request; we only touch the POD `scheduled` field.
-        unsafe { (*request).scheduled = false };
+        request.scheduled = false;
         // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
         let this: &mut ReadFile = unsafe {
-            &mut *((request as *mut u8)
+            &mut *((request as *mut io::Request as *mut u8)
                 .sub(offset_of!(ReadFile, io_request))
                 .cast::<ReadFile>())
         };
-        io::Action::Readable {
-            // TODO(port): @ptrCast(&onIOError) — fn pointer cast to erased signature
-            on_error: Self::on_io_error as *const (),
-            ctx: this as *mut ReadFile as *mut c_void,
+        io::Action::Readable(FileAction {
+            on_error: Self::on_io_error_thunk,
+            ctx: this as *mut ReadFile as *mut (),
             fd: this.opened_fd,
             poll: &mut this.io_poll,
             tag: ReadFile::IO_TAG,
-        }
+        })
     }
 
     pub fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;
         // Zig: @atomicStore on the callback fn-pointer field.
-        // TODO(port): io::Request.callback should be AtomicPtr-backed for this store.
-        // SAFETY: io_request.callback is a plain fn-ptr field on a struct we uniquely own;
-        // volatile write + SeqCst fence emulates Zig @atomicStore(.seq_cst).
-        unsafe {
-            core::ptr::write_volatile(
-                &mut self.io_request.callback,
-                Self::on_request_readable as _,
-            );
-            core::sync::atomic::fence(Ordering::SeqCst);
-        }
+        self.io_request.store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
             io::Loop::get().schedule(&mut self.io_request);
         }

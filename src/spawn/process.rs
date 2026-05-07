@@ -989,16 +989,15 @@ pub enum PollerWindows {
 }
 
 #[cfg(windows)]
-impl Drop for PollerWindows {
-    fn drop(&mut self) {
+impl PollerWindows {
+    /// Zig `PollerWindows.deinit` (process.zig:736). Not `Drop` — see
+    /// `PollerPosix::deinit`.
+    pub fn deinit(&mut self) {
         if let PollerWindows::Uv(p) = self {
             debug_assert!(p.is_closed());
         }
     }
-}
 
-#[cfg(windows)]
-impl PollerWindows {
     pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: EventLoopHandle) {
         match self {
             PollerWindows::Uv(process) => {

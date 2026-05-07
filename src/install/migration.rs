@@ -1032,9 +1032,21 @@ pub fn migrate_npm_lockfile<'a>(
                                 DepKey::PeerDependencies => Behavior::PEER,
                             };
 
-                            // PORT NOTE: capture tag before moving `version` into the buffer
-                            // (Zig copies the struct by value; Rust moves it).
+                            // PORT NOTE: capture tag and git/github owner before moving
+                            // `version` into the buffer (Zig copies the struct by value; Rust
+                            // moves it). The owner is needed when `version.tag` is git/github
+                            // but the package's `resolved` URL infers as something else, in
+                            // which case Zig reads `res_version.value.{git,github}.owner` from
+                            // the original parsed dependency version.
                             let version_tag = version.tag;
+                            // SAFETY: tag-guarded union access
+                            let version_git_owner = unsafe {
+                                match version_tag {
+                                    DepTag::Git => version.value.git.owner,
+                                    DepTag::Github => version.value.github.owner,
+                                    _ => SemverString::default(),
+                                }
+                            };
 
                             // SAFETY: cursor < num_deps; capacity reserved
                             unsafe {
@@ -1056,7 +1068,7 @@ pub fn migrate_npm_lockfile<'a>(
                                 debug!("resolving '{}'", bstr::BStr::new(name_bytes));
 
                                 let mut res_version_tag = version_tag;
-                                let mut res_version_git_owner = SemverString::default();
+                                let mut res_version_git_owner = version_git_owner;
 
                                 let res = 'resolved: {
                                     let ExprData::EObject(dep_pkg) = &packages_properties[found.old_json_index as usize].value.as_ref().unwrap().data else { unreachable!() };

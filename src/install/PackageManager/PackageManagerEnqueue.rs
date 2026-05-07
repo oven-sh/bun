@@ -2036,7 +2036,8 @@ fn get_or_put_resolved_package_with_find_result(
 
             let task_id = Task::Id::for_npm_package(
                 this.lockfile.str(&name),
-                package.resolution.value.npm.version,
+                // SAFETY: `package.resolution.tag == Npm` for the npm install path.
+                unsafe { package.resolution.value.npm }.version,
             );
             debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
@@ -2064,22 +2065,24 @@ fn get_or_put_resolved_package_with_find_result(
             task: Some(ResolvedPackageTask::PatchTask(PatchTask::new_calc_patch_hash(
                 this,
                 name_and_version_hash.unwrap(),
-                PatchTask::CalcHashContext {
+                Some(EnqueueAfterState {
                     pkg_id: package.meta.id,
                     dependency_id,
                     url: Box::<[u8]>::from(manifest.str(&find_result.package.tarball_url)),
-                },
+                }),
             ))),
         }),
         install::PreinstallState::ApplyPatch => Some(ResolvedPackageResult {
             package,
             is_first_time: true,
-            task: Some(ResolvedPackageTask::PatchTask(PatchTask::new_apply_patch_hash(
-                this,
-                package.meta.id,
-                patchfile_hash.unwrap(),
-                name_and_version_hash.unwrap(),
-            ))),
+            task: Some(ResolvedPackageTask::PatchTask(
+                PatchTask::new_apply_patch_hash(
+                    this,
+                    package.meta.id,
+                    patchfile_hash.unwrap(),
+                    name_and_version_hash.unwrap(),
+                ),
+            )),
         }),
         _ => unreachable!(),
     };

@@ -10,6 +10,7 @@ pub enum PerfEvent {
     _Stub = 0,
     FolderResolverReadPackageJSONFromDiskWorkspace,
     FolderResolverReadPackageJSONFromDiskFolder,
+    ModuleResolverResolve,
 }
 
 impl From<PerfEvent> for &'static str {
@@ -22,6 +23,7 @@ impl From<PerfEvent> for &'static str {
             PerfEvent::FolderResolverReadPackageJSONFromDiskFolder => {
                 "FolderResolver.readPackageJSONFromDisk.folder"
             }
+            PerfEvent::ModuleResolverResolve => "ModuleResolver.resolve",
         }
     }
 }
@@ -38,6 +40,7 @@ impl PerfEvent {
             PerfEvent::FolderResolverReadPackageJSONFromDiskFolder => {
                 c"FolderResolver.readPackageJSONFromDisk.folder"
             }
+            PerfEvent::ModuleResolverResolve => c"ModuleResolver.resolve",
         }
     }
 }

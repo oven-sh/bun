@@ -103,14 +103,12 @@ where
     writer.write_str("\n")?;
 
     {
-        // PORT NOTE: reshaped for borrowck — Zig used `defer formatter.indent -|= 1;`.
-        // The `ConsoleFormatter` trait exposes `indent_inc/dec` instead of a public
-        // `indent` field; we cannot capture `formatter` mutably in a scopeguard
-        // while also using it below, so pair the inc with an explicit `indent_dec`
-        // at the end of the block. Every intervening `?` is `core::fmt::Result`
-        // (formatter writes), so an early return here means the writer already
-        // failed and indent state is moot.
-        formatter.indent_inc();
+        // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
+        // `IndentScope` shadows the borrow and restores indent on `Drop`, so a
+        // `?` early-return below still leaves the formatter at its original
+        // depth (observable when `print_as` throws and the caller continues
+        // formatting).
+        let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
             &credentials.endpoint

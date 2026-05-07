@@ -1192,7 +1192,8 @@ impl Response {
             }
             return Err(bun_jsc::JsError::Thrown);
         };
-        // errdefer init.deinit() — Init: Drop handles cleanup on `?` below
+        // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // handles cleanup on `?` below
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);

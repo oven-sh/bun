@@ -39,6 +39,18 @@ impl ThreadLock {
         Self::init_locked()
     }
 
+    /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
+    /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)
+    /// so the caller's surrounding `&mut self` stays usable for the rest of
+    /// the scope — `ThreadLock` is a debug-only ownership assertion, not a
+    /// real mutex, so re-forming `&mut` at drop time mirrors what every
+    /// caller already did via `scopeguard` + raw pointer.
+    #[inline]
+    pub fn guard(&mut self) -> ThreadLockGuard {
+        self.lock();
+        ThreadLockGuard(self as *mut Self)
+    }
+
     pub fn lock(&mut self) {
         #[cfg(feature = "ci_assert")]
         {

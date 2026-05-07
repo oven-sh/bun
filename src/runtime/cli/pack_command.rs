@@ -24,7 +24,7 @@ type CowString = CowSlice<u8>;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_str::{ZStr, strings};
-use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, FdDirExt as _, File, Dir};
+use bun_sys::{self, dir_iterator as DirIterator, Fd, FdExt as _, FdDirExt as _, File, Dir, CloseOnDrop};
 use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_core::ZBox;
@@ -454,14 +454,9 @@ fn iterate_included_project_tree(
 
     // first find included dirs and files
     while let Some(dir_info) = dirs.pop() {
-        let DirInfo(mut dir, dir_subpath, dir_depth) = dir_info;
-        let close_guard = scopeguard::guard((), |_| {
-            if dir_depth != 1 {
-                dir.close();
-            }
-        });
-        // TODO(port): errdefer-style close — scopeguard captures `dir` by ref;
-        // Phase B should make Dir RAII.
+        let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
+        // Root (depth 1) is borrowed `Fd::cwd()`-ish; only close subdirs we opened.
+        let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {

@@ -1823,7 +1823,7 @@ pub fn parse_into_binary_lockfile(
         // `append_package_dedupe`) without conflicting with the
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
         let workspace_path_snapshot: Vec<String> =
-            lockfile.workspace_paths.values().copied().collect();
+            lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_path_snapshot {
             for prop in workspaces_obj.data.e_object().unwrap().properties.slice() {
                 let key = prop.key.unwrap();

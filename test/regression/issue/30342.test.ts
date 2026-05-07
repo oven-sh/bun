@@ -143,33 +143,44 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling", () => {
   });
 
   it("negative delta applied to existing stream holds DATA until WINDOW_UPDATE", async () => {
-    // Sequence exercises the *existing-stream* delta path specifically:
+    // Exercises the existing-stream delta path:
     //  1. server sends empty SETTINGS (initial=65535 default)
-    //  2. client opens a stream via HEADERS; stream's remoteWindowSize
-    //     is 65535 at that point
-    //  3. ONLY AFTER the HEADERS frame is visible on the wire, server
-    //     sends SETTINGS shrinking INITIAL_WINDOW_SIZE to 0. RFC §6.9.2
-    //     requires the delta (-65535) to apply to the live stream,
-    //     driving its remoteWindowSize to 0.
-    //  4. client writes 65535 bytes; DATA must NOT be sent
-    //  5. assert nothing was sent after 200ms, emit per-stream
-    //     WINDOW_UPDATE to reopen, and verify DATA finally flows
+    //  2. client opens a stream via HEADERS; remoteWindowSize is 65535
+    //  3. server sends SETTINGS shrinking INITIAL_WINDOW_SIZE to 0 —
+    //     RFC §6.9.2 requires the -65535 delta to drive the live
+    //     stream's window to 0
+    //  4. client's ACK of the shrink SETTINGS is the sync point; after
+    //     that, any DATA emitted before the reopen WINDOW_UPDATE means
+    //     the delta did not land
+    //  5. test writes 65535 bytes; DATA must not arrive until the
+    //     server sends a per-stream WINDOW_UPDATE
+    //  6. server emits the reopen, stream completes normally
     let peerSocket: net.Socket;
-    let dataBeforeReopen = 0;
-    let reopenArmed = false;
+    let ackCount = 0;
+    let reopenSent = false;
+    const { promise: shrinkAckSeen, resolve: resolveShrinkAck } = Promise.withResolvers<void>();
+    const { promise: unexpectedEarlyData, reject: rejectEarlyData } = Promise.withResolvers<never>();
     const { server, port } = await startRawServer({
       onPreface(sock) {
         peerSocket = sock;
         sock.write(rawFrame(TYPE_SETTINGS, 0, 0, Buffer.alloc(0)));
       },
-      onClientSettingsAck() {},
+      onClientSettingsAck() {
+        // First ACK is for the empty SETTINGS; second is for the shrink.
+        if (++ackCount === 2) resolveShrinkAck();
+      },
       onClientHeaders(sock) {
-        // Shrink per-stream initial window to 0. The delta (-65535) is
-        // applied to the stream that just opened.
+        // Shrink per-stream initial window to 0. The delta (-65535)
+        // applies to the stream that just opened.
         sock.write(rawFrame(TYPE_SETTINGS, 0, 0, settingsPayload(SETTING_INITIAL_WINDOW_SIZE, 0)));
       },
       onClientData(sock, streamId, payload, end) {
-        if (!reopenArmed) dataBeforeReopen += payload.length;
+        // With the fix, DATA only arrives after reopenSent=true. Any
+        // DATA before that means the stream window was not driven to 0.
+        if (!reopenSent) {
+          rejectEarlyData(new Error("client emitted DATA before per-stream WINDOW_UPDATE — stream window was not shrunk"));
+          return;
+        }
         const inc = Buffer.alloc(4);
         inc.writeUInt32BE(payload.length || 1, 0);
         sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, inc));
@@ -181,26 +192,28 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling", () => {
 
     try {
       const client = http2.connect(`http://127.0.0.1:${port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
       const req = client.request({ ":method": "POST", ":path": "/" });
       req.on("end", resolve);
       req.on("error", reject);
-      // Let HEADERS reach the server and the shrink SETTINGS come back
-      // and get applied before we write a body the size of the original
-      // window. Without the delta fix, remoteWindowSize stays at 65535
-      // and the write flies; with the fix it's driven to 0.
-      await new Promise(r => setTimeout(r, 150));
+      // Sync on the client's ACK of the shrink SETTINGS so we know the
+      // parser has applied the -65535 delta. If DATA fires before that
+      // point, unexpectedEarlyData rejects and fails the test.
+      await Promise.race([shrinkAckSeen, unexpectedEarlyData]);
       const body = Buffer.alloc(65535, 0x62);
       req.write(body);
       req.end();
-      await new Promise(r => setTimeout(r, 200));
-      expect(dataBeforeReopen).toBe(0);
-      reopenArmed = true;
-      // Emit WINDOW_UPDATE for stream 1 large enough to send the body.
+      // Give the buggy code a chance to (incorrectly) emit DATA. If it
+      // does, onClientData fires with reopenSent=false and the test
+      // fails immediately via unexpectedEarlyData. With the fix, the
+      // stream stays window-bound at zero so nothing happens.
+      const microWait = new Promise<void>(r => setImmediate(() => setImmediate(r)));
+      await Promise.race([microWait, unexpectedEarlyData]);
+      reopenSent = true;
       const inc = Buffer.alloc(4);
       inc.writeUInt32BE(body.length, 0);
       peerSocket!.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 1, inc));
-      await promise;
+      await Promise.race([ended, unexpectedEarlyData]);
       client.close();
     } finally {
       server.close();

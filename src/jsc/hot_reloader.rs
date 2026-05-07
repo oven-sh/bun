@@ -1,4 +1,4 @@
-#![allow(unused_imports, unused_variables, dead_code, unreachable_code, unused_mut)]
+#![allow(dead_code)]
 
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -363,9 +363,8 @@ fn record_changed_path(path: &[u8]) {
         return;
     }
     // SAFETY: pointer set once by test_command before watcher thread starts;
-    // only the watcher thread reaches here. `bun.handleOom` is implicit —
-    // `StringSet::insert` panics on OOM via the global allocator.
-    unsafe { (*set).insert(path) };
+    // only the watcher thread reaches here.
+    bun_core::handle_oom(unsafe { (*set).insert(path) });
 }
 
 /// Write the recorded changed paths to the trigger file so the next

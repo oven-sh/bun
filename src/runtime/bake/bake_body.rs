@@ -1153,8 +1153,18 @@ impl Framework {
             separate_ssr_graph: sc.separate_ssr_graph,
             server_runtime_import: sc.server_runtime_import.into(),
             server_register_client_reference: sc.server_register_client_reference.into(),
+            server_register_server_reference: sc.server_register_server_reference.into(),
+            client_register_server_reference: sc.client_register_server_reference.into(),
         });
-        bt::Framework::new(built_in_modules, server_components, self.is_built_in_react)
+        let react_fast_refresh = self.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
+            import_source: rfr.import_source.into(),
+        });
+        bt::Framework::new(
+            built_in_modules,
+            server_components,
+            react_fast_refresh,
+            self.is_built_in_react,
+        )
     }
 
     pub fn init_transpiler<'a>(

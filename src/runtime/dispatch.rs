@@ -395,12 +395,14 @@ pub fn run_task(
 
         // ── hot-reload (Zig early-returns from the drain loop) ───────────
         task_tag::HotReloadTask => {
-            let t = cast!(hot_reloader::HotReloadTask);
+            let t = cast_ptr!(hot_reloader::HotReloadTask);
             // Zig: `defer t.deinit(); t.run(); counter.* = 0; return;`.
-            // `deinit` here only resets the intrusive `count` (no free) — the
-            // task buffer is reused by the next `append`.
-            t.run();
-            t.deinit();
+            // The task was heap-allocated in `Task::enqueue` (`bun.new`);
+            // `deinit` frees it (`bun.destroy`).
+            // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with Box::into_raw in `Task::enqueue`.
+            unsafe { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::BakeHotReloadEvent => {

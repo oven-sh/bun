@@ -383,14 +383,18 @@ pub mod bake_types {
         pub fn empty() -> Self { Self { set: bun_collections::StringArrayHashMap::new() } }
     }
 
-    /// Mirrors src/bake/bake.zig `Framework`. Only the field bundler reads
-    /// (ParseTask.rs:958 `f.built_in_modules.get(...)`); remaining fields stay opaque
-    /// until tier-6 collapse lands the full struct in bun_runtime.
+    /// Mirrors src/bake/bake.zig `Framework`. TYPE_ONLY subset of the fields
+    /// the bundler/parser actually consult (see ParseTask.zig:1253
+    /// `opts.framework = transpiler.options.framework`); `file_system_router_types`
+    /// stays in T6 because only `bake::FrameworkRouter` reads it.
     pub struct Framework {
         pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-        /// Mirrors `Framework.server_components`. TYPE_ONLY: only the two
-        /// flags the bundler reads.
+        /// Mirrors `Framework.server_components`.
         pub server_components: Option<ServerComponents>,
+        /// Mirrors `Framework.react_fast_refresh` — read by the parser
+        /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
+        /// .import_source`) when `features.react_fast_refresh` is on.
+        pub react_fast_refresh: Option<ReactFastRefresh>,
         /// Mirrors `Framework.is_built_in_react` — read by
         /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
         pub is_built_in_react: bool,
@@ -398,8 +402,8 @@ pub mod bake_types {
         /// In Zig this lives on the legacy package_json `Framework`; the duck-typed
         /// `comptime TranspilerType` callers reach it through `options.framework.?`.
         pub client_css_in_js: crate::options::ClientCssInJs,
-        // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
-        // file_system_router_types, ...) — bundler does not read them; bake constructs.
+        // TODO(b0-genuine): remaining Framework field `file_system_router_types`
+        // stays in T6; only bake::FrameworkRouter reads it.
         _opaque_tail: (),
     }
     impl Framework {
@@ -411,23 +415,35 @@ pub mod bake_types {
         pub fn new(
             built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
             server_components: Option<ServerComponents>,
+            react_fast_refresh: Option<ReactFastRefresh>,
             is_built_in_react: bool,
         ) -> Self {
             Self {
                 built_in_modules,
                 server_components,
+                react_fast_refresh,
                 is_built_in_react,
                 client_css_in_js: crate::options::ClientCssInJs::default(),
                 _opaque_tail: (),
             }
         }
     }
-    /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — TYPE_ONLY subset.
+    /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — full string
+    /// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
+    /// can forward user-configured `serverRegisterServerReference` /
+    /// `clientRegisterServerReference` instead of hardcoding defaults.
     #[derive(Default, Clone)]
     pub struct ServerComponents {
         pub separate_ssr_graph: bool,
         pub server_runtime_import: Box<[u8]>,
         pub server_register_client_reference: Box<[u8]>,
+        pub server_register_server_reference: Box<[u8]>,
+        pub client_register_server_reference: Box<[u8]>,
+    }
+    /// Mirrors src/bake/bake.zig `Framework.ReactFastRefresh`.
+    #[derive(Clone)]
+    pub struct ReactFastRefresh {
+        pub import_source: Box<[u8]>,
     }
 
     /// Mirrors src/bake/bake.zig:840 `HmrRuntime`. TYPE_ONLY moved down so the

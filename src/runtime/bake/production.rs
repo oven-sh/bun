@@ -650,6 +650,18 @@ pub fn build_with_vm(
                 server_register_client_reference: Box::from(
                     sc.server_register_client_reference.as_ref(),
                 ),
+                server_register_server_reference: Box::from(
+                    sc.server_register_server_reference.as_ref(),
+                ),
+                client_register_server_reference: Box::from(
+                    sc.client_register_server_reference.as_ref(),
+                ),
+            }),
+        framework
+            .react_fast_refresh
+            .as_ref()
+            .map(|rfr| bun_bundler::bake_types::ReactFastRefresh {
+                import_source: Box::from(rfr.import_source.as_ref()),
             }),
         framework.is_built_in_react,
     );

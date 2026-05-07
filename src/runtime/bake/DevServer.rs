@@ -116,8 +116,18 @@ fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framew
         separate_ssr_graph: sc.separate_ssr_graph,
         server_runtime_import: sc.server_runtime_import.as_ref().into(),
         server_register_client_reference: sc.server_register_client_reference.as_ref().into(),
+        server_register_server_reference: sc.server_register_server_reference.as_ref().into(),
+        client_register_server_reference: sc.client_register_server_reference.as_ref().into(),
     });
-    bt::Framework::new(built_in_modules, server_components, f.is_built_in_react)
+    let react_fast_refresh = f.react_fast_refresh.as_ref().map(|rfr| bt::ReactFastRefresh {
+        import_source: rfr.import_source.as_ref().into(),
+    });
+    bt::Framework::new(
+        built_in_modules,
+        server_components,
+        react_fast_refresh,
+        f.is_built_in_react,
+    )
 }
 
 impl DevServer {

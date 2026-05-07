@@ -5325,7 +5325,7 @@ impl VirtualMachine {
                         m: prev_max_depth,
                         b: prev_format_buffer_as_text,
                     };
-                    let formatter = restore.f;
+                    let formatter = &mut *restore.f;
 
                     let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;

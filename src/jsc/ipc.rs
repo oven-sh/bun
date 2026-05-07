@@ -1527,13 +1527,16 @@ impl SendQueue {
         let this: &mut SendQueue = unsafe { &mut *this };
 
         let vm = VirtualMachine::get();
-        vm.event_loop().enter();
-        // TODO(port): errdefer — scopeguard for event_loop().exit()
+        // SAFETY: `VirtualMachine::get()` yields the live `*mut VirtualMachine` for
+        // this thread; `event_loop()` returns its VM-owned `*mut EventLoop`. Same
+        // raw-ptr deref pattern as `_socket_closed` / `on_data`.
+        unsafe { (*(*vm).event_loop()).enter() };
 
         this.windows.windows_write = None;
         if let Some(socket) = this.get_socket() {
-            // SAFETY: socket is a live uv_pipe_t.
-            unsafe { (*socket).unref() }; // write complete; unref
+            // SAFETY: `get_socket()` -> `&*mut uv::Pipe`; double-deref reaches the
+            // live `uv_pipe_t` place (matches the `(*pipe).ref_()` site in `_write`).
+            unsafe { (**socket).unref() }; // write complete; unref
         }
         if status.to_error(uv::Op::Write).is_some() {
             this._on_write_complete(-1);
@@ -1545,7 +1548,11 @@ impl SendQueue {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
 
-        vm.event_loop().exit();
+        // Zig: `defer vm.eventLoop().exit()` — placed last; the body above is
+        // infallible (no `?`/early-return after `enter()`), so a scopeguard is
+        // unnecessary.
+        // SAFETY: see the `enter()` call above.
+        unsafe { (*(*vm).event_loop()).exit() };
     }
     fn get_global_this(&self) -> &'static JSGlobalObject {
         // PORT NOTE: lifetime detached from `&self` so callers can hold the

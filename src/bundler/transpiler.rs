@@ -2430,10 +2430,7 @@ impl<'a> Transpiler<'a> {
                 _entry
             };
 
-            let _reset = scopeguard::guard((), |_| {
-                js_ast::Expr::data_store_reset();
-                js_ast::Stmt::data_store_reset();
-            });
+            let _reset = js_ast::ast::StoreResetGuard::new();
 
             let result = match self.resolver.resolve(
                 top_level_dir,

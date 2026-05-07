@@ -96,7 +96,7 @@ pub mod TestingAPIs {
         #[cfg(windows)]
         {
             let code: core::ffi::c_int = arguments[0].to_int32();
-            let result = bun_sys::windows::libuv::translate_uv_error_to_e(code);
+            let result = bun_sys::windows::translate_uv_error_to_e(code);
             // @tagName(result) → IntoStaticStr derive on the E enum.
             return bun_jsc::bun_string_jsc::create_utf8_for_js(
                 global,

@@ -340,7 +340,19 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop.platform_event_loop()
+        #[cfg(not(windows))]
+        {
+            self.event_loop.platform_event_loop()
+        }
+        #[cfg(windows)]
+        {
+            // `platform_event_loop()` returns the uws `WindowsLoop` wrapper;
+            // `AsyncLoop` (= `bun_aio::Loop`) is the inner `uv_loop_t` on
+            // Windows (Zig: `vm.event_loop_handle.?` is `*uv.Loop`).
+            // SAFETY: the wrapper is live for the VM lifetime; `.uv_loop` is
+            // set by `us_create_loop` and stable thereafter.
+            unsafe { (*self.event_loop.platform_event_loop()).uv_loop }
+        }
     }
 
     pub fn watch(&mut self) {

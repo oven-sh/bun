@@ -991,16 +991,19 @@ fn overwrite_package_in_node_modules_folder(
 ) -> Result<(), bun_core::Error> {
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
-    let dest_subpath = bun_paths::Path::from(node_modules_folder_path).unwrap();
+    // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
+    // is generic over the *input* width and converts internally, so accepting
+    // `&[u8]` and producing `Path<OSPathChar>` is intentional.
+    let dest_subpath = bun_paths::Path::<bun_paths::OSPathChar>::from(node_modules_folder_path).unwrap();
     // `defer dest_subpath.deinit();` — Drop
 
-    let src_path: bun_paths::AbsPath = 'src_path: {
+    let src_path: bun_paths::AbsPath<bun_paths::OSPathChar> = 'src_path: {
         #[cfg(windows)]
         {
             let mut path_buf = bun_paths::WPathBuffer::uninit();
             let abs_path = sys::get_fd_path_w(cache_dir.fd, &mut path_buf)?;
 
-            let mut sp = bun_paths::AbsPath::from(abs_path).unwrap();
+            let mut sp = bun_paths::AbsPath::<bun_paths::OSPathChar>::from(&*abs_path).unwrap();
             sp.append(cache_dir_subpath)?;
 
             break 'src_path sp;

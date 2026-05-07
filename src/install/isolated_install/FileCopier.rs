@@ -6,11 +6,12 @@ use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, walker_skippable, walker_skippable::Walker, Dir, EntryKind, Fd, E};
 
-// TODO(port): `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
-// comptime-configured path-builder types. Phase B must pick the concrete Rust
-// instantiation (sep=auto, unit=os).
-type AbsPathAutoOs = bun_paths::AbsPath;
-type PathAutoOs = bun_paths::Path;
+// `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
+// comptime-configured path-builder types. `.unit = .os` means u8 on POSIX,
+// u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
+// the platform-native width.
+type AbsPathAutoOs = bun_paths::AbsPath<OSPathChar>;
+type PathAutoOs = bun_paths::Path<OSPathChar>;
 
 pub struct FileCopier {
     pub src_path: AbsPathAutoOs,
@@ -45,9 +46,28 @@ impl FileCopier {
     // resources and drops automatically, so no explicit `Drop` impl is needed.
 
     pub fn copy(&mut self) -> sys::Result<()> {
+        // Zig: `bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{})`.
+        // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
+        // narrow it (store paths are built from UTF-8 package names, always
+        // representable). On POSIX `OSPathChar == u8` and `slice_z()` already
+        // yields `&ZStr`, so deref-coerce to `&[u8]`.
+        #[cfg(windows)]
+        let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let dest_subpath_u8: &[u8] = match bun_str::strings::convert_utf16_to_utf8_in_buffer(
+            &mut dest_u8_buf[..],
+            self.dest_subpath.slice(),
+        ) {
+            Ok(s) => &*s,
+            Err(_) => {
+                return sys::Result::Err(sys::Error::from_code(E::EINVAL, sys::Tag::copyfile))
+            }
+        };
+        #[cfg(not(windows))]
+        let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
         let dest_dir = match bun_sys::make_path::make_open_path(
             Dir::cwd(),
-            self.dest_subpath.slice_z(),
+            dest_subpath_u8,
             Default::default(),
         ) {
             Ok(d) => d,
@@ -131,30 +151,42 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig's `save()`/`defer restore()`
-                // pattern becomes an RAII guard returned by `save()`. Phase B must
-                // ensure `save()` does not hold a `&mut` borrow across `append()`.
-                // TODO(port): verify AbsPath/Path save-guard borrow shape.
-                let _src_path_save = self.src_path.save();
-                self.src_path.append(entry.path);
+                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
+                // defer s.restore();` returns a `ResetScope` that holds
+                // `&mut Path`, which would keep `self.src_path` /
+                // `self.dest_subpath` exclusively borrowed for the rest of the
+                // iteration. Capture the saved length and restore via
+                // `set_length` after the body.
+                let src_saved_len = self.src_path.len();
+                let _ = self.src_path.append(entry.path.as_slice());
 
-                let _dest_subpath_save = self.dest_subpath.save();
-                self.dest_subpath.append(entry.path);
+                let dest_saved_len = self.dest_subpath.len();
+                let _ = self.dest_subpath.append(entry.path.as_slice());
 
-                match entry.kind {
+                let result: sys::Result<()> = match entry.kind {
                     EntryKind::Directory => {
-                        if bun_sys::windows::CreateDirectoryExW(
-                            self.src_path.slice_z(),
-                            self.dest_subpath.slice_z(),
-                            ptr::null_mut(),
-                        ) == 0
+                        // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
+                        if unsafe {
+                            bun_sys::windows::CreateDirectoryExW(
+                                self.src_path.slice_z().as_ptr(),
+                                self.dest_subpath.slice_z().as_ptr(),
+                                ptr::null_mut(),
+                            )
+                        } == 0
                         {
-                            let _ = bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path);
+                            let _ = bun_sys::make_path::make_path::<u16>(
+                                dest_dir,
+                                entry.path.as_slice(),
+                            );
                         }
+                        sys::Result::Ok(())
                     }
                     EntryKind::File => {
-                        match bun_sys::copy_file(self.src_path.slice_z(), self.dest_subpath.slice_z()) {
-                            sys::Result::Ok(()) => {}
+                        match bun_sys::copy_file::copy_file(
+                            self.src_path.slice_z(),
+                            self.dest_subpath.slice_z(),
+                        ) {
+                            sys::Result::Ok(()) => sys::Result::Ok(()),
                             sys::Result::Err(first_err) => {
                                 // Retry after creating the parent directory.
                                 // For root-level files (`index.js`,
@@ -166,26 +198,30 @@ impl FileCopier {
                                 // continuing here would let a staged
                                 // global-store entry be renamed into place
                                 // with files missing.
-                                let Some(entry_dirname) =
-                                    bun_paths::Dirname::dirname::<u16>(entry.path)
-                                else {
-                                    return sys::Result::Err(first_err);
-                                };
-                                let _ =
-                                    bun_sys::make_path::make_path::<u16>(&dest_dir, entry_dirname);
-                                match bun_sys::copy_file(
-                                    self.src_path.slice_z(),
-                                    self.dest_subpath.slice_z(),
-                                ) {
-                                    sys::Result::Ok(()) => {}
-                                    sys::Result::Err(err) => {
-                                        return sys::Result::Err(err);
+                                match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
+                                    None => sys::Result::Err(first_err),
+                                    Some(entry_dirname) => {
+                                        let _ = bun_sys::make_path::make_path::<u16>(
+                                            dest_dir,
+                                            entry_dirname,
+                                        );
+                                        bun_sys::copy_file::copy_file(
+                                            self.src_path.slice_z(),
+                                            self.dest_subpath.slice_z(),
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                     _ => unreachable!(),
+                };
+
+                self.src_path.set_length(src_saved_len);
+                self.dest_subpath.set_length(dest_saved_len);
+
+                if let sys::Result::Err(err) = result {
+                    return sys::Result::Err(err);
                 }
             }
             #[cfg(not(windows))]

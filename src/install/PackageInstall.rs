@@ -409,12 +409,15 @@ impl HardLinkWindowsInstallTask {
         // Returns a shared ref so worker threads in run_from_thread_pool() may safely
         // alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take &self.
         unsafe {
-            HARDLINK_QUEUE.write(HardLinkQueue {
+            // `addr_of_mut!` instead of `&mut HARDLINK_QUEUE` so we don't form
+            // a `&mut` to a `static mut` (denied by `static_mut_refs`); the
+            // single-init contract is upheld by call-site discipline.
+            (*core::ptr::addr_of_mut!(HARDLINK_QUEUE)).write(HardLinkQueue {
                 thread_pool: &PackageManager::get().thread_pool,
                 errored_task: AtomicPtr::new(core::ptr::null_mut()),
                 wait_group: WaitGroup::init(),
             });
-            HARDLINK_QUEUE.assume_init_ref()
+            (*core::ptr::addr_of!(HARDLINK_QUEUE)).assume_init_ref()
         }
     }
 
@@ -445,7 +448,7 @@ impl HardLinkWindowsInstallTask {
                 .cast::<Self>()
         };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { HARDLINK_QUEUE.assume_init_ref() };
+        let queue = unsafe { (*core::ptr::addr_of!(HARDLINK_QUEUE)).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: self_ is valid until deinit().
@@ -478,12 +481,12 @@ impl HardLinkWindowsInstallTask {
         let dest_len = dest.len() - 1;
         debug_assert_eq!(dest[dest_len], 0);
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers backed by self.bytes.
-        if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
+        // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
+        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
             return None;
         }
 
-        match windows::GetLastError() {
+        match windows::Win32Error::get() {
             windows::Win32Error::ALREADY_EXISTS
             | windows::Win32Error::FILE_EXISTS
             | windows::Win32Error::CANNOT_MAKE => {
@@ -492,13 +495,12 @@ impl HardLinkWindowsInstallTask {
                     bun_output::scoped_log!(
                         install,
                         "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(&dest[..dest_len])
+                        bun_core::fmt::fmt_path_u16(&dest[..dest_len], Default::default())
                     );
                 }
                 // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
                 unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
-                if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
+                if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
                     return None;
                 }
             }
@@ -512,8 +514,7 @@ impl HardLinkWindowsInstallTask {
         let _ = mkdir_recursive_os_path(dirpath);
         dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
-        if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
+        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
             return None;
         }
 
@@ -1129,7 +1130,7 @@ impl<'a> PackageInstall<'a> {
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
                 windows::GetFinalPathNameByHandleW(
-                    destbase.fd(),
+                    destbase.fd().native(),
                     state.buf.as_mut_ptr(),
                     u32::try_from(state.buf.len()).expect("int cast"),
                     0,
@@ -1139,7 +1140,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(bun_sys::errno_to_zig_err)
+                        .map(|s| s.to_error().into())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
@@ -1175,7 +1176,7 @@ impl<'a> PackageInstall<'a> {
             // state.buf2 is a valid writable WPathBuffer of the passed length.
             let cache_path_length = unsafe {
                 windows::GetFinalPathNameByHandleW(
-                    state.cached_package_dir.fd(),
+                    state.cached_package_dir.fd().native(),
                     state.buf2.as_mut_ptr(),
                     u32::try_from(state.buf2.len()).expect("int cast"),
                     0,
@@ -1185,7 +1186,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if cache_path_length == 0 {
                     e.to_system_errno()
-                        .map(bun_sys::errno_to_zig_err)
+                        .map(|s| s.to_error().into())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
@@ -1297,7 +1298,7 @@ impl<'a> PackageInstall<'a> {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                             if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
                                 if let Some(entry_dirname) =
-                                    bun_paths::resolve_path::dirname_u16(entry.path.as_slice())
+                                    bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
                                     let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
                                     // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
@@ -1421,8 +1422,11 @@ impl<'a> PackageInstall<'a> {
         let result = {
             // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
             // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
-            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
+            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
+            // so no `dangerous_implicit_autorefs` and no validity requirement
+            // beyond the pointer itself being well-formed.
+            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
+            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
             copy(
                 state.subdir,
                 state.walker.as_mut().unwrap(),
@@ -1585,8 +1589,11 @@ impl<'a> PackageInstall<'a> {
         let result = {
             // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
             // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
-            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
+            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
+            // so no `dangerous_implicit_autorefs` and no validity requirement
+            // beyond the pointer itself being well-formed.
+            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
+            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
             copy(
                 state.subdir,
                 state.walker.as_mut().unwrap(),
@@ -1749,7 +1756,7 @@ impl<'a> PackageInstall<'a> {
                             match sys::symlink_w(dest, src, Default::default()) {
                                 Err(err) => {
                                     if let Some(entry_dirname) =
-                                        bun_paths::resolve_path::dirname_u16(entry.path.as_slice())
+                                        bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                     {
                                         let _ = bun_sys::MakePath::make_path_u16(
                                             destination_dir,
@@ -1789,8 +1796,11 @@ impl<'a> PackageInstall<'a> {
         let result = {
             // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
             // to non-null suffixes of buf/buf2 on the success path that reaches here.
-            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
-            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
+            // `<*mut [T]>::len()` reads only the fat-pointer metadata; no deref,
+            // so no `dangerous_implicit_autorefs` and no validity requirement
+            // beyond the pointer itself being well-formed.
+            let to_copy1_off = state.buf.len() - state.to_copy_buf.len();
+            let to_copy2_off = state.buf2.len() - state.to_copy_buf2.len();
             copy(
                 state.subdir,
                 state.walker.as_mut().unwrap(),
@@ -1952,10 +1962,10 @@ impl<'a> PackageInstall<'a> {
                 return true;
             };
             let _close = scopeguard::guard(fd, |f| f.close());
-            let Ok(size) = fd.std_file().read_all(temp_buffer) else {
+            let Ok(size) = sys::File::from_fd(fd).read_all(temp_buffer) else {
                 return true;
             };
-            let Some(decoded) = WinBinLinkingShim::loose_decode(&temp_buffer[..size]) else {
+            let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {
                 return true;
             };
             debug_assert!(decoded.flags.is_valid()); // looseDecode ensures valid flags
@@ -2019,7 +2029,7 @@ impl<'a> PackageInstall<'a> {
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
                 windows::GetFinalPathNameByHandleW(
-                    destination_dir.fd(),
+                    destination_dir.fd().native(),
                     wbuf.as_mut_ptr(),
                     u32::try_from(wbuf.len()).expect("int cast"),
                     0,
@@ -2029,7 +2039,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(bun_sys::errno_to_zig_err)
+                        .map(|s| s.to_error().into())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
@@ -2055,7 +2065,7 @@ impl<'a> PackageInstall<'a> {
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written;
+            let mut offset: usize = res.written as usize;
             if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;
@@ -2089,7 +2099,7 @@ impl<'a> PackageInstall<'a> {
                     }
 
                     return InstallResult::fail(
-                        bun_sys::errno_to_zig_err(err.errno),
+                        bun_sys::errno_to_zig_err(err.errno.into()),
                         Step::LinkingDependency,
                         None,
                     );

@@ -1678,11 +1678,14 @@ pub fn install_isolated_packages(
 
     // setup node_modules/.bun
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
-        let node_modules_path = paths::os_path_literal!("node_modules");
+        // Zig: `bun.OSPathLiteral(...)` — but `sys::mkdirat` is `&ZStr`-only
+        // (it widens to NT path internally on Windows), so use `path_literal!`
+        // here to keep the call-site cross-platform without a `&WStr` overload.
+        let node_modules_path = paths::path_literal!("node_modules");
         // Zig: `bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name)`.
         // Rust `concat!` can't take a `&[u8]` const, so spell the literal —
         // matches `Installer::NODE_MODULES_BUN`.
-        let bun_modules_path = paths::os_path_literal!("node_modules/.bun");
+        let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {

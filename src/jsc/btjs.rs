@@ -50,7 +50,7 @@ mod zig_std_debug {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
             unsafe {
                 core::ptr::write(context, core::mem::zeroed());
-                bun_sys::windows::ntdll::RtlCaptureContext(context);
+                bun_sys::windows::ntdll_context::RtlCaptureContext(context);
             }
             return true;
         }
@@ -555,6 +555,23 @@ mod zig_std_debug {
 
     impl Module {
         /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(windows)]
+        pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
+            // Windows: Zig's `std.debug.SelfInfo` walks the loaded PE's PDB
+            // via `dbghelp.dll`. That path is not yet ported (requires the
+            // `Coff`/`Pdb` parsers); return the same default-initialized
+            // `Symbol` Zig uses when the lookup fails so the caller still
+            // prints the raw address line. Functionally equivalent to a
+            // missing-PDB build.
+            let _ = (address, self.base_address);
+            Ok(SymbolInfo {
+                name: b"???".to_vec().into_boxed_slice(),
+                compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
+                source_location: None,
+            })
+        }
+        /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(not(windows))]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.

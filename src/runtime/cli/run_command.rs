@@ -1807,7 +1807,15 @@ impl RunCommand {
                     }
                 )
             };
-            let dir_name_w = bun_str::w!(DIR_NAME);
+            // Zig: `comptime bun.strings.w(DIR_NAME)`. `bun_str::w!` requires
+            // a string-literal *token*, which `concatcp!` doesn't yield, so
+            // widen the ASCII const at runtime into a small stack buffer.
+            let mut dir_name_buf = [0u16; 64];
+            for (i, b) in DIR_NAME.bytes().enumerate() {
+                debug_assert!(b < 0x80, "DIR_NAME is ASCII-only");
+                dir_name_buf[i] = b as u16;
+            }
+            let dir_name_w: &[u16] = &dir_name_buf[..DIR_NAME.len()];
             target_path_buffer[prefix.len() + len..prefix.len() + len + dir_name_w.len()]
                 .copy_from_slice(dir_name_w);
             let dir_slice_len = prefix.len() + len + dir_name_w.len();

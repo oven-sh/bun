@@ -194,7 +194,8 @@ impl ArrayBuffer {
         // It creates a new memory mapping.
         // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
         // So we clone it when it's small.
-        if size < Self::MMAP_THRESHOLD as i64 {
+        // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
+        if (size as i64) < Self::MMAP_THRESHOLD as i64 {
             let result = Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
             fd.close();
             return Ok(result);

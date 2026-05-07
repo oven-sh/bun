@@ -872,13 +872,17 @@ impl Task {
 
                                         #[cfg(windows)]
                                         {
-                                            let src_path_len =
+                                            // SAFETY: FFI — `folder_dir` is an open
+                                            // handle; `src_path.buf()` is a writable
+                                            // WPathBuffer of the passed length.
+                                            let src_path_len = unsafe {
                                                 bun_sys::windows::GetFinalPathNameByHandleW(
-                                                    folder_dir.cast(),
+                                                    folder_dir.native(),
                                                     src_path.buf().as_mut_ptr(),
                                                     u32::try_from(src_path.buf().len()).expect("int cast"),
                                                     0,
-                                                );
+                                                )
+                                            };
 
                                             if src_path_len == 0
                                                 || src_path_len as usize >= src_path.buf().len()
@@ -893,13 +897,13 @@ impl Task {
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
                                                     sys::Error {
                                                         errno: err as _,
-                                                        syscall: sys::Syscall::Copyfile,
+                                                        syscall: sys::Tag::copyfile,
                                                         ..Default::default()
                                                     },
                                                 )));
                                             }
 
-                                            src_path.set_length(src_path_len);
+                                            src_path.set_length(src_path_len as usize);
                                         }
 
                                         let mut dest = OsAutoPath::init();
@@ -2342,7 +2346,9 @@ impl<'a> Installer<'a> {
         fn do_symlink(d: &ZStr, t: &ZStr) -> sys::Result<()> {
             #[cfg(windows)]
             {
-                return sys::symlink_or_junction(d, t, t);
+                // `target_abs` is already absolute, so the junction fallback
+                // can reuse it directly (Zig: passes the same `target` pointer).
+                return sys::symlink_or_junction(d, t, None);
             }
             #[cfg(not(windows))]
             {

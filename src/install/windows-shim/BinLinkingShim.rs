@@ -120,17 +120,25 @@ impl Flags {
 // artifact to embed and the data is never read.
 #[cfg(windows)]
 pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
-// Guard against the placeholder/empty artifact slipping through: a 0-byte embed
-// would silently make `bun install` write 0-byte `.exe` shims into
-// `node_modules/.bin/` and break every package binary. Fail the Windows build
-// loudly until the real PE is wired into the build.
-#[cfg(windows)]
-const _: () = assert!(
-    !EMBEDDED_EXECUTABLE_DATA.is_empty(),
-    "bun_shim_impl.exe is empty — the Windows shim PE must be built before this crate is compiled",
-);
 #[cfg(not(windows))]
 pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
+
+/// Guard against the placeholder/empty artifact slipping through: a 0-byte
+/// embed would silently make `bun install` write 0-byte `.exe` shims into
+/// `node_modules/.bin/` and break every package binary. This is a runtime
+/// assert (not `const _: () = assert!(..)`) so `cargo check` on Windows can
+/// type-check the install crate before the separate `bun_shim_impl` build step
+/// has produced the PE — but any actual *use* of the data still fails loudly.
+/// Call this from every site that writes `EMBEDDED_EXECUTABLE_DATA` to disk.
+#[inline]
+#[track_caller]
+pub fn embedded_executable_data() -> &'static [u8] {
+    assert!(
+        !EMBEDDED_EXECUTABLE_DATA.is_empty(),
+        "bun_shim_impl.exe is empty — the Windows shim PE must be built before this crate is compiled",
+    );
+    EMBEDDED_EXECUTABLE_DATA
+}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ExtensionType {

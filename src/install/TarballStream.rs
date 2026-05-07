@@ -1347,7 +1347,7 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
     // Windows rejects in filenames into the 0xf000 private-use range so
     // the extraction round-trips with node-tar.
     let mut remain: &mut [OSPathChar] = path.as_mut_slice();
-    if strings::starts_with_windows_drive_letter(remain) {
+    if strings::starts_with_windows_drive_letter_t(&*remain) {
         remain = &mut remain[2..];
     }
     for ch in remain.iter_mut() {

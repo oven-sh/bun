@@ -1569,7 +1569,11 @@ pub struct RuntimeHooks {
 /// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
 pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
     platform_event_loop: {
-        unsafe fn f(owner: *mut ()) -> *mut bun_aio::Loop {
+        // PORT NOTE: the vtable slot is typed `*mut bun_uws::Loop` (the uws
+        // wrapper — `posix_event_loop::Loop`), not `*mut bun_aio::Loop`
+        // (= `uv_loop_t` on Windows). `uws_loop()` already returns the right
+        // pointer on both platforms.
+        unsafe fn f(owner: *mut ()) -> *mut bun_uws::Loop {
             // SAFETY: `owner` is `*mut VirtualMachine` (erased in `event_loop_ctx`).
             unsafe { (*owner.cast::<VirtualMachine>()).uws_loop() }
         }

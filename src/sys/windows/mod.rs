@@ -3456,6 +3456,36 @@ pub use bun_windows_sys::externs::GetHostNameW;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
 
+/// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
+/// the underlying call has no preconditions and never fails.
+#[inline]
+pub fn GetCurrentProcessId() -> DWORD {
+    unsafe extern "system" {
+        fn GetCurrentProcessId() -> DWORD;
+    }
+    // SAFETY: no preconditions; reads thread-local kernel state.
+    unsafe { GetCurrentProcessId() }
+}
+
+/// `CONTEXT` (winnt.h) — full processor context captured by
+/// `RtlCaptureContext`. Declared as an arch-sized opaque aligned blob so this
+/// crate doesn't need to mirror the (large, arch-specific) field layout; the
+/// only consumer (`btjs::ThreadContext`) treats it as opaque storage and
+/// passes `*mut CONTEXT` straight back to ntdll.
+#[repr(C, align(16))]
+pub struct CONTEXT {
+    // x64: 1232 bytes; ARM64: 912 bytes. Use the larger so the buffer is
+    // always sufficient regardless of `target_arch`.
+    _opaque: [u8; 1232],
+}
+pub mod ntdll_context {
+    unsafe extern "system" {
+        /// `RtlCaptureContext` (winnt.h / ntdll.dll). Writes the calling
+        /// thread's register state into `*ContextRecord`.
+        pub fn RtlCaptureContext(ContextRecord: *mut super::CONTEXT);
+    }
+}
+
 pub use bun_windows_sys::externs::CreateJobObjectA;
 
 pub use bun_windows_sys::externs::AssignProcessToJobObject;

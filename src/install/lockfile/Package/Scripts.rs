@@ -240,7 +240,7 @@ impl Scripts {
                 ) else {
                     break 'brk cwd_.slice();
                 };
-                match Fd::from_std_dir(cwd_handle).get_fd_path(&mut cwd_buf) {
+                match bun_sys::get_fd_path(cwd_handle, &mut cwd_buf) {
                     Ok(p) => p,
                     Err(_) => cwd_.slice(),
                 }

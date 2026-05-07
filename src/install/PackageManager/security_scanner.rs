@@ -5,7 +5,12 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_aio::Loop as AsyncLoop;
+// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
+// `bun_aio::Loop` (= `uv_loop_t` on Windows). Alias the uws type so the
+// inherent `loop_()` matches the trait; the `Pipe::init` call site projects
+// `.uv_loop` to reach the inner libuv loop.
+use bun_uws::Loop as AsyncLoop;
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
@@ -1162,9 +1167,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::windows::libuv as uv;
+        use bun_sys::ReturnCodeExt as _;
 
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
-        if let Some(e) = uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE).err_enum() {
+        // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
+        let pipe_rc =
+            unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
+        if let Some(e) = pipe_rc.err_enum() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_core::errno_to_zig_err(e as i32));
@@ -1198,14 +1207,23 @@ impl<'a> SecurityScanSubprocess<'a> {
         // succeeds, matching the Zig errdefer scope exactly: it must stay armed
         // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
         // window) so a registered-but-unowned uv handle is never leaked.
-        let pipe = scopeguard::guard(pipe_ptr, |p| {
+        let mut pipe = scopeguard::guard(pipe_ptr, |p| {
             // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
             // schedules uv_close + frees the allocation.
             unsafe { uv::Pipe::close_and_destroy(p) };
         });
-        // SAFETY: *pipe was just Box::into_raw'd above and is non-null.
-        unsafe { (**pipe).init(self.loop_(), false) }.unwrap()?;
-        unsafe { (**pipe).open(fds.1.unwrap()) }.unwrap()?;
+        // SAFETY: *pipe was just Box::into_raw'd above and is non-null;
+        // `self.loop_()` is the live `WindowsLoop*` whose `.uv_loop` is the
+        // libuv loop handle Pipe::init expects.
+        let uv_loop = unsafe { (*self.loop_()).uv_loop };
+        if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
+            return Err(e.into());
+        }
+        if let Some(e) =
+            unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::pipe)
+        {
+            return Err(e.into());
+        }
         fds.1 = None; // pipe owns it now
 
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1221,6 +1239,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1238,7 +1257,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         fds.0.unwrap().close();
         fds.0 = None;
 
-        self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
+        self.ipc_reader
+            .flags
+            .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
 
         // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
         // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
@@ -1399,16 +1420,11 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn loop_(&mut self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `event_loop.loop_()` returns the live UwsLoop wrapper; on
-            // Windows AsyncLoop is the inner `uv::Loop` reached via `.uv_loop`.
-            return unsafe { (*self.manager.event_loop.loop_()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.manager.event_loop.loop_().cast()
-        }
+        // `bun_aio::Loop` is the platform's uws-wrapper (`PosixLoop` /
+        // `WindowsLoop`), so this is an identity cast on every target.
+        // Windows callers that need the inner `uv::Loop` project `.uv_loop`
+        // themselves at the FFI boundary (see `init_windows`).
+        self.manager.event_loop.loop_().cast()
     }
 
     pub fn on_reader_done(&mut self) {

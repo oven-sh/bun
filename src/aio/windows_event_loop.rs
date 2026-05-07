@@ -17,10 +17,12 @@ pub use crate::posix_event_loop::{get_vm_ctx, AllocatorType, EventLoopCtx, Opaqu
 bun_core::declare_scope!(KeepAlive, visible);
 bun_core::declare_scope!(FilePoll, visible);
 
-// Zig `windows_event_loop.zig:10` — `pub const Loop = bun.uws.WindowsLoop`.
-// (Not the raw `uv_loop_t`; `WindowsLoop` wraps it with Bun's bookkeeping —
-// `active_handles`, `wakeup`, `wait`, `iterationNumber`.)
-pub type Loop = WindowsLoop;
+// Zig `windows_event_loop.zig:1` — `pub const Loop = uv.Loop;` — the raw
+// `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
+// in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
+// field themselves. See `VirtualMachine::event_loop_handle` /
+// `SpawnSyncEventLoop` which store/compare the inner `uv::Loop` pointer.)
+pub type Loop = uv::Loop;
 
 #[derive(Default)]
 pub struct KeepAlive {
@@ -245,7 +247,7 @@ impl FilePoll {
         self.deinit()
     }
 
-    pub fn unregister(&mut self, _loop: &mut Loop) -> bool {
+    pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
         // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -261,7 +263,7 @@ impl FilePoll {
     fn deinit_possibly_defer(
         &mut self,
         vm: EventLoopCtx,
-        loop_: &mut Loop,
+        loop_: &mut WindowsLoop,
         polls: &mut Store,
     ) {
         if self.is_registered() {
@@ -326,7 +328,12 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn deactivate(&mut self, loop_: &mut Loop) {
+    // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
+    // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable returns
+    // the uws `WindowsLoop` wrapper. `WindowsLoop::sub_active`/`add_active`
+    // proxy straight through to `(*self.uv_loop).{sub,add}_active`, so accept
+    // the wrapper type to avoid an extra unsafe deref at every call site.
+    pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
         // SAFETY: uv_loop is set by C us_create_loop; valid for loop lifetime.
@@ -335,7 +342,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut Loop) {
+    pub fn activate(&mut self, loop_: &mut WindowsLoop) {
         loop_.add_active(
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,

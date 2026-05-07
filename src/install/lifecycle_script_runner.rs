@@ -18,7 +18,11 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
-use bun_aio::Loop as AsyncLoop;
+// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
+// `bun_aio::Loop` (= `uv_loop_t` on Windows). Alias the uws type so the
+// inherent `loop_()` matches the trait.
+use bun_uws::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -313,23 +317,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn loop_(&self) -> *mut AsyncLoop {
         // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_aio::Loop` *is* `UwsLoop`, so the cast is a no-op. On Windows
-        // `bun_aio::Loop` is `uv::Loop` and the inner libuv loop must be
-        // projected out of the uws wrapper (Zig: `loop().uv_loop`); reinter-
-        // preting the `UwsLoop*` as a `uv::Loop*` would hand BufferedReader
-        // the wrong pointer.
-        #[cfg(not(windows))]
-        {
-            self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
-        }
-        #[cfg(windows)]
-        {
-            let uws = self.manager_mut().event_loop.r#loop();
-            // SAFETY: `r#loop()` returns the live `*mut UwsLoop` owned by the
-            // VM/mini event loop; its `uv_loop` field is initialized at loop
-            // creation and stable for the loop's lifetime.
-            unsafe { (*uws).uv_loop }
-        }
+        // `bun_aio::Loop` *is* `PosixLoop`; on Windows `bun_aio::Loop` *is*
+        // `WindowsLoop` — both are the uws wrapper type, so this is an
+        // identity cast on every platform. Callers that need the inner
+        // `uv::Loop` on Windows project `.uv_loop` themselves.
+        self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {

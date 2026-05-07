@@ -73,7 +73,13 @@ pub(crate) fn throw_panic_as_js_error(
 /// Rust does not accept a macro in ABI position, so the canonical encoding is the
 /// `#[bun_jsc::host_call]` attribute on the concrete `extern fn`. This alias uses
 /// `extern "C"` as the placeholder; the proc-macro rewrites it per-target.
-// TODO(port): jsc.conv ABI — the proc-macro must emit `extern "sysv64"` on windows-x64.
+// `jsc.conv` is `"sysv64"` on Windows-x64 (JSC always uses System V there) and
+// `"C"` everywhere else. Rust forbids macros in ABI position, so cfg-split the
+// alias — the `#[bun_jsc::host_call]` proc-macro emits the matching ABI on
+// each target so `JsHostFn`-typed slots accept its output without a cast.
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type JsHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
+#[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
 /// To allow usage of `?` for error handling, Bun provides `to_js_host_fn` to
@@ -84,7 +90,10 @@ pub type JsHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 pub type JsHostFnZigWithContext<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type`
-// TODO(port): jsc.conv ABI (see JsHostFn note)
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type JsHostFunctionTypeWithContext<C> =
+    unsafe extern "sysv64" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
+#[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFunctionTypeWithContext<C> =
     unsafe extern "C" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
 

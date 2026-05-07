@@ -988,9 +988,9 @@ pub fn save_lockfile(
                 match sys::unlinkat(
                     Fd::cwd(),
                     if delete_format == LockfileFormat::Text {
-                        bun_paths::os_path_literal!("bun.lock")
+                        bun_paths::path_literal!("bun.lock")
                     } else {
-                        bun_paths::os_path_literal!("bun.lockb")
+                        bun_paths::path_literal!("bun.lockb")
                     },
                 ) {
                     Ok(()) => {}
@@ -1044,7 +1044,7 @@ pub fn save_lockfile(
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::os_path_literal!("bun.lockb"));
+        let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
     }
 
     if cfg!(debug_assertions) {

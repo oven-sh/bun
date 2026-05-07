@@ -1904,7 +1904,7 @@ pub(super) fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u
     &mut buf[..result]
 }
 
-pub(super) fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
+pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
     // TODO: see convert_utf8_to_utf16_in_buffer
     if input.is_empty() {
         buf[0] = 0;

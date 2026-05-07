@@ -508,10 +508,22 @@ impl WStr {
     #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
     #[inline] pub const fn as_ptr(&self) -> *const u16 { self.0.as_ptr() }
+    /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
+    /// Mirrors [`ZStr::from_raw_mut`] so callers can rewrite UTF-16 path
+    /// chars in place (Windows tar path-escape pass) without round-tripping
+    /// through an owned buffer.
+    #[inline]
+    pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
+        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
+    }
+    #[inline] pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
 }
 impl core::ops::Deref for WStr {
     type Target = [u16];
     #[inline] fn deref(&self) -> &[u16] { &self.0 }
+}
+impl core::ops::DerefMut for WStr {
+    #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
 }
 
 /// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time

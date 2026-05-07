@@ -451,6 +451,7 @@ impl Debugger {
             // `tickWithTimeout`). Per the original Zig comment ("TODO: remove
             // this when tickWithTimeout actually works properly on Windows").
             use bun_sys::windows::libuv as uv;
+            use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
                 // SAFETY: `this` is the live per-thread VM; `uv_loop()` returns
                 // the per-thread `uv_loop_t` initialized by `init()`.
@@ -466,11 +467,10 @@ impl Debugger {
                 unsafe { (*timer).init(uv_loop) };
 
                 unsafe extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    let vm = VirtualMachine::get();
                     // SAFETY: `vm` is the per-thread singleton; called on the
                     // JS thread (libuv timer callback). Spec `.?` would panic;
                     // unwinding across `extern "C"` is UB so we early-return.
-                    if let Some(d) = unsafe { (*vm).debugger.as_deref_mut() } {
+                    if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
                         d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`

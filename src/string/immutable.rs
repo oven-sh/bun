@@ -3355,6 +3355,24 @@ pub use paths::without_leading_path_separator;
 // Zig: `pub const fromWPath = paths_.fromWPath;` (immutable.zig:2356) — re-export
 // so callers can use `strings::from_wpath` directly, matching the Zig namespace.
 pub use paths::from_w_path as from_wpath;
+// Zig flattens the `paths_` submodule into `bun.strings.*` so callers write
+// `bun.strings.toWPathNormalized(..)` / `bun.strings.toNTPath(..)` directly.
+// Re-export the Windows path-shape helpers used by `#[cfg(windows)]` install
+// paths so the Rust namespace matches.
+pub use paths::{
+    add_nt_path_prefix, add_nt_path_prefix_if_needed, starts_with_windows_drive_letter,
+    to_kernel32_path, to_nt_path, to_w_path, to_w_path_normalize_auto_extend,
+    to_w_path_normalized, to_w_path_normalized as to_wpath_normalized,
+};
+// Zig: `pub const convertUTF16ToUTF8InBuffer = unicode.convertUTF16ToUTF8InBuffer;`
+// (immutable.zig). Re-export the bun_core implementation so callers can spell
+// `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
+pub use bun_core::strings::convert_utf16_to_utf8_in_buffer;
+// Zig: `pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;`
+// — re-export the NUL-terminated variant so callers can spell
+// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
+// to widen output paths for `File::write_file_os_path`).
+pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
 /// followed by at least one more byte (Zig: `s.len > 2`).

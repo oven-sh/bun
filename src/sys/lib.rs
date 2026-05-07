@@ -760,6 +760,10 @@ use core::ffi::{c_char, c_int, c_void};
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind_from_mode};
+/// Zig: `bun.errnoToZigErr(errno)` (bun.zig) — re-exported here so callers
+/// that already depend on `bun_sys` (e.g. `bun_install` Windows paths) can
+/// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
+pub use bun_core::errno_to_zig_err;
 
 /// Zig: `bun.isRegularFile(mode)` (bun.zig) — `S.ISREG(@intCast(mode))`.
 #[inline]
@@ -2955,6 +2959,27 @@ impl File {
     }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
+    /// Port of `bun.sys.File.openatOSPath` (File.zig:65) — `openat` accepting
+    /// the platform-native NUL-terminated path type (`ZStr` POSIX / `WStr`
+    /// Windows). Returns a `File` wrapper around the opened fd.
+    #[inline]
+    pub fn openat_os_path(
+        dir: Fd,
+        path: &bun_paths::OSPathSliceZ,
+        flags: i32,
+        mode: Mode,
+    ) -> Maybe<File> {
+        openat_os_path(dir, path, flags, mode).map(|fd| File { handle: fd })
+    }
+    /// Port of `bun.sys.File.writeFileWithPathBuffer` (File.zig) Windows arm —
+    /// like [`write_file`] but takes the platform-native path type so Windows
+    /// callers can pass a `&WStr` without round-tripping through UTF-8.
+    pub fn write_file_os_path(dir: Fd, path: &bun_paths::OSPathSliceZ, data: &[u8]) -> Maybe<()> {
+        let file = File::openat_os_path(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
+        let result = file.write_all(data);
+        let _ = close(file.handle);
+        result
+    }
     /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
     /// `path: anytype`); `&ZStr` callers deref-coerce.
     /// Port of `bun.sys.File.readFillBuf` (src/sys/File.zig). Reads until
@@ -5808,6 +5833,157 @@ impl WindowsSymlinkOptions {
     pub fn has_failed_to_create_symlink() -> bool {
         WINDOWS_SYMLINK_HAS_FAILED.load(core::sync::atomic::Ordering::Relaxed)
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Port of `sys.zig:2653-2902` — Windows-only `symlinkW` / `symlinkOrJunction`
+// / `unlinkW` / `rmdir` / `mkdir` (CreateDirectoryW path). Compiled on
+// Windows; on POSIX these names are absent (matches `@compileError` in spec).
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(windows)]
+mod win_symlink_impl {
+    use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, sys_uv, windows};
+    use bun_core::WStr;
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    // `CreateSymbolicLinkW` `dwFlags` bits (winbase.h). Not currently exported
+    // by `bun_windows_sys`; spell them locally so we don't widen the leaf
+    // crate's surface for two constants.
+    const SYMBOLIC_LINK_FLAG_DIRECTORY: u32 = 0x1;
+    const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: u32 = 0x2;
+
+    /// Zig: `WindowsSymlinkOptions.symlink_flags` — process-global, starts
+    /// with `ALLOW_UNPRIVILEGED_CREATE` and is cleared on `INVALID_PARAMETER`
+    /// (older Windows). The `directory` bit is OR'd in per-call without
+    /// stickying it back into the global (matches Zig: the static is only
+    /// mutated by `denied()`).
+    static SYMLINK_FLAGS: AtomicU32 = AtomicU32::new(SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
+
+    impl WindowsSymlinkOptions {
+        #[inline]
+        fn flags(self) -> u32 {
+            let mut f = SYMLINK_FLAGS.load(Ordering::Relaxed);
+            if self.directory {
+                f |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+            }
+            f
+        }
+        #[inline]
+        fn denied() {
+            SYMLINK_FLAGS.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Port of `sys.zig:2717 symlinkW`. `dest` is the link path, `target` is
+    /// the path the link points to. Retries once with `flags = 0` if the
+    /// kernel rejects `ALLOW_UNPRIVILEGED_CREATE` (`INVALID_PARAMETER`).
+    pub fn symlink_w(dest: &WStr, target: &WStr, options: WindowsSymlinkOptions) -> Maybe<()> {
+        loop {
+            let flags = options.flags();
+            // SAFETY: both inputs are NUL-terminated wide strings.
+            let rc = unsafe { windows::CreateSymbolicLinkW(dest.as_ptr(), target.as_ptr(), flags) };
+            if rc == 0 {
+                let win_err = windows::Win32Error::get();
+                if win_err == windows::Win32Error::INVALID_PARAMETER
+                    && (flags & SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0
+                {
+                    WindowsSymlinkOptions::denied();
+                    continue;
+                }
+                if let Some(sys_errno) = win_err.to_system_errno() {
+                    let e: E = sys_errno.to_e();
+                    // Zig: only ENOENT/EEXIST keep `has_failed_to_create_symlink`
+                    // unset; every other failure flips the sticky bit so
+                    // `symlinkOrJunction` falls through to junctions next time.
+                    if !matches!(e, E::NOENT | E::EXIST) {
+                        WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
+                    }
+                    return Err(Error::from_code(e, Tag::symlink));
+                }
+                // Win32 error without an errno mapping — Zig falls through to
+                // `return .success` (the `if let` yields `null`). Mirror that.
+            }
+            return Ok(());
+        }
+    }
+
+    /// Port of `sys.zig:2675 symlinkOrJunction`. Tries `CreateSymbolicLinkW`
+    /// (directory flavour) first; on failure other than ENOENT/EEXIST falls
+    /// back to a libuv junction. `abs_fallback_junction_target = None` says
+    /// `target` is already absolute and reusable for the junction.
+    pub fn symlink_or_junction(
+        dest: &ZStr,
+        target: &ZStr,
+        abs_fallback_junction_target: Option<&ZStr>,
+    ) -> Maybe<()> {
+        if !WindowsSymlinkOptions::has_failed_to_create_symlink() {
+            let mut sym16 = bun_paths::w_path_buffer_pool::get();
+            let mut target16 = bun_paths::w_path_buffer_pool::get();
+            let sym_path = bun_string::strings::paths::to_w_path_normalize_auto_extend(
+                &mut sym16[..],
+                dest.as_bytes(),
+            );
+            let target_path = bun_string::strings::paths::to_w_path_normalize_auto_extend(
+                &mut target16[..],
+                target.as_bytes(),
+            );
+            match symlink_w(sym_path, target_path, WindowsSymlinkOptions { directory: true }) {
+                Ok(()) => return Ok(()),
+                Err(err) => match err.get_errno() {
+                    // EEXIST/ENOENT: surface the symlink error; junctions
+                    // would hit the same condition.
+                    E::EXIST | E::NOENT => return Err(err),
+                    // anything else: fall through to junction.
+                    _ => {}
+                },
+            }
+        }
+        sys_uv::symlink_uv(
+            abs_fallback_junction_target.unwrap_or(target),
+            dest,
+            bun_libuv_sys::UV_FS_SYMLINK_JUNCTION,
+        )
+    }
+
+    /// Port of `sys.zig:2846 unlinkW` — `DeleteFileW` with errno mapping.
+    pub fn unlink_w(from: &WStr) -> Maybe<()> {
+        // SAFETY: `from` is NUL-terminated.
+        let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
+        if rc == 0 {
+            return Err(Error::from_code(windows::get_last_errno(), Tag::unlink));
+        }
+        Ok(())
+    }
+
+    /// Port of `sys.zig:mkdirOSPath` (Windows arm) — `CreateDirectoryW` with
+    /// errno mapping. Named `mkdir_w` for parity with `unlink_w`/`symlink_w`.
+    pub fn mkdir_w(path: &WStr) -> Maybe<()> {
+        // SAFETY: `path` is NUL-terminated; null security attributes.
+        let rc = unsafe { windows::CreateDirectoryW(path.as_ptr(), core::ptr::null_mut()) };
+        if rc == 0 {
+            return Err(Error::from_code(windows::get_last_errno(), Tag::mkdir));
+        }
+        Ok(())
+    }
+}
+#[cfg(windows)]
+pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
+
+/// Port of `sys.zig:3915 link(u16, ...)` Windows arm — `CreateHardLinkW` with
+/// errno mapping. The u8/ZStr overload (`link`) routes through `sys_uv::link`.
+#[cfg(windows)]
+pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
+    if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
+        return Err(Error::from_code(windows::get_last_errno(), Tag::link));
+    }
+    Ok(())
+}
+
+/// Port of `sys.zig:2876 rmdir` — `rmdirat(FD.cwd(), to)`. Exposed on all
+/// platforms (POSIX `unlinkat(.., AT_REMOVEDIR)`; Windows `DeleteFileBun`).
+#[inline]
+pub fn rmdir(to: &ZStr) -> Maybe<()> {
+    rmdirat(Fd::cwd(), to)
 }
 
 /// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`

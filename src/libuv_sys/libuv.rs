@@ -742,6 +742,79 @@ pub unsafe trait UvStream: UvHandle {
         // SAFETY: stream prefix invariant.
         unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
     }
+    /// Port of `StreamMixin::readStart` (libuv.zig:3067) — high-level wrapper
+    /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
+    /// `extern "C"` trampoline. `context` is stashed in `handle.data` and
+    /// recovered in the trampoline; the three callbacks are baked into the
+    /// monomorphisation via the [`StreamReader`] trait (Zig captures them as
+    /// `comptime` fn pointers — Rust expresses that as associated fns so the
+    /// trampoline stays zero-alloc and `Handle` needs no spare storage).
+    ///
+    /// Unlike Zig (`error_cb` takes `bun.sys.E`), the Rust binding passes the
+    /// raw negative libuv errno (`c_int`); this crate is layered below
+    /// `bun_sys` so it can't name `E`. Callers map via
+    /// `bun_sys::windows::translate_uv_error_to_e`. Returns the raw
+    /// [`ReturnCode`] from `uv_read_start`; callers apply
+    /// `.to_error(Tag::listen)` themselves.
+    #[inline]
+    fn read_start_ctx<T: StreamReader>(&mut self, context: *mut T) -> ReturnCode {
+        // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
+        // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
+        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
+        h.data = context.cast();
+
+        unsafe extern "C" fn uv_allocb<T: StreamReader>(
+            req: *mut uv_handle_t,
+            suggested_size: usize,
+            buffer: *mut uv_buf_t,
+        ) {
+            // SAFETY: `req.data` was set to `context` above; libuv calls this
+            // on the loop thread before `uv_readcb`.
+            let ctx: &mut T = unsafe { &mut *(*req).data.cast::<T>() };
+            let buf = T::on_read_alloc(ctx, suggested_size);
+            // SAFETY: `buffer` is libuv's out-param.
+            unsafe { *buffer = uv_buf_t::init(buf) };
+        }
+        unsafe extern "C" fn uv_readcb<T: StreamReader>(
+            req: *mut uv_stream_t,
+            nreads: ReturnCodeI64,
+            buffer: *const uv_buf_t,
+        ) {
+            // SAFETY: `req.data` was set to `context` above.
+            let ctx: &mut T = unsafe { &mut *(*req).data.cast::<T>() };
+            let n = nreads.int();
+            if n == 0 {
+                return; // EAGAIN / EWOULDBLOCK
+            }
+            if n < 0 {
+                // SAFETY: stream prefix invariant.
+                let _ = unsafe { uv_read_stop(req) };
+                T::on_read_error(ctx, n as c_int);
+            } else {
+                // SAFETY: `buffer` was filled by `uv_allocb` above with a
+                // slice of length `>= n`.
+                let slice = unsafe {
+                    core::slice::from_raw_parts((*buffer).base.cast::<u8>(), n as usize)
+                };
+                T::on_read(ctx, slice);
+            }
+        }
+        // SAFETY: stream prefix invariant.
+        unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
+    }
+}
+
+/// Callback bundle for [`UvStream::read_start_ctx`]. Port of the three
+/// `comptime` fn-pointer parameters on Zig's `StreamMixin::readStart`
+/// (libuv.zig:3070-3072): Rust monomorphises the `extern "C"` trampolines over
+/// this trait so the callbacks are baked into the codegen (zero-alloc, no
+/// per-handle storage) exactly as in Zig.
+pub trait StreamReader: Sized {
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8];
+    /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
+    /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
+    fn on_read_error(this: &mut Self, err: c_int);
+    fn on_read(this: &mut Self, data: &[u8]);
 }
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}

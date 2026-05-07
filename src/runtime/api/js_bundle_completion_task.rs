@@ -58,7 +58,7 @@ pub struct JSBundleCompletionTask {
     pub global_this: *const JSGlobalObject,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *const bun_dotenv::Loader<'static>,
+    pub env: *mut bun_dotenv::Loader<'static>,
     pub log: logger::Log,
     pub cancelled: bool,
 
@@ -109,8 +109,9 @@ pub fn create_and_schedule_completion_task(
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
 ) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
-    // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
     let vm = global_this.bun_vm();
+    // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
+    let env = unsafe { (*vm).transpiler.env };
     let completion = Box::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
@@ -119,7 +120,7 @@ pub fn create_and_schedule_completion_task(
         global_this,
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
-        env: vm.transpiler.env,
+        env,
         log: logger::Log::init(),
         cancelled: false,
         html_build_task: None,
@@ -131,10 +132,10 @@ pub fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        (*completion).task = AnyTask::init::<JSBundleCompletionTask>(
-            completion,
-            JSBundleCompletionTask::on_complete_anytask,
-        );
+        (*completion).task = AnyTask {
+            ctx: NonNull::new(completion.cast()),
+            callback: JSBundleCompletionTask::on_complete_anytask,
+        };
         if let Some(plugin) = (*completion).plugins {
             (*plugin.as_ptr()).set_config(completion.cast());
         }
@@ -147,7 +148,7 @@ pub fn create_and_schedule_completion_task(
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe { (*completion).poll_ref.ref_(vm) };
+    unsafe { (*completion).poll_ref.ref_(jsc::VirtualMachine::event_loop_ctx(vm)) };
 
     Ok(completion)
 }
@@ -525,14 +526,16 @@ impl JSBundleCompletionTask {
 
     /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
     /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn on_complete_anytask(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
+        let ctx = ctx.cast::<Self>();
         // SAFETY: `ctx` is the Box::into_raw allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         let _drop_ref = scopeguard::guard(ctx, |p| unsafe { RefCount::<Self>::deref(p) });
 
         // SAFETY: bun_vm() is non-null for a Bun global.
-        this.poll_ref.unref(unsafe { (*this.global_this).bun_vm() });
+        let vm = unsafe { (*this.global_this).bun_vm() };
+        this.poll_ref.unref(jsc::VirtualMachine::event_loop_ctx(vm));
         if this.cancelled {
             return Ok(());
         }

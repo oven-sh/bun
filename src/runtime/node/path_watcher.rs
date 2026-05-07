@@ -326,12 +326,12 @@ pub fn watch(
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
-    // The callback/updateEnd are comptime so the emit path can call them directly
-    // without an indirect-call-per-event; assert they're what node_fs_watcher passes.
-    // PERF(port): was comptime monomorphization — Zig asserted at compile time.
-    debug_assert!(callback as usize == on_path_update_fn as usize);
-    debug_assert!(update_end as usize == on_update_end_fn as usize);
-    let _ = vm;
+    // The callback/updateEnd are comptime in Zig so the emit path can call them directly
+    // without an indirect-call-per-event. Rust can't `comptime assert` fn-ptr identity;
+    // the emit path calls `FSWatcher::ON_PATH_UPDATE` / `on_update_end` directly and the
+    // params are kept for API parity with `node_fs_watcher.rs`'s call site.
+    // PERF(port): was comptime monomorphization — profile in Phase B.
+    let _ = (vm, callback, update_end);
 
     let manager = match PathWatcherManager::get() {
         Err(e) => return Err(e),

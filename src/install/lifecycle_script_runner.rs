@@ -205,9 +205,11 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
     pub manager: *mut PackageManager,
-    // TODO(port): `[:null]?[*:0]const u8` — null-terminated slice of nullable C strings (envp).
-    // No direct ZStr/WStr analogue; using raw repr for FFI passthrough to spawnProcess.
-    pub envp: *const *const c_char,
+    /// Zig: `envp: [:null]?[*:0]const u8` — allocated with `manager.allocator`
+    /// (manager-lifetime) and never freed there. Ownership is moved into this
+    /// struct so the `K=V\0` buffers stay alive across every async
+    /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
+    pub envp: bun_dotenv::NullDelimitedEnvMap,
     pub shell_bin: Option<&'a ZStr>,
 
     pub timer: Option<Timer>,
@@ -595,7 +597,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // SAFETY: argv is a `[?[*:0]const u8; 4]` with trailing null; matches the C layout
             // expected by spawn_process (Zig used @ptrCast here).
             argv.as_mut_ptr() as *mut _,
-            (*this).envp,
+            (*this).envp.as_ptr() as *const *const c_char,
         )??;
         // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer `!Maybe(Spawned)`.
         // Modeled here as `Result<bun_sys::Result<Spawned>, _>`, hence `??`. Verify in Phase B.
@@ -1013,7 +1015,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub fn spawn_package_scripts(
         manager: *mut PackageManager,
         list: ScriptsList,
-        envp: *const *const c_char,
+        envp: bun_dotenv::NullDelimitedEnvMap,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
         log_level: crate::LogLevel,
@@ -1137,5 +1139,5 @@ impl Drop for LifecycleScriptSubprocess<'_> {
 //   source:     src/install/lifecycle_script_runner.zig (605 lines)
 //   confidence: medium
 //   todos:      12
-//   notes:      manager is &'a but mutated (active_lifecycle_scripts, progress, scripts_node) — needs interior mutability; envp/argv FFI repr and Intrusive comparator wiring deferred; self-freeing intrusive type uses Drop + unsafe destroy(*mut Self).
+//   notes:      manager is &'a but mutated (active_lifecycle_scripts, progress, scripts_node) — needs interior mutability; envp owned by-value (NullDelimitedEnvMap) so it survives across spawn_next_script; self-freeing intrusive type uses Drop + unsafe destroy(*mut Self).
 // ──────────────────────────────────────────────────────────────────────────

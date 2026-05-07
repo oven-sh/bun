@@ -48,7 +48,7 @@ use crate::{
 /// a pointer because the linker borrows the loop owned by the
 /// `BundleThread` / runtime.
 pub type EventLoop =
-    Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop::AnyEventLoop<'static>>>;
+    Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop<'static>>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);

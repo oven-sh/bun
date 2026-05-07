@@ -3909,9 +3909,12 @@ impl VirtualMachine {
             return;
         }
 
+        // PORT NOTE: reborrow so the Zig `defer { addToErrorList(exception_list) }`
+        // tail can still see it after `print_error_from_maybe_private_data`.
+        let mut exception_list = exception_list;
         let was_internal = self.print_error_from_maybe_private_data(
             value,
-            exception_list,
+            exception_list.as_deref_mut(),
             formatter,
             writer,
             allow_ansi_color,
@@ -3919,13 +3922,25 @@ impl VirtualMachine {
         );
 
         if was_internal {
-            if let Some(_exception_) = exception {
-                // TODO(port): blocked_on `ZigStackTrace` stub — populate
-                // `holder.zig_exception().stack` via
-                // `Exception::get_stack_trace` and route through
-                // `print_stack_trace`. `crate::ZigStackTrace` field walk
-                // not yet ported here.
-                let _ = (global_ref, allow_ansi_color);
+            if let Some(exception_) = exception {
+                let mut holder = crate::zig_exception::Holder::init();
+                // PORT NOTE: Zig calls `holder.deinit(this)` *before*
+                // `getStackTrace` (no-op on the empty holder); reordered to
+                // the tail for borrowck — semantics unchanged because
+                // `need_to_clear_parser_arena_on_deinit` is false here.
+                let zig_exception: &mut ZigException = holder.zig_exception();
+                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
+                if zig_exception.stack.frames_len > 0 {
+                    let _ =
+                        Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
+                }
+                if let Some(list) = exception_list {
+                    // SAFETY: `transpiler.fs` set during init; live for VM lifetime.
+                    let top_level_dir = unsafe { (*self.transpiler.fs).top_level_dir };
+                    let _ =
+                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                }
+                holder.deinit(self);
             }
         }
     }

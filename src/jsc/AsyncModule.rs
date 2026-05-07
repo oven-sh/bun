@@ -54,12 +54,13 @@ pub struct AsyncModule<'a> {
     // This is all the state used by the printer to print the module
     pub parse_result: ParseResult,
     pub promise: StrongOptional, // Strong.Optional, default .empty
-    pub path: Fs::Path<'a>,
-    // TODO(port): lifetime — specifier/referrer/path.text are slices into
-    // `string_buf` (self-referential). Phase B: store as (off,len) pairs.
-    pub specifier: &'a [u8],
-    pub referrer: &'a [u8],
+    /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes that the
+    /// Zig version aliased via `buf.allocatedSlice()`. Stored as offsets so
+    /// the struct stays movable (no self-referential borrows); reconstruct
+    /// slices via `referrer()` / `specifier()` / `path_text()`.
     pub string_buf: Box<[u8]>,
+    referrer_len: u32,
+    specifier_len: u32,
     pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
     pub loader: api::Loader,
@@ -130,6 +131,23 @@ impl Queue {
 }
 
 impl<'a> AsyncModule<'a> {
+    #[inline]
+    pub fn referrer(&self) -> &[u8] {
+        &self.string_buf[..self.referrer_len as usize]
+    }
+
+    #[inline]
+    pub fn specifier(&self) -> &[u8] {
+        let off = self.referrer_len as usize;
+        &self.string_buf[off..off + self.specifier_len as usize]
+    }
+
+    #[inline]
+    pub fn path_text(&self) -> &[u8] {
+        let off = self.referrer_len as usize + self.specifier_len as usize;
+        &self.string_buf[off..]
+    }
+
     /// Spec AsyncModule.zig:412-460. Dispatch the (possibly errored) transpile
     /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
     /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
@@ -573,21 +591,29 @@ impl<'a> AsyncModule<'a> {
         unsafe {
             *opts.promise_ptr.unwrap() = this_promise.as_promise().unwrap();
         }
-        let referrer = buf.append(opts.referrer);
-        let specifier = buf.append(opts.specifier);
-        let path = Fs::Path::init(buf.append(opts.path.text));
+        // PORT NOTE: Zig kept three aliasing slices into `buf` plus
+        // `buf.allocatedSlice()` as the owning storage. Rust can't store
+        // self-referential borrows, so capture lengths and pack
+        // `referrer ++ specifier ++ path.text` into `string_buf`, then expose
+        // them via `referrer()`/`specifier()`/`path_text()`. `move_to_slice()`
+        // transfers ownership (resets `buf` so its Drop is a no-op) — exactly
+        // one free, via `string_buf`.
+        let referrer_len = opts.referrer.len() as u32;
+        let specifier_len = opts.specifier.len() as u32;
+        let _ = buf.append(opts.referrer);
+        let _ = buf.append(opts.specifier);
+        let _ = buf.append(opts.path.text);
+        let string_buf = buf.move_to_slice();
 
-        // TODO(port): referrer/specifier/path borrow buf.allocated_slice() (self-referential).
         Ok(AsyncModule {
             parse_result: opts.parse_result,
             promise,
-            path,
-            specifier,
-            referrer,
+            string_buf,
+            referrer_len,
+            specifier_len,
             fd: opts.fd,
             package_json: opts.package_json,
             loader: opts.loader.to_api(),
-            string_buf: Box::<[u8]>::from(&*buf.allocated_slice()),
             hash: u32::MAX,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
@@ -598,19 +624,14 @@ impl<'a> AsyncModule<'a> {
         })
     }
 
-    pub fn done(&mut self, jsc_vm: &mut VirtualMachine) {
-        // PORT NOTE: Zig allocator.create + bitwise copy. In Rust we Box a
-        // moved-out value; caller (poll_modules) returns `false` from
-        // retain_mut so the slot is dropped without double-free. We use
-        // ptr::read to move out of &mut self — caller MUST drop the slot
-        // without running Drop again.
-        // TODO(port): this is unsound as written; Phase B should
-        // restructure poll_modules to drain finished modules by value
-        // instead.
-        // SAFETY: bitwise move out of &mut self; caller must forget the
-        // original slot (see TODO(port) above).
-        let clone: Box<AsyncModule<'a>> = Box::new(unsafe { core::ptr::read(self) });
-        let clone = Box::into_raw(clone);
+    pub fn done(self, jsc_vm: &mut VirtualMachine) {
+        // PORT NOTE: Zig `allocator.create` + bitwise copy then truncated the
+        // queue without running deinit on the discarded slot — single
+        // ownership transfers to the heap clone. In Rust the caller
+        // (`Queue::poll_modules`) removes the element by value and passes it
+        // here, so `Box::new(self)` is the same single transfer with no
+        // `ptr::read` and no double-Drop.
+        let clone = Box::into_raw(Box::new(self));
         jsc_vm.modules.scheduled += 1;
         // SAFETY: clone is a valid Box::into_raw allocation owned by the
         // task queue until on_done reclaims it via Box::from_raw; we hold

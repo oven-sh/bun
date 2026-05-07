@@ -164,8 +164,9 @@ impl StaticRoute {
             let mut blob: AnyBlob = 'brk: {
                 match body_value {
                     BodyValue::Used => {
-                        return Err(global_this
-                            .throw_invalid_arguments("Response body has already been used"));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Response body has already been used"
+                        )));
                     }
 
                     BodyValue::Null | BodyValue::Empty => {
@@ -179,7 +180,7 @@ impl StaticRoute {
                         if let BodyValue::Blob(b) = &*body_value {
                             if b.needs_to_read_file() {
                                 return Err(global_this
-                                    .throw_todo("TODO: support Bun.file(path) in static routes"));
+                                    .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
                         }
                         let mut blob = body_value.use_();
@@ -194,9 +195,9 @@ impl StaticRoute {
                     }
 
                     _ => {
-                        return Err(global_this.throw_invalid_arguments(
-                            "Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body.",
-                        ));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body."
+                        )));
                     }
                 }
             };

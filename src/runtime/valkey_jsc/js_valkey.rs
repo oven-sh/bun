@@ -82,50 +82,67 @@ pub struct SubscriptionCtx {
 }
 
 // Shorthand alias matching Zig's `const ParentJS = JSValkeyClient.js;`
-type ParentJS = codegen_stub::JSRedisClient;
+type ParentJS = codegen_js::JSRedisClient;
 
-// TODO(b2-blocked): `bun_jsc::codegen::JSRedisClient` cached-slot accessors are
-// emitted by generate-classes.ts (.rs output not yet wired). Stub the surface
-// so this file compiles; bodies panic if reached at runtime.
-mod codegen_stub {
+/// `jsc.Codegen.JSRedisClient` — thin adapter over the generate-classes.ts
+/// output (`crate::generated_classes::RedisClient`). The generator emits
+/// per-slot `*_set_cached`/`*_get_cached` accessors; this adapter presents
+/// the snake-case surface the hand-ported call sites use.
+mod codegen_js {
     use super::{JSGlobalObject, JSValue};
+    use crate::generated_classes::RedisClient as Gen;
+
     pub struct JSRedisClient;
-    #[allow(non_upper_case_globals, dead_code)]
+
+    #[allow(non_snake_case)]
     impl JSRedisClient {
-        pub const SubscriptionCallbackMap: u32 = 0;
-        pub fn gc_set(_slot: u32, _this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
-        }
-        pub fn gc_get(_slot: u32, _this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
-        }
-        pub fn hello_get_cached(_this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
-        }
-        pub fn hello_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
-        }
-        pub fn connection_promise_get_cached(_this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
-        }
-        pub fn connection_promise_set_cached(
-            _this: JSValue,
-            _global: &JSGlobalObject,
-            _val: JSValue,
+        #[inline]
+        pub fn subscriptionCallbackMap_set_cached(
+            this: JSValue,
+            global: &JSGlobalObject,
+            val: JSValue,
         ) {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
+            Gen::subscriptionCallbackMap_set_cached(this, global, val)
         }
-        pub fn onconnect_get_cached(_this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        #[inline]
+        pub fn subscriptionCallbackMap_get_cached(this: JSValue) -> Option<JSValue> {
+            Gen::subscriptionCallbackMap_get_cached(this)
         }
-        pub fn onconnect_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        #[inline]
+        pub fn hello_get_cached(this: JSValue) -> Option<JSValue> {
+            Gen::hello_get_cached(this)
         }
-        pub fn onclose_get_cached(_this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        #[inline]
+        pub fn hello_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
+            Gen::hello_set_cached(this, global, val)
         }
-        pub fn onclose_set_cached(_this: JSValue, _global: &JSGlobalObject, _val: JSValue) {
-            todo!("blocked_on: jsc::codegen::JSRedisClient")
+        #[inline]
+        pub fn connection_promise_get_cached(this: JSValue) -> Option<JSValue> {
+            Gen::connectionPromise_get_cached(this)
+        }
+        #[inline]
+        pub fn connection_promise_set_cached(
+            this: JSValue,
+            global: &JSGlobalObject,
+            val: JSValue,
+        ) {
+            Gen::connectionPromise_set_cached(this, global, val)
+        }
+        #[inline]
+        pub fn onconnect_get_cached(this: JSValue) -> Option<JSValue> {
+            Gen::onconnect_get_cached(this)
+        }
+        #[inline]
+        pub fn onconnect_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
+            Gen::onconnect_set_cached(this, global, val)
+        }
+        #[inline]
+        pub fn onclose_get_cached(this: JSValue) -> Option<JSValue> {
+            Gen::onclose_get_cached(this)
+        }
+        #[inline]
+        pub fn onclose_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
+            Gen::onclose_set_cached(this, global, val)
         }
     }
 }
@@ -135,8 +152,7 @@ impl SubscriptionCtx {
         let callback_map = JSMap::create(valkey_parent.global_object);
         let parent_this = valkey_parent.this_value.try_get().expect("unreachable");
 
-        ParentJS::gc_set(
-            ParentJS::SubscriptionCallbackMap,
+        ParentJS::subscriptionCallbackMap_set_cached(
             parent_this,
             valkey_parent.global_object,
             callback_map,
@@ -161,7 +177,7 @@ impl SubscriptionCtx {
     fn subscription_callback_map(&mut self) -> &mut JSMap {
         let parent_this = self.parent().this_value.try_get().expect("unreachable");
         let value_js =
-            ParentJS::gc_get(ParentJS::SubscriptionCallbackMap, parent_this).unwrap();
+            ParentJS::subscriptionCallbackMap_get_cached(parent_this).unwrap();
         // SAFETY: `from_js` returns a non-null heap cell when the slot was set
         // by `init()`; treated as `&mut` for the duration of the call (single
         // JS thread).
@@ -377,8 +393,7 @@ impl SubscriptionCtx {
         }
 
         if let Some(parent_this) = self.parent().this_value.try_get() {
-            ParentJS::gc_set(
-                ParentJS::SubscriptionCallbackMap,
+            ParentJS::subscriptionCallbackMap_set_cached(
                 parent_this,
                 global_object,
                 JSValue::UNDEFINED,
@@ -411,8 +426,7 @@ pub struct JSValkeyClient {
 }
 
 // Codegen alias: `pub const js = jsc.Codegen.JSRedisClient;`
-// TODO(b2-blocked): swap to `jsc::codegen::JSRedisClient` once generate-classes.ts emits .rs.
-pub type Js = codegen_stub::JSRedisClient;
+pub type Js = codegen_js::JSRedisClient;
 // `toJS`/`fromJS`/`fromJSDirect` are provided by the hand-rolled `JsClass` impl in mod.rs.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
@@ -446,14 +460,10 @@ impl JSValkeyClient {
         Box::into_raw(Box::new(init))
     }
 
-    /// `self.client.vm` is type-erased to `*mut c_void` in the Phase-A struct;
-    /// recover the typed `&mut VirtualMachine` here for method calls.
+    /// Convenience accessor for the per-thread JS VM stored on `client`.
     #[inline]
-    fn vm(&self) -> &'static mut VirtualMachine {
-        // SAFETY: `vm` was stored via `global_object.bun_vm().cast()` in
-        // `create_no_js_no_pubsub` and is the per-thread JS VM, alive for the
-        // process lifetime.
-        unsafe { &mut *self.client.vm.cast::<VirtualMachine>() }
+    fn vm(&self) -> &'static VirtualMachine {
+        self.client.vm
     }
 
     // Factory function to create a new Valkey client from JS
@@ -478,9 +488,11 @@ impl JSValkeyClient {
         // (Phase A models it as `&'static`).
         let global_object: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
-        let vm = global_object.bun_vm();
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        let vm_ref = unsafe { &mut *vm };
+        // SAFETY: the JS VM is process-lifetime; widen the borrow so it can be
+        // stored on `ValkeyClient.vm` (`&'static VirtualMachine`).
+        let vm: &'static VirtualMachine =
+            unsafe { &*(global_object.bun_vm() as *const VirtualMachine) };
+        let vm_ref = vm;
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(global_object)?
@@ -679,7 +691,7 @@ impl JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm: vm.cast(),
+                vm,
                 address: match uri {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
@@ -716,7 +728,7 @@ impl JSValkeyClient {
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 retry_attempts: 0,
-                auto_flusher: (),
+                auto_flusher: Default::default(),
             },
             global_object,
             this_value: JsRef::empty(),
@@ -758,7 +770,9 @@ impl JSValkeyClient {
         // SAFETY: see `create_no_js_no_pubsub`.
         let global_object: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
-        let vm = global_object.bun_vm();
+        // SAFETY: process-lifetime VM; widen for `ValkeyClient.vm`.
+        let vm: &'static VirtualMachine =
+            unsafe { &*(global_object.bun_vm() as *const VirtualMachine) };
 
         // Make a copy of connection_strings to avoid double-free
         let connection_strings_copy: Box<[u8]> =
@@ -794,7 +808,7 @@ impl JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: subscription_ctx_uninit,
             client: valkey::ValkeyClient {
-                vm: vm.cast(),
+                vm,
                 address: match self.client.protocol {
                     valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                         valkey::Address::Unix(hostname)
@@ -848,7 +862,7 @@ impl JSValkeyClient {
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
                 retry_attempts: 0,
-                auto_flusher: (),
+                auto_flusher: Default::default(),
             },
             global_object,
             this_value: JsRef::empty(),

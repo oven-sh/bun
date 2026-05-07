@@ -3460,9 +3460,13 @@ impl Blob {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
-        let arguments = &arguments_.ptr[..arguments_.len];
+        // Zig indexes the fixed-size buffer (`arguments.ptr[0]`), not the
+        // len-bounded view, so the slot reads `.zero` when no arg was passed
+        // instead of panicking on `arguments[0]`.
+        let arg0 = arguments_.ptr[0];
+        let has_args = arguments_.len > 0;
 
-        if !arguments[0].is_empty_or_undefined_or_null() && !arguments[0].is_object() {
+        if !arg0.is_empty_or_undefined_or_null() && !arg0.is_object() {
             return Err(global_this.throw_invalid_arguments("options must be an object or undefined"));
         }
 
@@ -3470,16 +3474,176 @@ impl Blob {
 
         let store = self.store.as_ref().unwrap().clone();
         if self.is_s3() {
-            // TODO(port): full S3 writableStream branch (Zig lines 2812-2888).
-            // Reads options.type/contentDisposition/contentEncoding, then calls S3::writable_stream.
-            return Err(jsc::JsError::Thrown); // placeholder
+            let s3 = self.store.as_ref().unwrap().data.as_s3();
+            // PORT NOTE: reshaped for borrowck — `s3.path()` borrows `self.store`;
+            // `content_type_or_mime_type()` re-borrows `self`. Snapshot path bytes
+            // up front (the `s3` borrow stays live for `get_credentials*`).
+            let path = s3.path().to_vec();
+            // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
+            // is the process-singleton dotenv loader, never null once init'd.
+            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
+                (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+            };
+            let proxy = proxy_url.as_ref().map(|p| p.href);
+
+            if has_args && arg0.is_object() {
+                let options = arg0;
+                if let Some(content_type) = options.get_truthy(global_this, "type")? {
+                    // override the content type
+                    if !content_type.is_string() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            "write", "options.type", "string",
+                        ));
+                    }
+                    let content_type_str = content_type.to_slice(global_this)?;
+                    let slice = content_type_str.slice();
+                    if strings::is_all_ascii(slice) {
+                        if self.content_type_allocated {
+                            // SAFETY: `content_type_allocated` ⇒ the bytes were
+                            // a leaked `Box<[u8]>` (or default-allocator buf).
+                            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
+                            self.content_type_allocated = false;
+                        }
+                        self.content_type_was_set = true;
+                        // SAFETY: see other `mime_type` call sites.
+                        if let Some(mime) = unsafe { (*global_this.bun_vm()).mime_type(slice) } {
+                            self.content_type = mime.value.as_ref() as *const [u8];
+                        } else {
+                            let mut buf = vec![0u8; slice.len()];
+                            strings::copy_lowercase(slice, &mut buf);
+                            self.content_type = Box::into_raw(buf.into_boxed_slice());
+                            self.content_type_allocated = true;
+                        }
+                    }
+                }
+
+                let content_disposition_str: Option<ZigStringSlice> =
+                    match options.get_truthy(global_this, "contentDisposition")? {
+                        Some(v) if !v.is_string() => {
+                            return Err(global_this.throw_invalid_argument_type(
+                                "write", "options.contentDisposition", "string",
+                            ));
+                        }
+                        Some(v) => Some(v.to_slice(global_this)?),
+                        None => None,
+                    };
+                let content_encoding_str: Option<ZigStringSlice> =
+                    match options.get_truthy(global_this, "contentEncoding")? {
+                        Some(v) if !v.is_string() => {
+                            return Err(global_this.throw_invalid_argument_type(
+                                "write", "options.contentEncoding", "string",
+                            ));
+                        }
+                        Some(v) => Some(v.to_slice(global_this)?),
+                        None => None,
+                    };
+
+                let credentials_with_options =
+                    s3.get_credentials_with_options(Some(options), global_this)?;
+                // `defer credentialsWithOptions.deinit()` → Drop handles slices.
+                let mut creds = credentials_with_options.credentials.dupe();
+                return crate::webcore::s3::client::writable_stream(
+                    &mut creds,
+                    &path,
+                    global_this,
+                    credentials_with_options.options,
+                    self.content_type_or_mime_type(),
+                    content_disposition_str.as_ref().map(|s| s.slice()),
+                    content_encoding_str.as_ref().map(|s| s.slice()),
+                    proxy,
+                    credentials_with_options.storage_class,
+                    credentials_with_options.request_payer,
+                );
+            }
+
+            let mut creds = s3.get_credentials().dupe();
+            let request_payer = s3.request_payer;
+            return crate::webcore::s3::client::writable_stream(
+                &mut creds,
+                &path,
+                global_this,
+                Default::default(),
+                self.content_type_or_mime_type(),
+                None,
+                None,
+                proxy,
+                None,
+                request_payer,
+            );
         }
 
-        // TODO(port): Windows-specific FileSink open path (Zig lines 2890-2952).
+        #[cfg(windows)]
+        {
+            use bun_io::pipe_writer::WindowsPipeWriter as _;
+
+            let pathlike = &store.data.as_file().pathlike;
+            // SAFETY: bun_vm() never returns null for a Bun-owned global.
+            let vm = unsafe { &mut *global_this.bun_vm() };
+            let fd: Fd = match pathlike {
+                PathOrFileDescriptor::Fd(fd) => *fd,
+                PathOrFileDescriptor::Path(p) => {
+                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    match bun_sys::open(
+                        p.slice_z(&mut file_path),
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        WRITE_PERMISSIONS,
+                    ) {
+                        bun_sys::Result::Ok(result) => result,
+                        bun_sys::Result::Err(err) => {
+                            return Err(global_this
+                                .throw_value(err.with_path(p.slice()).to_js(global_this)));
+                        }
+                    }
+                }
+            };
+
+            let is_stdout_or_stderr = 'brk: {
+                if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
+                    break 'brk false;
+                }
+                if let Some(rare) = vm.rare_data.as_ref() {
+                    let store_ptr = store.as_ptr().cast::<c_void>();
+                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                }
+                matches!(
+                    fd.stdio_tag(),
+                    Some(bun_sys::StdioTag::StdOut) | Some(bun_sys::StdioTag::StdErr)
+                )
+            };
+
+            // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
+            let sink = webcore::FileSink::init(
+                fd,
+                jsc::EventLoopHandle::init(
+                    unsafe { (*(*self.global_this).bun_vm()).event_loop() } as *mut (),
+                ),
+            );
+            // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
+            let sink_mut = unsafe { &mut *sink };
+            sink_mut.writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
+
+            let start_result = if is_stdout_or_stderr {
+                sink_mut.writer.start_sync(fd, false)
+            } else {
+                sink_mut.writer.start(fd, true)
+            };
+            if let bun_sys::Result::Err(err) = start_result {
+                // SAFETY: release the +1 ref from `init`.
+                unsafe { webcore::FileSink::deref(sink) };
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+
+            return Ok(sink_mut.to_js(global_this));
+        }
 
         #[cfg(not(windows))]
         {
-            let mut sink = webcore::FileSink::init(
+            let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
                 // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                 jsc::EventLoopHandle::init(
@@ -3496,32 +3660,31 @@ impl Blob {
 
             // PORT NOTE: `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
-            let mut stream_start = if !arguments.is_empty() && arguments[0].is_object() {
-                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arguments[0])?
+            let mut stream_start = if has_args && arg0.is_object() {
+                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arg0)?
             } else {
-                streams::Start::FileSink(streams::FileSinkOptions { chunk_size: 0, input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID) })
+                streams::Start::FileSink(streams::FileSinkOptions {
+                    chunk_size: 0,
+                    input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+                })
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
                 opts.input_path = input_path;
             } else {
-                stream_start = streams::Start::FileSink(streams::FileSinkOptions { chunk_size: 0, input_path });
+                stream_start =
+                    streams::Start::FileSink(streams::FileSinkOptions { chunk_size: 0, input_path });
             }
 
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
-            match unsafe { (*sink).start(stream_start) } {
-                bun_sys::Result::Err(err) => {
-                    // SAFETY: release the +1 ref from `init`.
-                    unsafe { webcore::FileSink::deref(sink) };
-                    return Err(global_this.throw_value(err.to_js(global_this)));
-                }
-                _ => {}
+            if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
+                // SAFETY: release the +1 ref from `init`.
+                unsafe { webcore::FileSink::deref(sink) };
+                return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
             // SAFETY: sink is live; `to_js` transfers ownership to the JS wrapper.
-            return Ok(unsafe { (*sink).to_js(global_this) });
+            Ok(unsafe { (*sink).to_js(global_this) })
         }
-        #[cfg(windows)]
-        unreachable!()
     }
 }
 

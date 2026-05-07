@@ -100,28 +100,36 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = Box::into_raw(result);
 
-    // PORT NOTE: Zig matched `worker.ctx.loop().*` on `EventLoopHandle::{js,mini}`.
-    // `r#loop` is currently CYCLEBREAK-erased to `Option<NonNull<()>>` (see
-    // LinkerContext.rs); until that un-erases to `bun_event_loop::EventLoopHandle`,
-    // treat the erased pointer as a `MiniEventLoop` (the CLI is the only path that
-    // reaches here without a JS VM). TODO(port): re-expand to `Js`/`Mini` match.
+    // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // SAFETY: `worker.ctx` is a live BACKREF.
     let r#loop = *unsafe { &mut *(worker.ctx as *mut BundleV2<'static>) }.r#loop();
     worker.unget();
-    if let Some(mini) = r#loop {
-        let mini = mini.cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
-        // SAFETY: erased BACKREF to a live MiniEventLoop for the bundle pass.
-        unsafe {
-            (*mini.as_ptr())
-                .enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(parse_task::Result, task),
-                );
-        }
-    } else {
+    let Some(any_loop) = r#loop else {
         // No event loop registered (e.g., synchronous CLI bundling) — run inline.
         on_complete(result);
+        return;
+    };
+    // SAFETY: BACKREF — `any_loop` outlives this parse task.
+    match unsafe { &mut *any_loop.as_ptr() } {
+        bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
+            // SAFETY: vtable populated by runtime; `owner` is a live `*mut jsc::EventLoop`.
+            unsafe {
+                (vtable.enqueue_task_concurrent)(
+                    *owner,
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        result,
+                        on_complete,
+                    ),
+                );
+            }
+        }
+        bun_event_loop::AnyEventLoop::Mini(mini) => {
+            mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                result,
+                on_complete_mini,
+                offset_of!(parse_task::Result, task),
+            );
+        }
     }
 }
 

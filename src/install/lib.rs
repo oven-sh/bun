@@ -2739,6 +2739,12 @@ impl PackageManager {
     pub registries: npm::registry::Map,
     /// Zig: `Options.publish_config`.
     pub publish_config: PublishConfigStub,
+    /// Zig: `Options.pack_destination: string = ""` — `bun pack --destination`.
+    pub pack_destination: &'static [u8],
+    /// Zig: `Options.pack_filename: string = ""` — `bun pack --filename`.
+    pub pack_filename: &'static [u8],
+    /// Zig: `Options.pack_gzip_level: ?string = null` — `bun pack --gzip-level`.
+    pub pack_gzip_level: Option<&'static [u8]>,
     /// Zig: `Options.do: Do = .{}`.
     pub do_: PackageManagerDoStub,
     /// Zig: `Options.node_linker: NodeLinker = .auto`.

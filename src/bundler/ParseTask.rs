@@ -2519,16 +2519,19 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     };
     // SAFETY: BACKREF — `any_loop` outlives this parse task.
     match unsafe { &mut *any_loop.as_ptr() } {
-        bun_event_loop::AnyEventLoop::AnyEventLoop::Js { owner, vtable } => {
+        bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
             // SAFETY: vtable populated by runtime; `owner` is a live `*mut jsc::EventLoop`.
             unsafe {
                 (vtable.enqueue_task_concurrent)(
                     *owner,
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result),
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        result,
+                        on_complete,
+                    ),
                 );
             }
         }
-        bun_event_loop::AnyEventLoop::AnyEventLoop::Mini(mini) => {
+        bun_event_loop::AnyEventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
                 result,
                 on_complete_mini,

@@ -1401,42 +1401,14 @@ pub mod js_bundler {
 
     bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
 
-    /// JS-thread plumbing for `Load` (upstream owns `init`/`dispatch`/`bake_graph`).
+    /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
+    /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
+    /// returns a `JSValue` and throws on the `JSGlobalObject`.
     pub trait LoadJsExt {
-        fn dispatch_js(&mut self);
-        fn run_on_js_thread(&mut self);
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
     impl LoadJsExt for Load {
-        fn dispatch_js(&mut self) {
-            self.js_task = AnyTask {
-                ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
-                callback: load_run_on_js_thread_wrap,
-            };
-            let concurrent_task = ConcurrentTask::create(self.js_task.task());
-            // SAFETY: bv2 backref is valid
-            unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task) };
-        }
-
-        fn run_on_js_thread(&mut self) {
-            let is_server_side = self.bake_graph() != bun_bundler::bake_types::Graph::Client;
-            let default_loader = self.default_loader;
-            // PORT NOTE: reshaped for borrowck — capture the erased self pointer
-            // before borrowing fields immutably for the FFI call.
-            let self_ptr = self as *mut Self as *mut c_void;
-            // SAFETY: bv2 backref is valid; plugins is Some
-            unsafe {
-                (*bv2_plugin(self.bv2)).match_on_load(
-                    &self.path,
-                    &self.namespace,
-                    self_ptr,
-                    default_loader,
-                    is_server_side,
-                );
-            }
-        }
-
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             if self.called_defer {
                 return Err(global_object
@@ -1451,46 +1423,38 @@ pub mod js_bundler {
                 bstr::BStr::new(&self.path)
             );
 
-            // Notify the *bundler thread* about the deferral. This must land
-            // on `parse_task.ctx.loop()` (the loop running BundleV2), which is
-            // distinct from `js_loop_for_plugins()` (the plugin host's JS loop)
-            // when `Bun.build` runs the bundler on its own Mini event loop.
-            //
-            // `linker.r#loop` is currently erased to `Option<NonNull<()>>`, so
-            // the Js/Mini discriminant is recovered from `completion.is_some()`:
-            // `Bun.build` always runs the bundle thread under a Mini loop and
-            // sets `completion`; bake/DevServer drives BundleV2 on the JS loop
-            // and does not set `completion`.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs.
+            // Notify the *bundler thread* about the deferral. This will
+            // decrement the pending item counter and increment the deferred
+            // counter. Must land on `parse_task.ctx.loop()` (the loop running
+            // BundleV2), which is distinct from `js_loop_for_plugins()` (the
+            // plugin host's JS loop) when `Bun.build` runs the bundler on its
+            // own Mini event loop.
+            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
+            // points at a live `AnyEventLoop` owned by the bundle thread /
+            // runtime for the duration of the bundle.
             unsafe {
                 let ctx = (*self.parse_task).ctx;
-                if (*ctx).completion.is_some() {
-                    // .mini arm — `mini.enqueueTaskConcurrentWithExtraCtx(
-                    //   Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`.
-                    // The bundle thread for `Bun.build` runs a `MiniEventLoop`
-                    // stored erased in `linker.r#loop` (set by `BundleThread::run`,
-                    // same convention `ParseTask::callback` relies on).
-                    let mini = (*ctx)
-                        .r#loop()
-                        .expect("BundleThread sets linker.loop before parse begins")
-                        .cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
-                    // SAFETY: erased BACKREF to a live `MiniEventLoop` for the
-                    // duration of the bundle pass; `Load.task: [usize; 4]` is
-                    // reserved storage for `AnyTaskWithExtraContext`.
-                    (*mini.as_ptr())
-                        .enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                let any_loop = (*ctx)
+                    .r#loop()
+                    .expect("BundleV2.linker.loop must be set before plugins run");
+                match &mut *any_loop.as_ptr() {
+                    bun_event_loop::AnyEventLoop::AnyEventLoop::Js { owner, vtable } => {
+                        // SAFETY: vtable populated by runtime; `owner` is the
+                        // erased `*mut jsc::EventLoop`.
+                        (vtable.enqueue_task_concurrent)(
+                            *owner,
+                            ConcurrentTask::from_callback(ctx, on_notify_defer_raw),
+                        );
+                    }
+                    bun_event_loop::AnyEventLoop::AnyEventLoop::Mini(mini) => {
+                        // `mini.enqueueTaskConcurrentWithExtraCtx(
+                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
+                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             self as *mut Load,
                             on_notify_defer_mini_wrap,
                             core::mem::offset_of!(Load, task),
                         );
-                } else {
-                    // .js arm — bake/DevServer; the bundle loop *is* the plugin
-                    // host's JS loop, so `enqueue_on_js_loop_for_plugins` lands on
-                    // the right thread.
-                    (*ctx).enqueue_on_js_loop_for_plugins(ConcurrentTask::from_callback(
-                        ctx,
-                        on_notify_defer_raw,
-                    ));
+                    }
                 }
 
                 Ok((*bv2_plugin(self.bv2)).append_defer_promise())
@@ -1509,12 +1473,6 @@ pub mod js_bundler {
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
-    }
-
-    fn load_run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
-        // SAFETY: ctx was stored from `*mut Load` in `dispatch_js`.
-        unsafe { &mut *(ctx as *mut Load) }.run_on_js_thread();
-        Ok(())
     }
 
     // TODO(port): move to runtime_sys
@@ -1616,22 +1574,6 @@ pub mod js_bundler {
             rejection: JSValue,
         ) -> JSValue;
         fn JSBundlerPlugin__globalObject(plugin: *mut Plugin) -> *mut JSGlobalObject;
-        fn JSBundlerPlugin__matchOnLoad(
-            plugin: *mut Plugin,
-            namespace_string: *const BunString,
-            path: *const BunString,
-            context: *mut c_void,
-            default_loader: u8,
-            is_server_side: bool,
-        );
-        fn JSBundlerPlugin__matchOnResolve(
-            plugin: *mut Plugin,
-            namespace_string: *const BunString,
-            path: *const BunString,
-            importer: *const BunString,
-            context: *mut c_void,
-            kind: u8,
-        );
         fn JSBundlerPlugin__drainDeferred(plugin: *mut Plugin, rejected: bool);
         fn JSBundlerPlugin__appendDeferPromise(plugin: *mut Plugin) -> JSValue;
         fn JSBundlerPlugin__setConfig(plugin: *mut Plugin, config: *mut c_void);
@@ -1671,22 +1613,6 @@ pub mod js_bundler {
         unsafe fn destroy(this: *mut Plugin);
         fn global_object(&mut self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
-        fn match_on_load(
-            &mut self,
-            path: &[u8],
-            namespace: &[u8],
-            context: *mut c_void,
-            default_loader: options::Loader,
-            is_server_side: bool,
-        );
-        fn match_on_resolve(
-            &mut self,
-            path: &[u8],
-            namespace: &[u8],
-            importer: &[u8],
-            context: *mut c_void,
-            import_record_kind: ImportKind,
-        );
         fn add_plugin(
             &mut self,
             object: JSValue,
@@ -1793,72 +1719,6 @@ pub mod js_bundler {
         fn append_defer_promise(&mut self) -> JSValue {
             // SAFETY: self is valid opaque FFI handle
             unsafe { JSBundlerPlugin__appendDeferPromise(self) }
-        }
-
-        fn match_on_load(
-            &mut self,
-            path: &[u8],
-            namespace: &[u8],
-            context: *mut c_void,
-            default_loader: options::Loader,
-            is_server_side: bool,
-        ) {
-            jsc::mark_binding();
-            let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
-            bun_output::scoped_log!(
-                Transpiler,
-                "JSBundler.matchOnLoad(0x{:x}, {}, {})",
-                self as *const _ as usize,
-                bstr::BStr::new(namespace),
-                bstr::BStr::new(path)
-            );
-            let namespace_string = if namespace.is_empty() {
-                BunString::static_(b"file")
-            } else {
-                BunString::clone_utf8(namespace)
-            };
-            let path_string = BunString::clone_utf8(path);
-            // SAFETY: self is valid opaque FFI handle
-            unsafe {
-                JSBundlerPlugin__matchOnLoad(
-                    self,
-                    &namespace_string,
-                    &path_string,
-                    context,
-                    default_loader as u8,
-                    is_server_side,
-                );
-            }
-        }
-
-        fn match_on_resolve(
-            &mut self,
-            path: &[u8],
-            namespace: &[u8],
-            importer: &[u8],
-            context: *mut c_void,
-            import_record_kind: ImportKind,
-        ) {
-            jsc::mark_binding();
-            let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
-            let namespace_string = if namespace == b"file" {
-                BunString::empty()
-            } else {
-                BunString::clone_utf8(namespace)
-            };
-            let path_string = BunString::clone_utf8(path);
-            let importer_string = BunString::clone_utf8(importer);
-            // SAFETY: self is valid opaque FFI handle
-            unsafe {
-                JSBundlerPlugin__matchOnResolve(
-                    self,
-                    &namespace_string,
-                    &path_string,
-                    &importer_string,
-                    context,
-                    import_record_kind as u8,
-                );
-            }
         }
 
         fn add_plugin(

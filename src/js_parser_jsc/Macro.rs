@@ -748,9 +748,8 @@ impl<'a> Run<'a> {
 
                     // PORT NOTE: `EString::init` lifetime-erases its borrow
                     // (arena-owned per the Phase-A `Str` convention). Copy the
-                    // key into `self.bump` so it outlives the temporary
-                    // `to_owned_slice()` Vec — the previous `&temp` form was a
-                    // use-after-free once the Vec dropped.
+                    // key into the `MacroContext` bump arena so it outlives the
+                    // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] =
                         self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     bun_core::handle_oom(properties.append(G::Property {
@@ -822,7 +821,8 @@ impl<'a> Run<'a> {
                 utf16_bytes.truncate(encoded_bytes / 2);
                 // PORT NOTE: `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the Phase-A `Str` convention). Copy into
-                // `self.bump` — the Zig spec used `this.allocator.alloc`.
+                // the `MacroContext` bump arena — Zig used `this.allocator`
+                // (`default_allocator`, process-lifetime).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::init(E::EString::init_utf16(arena_slice), self.caller.loc));
             }

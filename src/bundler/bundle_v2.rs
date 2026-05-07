@@ -1025,8 +1025,8 @@ pub mod api {
                 let task =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
                 // SAFETY: `bv2` is a valid backref set by `init`; plugins is
-                // Some (asserted by `js_loop_for_plugins`).
-                unsafe { (*self.bv2).js_loop_for_plugins().enqueue_task_concurrent(task) };
+                // Some (asserted by `enqueue_on_js_loop_for_plugins`).
+                unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
             }
             pub fn run_on_js_thread(&mut self) {
                 let kind = self.import_record.kind;
@@ -1131,9 +1131,9 @@ pub mod api {
                 let concurrent_task =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
                 // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
-                // by `js_loop_for_plugins`).
+                // by `enqueue_on_js_loop_for_plugins`).
                 unsafe {
-                    (*self.bv2).js_loop_for_plugins().enqueue_task_concurrent(concurrent_task);
+                    (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
                 }
             }
             pub fn run_on_js_thread(&mut self) {

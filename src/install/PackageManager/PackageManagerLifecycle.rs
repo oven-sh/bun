@@ -456,6 +456,12 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
+        // Zig: `try script_env.createNullDelimitedEnvMap(this.allocator)` —
+        // allocated with the manager-lifetime allocator and never freed in this
+        // scope; ownership transfers to `LifecycleScriptSubprocess`, which
+        // re-uses it across every `spawn_next_script` in the chain. Move the
+        // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
+        // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 
         let shell_bin: Option<&ZStr> = 'shell_bin: {
@@ -487,7 +493,7 @@ impl PackageManager {
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
             list,
-            envp.as_ptr() as *const *const core::ffi::c_char,
+            envp,
             shell_bin,
             optional,
             log_level,

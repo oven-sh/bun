@@ -1401,6 +1401,32 @@ macro_rules! from_any_via_from {
 }
 from_any_via_from!(bool, i32, u32, f64, u64, usize, JSValue);
 
+// Zig: `if (bun.trait.isNumber(Type)) return jsNumberWithType(Type, value)` —
+// small ints widen to i32 → JSValue.
+impl FromAny for u8 {
+    #[inline]
+    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_number_from_int32(self as i32))
+    }
+}
+impl FromAny for u16 {
+    #[inline]
+    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_number_from_int32(self as i32))
+    }
+}
+impl FromAny for &[u16] {
+    /// Zig: `[]const u16` → `createEmptyArray` + `putIndex(.jsNumber(item))`
+    /// (JSValue.zig:2390 — the inline numeric-slice arm).
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let array = JSValue::create_empty_array(global, self.len())?;
+        for (i, &item) in self.iter().enumerate() {
+            array.put_index(global, i as u32, JSValue::js_number_from_int32(item as i32))?;
+        }
+        Ok(array)
+    }
+}
+
 impl FromAny for () {
     #[inline]
     fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {

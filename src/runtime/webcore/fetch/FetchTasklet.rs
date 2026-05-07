@@ -49,7 +49,7 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
-pub type ResumableSink = ResumableFetchSink<'static>;
+pub type ResumableSink = ResumableFetchSink;
 
 pub struct FetchTasklet {
     // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +

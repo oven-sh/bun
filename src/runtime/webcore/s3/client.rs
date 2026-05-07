@@ -555,7 +555,7 @@ pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
     pub ref_count: core::cell::Cell<u32>,
 
-    pub sink: Option<*mut ResumableS3UploadSink<'static>>,
+    pub sink: Option<*mut ResumableS3UploadSink>,
     pub task: *mut MultiPartUpload,
     pub end_promise: bun_jsc::JSPromiseStrong,
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
@@ -572,7 +572,7 @@ pub type S3UploadStreamWrapperRef = *mut S3UploadStreamWrapper;
 
 // Zig: `pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;`
 // Inherent associated types are unstable; expose as a module-level alias instead.
-pub type ResumableSink = ResumableS3UploadSink<'static>;
+pub type ResumableSink = ResumableS3UploadSink;
 
 impl S3UploadStreamWrapper {
     /// Intrusive `ref()` — bumps the ref_count.

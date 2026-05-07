@@ -92,30 +92,6 @@ use self::fetch_tasklet::{HTTPRequestBody, FetchOptions};
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `JSGlobalObject::toTypeError` — produce (not throw) a TypeError JSValue
-/// with an `ErrorCode`. Upstream lives in a sibling-module trait
-/// (`h2_frame_parser_body::H2GlobalErrExt`); duplicated locally to avoid the
-/// cross-module reach-through.
-trait FetchGlobalErrExt {
-    fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue;
-    fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
-    fn throw_not_enough_arguments(&self, name: &'static str, expected: usize, got: usize) -> jsc::JsError;
-}
-impl FetchGlobalErrExt for JSGlobalObject {
-    fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue {
-        code.fmt(self, format_args!("{msg}"))
-    }
-    fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue {
-        code.fmt(self, args)
-    }
-    fn throw_not_enough_arguments(&self, name: &'static str, expected: usize, got: usize) -> jsc::JsError {
-        self.throw_invalid_arguments(format_args!(
-            "{name} requires at least {expected} argument{}, but only {got} were passed",
-            if expected == 1 { "" } else { "s" }
-        ))
-    }
-}
-
 /// `bun.String.hasPrefixComptime` — upstream `bun_str::String` only exposes
 /// `eql_comptime`; prefix matching is in `bun_str::strings::has_prefix_comptime`
 /// (free fn over `&[u8]`). Bridge via the encoding-aware byte view.

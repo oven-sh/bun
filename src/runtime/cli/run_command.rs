@@ -225,135 +225,19 @@ impl RunCommand {
         })
     }
 
-    // Look for invocations of any:
-    // - yarn run
-    // - yarn $cmdName
-    // - pnpm run
-    // - npm run
-    // Replace them with "bun run"
+    // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
+    // `npm run` / `npx` / `pnpx` and replace them with `bun run` / `bun x`.
+    //
+    // MOVE_DOWN(b0): canonical impl lives in `bun_install` (the lower crate)
+    // so lifecycle scripts can call it without a bun_runtime → bun_install
+    // → bun_runtime cycle. This is a thin re-export for `bun run` /
+    // filter_run / multi_run callers.
+    #[inline]
     pub fn replace_package_manager_run(
         copy_script: &mut Vec<u8>,
         script: &[u8],
     ) -> Result<(), bun_core::Error> {
-        let mut entry_i: usize = 0;
-        let mut delimiter: u8 = b' ';
-
-        while entry_i < script.len() {
-            let start = entry_i;
-
-            match script[entry_i] {
-                b'y' => {
-                    if delimiter > 0 {
-                        let remainder = &script[start..];
-                        if remainder.starts_with(b"yarn ") {
-                            let next = &remainder[b"yarn ".len()..];
-                            // We have yarn
-                            // Find the next space
-                            if let Some(space) = strings::index_of_char(next, b' ') {
-                                let yarn_cmd = &next[..space as usize];
-                                if yarn_cmd == b"run" {
-                                    copy_script.extend_from_slice(Self::BUN_RUN.as_bytes());
-                                    entry_i += b"yarn run".len();
-                                    continue;
-                                }
-
-                                // yarn npm is a yarn 2 subcommand
-                                if yarn_cmd == b"npm" {
-                                    entry_i += b"yarn npm ".len();
-                                    copy_script.extend_from_slice(b"yarn npm ");
-                                    continue;
-                                }
-
-                                if yarn_cmd.starts_with(b"-") {
-                                    // Skip the rest of the command
-                                    entry_i += b"yarn ".len() + yarn_cmd.len();
-                                    copy_script.extend_from_slice(b"yarn ");
-                                    copy_script.extend_from_slice(yarn_cmd);
-                                    continue;
-                                }
-
-                                // implicit yarn commands
-                                if !crate::cli::list_of_yarn_commands::ALL_YARN_COMMANDS
-                                    .contains(yarn_cmd)
-                                {
-                                    copy_script.extend_from_slice(Self::BUN_RUN.as_bytes());
-                                    copy_script.push(b' ');
-                                    copy_script.extend_from_slice(yarn_cmd);
-                                    entry_i += b"yarn ".len() + yarn_cmd.len();
-                                    delimiter = 0;
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    delimiter = 0;
-                }
-
-                b' ' => delimiter = b' ',
-                b'"' => delimiter = b'"',
-                b'\'' => delimiter = b'\'',
-
-                b'n' => {
-                    if delimiter > 0 {
-                        if script[start..].starts_with(b"npm run ") {
-                            copy_script.extend_from_slice(
-                                const_format::concatcp!(RunCommand::BUN_RUN, " ").as_bytes(),
-                            );
-                            entry_i += b"npm run ".len();
-                            delimiter = 0;
-                            continue;
-                        }
-
-                        if script[start..].starts_with(b"npx ") {
-                            copy_script.extend_from_slice(
-                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
-                            );
-                            entry_i += b"npx ".len();
-                            delimiter = 0;
-                            continue;
-                        }
-                    }
-
-                    delimiter = 0;
-                }
-                b'p' => {
-                    if delimiter > 0 {
-                        if script[start..].starts_with(b"pnpm run ") {
-                            copy_script.extend_from_slice(
-                                const_format::concatcp!(RunCommand::BUN_RUN, " ").as_bytes(),
-                            );
-                            entry_i += b"pnpm run ".len();
-                            delimiter = 0;
-                            continue;
-                        }
-                        if script[start..].starts_with(b"pnpm dlx ") {
-                            copy_script.extend_from_slice(
-                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
-                            );
-                            entry_i += b"pnpm dlx ".len();
-                            delimiter = 0;
-                            continue;
-                        }
-                        if script[start..].starts_with(b"pnpx ") {
-                            copy_script.extend_from_slice(
-                                const_format::concatcp!(RunCommand::BUN_BIN_NAME, " x ").as_bytes(),
-                            );
-                            entry_i += b"pnpx ".len();
-                            delimiter = 0;
-                            continue;
-                        }
-                    }
-
-                    delimiter = 0;
-                }
-                _ => delimiter = 0,
-            }
-
-            copy_script.push(script[entry_i]);
-            entry_i += 1;
-        }
-        Ok(())
+        bun_install::lifecycle_script_runner::replace_package_manager_run(copy_script, script)
     }
 
     /// Port of `runPackageScriptForeground` (run_command.zig:209). Spawns the

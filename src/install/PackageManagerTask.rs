@@ -17,7 +17,6 @@ use crate::{
     Repository, Resolution,
 };
 
-// TODO(port): `bun.DotEnv` crate location — guessed `bun_dotenv`
 use bun_dotenv as dot_env;
 
 /// File-level struct in Zig (`@This()` == `Task`).
@@ -309,7 +308,7 @@ impl<'a> Task<'a> {
                     ) {
                         Ok(v) => v,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
+                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
@@ -321,7 +320,6 @@ impl<'a> Task<'a> {
                         }
                     };
 
-                    // TODO(port): exact enum type for `getPackageMetadata` result
                     match package_manifest {
                         npm::registry::PackageVersionResponse::Fresh(result)
                         | npm::registry::PackageVersionResponse::Cached(result) => {
@@ -373,7 +371,7 @@ impl<'a> Task<'a> {
                     let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
+                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
@@ -518,7 +516,7 @@ impl<'a> Task<'a> {
                     ) {
                         Ok(v) => v,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
+                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {

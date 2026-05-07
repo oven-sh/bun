@@ -1075,8 +1075,8 @@ pub fn migrate_npm_lockfile<'a>(
                                                         dep_resolved_sliced.slice,
                                                         tag,
                                                         &dep_resolved_sliced,
-                                                        Some(log),
-                                                        Some(manager as &mut dyn dependency::NpmAliasRegistry),
+                                                        Some(&mut *log),
+                                                        Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
                                                     ).ok_or(err!("InvalidNPMLockfile"))?;
                                                     res_version_tag = parsed.tag;
                                                     // SAFETY: tag-guarded union access
@@ -1128,10 +1128,13 @@ pub fn migrate_npm_lockfile<'a>(
                                                 .ok_or(err!("InvalidNPMLockfile"))?;
 
                                             let dep_actual_version_str = sb.append(dep_actual_version)?;
+                                            // Append the URL before slicing the version so the
+                                            // backing buffer is stable while the slice is live.
+                                            let url = sb.append(dep_resolved)?;
                                             let dep_actual_version_sliced = dep_actual_version_str.sliced(sb.bytes.as_slice());
 
                                             Resolution::init(ResTagged::Npm(VersionedURLType {
-                                                url: sb.append(dep_resolved)?,
+                                                url,
                                                 version: Semver::Version::parse(dep_actual_version_sliced).version.min(),
                                             }))
                                         }

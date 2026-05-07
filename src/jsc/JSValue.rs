@@ -1283,6 +1283,59 @@ impl<T: FromAny> FromAny for Option<T> {
     }
 }
 
+/// Dispatch trait for [`JSValue::put`]'s `key: anytype` parameter
+/// (JSValue.zig:366). Zig used `@typeInfo` to route `ZigString`/`bun.String`/
+/// `[]const u8` to the matching FFI; Rust expresses that as a trait per
+/// PORTING.md §Comptime reflection.
+pub trait PutKey {
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
+}
+impl PutKey for &bun_string::ZigString {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `global` is live; `self` borrowed for the call.
+        unsafe { JSC__JSValue__put(target, global, self, value) }
+    }
+}
+impl PutKey for bun_string::ZigString {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        (&self).put(target, global, value)
+    }
+}
+impl PutKey for &bun_string::String {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: `global` is live; `self` borrowed for the call.
+        unsafe { JSC__JSValue__putBunString(target, global, self, value) }
+    }
+}
+impl PutKey for bun_string::String {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        (&self).put(target, global, value)
+    }
+}
+impl PutKey for &[u8] {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        let zs = bun_string::ZigString::init(self);
+        (&zs).put(target, global, value)
+    }
+}
+impl<const N: usize> PutKey for &[u8; N] {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        self.as_slice().put(target, global, value)
+    }
+}
+impl PutKey for &str {
+    #[inline]
+    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        self.as_bytes().put(target, global, value)
+    }
+}
+
 /// Dispatch trait for `JSValue::coerce::<T>()`. Zig used a comptime type switch.
 pub trait CoerceTo: Sized {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<Self>;

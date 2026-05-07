@@ -3082,6 +3082,9 @@ impl VirtualMachine {
         // PORT NOTE: Zig `lock(); defer unlock()` — RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
+        // PORT NOTE: reshaped for borrowck — capture the back-pointer before
+        // `ref_strings.entry()` takes its unique borrow on `self`.
+        let self_ctx = NonNull::new((self as *mut VirtualMachine).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => {
@@ -3105,7 +3108,7 @@ impl VirtualMachine {
                     // Filled in just below — `create_external` needs the
                     // `*mut RefString` ctx pointer first.
                     impl_: core::ptr::null_mut(),
-                    ctx: NonNull::new((self as *mut VirtualMachine).cast()),
+                    ctx: self_ctx,
                     on_before_deinit: Some(VirtualMachine::clear_ref_string),
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
@@ -3548,7 +3551,8 @@ impl VirtualMachine {
 
         let mut result = ResolveFunctionResult::default();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
-        let jsc_vm = unsafe { &mut *global.bun_vm() };
+        let jsc_vm_ptr = global.bun_vm_ptr();
+        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
@@ -3581,17 +3585,25 @@ impl VirtualMachine {
         // — gated bundler fields.
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
-        // `log` cannot be left pointing at the dropped stack `log`.
-        let jsc_vm_ptr = jsc_vm as *mut VirtualMachine;
-        scopeguard::defer! {
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM (caller is on the
-            // JS thread); `old_log` outlives the VM (Box::leak in `init`).
-            let jsc_vm = unsafe { &mut *jsc_vm_ptr };
-            jsc_vm.log = Some(old_log);
-            jsc_vm.transpiler.resolver.log = unsafe { &mut *old_log.as_ptr() };
+        // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
+        // a drop guard (no captured borrows) so the unique `&mut *jsc_vm_ptr`
+        // below isn't kept alive across the closure.
+        struct RestoreLog {
+            vm: *mut VirtualMachine,
+            old_log: NonNull<logger::Log>,
         }
+        impl Drop for RestoreLog {
+            fn drop(&mut self) {
+                // SAFETY: `vm` is the live per-thread VM (caller is on the JS
+                // thread); `old_log` outlives the VM (Box::leak in `init`).
+                let jsc_vm = unsafe { &mut *self.vm };
+                jsc_vm.log = Some(self.old_log);
+                jsc_vm.transpiler.resolver.log = unsafe { &mut *self.old_log.as_ptr() };
+            }
+        }
+        let _restore = RestoreLog { vm: jsc_vm_ptr, old_log };
         // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
-        // borrow doesn't span the defer guard's drop.
+        // borrow doesn't span the guard's drop.
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
@@ -4199,7 +4211,7 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         // SAFETY: per-thread VM.
-        let jsc_vm = unsafe { &mut *global_object.bun_vm() };
+        let jsc_vm = unsafe { &mut *global_object.bun_vm_ptr() };
         let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
         JSValue::UNDEFINED
     }

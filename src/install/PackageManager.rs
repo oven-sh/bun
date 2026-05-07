@@ -1813,7 +1813,7 @@ pub fn init(
         let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
     }
-    let cpu_count = bun_core::get_thread_count();
+    let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
     let cli_network_concurrency = cli.network_concurrency;
 

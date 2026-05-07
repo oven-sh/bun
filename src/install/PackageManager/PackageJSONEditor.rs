@@ -785,7 +785,8 @@ pub fn edit(
                 while i > 0 {
                     i -= 1;
                     if matches!(deps[i].data, js_ast::ExprData::EMissing(_)) {
-                        deps[i] = Expr::init(
+                        deps[i] = Expr::allocate(
+                            arena,
                             E::EString::init(leak_dup(package_name)),
                             logger::Loc::EMPTY,
                         );
@@ -825,12 +826,14 @@ pub fn edit(
                     }
                 }
 
-                new_dependencies[k].key = Some(Expr::init(
+                new_dependencies[k].key = Some(Expr::allocate(
+                    arena,
                     E::EString::init(leak_dup(request.get_resolved_name(&manager.lockfile))),
                     logger::Loc::EMPTY,
                 ));
 
-                new_dependencies[k].value = Some(Expr::init(
+                new_dependencies[k].value = Some(Expr::allocate(
+                    arena,
                     // we set it later
                     E::EString::init(b""),
                     logger::Loc::EMPTY,

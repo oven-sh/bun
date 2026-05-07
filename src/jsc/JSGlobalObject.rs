@@ -1093,10 +1093,10 @@ impl JSGlobalObject {
         Ok(())
     }
 
-    pub fn throw_range_error<V: core::fmt::Display>(
+    pub fn throw_range_error<V: bun_fmt::OutOfRangeValue>(
         &self,
         value: V,
-        options: bun_fmt::OutOfRangeOptions,
+        options: bun_fmt::OutOfRangeOptions<'_>,
     ) -> JsError {
         self.err(
             JscError::OUT_OF_RANGE,
@@ -1373,10 +1373,19 @@ impl JSGlobalObject {
 // Nested types (moved out of `impl` since Rust impls cannot contain type defs).
 // ──────────────────────────────────────────────────────────────────────────────
 
-// `GregorianDateTime`, `BunPluginTarget`, `ValidateObjectOpts` — canonical defs
-// live at crate root (lib.rs) so `bun_jsc::BunPluginTarget` etc. resolve to one
-// type. Re-exported here for callers that path through `js_global_object::`.
-pub use crate::{BunPluginTarget, GregorianDateTime, IntegerRange, ValidateObjectOpts};
+// `GregorianDateTime` / `ValidateObjectOpts` — canonical defs live at crate root
+// (lib.rs); re-exported here for callers that path through `js_global_object::`.
+pub use crate::{GregorianDateTime, IntegerRange, ValidateObjectOpts};
+
+/// `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Canonical
+/// definition — `crate::BunPluginTarget` re-exports this.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum BunPluginTarget {
+    Bun = 0,
+    Node = 1,
+    Browser = 2,
+}
 
 /// Options for [`JSGlobalObject::throw_sys_error`].
 ///

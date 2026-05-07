@@ -1117,7 +1117,7 @@ impl Listener {
                         Err(_) => return Ok(promise_value),
                     };
                     tls_ref.socket = uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Pipe(named_pipe.cast::<c_void>()),
+                        socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                     };
                 } else {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
@@ -1185,7 +1185,7 @@ impl Listener {
                         Err(_) => return Ok(promise_value),
                     };
                     tcp_ref.socket = uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Pipe(named_pipe.cast::<c_void>()),
+                        socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                     };
                 }
                 return Ok(promise_value);

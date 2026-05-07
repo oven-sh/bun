@@ -32,8 +32,7 @@ use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
 
 // `uws::NewSocketHandler::from_duplex` (uws_sys/socket.zig:308) not yet
-// surfaced in `bun_uws` — shim it locally over the type-erased
-// `InternalSocket::UpgradedDuplex(*mut c_void)` variant.
+// surfaced in `bun_uws` — wrap the pointer in the `UpgradedDuplex` variant.
 trait SocketHandlerFromDuplex {
     fn from_duplex(duplex: &mut UpgradedDuplex) -> Self;
 }
@@ -42,7 +41,7 @@ impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
     fn from_duplex(duplex: &mut UpgradedDuplex) -> Self {
         Self {
             socket: uws::InternalSocket::UpgradedDuplex(
-                std::ptr::from_mut::<UpgradedDuplex>(duplex).cast::<c_void>(),
+                std::ptr::from_mut::<UpgradedDuplex>(duplex).cast(),
             ),
         }
     }
@@ -3279,13 +3278,10 @@ pub enum EventState {
 }
 
 impl DuplexUpgradeContext {
-    /// Local shim: `bun_uws::NewSocketHandler` has no `from_duplex` (the
-    /// `UpgradedDuplex` type is higher-tier and type-erased there). Wrap the
-    /// pointer in the `InternalSocket::UpgradedDuplex` variant.
     #[inline(always)]
     fn duplex_socket(&mut self) -> SocketHandler<true> {
         SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
-            (&raw mut self.upgrade).cast::<c_void>(),
+            (&raw mut self.upgrade).cast(),
         ))
     }
 

@@ -1223,7 +1223,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to open cache directory for copyfile\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path((&dest_subpath).slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }
@@ -1250,7 +1250,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path(file_copier.dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }
@@ -1325,13 +1325,17 @@ impl Task {
                             installer.append_store_path(&mut dep_store_path, dep.entry_id);
                         }
 
+                        // PORT NOTE: reshaped for borrowck — Zig's
+                        // `const dest_save = dest.save(); defer dest_save.restore();`
+                        // can't coexist with `dest.undo()/dest.relative()` because
+                        // the `ResetScope` guard holds `&mut dest`. Capture the
+                        // length and restore manually.
+                        let dest_saved_len = dest.len();
                         let target = {
-                            let dest_save = dest.save();
-                            // PORT NOTE: reshaped for borrowck — restore via guard
-                            let _restore = scopeguard::guard((), |_| dest_save.restore());
                             dest.undo(1);
                             dest.relative(&dep_store_path)
                         };
+                        dest.set_length(dest_saved_len);
 
                         let mut symlinker = Symlinker {
                             dest: dest.into_sep::<{ PathSeparators::ANY }>(),
@@ -1455,7 +1459,7 @@ impl Task {
 
                     let string_buf = installer.lockfile.buffers.string_bytes.as_slice();
 
-                    let dep = installer.lockfile.buffers.dependencies[dep_id as usize];
+                    let dep = &installer.lockfile.buffers.dependencies[dep_id as usize];
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
@@ -1492,7 +1496,8 @@ impl Task {
                                 postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if pkg_res.tag == ResolutionTag::Npm {
-                                        Some(pkg_res.value.npm.version)
+                                        // SAFETY: `tag == Npm` discriminates the active variant.
+                                        Some(unsafe { pkg_res.value.npm }.version)
                                     } else {
                                         None
                                     },
@@ -1616,9 +1621,9 @@ impl Task {
 
                     let dep_name = dependencies[dep_id as usize].name.slice(string_buf);
 
-                    let abs_target_buf = paths::path_buffer_pool::get();
-                    let abs_dest_buf = paths::path_buffer_pool::get();
-                    let rel_buf = paths::path_buffer_pool::get();
+                    let mut abs_target_buf = paths::path_buffer_pool::get();
+                    let mut abs_dest_buf = paths::path_buffer_pool::get();
+                    let mut rel_buf = paths::path_buffer_pool::get();
 
                     let mut seen: StringHashMap<()> = StringHashMap::default();
 

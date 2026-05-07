@@ -239,6 +239,14 @@ impl Strong {
         }
     }
 
+    /// `JSPromise.Strong.strong.set` — re-seat the underlying handle slot to a
+    /// new promise value (used when a pending load returns a promise that
+    /// should replace the placeholder created by [`init`]).
+    #[inline]
+    pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
+        self.strong.set(global, value);
+    }
+
     /// Wrap an existing promise `JSValue` in a fresh Strong handle.
     /// PORT NOTE: Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
     /// shared); Rust `Strong` owns its slot, so a literal copy would

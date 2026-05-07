@@ -210,6 +210,16 @@ impl AuthType {
             _ => None,
         }
     }
+
+    /// Port of Zig `@tagName(auth_type)` — lower-case tag name as used by
+    /// `npm-auth-type` header in `npm.whoami`.
+    #[inline]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AuthType::Legacy => "legacy",
+            AuthType::Web => "web",
+        }
+    }
 }
 
 impl Options {

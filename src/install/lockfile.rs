@@ -1992,10 +1992,14 @@ impl Lockfile {
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
-        let npm_version = version.and_then(|v| match v.tag {
-            dependency::Tag::Npm => Some(v.value.npm.version),
+        // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
+        // list head). `version` is held by-value for the whole fn body so the
+        // borrow is sound; Zig's by-value copy is replaced with a `&Group`.
+        let npm_version = match &version {
+            // SAFETY: tag checked == .npm; `npm` is the active union field.
+            Some(v) if v.tag == dependency::Tag::Npm => Some(unsafe { &v.value.npm.version }),
             _ => None,
-        });
+        };
         let buf = self.buffers.string_bytes.as_slice();
 
         match entry {
@@ -2009,8 +2013,10 @@ impl Lockfile {
                 }
 
                 if resolutions[*id as usize].tag == ResolutionTag::Npm {
-                    if let Some(npm_v) = &npm_version {
-                        if npm_v.satisfies(resolutions[*id as usize].value.npm.version, buf, buf) {
+                    if let Some(npm_v) = npm_version {
+                        // SAFETY: tag checked == .npm above; `npm` is the active union field.
+                        let res_ver = unsafe { resolutions[*id as usize].value.npm.version };
+                        if npm_v.satisfies(res_ver, buf, buf) {
                             return Some(*id);
                         }
                     }
@@ -2027,9 +2033,10 @@ impl Lockfile {
                     }
 
                     if resolutions[id as usize].tag == ResolutionTag::Npm {
-                        if let Some(npm_v) = &npm_version {
-                            if npm_v.satisfies(resolutions[id as usize].value.npm.version, buf, buf)
-                            {
+                        if let Some(npm_v) = npm_version {
+                            // SAFETY: tag checked == .npm above; `npm` is the active union field.
+                            let res_ver = unsafe { resolutions[id as usize].value.npm.version };
+                            if npm_v.satisfies(res_ver, buf, buf) {
                                 return Some(id);
                             }
                         }
@@ -2762,7 +2769,8 @@ impl Lockfile {
                 return Ok(false);
             }
 
-            if !l_pkg_bins[l_pkg_id].eql(
+            if !crate::bin::Bin::eql(
+                &l_pkg_bins[l_pkg_id],
                 &r_pkg_bins[r_pkg_id],
                 l_string_buf,
                 l_extern_strings,
@@ -2772,7 +2780,12 @@ impl Lockfile {
                 return Ok(false);
             }
 
-            if !l_pkg_scripts[l_pkg_id].eql(&r_pkg_scripts[r_pkg_id], l_string_buf, r_string_buf) {
+            if !package::Scripts::eql(
+                &l_pkg_scripts[l_pkg_id],
+                &r_pkg_scripts[r_pkg_id],
+                l_string_buf,
+                r_string_buf,
+            ) {
                 return Ok(false);
             }
         }
@@ -2953,40 +2966,38 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
 
         match version.tag {
-            dependency::Tag::Npm => match entry {
-                PackageIndexEntry::Id(id) => {
-                    let resolutions = self.packages.items_resolution();
+            dependency::Tag::Npm => {
+                // SAFETY: tag checked == .npm above; `npm` is the active
+                // `dependency::Value` union field. Same for `Resolution.value`
+                // below — Zig reads `.npm` unconditionally on this path.
+                let npm_group = unsafe { &version.value.npm.version };
+                match entry {
+                    PackageIndexEntry::Id(id) => {
+                        let resolutions = self.packages.items_resolution();
 
-                    if cfg!(debug_assertions) {
-                        debug_assert!((*id as usize) < resolutions.len());
-                    }
-                    if version
-                        .value
-                        .npm
-                        .version
-                        .satisfies(resolutions[*id as usize].value.npm.version, buf, buf)
-                    {
-                        return Some(*id);
-                    }
-                }
-                PackageIndexEntry::Ids(ids) => {
-                    let resolutions = self.packages.items_resolution();
-
-                    for &id in ids.iter() {
                         if cfg!(debug_assertions) {
-                            debug_assert!((id as usize) < resolutions.len());
+                            debug_assert!((*id as usize) < resolutions.len());
                         }
-                        if version
-                            .value
-                            .npm
-                            .version
-                            .satisfies(resolutions[id as usize].value.npm.version, buf, buf)
-                        {
-                            return Some(id);
+                        let res_ver = unsafe { resolutions[*id as usize].value.npm.version };
+                        if npm_group.satisfies(res_ver, buf, buf) {
+                            return Some(*id);
+                        }
+                    }
+                    PackageIndexEntry::Ids(ids) => {
+                        let resolutions = self.packages.items_resolution();
+
+                        for &id in ids.iter() {
+                            if cfg!(debug_assertions) {
+                                debug_assert!((id as usize) < resolutions.len());
+                            }
+                            let res_ver = unsafe { resolutions[id as usize].value.npm.version };
+                            if npm_group.satisfies(res_ver, buf, buf) {
+                                return Some(id);
+                            }
                         }
                     }
                 }
-            },
+            }
             _ => {}
         }
 

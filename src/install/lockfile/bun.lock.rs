@@ -1776,7 +1776,6 @@ pub fn parse_into_binary_lockfile(
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
             &root_pkg_exr,
-            &mut sbuf!(lockfile),
             log,
             source,
             &mut optional_peers_buf,
@@ -1797,8 +1796,9 @@ pub fn parse_into_binary_lockfile(
         root_pkg.resolutions = PackageIDSlice::new(off, len);
 
         root_pkg.meta.id = 0;
+        let root_name_hash = root_pkg.name_hash;
         lockfile.packages.append(root_pkg)?;
-        lockfile.get_or_put_id(0, root_pkg.name_hash)?;
+        lockfile.get_or_put_id(0, root_name_hash)?;
     }
 
     let mut pkg_map: PkgMap<PackageID> = PkgMap::init();
@@ -1808,7 +1808,13 @@ pub fn parse_into_binary_lockfile(
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
-        'workspaces: for workspace_path in lockfile.workspace_paths.values() {
+        // PORT NOTE: snapshot the workspace-path handles up front so the loop
+        // body can take `&mut *lockfile` (`parse_append_dependencies`,
+        // `append_package_dedupe`) without conflicting with the
+        // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
+        let workspace_path_snapshot: Vec<String> =
+            lockfile.workspace_paths.values().copied().collect();
+        'workspaces: for workspace_path in &workspace_path_snapshot {
             for prop in workspaces_obj.data.e_object().unwrap().properties.slice() {
                 let key = prop.key.unwrap();
                 let value = prop.value.unwrap();
@@ -1823,7 +1829,8 @@ pub fn parse_into_binary_lockfile(
                     crate::resolution::TaggedValue::Workspace(sbuf!(lockfile).append(path)?),
                 );
 
-                let name = value.get(b"name").unwrap().as_utf8_string_literal().unwrap();
+                let name_expr = value.get(b"name").unwrap();
+                let name = name_expr.as_utf8_string_literal().unwrap();
                 let name_hash = StringBuilder::string_hash(name);
 
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
@@ -1832,7 +1839,6 @@ pub fn parse_into_binary_lockfile(
                 let (off, len) = parse_append_dependencies::<false, false>(
                     lockfile,
                     &value,
-                    &mut sbuf!(lockfile),
                     log,
                     source,
                     &mut optional_peers_buf,
@@ -2104,7 +2110,6 @@ pub fn parse_into_binary_lockfile(
                         let (off, len) = parse_append_dependencies::<true, false>(
                             lockfile,
                             deps_os_cpu_libc_bin_bundle_obj,
-                            &mut sbuf!(lockfile),
                             log,
                             source,
                             &mut optional_peers_buf,

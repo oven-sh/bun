@@ -1096,7 +1096,6 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
                 Err(_) => bun_alloc::out_of_memory(),
             }
         },
-<<<<<<< Updated upstream
         finalize_bundle: |p, bv2, result| {
             // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
             // (DevServerHandle invariant). `result` is `*mut DevServerOutput<'_>`
@@ -1110,19 +1109,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
                 unsafe { &mut *bv2.cast() },
                 unsafe { &mut *result },
             )
-||||||| Stash base
-        finalize_bundle: |_p, _bv2, _result| {
-            todo!("blocked_on: dev_server_body::DevServer::finalize_bundle un-gate")
-=======
-        finalize_bundle: |p, bv2, result| {
-            // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
-            // (DevServerHandle invariant).
-            let dev = unsafe { &mut *p.cast::<DevServer>() };
-            // SAFETY: `bv2` borrows the three `Transpiler`s stored inline in
-            // `DevServer` (stable heap address); the `'static` is a stand-in for
-            // the DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
-            dev.finalize_bundle(unsafe { &mut *bv2.cast() }, result as *const ())
->>>>>>> Stashed changes
+            .map_err(Into::into)
         },
         handle_parse_task_failure: |p, err, graph, abs_path, log, bv2| {
             // SAFETY: p is a live *mut DevServer; log/bv2 are valid for the call.
@@ -1243,7 +1230,6 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
-<<<<<<< Updated upstream
         let mut buf = bun_paths::path_buffer_pool::get();
         let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
@@ -1251,31 +1237,7 @@ impl DirectoryWatchStore {
             &[specifier],
         );
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
-||||||| Stash base
-    /// `DevServer.routeToBundleIndexSlow`. Full body in gated `../DevServer.rs`
-    /// draft (depends on `FrameworkRouter::match_slow` + `html_router`).
-    pub fn route_to_bundle_index_slow(&mut self, _pattern: &[u8]) -> Option<route_bundle::Index> {
-        todo!("blocked_on: dev_server::DevServer::route_to_bundle_index_slow body un-gate")
-    }
-=======
-    /// `DevServer.routeToBundleIndexSlow` — DevServer.zig:4021.
-    pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
-        let mut params: framework_router::MatchedParams = Default::default();
-        if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
-            return Some(bun_core::handle_oom(
-                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index)),
-            ));
-        }
-        if let Some(html) = self.html_router.get(pattern) {
-            return Some(bun_core::handle_oom(
-                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html)),
-            ));
-        }
-        None
-    }
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.

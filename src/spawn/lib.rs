@@ -355,7 +355,7 @@ mod posix {
 }
 
 #[cfg(windows)]
-mod windows {
+pub mod windows {
     use super::*;
 
     // `bun.windows.libuv.Pipe`. The libuv `Pipe` wrapper has not yet landed in
@@ -543,10 +543,31 @@ impl<'a> Default for SpawnOptions<'a> {
     }
 }
 
-/// Port of `SpawnProcessResult` (process.zig:1221) — POSIX shape. Windows
-/// callers go through `WindowsSpawnResult` in `bun_runtime`; only the POSIX
-/// fields are needed at this tier (lifecycle scripts read `stdout`/`stderr`/
-/// `memfds` and call `to_process`).
+/// Port of `WindowsSpawnResult.StdioResult` (process.zig:1196) — the per-stream
+/// outcome handed back to mid-tier callers on Windows so they can match the
+/// `.buffer` arm without depending on `bun_runtime` (cycle).
+///
+/// MOVE_DOWN(b0) from `bun_runtime::api::bun::process::WindowsStdioResult`:
+/// `bun_install::lifecycle_script_runner` checks `spawned.stdout == .buffer` to
+/// decide whether to start the libuv-backed `BufferedReader`; that check must
+/// typecheck at this tier.
+#[cfg(windows)]
+#[derive(Default)]
+pub enum SpawnedStdio {
+    /// inherit, ignore, path, pipe
+    #[default]
+    Unavailable,
+    Buffer(windows::UvPipePtr),
+    BufferFd(Fd),
+}
+
+/// Port of `SpawnProcessResult` (process.zig:1221). Platform-split to mirror
+/// `PosixSpawnResult` / `WindowsSpawnResult`: POSIX hands back raw `Fd`s +
+/// `memfds`; Windows hands back [`SpawnedStdio`] so mid-tier callers can match
+/// the `.buffer` arm. Only the fields crossed at this tier are present — the
+/// full `WindowsSpawnResult` (with the intrusive `*mut Process`) lives in
+/// `bun_runtime` and is bridged into this shape by the dispatch hook.
+#[cfg(not(windows))]
 #[derive(Default)]
 pub struct SpawnResult {
     pub pid: PidT,
@@ -557,6 +578,19 @@ pub struct SpawnResult {
     pub extra_pipes: Vec<Fd>,
     pub memfds: [bool; 3],
 }
+
+#[cfg(windows)]
+#[derive(Default)]
+pub struct SpawnResult {
+    pub pid: PidT,
+    pub stdin: SpawnedStdio,
+    pub stdout: SpawnedStdio,
+    pub stderr: SpawnedStdio,
+    pub extra_pipes: Vec<SpawnedStdio>,
+}
+
+#[cfg(windows)]
+pub use sync::WindowsOptions;
 
 impl SpawnResult {
     /// Port of `SpawnProcessResult.toProcess` (process.zig:1241). Builds the

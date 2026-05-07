@@ -53,51 +53,9 @@ macro_rules! ctx_log {
     ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
 }
 
-// Local BoringSSL ERR_* string accessors (not yet surfaced in bun_boringssl_sys).
-// Each returns a NUL-terminated static string, or NULL if unknown.
-unsafe extern "C" {
-    fn ERR_reason_error_string(packed_error: u32) -> *const c_char;
-    fn ERR_func_error_string(packed_error: u32) -> *const c_char;
-    fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
-}
-
-/// Local shim: `bun_jsc::VM` lacks a `deprecated_report_extra_memory` method;
-/// call the underlying C++ symbol directly.
-#[inline]
-unsafe fn vm_report_extra_memory(vm: *mut bun_jsc::VM, size: usize) {
-    unsafe extern "C" {
-        fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
-    }
-    // SAFETY: `vm` is a live opaque JSC VM handle.
-    unsafe { JSC__VM__reportExtraMemory(vm, size) }
-}
-
-/// Local shims over `bun_string_jsc.zig` symbols not yet surfaced through the
-/// top-level `bun_jsc::bun_string_jsc` re-export module.
-mod bun_string_jsc_shim {
-    use super::{BunString, JSGlobalObject, JSValue, JsError, JsResult};
-
-    unsafe extern "C" {
-        fn BunString__toJSDOMURL(global_object: *mut JSGlobalObject, in_: *mut BunString) -> JSValue;
-        fn BunString__createArray(
-            global_object: *mut JSGlobalObject,
-            ptr: *const BunString,
-            len: usize,
-        ) -> JSValue;
-    }
-
-    pub fn to_jsdomurl(this: &mut BunString, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a live &mut BunString; `global_object` borrowed for call duration.
-        unsafe { BunString__toJSDOMURL(global_object.as_ptr(), this) }
-    }
-
-    /// Calls `toJS` on each element of `array` and returns a JSArray.
-    pub fn to_js_array(global_object: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
-        // SAFETY: ptr/len from a live slice; `global_object` borrowed for call duration.
-        let v = unsafe { BunString__createArray(global_object.as_ptr(), array.as_ptr(), array.len()) };
-        if global_object.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
-    }
-}
+use bun_boringssl_sys::{ERR_func_error_string, ERR_lib_error_string, ERR_reason_error_string};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::http_server_agent::{self, InspectorHTTPServerAgent};
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub use super::web_socket_server_context::WebSocketServerContext;
@@ -328,10 +286,14 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::NewAppResponse::<SSL>::write_status(self, s) }
     #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::NewAppResponse::<SSL>::end_without_body(self, c) }
     #[inline] fn timeout(&mut self, s: u8) { uws_sys::NewAppResponse::<SSL>::timeout(self, s) }
-    #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
-        // TODO(port): wire on_timeout::<c_void>(on_timeout_for_idle_warn, ud) once the
-        // generic `Fn(*mut U, &mut Response<SSL>)` shape can be expressed without
-        // capturing the const-generic ThisServer in the ZST closure type.
+    #[inline] fn on_timeout_warn(&mut self, ud: *mut c_void) {
+        // The dev-mode idle-timeout warning ignores both args; the user-data
+        // pointer is an opaque sentinel (any non-null value satisfies uWS).
+        uws_sys::NewAppResponse::<SSL>::on_timeout(
+            self,
+            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
+            ud,
+        );
     }
     #[inline] fn to_any_response(&mut self) -> uws::AnyResponse {
         // SAFETY: NewAppResponse<true>/NewAppResponse<false> are the only two
@@ -348,8 +310,12 @@ impl RespLike for uws_sys::h3::Response {
     #[inline] fn write_status(&mut self, s: &[u8]) { uws_sys::h3::Response::write_status(self, s) }
     #[inline] fn end_without_body(&mut self, c: bool) { uws_sys::h3::Response::end_without_body(self, c) }
     #[inline] fn timeout(&mut self, s: u8) { uws_sys::h3::Response::timeout(self, s) }
-    #[inline] fn on_timeout_warn(&mut self, _ud: *mut c_void) {
-        // TODO(port): wire H3::Response::on_timeout once warn handler is generic.
+    #[inline] fn on_timeout_warn(&mut self, ud: *mut c_void) {
+        uws_sys::h3::Response::on_timeout(
+            self,
+            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
+            ud,
+        );
     }
     #[inline] fn to_any_response(&mut self) -> uws::AnyResponse { uws::AnyResponse::from(self as *mut Self) }
 }
@@ -390,24 +356,6 @@ fn zstr_from_boxed_with_nul(buf: Box<[u8]>) -> Box<ZStr> {
     unsafe {
         let raw: *mut [u8] = Box::into_raw(buf);
         Box::from_raw(core::ptr::slice_from_raw_parts_mut((*raw).as_mut_ptr(), len) as *mut ZStr)
-    }
-}
-
-// Local shim: upstream `bun_jsc::AnyPromise` (lib.rs) lacks `.result()`; only
-// the per-file `jsc::any_promise::AnyPromise<'a>` has it. Hand-dispatch here.
-trait AnyPromiseResultExt {
-    fn result(self, vm: &jsc::VM) -> JSValue;
-}
-impl AnyPromiseResultExt for jsc::AnyPromise {
-    #[inline]
-    fn result(self, vm: &jsc::VM) -> JSValue {
-        match self {
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-            jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`;
-            // `JSInternalPromise` aliases `JSPromise` (JSInternalPromise.rs).
-            jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
-        }
     }
 }
 

@@ -20,6 +20,28 @@ use crate::bun_progress::Node as ProgressNode;
 use super::options::{self, Enable, LogLevel};
 use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
+// ───────────────────────────── method wrappers ───────────────────────────────
+// Thin `&mut self` shims so call sites can use Zig's method-style spelling
+// (`pm.getCacheDirectory()` / `pm.getTemporaryDirectory()`). The bodies live
+// in the free functions below to keep them callable without an `impl` path.
+
+impl PackageManager {
+    #[inline]
+    pub fn get_cache_directory(&mut self) -> Dir {
+        get_cache_directory(self)
+    }
+
+    #[inline]
+    pub fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
+        get_cache_directory_and_abs_path(self)
+    }
+
+    #[inline]
+    pub fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
+        get_temporary_directory(self)
+    }
+}
+
 // ───────────────────────────── cache directory ────────────────────────────────
 
 #[inline]
@@ -774,7 +796,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         }
         ResolutionTag::Workspace => {
             // SAFETY: tag == Workspace guarantees `value.workspace` is the active union arm.
-            let folder = unsafe { resolution.value.workspace }.slice(buf);
+            let folder = unsafe { &resolution.value.workspace }.slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
@@ -934,7 +956,7 @@ pub fn save_lockfile(
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
-                if !this.lockfile.eql(lockfile_before_install, packages_len_before_install)? {
+                if !Lockfile::eql(&this.lockfile, lockfile_before_install, packages_len_before_install)? {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
                 }
             } else {
@@ -968,7 +990,7 @@ pub fn update_lockfile_if_needed(
     // TODO(port): narrow error set
     if let LoadResult::Ok(ok) = &load_result {
         if ok.serializer_result.packages_need_update {
-            let slice = manager.lockfile.packages.slice();
+            let mut slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {
                 // these are possibly updated later, but need to make sure non are zero
                 meta.set_has_install_script(false);

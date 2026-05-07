@@ -62,7 +62,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     }
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
-        Some(auth_type) => <&'static str>::from(*auth_type).as_bytes(),
+        Some(auth_type) => auth_type.as_str().as_bytes(),
         None => b"web",
     };
     let ci_name = crate::ci_info::detect_ci_name();
@@ -569,7 +569,7 @@ pub mod registry {
             (u64::try_from(bun_core::time::timestamp().max(0)).unwrap() as u32) + 300,
             is_extended_manifest,
         )? {
-            if package_manager.options.enable.manifest_cache {
+            if package_manager.options.enable.manifest_cache() {
                 package_manifest::Serializer::save_async(
                     &package,
                     scope,

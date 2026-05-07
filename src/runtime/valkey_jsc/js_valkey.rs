@@ -1663,16 +1663,15 @@ impl JSValkeyClient {
         // through a raw pointer; `Address::connect` only reads host/path bytes
         // and forwards `client_ptr` opaquely (no overlapping write).
         let client_ptr: *mut valkey::ValkeyClient = &mut self.client;
+        // SAFETY: `ssl_ctx` is a +1-ref BoringSSL `SSL_CTX*` (or None).
+        let ssl_ctx_ref = match ssl_ctx {
+            Some(p) => Some(unsafe { &mut *p }),
+            None => None,
+        };
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
-        // `SocketGroup` (stable for the VM's lifetime); `ssl_ctx` is a +1-ref
-        // BoringSSL `SSL_CTX*`.
+        // `SocketGroup` (stable for the VM's lifetime).
         let socket = unsafe {
-            (*client_ptr).address.connect(
-                client_ptr,
-                &mut *group,
-                ssl_ctx.map(|p| &mut *p),
-                is_tls,
-            )
+            (*client_ptr).address.connect(client_ptr, &mut *group, ssl_ctx_ref, is_tls)
         }?;
         self.client.socket = socket;
         // Disarm errdefers on success.

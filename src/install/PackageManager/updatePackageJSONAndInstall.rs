@@ -176,6 +176,13 @@ fn update_package_json_and_install_with_manager_with_updates(
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
+    // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_logger::js_ast::Expr`
+    // (kept low-tier so `Package::parse_with_json` / pnpm migration can consume it
+    // without depending on the full parser). `PackageJSONEditor` and
+    // `js_printer::print_json` operate on the T4 `bun_js_parser::Expr`. Promote once
+    // here via the existing `From<T2> for T4` deep-rebuild and edit/print the T4
+    // local; the T2 entry is not read again — only `source.contents` is written back.
+    let mut current_package_json_root: bun_js_parser::Expr = current_package_json.root.into();
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it
@@ -190,22 +197,22 @@ fn update_package_json_and_install_with_manager_with_updates(
             == b'\n';
 
     if subcommand == Subcommand::Remove {
-        if !current_package_json.root.data.is_e_object() {
+        if !current_package_json_root.data.is_e_object() {
             Output::err_generic(
                 "package.json is not an Object {{}}, so there's nothing to {s}!",
                 (<&'static str>::from(subcommand),),
             );
             Global::crash();
-        } else if current_package_json.root.data.as_e_object().properties.len == 0 {
+        } else if current_package_json_root.data.as_e_object().properties.len == 0 {
             Output::err_generic(
                 "package.json is empty {{}}, so there's nothing to {s}!",
                 (<&'static str>::from(subcommand),),
             );
             Global::crash();
-        } else if current_package_json.root.as_property(b"devDependencies").is_none()
-            && current_package_json.root.as_property(b"dependencies").is_none()
-            && current_package_json.root.as_property(b"optionalDependencies").is_none()
-            && current_package_json.root.as_property(b"peerDependencies").is_none()
+        } else if current_package_json_root.as_property(b"devDependencies").is_none()
+            && current_package_json_root.as_property(b"dependencies").is_none()
+            && current_package_json_root.as_property(b"optionalDependencies").is_none()
+            && current_package_json_root.as_property(b"peerDependencies").is_none()
         {
             Output::pretty_errorln(format_args!(
                 "package.json doesn't have dependencies, there's nothing to {}!",

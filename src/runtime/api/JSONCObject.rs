@@ -1,21 +1,11 @@
-//! `Bun.JSONC` — `parse()` host function. Entirely JSC surface; body gated
-//! until `bun_jsc` dep is green and `#[bun_jsc::host_fn]` proc-macro lands.
+//! `Bun.JSONC` — `parse()` host function.
 
- // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro
-mod _jsc_gated {
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_interchange::json;
 use bun_js_parser::{ast, ToJSError};
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_logger as logger;
-
-// Local shim: `JSGlobalObject::throw_stack_overflow` lives in the not-yet-wired
-// `src/jsc/JSGlobalObject.rs` impl block; until that lands on the lib.rs type,
-// call the C++ export directly (matches ConsoleObject.rs pattern).
-unsafe extern "C" {
-    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
-}
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 1);
@@ -40,11 +30,12 @@ pub fn parse(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Arena threaded into AST/interchange crates (bulk-freed on Drop at scope exit).
+    // PERF(port): was ArenaAllocator bulk-free feeding the JSON parser + AST stores
+    // — profile in Phase B.
     let arena = Arena::new();
 
-    // TODO(port): ASTMemoryAllocator is a typed slab (typed_arena) with an enter/exit scope
-    // guard. Model as RAII — `_ast_scope` Drop replaces `defer ast_scope.exit()`.
+    // ASTMemoryAllocator is a typed slab with an enter/exit scope guard. Model
+    // as RAII — `_ast_scope` Drop replaces `defer ast_scope.exit()`.
     let mut ast_memory_allocator = ast::ASTMemoryAllocator::new(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
@@ -60,9 +51,7 @@ pub fn parse(
         Ok(v) => v,
         Err(e) => {
             if e == bun_core::err!(StackOverflow) {
-                // SAFETY: FFI — `global` is a valid live JSGlobalObject*.
-                unsafe { JSGlobalObject__throwStackOverflow(global) };
-                return Err(JsError::Thrown);
+                return Err(global.throw_stack_overflow());
             }
             return Err(global.throw_value(log.to_js(global, "Failed to parse JSONC")?));
         }
@@ -83,14 +72,11 @@ pub fn parse(
         Err(_) => unreachable!(),
     }
 }
-} // mod _jsc_gated
-
-pub use _jsc_gated::create;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/JSONCObject.zig (64 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Arena kept (threaded into interchange/ast crates); ASTMemoryAllocator enter/exit modeled as RAII guard; Expr.to_js error-set narrowing matches against bun_core::err! consts.
+//   confidence: high
+//   todos:      0
+//   notes:      Arena threaded into interchange/ast crates; ASTMemoryAllocator enter/exit modeled as RAII guard; Expr.to_js error-set narrowing matches against ToJSError variants.
 // ──────────────────────────────────────────────────────────────────────────

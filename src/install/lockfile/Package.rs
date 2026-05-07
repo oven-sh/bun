@@ -84,6 +84,7 @@ fn expr_str(e: &Expr) -> Option<&'static [u8]> {
 // `PackageSliceExt` accessor traits are therefore expanded by hand below
 // (mirroring Zig's `MultiArrayList(Package).items(.field)`).
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
     pub name_hash: PackageNameHash,

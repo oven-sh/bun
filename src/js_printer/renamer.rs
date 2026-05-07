@@ -380,7 +380,7 @@ impl MinifyRenamer {
 
     pub fn assign_names_by_frequency(
         &mut self,
-        name_minifier: &mut js_ast::NameMinifier,
+        name_minifier: &js_ast::NameMinifier,
     ) -> Result<(), bun_core::Error> {
         let mut name_buf: Vec<u8> = Vec::with_capacity(64);
 

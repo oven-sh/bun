@@ -83,13 +83,20 @@ impl CharFreq {
                 };
             }
 
-            // std.sort.pdq → Rust's sort_unstable_by (pattern-defeating quicksort)
+            // std.sort.pdq → Rust's sort_unstable_by (pattern-defeating quicksort).
+            // PORT NOTE: do NOT route through `CharAndCount::less_than` and map
+            // false→Greater — that comparator never returns `Equal`, which
+            // violates `sort_unstable_by`'s total-order contract (Rust 1.81+
+            // is permitted to panic on inconsistent comparators). `index` is
+            // unique so equality is unreachable in practice, but keep the
+            // comparator well-formed regardless.
             arr.sort_unstable_by(|a, b| {
-                if CharAndCount::less_than(a, b) {
-                    core::cmp::Ordering::Less
-                } else {
-                    core::cmp::Ordering::Greater
-                }
+                // descending by count, then ascending by (index, char) —
+                // matches CharFreq.zig:12 `CharAndCount.lessThan`.
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| a.index.cmp(&b.index))
+                    .then_with(|| a.char.cmp(&b.char))
             });
 
             break 'brk arr;

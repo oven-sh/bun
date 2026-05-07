@@ -790,7 +790,7 @@ impl NameMinifier {
     }
 
     pub fn number_to_minified_name(
-        &mut self,
+        &self,
         name: &mut Vec<u8>,
         i_: isize,
     ) -> core::result::Result<(), bun_alloc::AllocError> {

@@ -534,19 +534,24 @@ impl Request {
         self.reported_estimated_size
     }
 
-    pub fn get_remote_socket_info(&mut self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if let Some(info) = self.request_context.get_remote_socket_info() {
-            // Zig: `jsc.JSSocketAddress.create` → SocketAddress DTO POJO.
-            return crate::socket::socket_address::SocketAddress::create_dto(
-                global_object,
-                &info.ip,
-                info.port as u16,
-                info.is_ipv6,
-            )
-            .ok();
-        }
-
-        None
+    pub fn get_remote_socket_info(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<Option<JSValue>> {
+        let Some(info) = self.request_context.get_remote_socket_info() else {
+            return Ok(None);
+        };
+        // Zig: `jsc.JSSocketAddress.create` → SocketAddress DTO POJO. Zig's
+        // `JSSocketAddress.create` is infallible, but the Rust port routes
+        // through `create_utf8_for_js` which can throw — propagate, don't
+        // swallow, so we never return `None` while a JS exception is pending.
+        crate::socket::socket_address::SocketAddress::create_dto(
+            global_object,
+            &info.ip,
+            info.port as u16,
+            info.is_ipv6,
+        )
+        .map(Some)
     }
 
     pub fn calculate_estimated_byte_size(&mut self) {

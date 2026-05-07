@@ -712,17 +712,21 @@ pub mod random {
             buf.byte_len,
         )?;
 
-        let size: u32 = if size_value.is_undefined() {
-            (buf.byte_len - offset as usize) as u32
+        // Zig keeps `size: usize` here (`buf.byte_len - offset`, both usize). The
+        // `assert_size` branch is bounded by `MAX_POSSIBLE_LENGTH` (≤ i32::MAX) so widening
+        // its `u32` result is lossless; the default branch must NOT truncate to `u32` —
+        // a >4 GiB ArrayBuffer remainder would silently fill only `(n % 2^32)` bytes.
+        let size: usize = if size_value.is_undefined() {
+            buf.byte_len - offset as usize
         } else {
-            assert_size(global, size_value, element_size, offset, buf.byte_len)?
+            assert_size(global, size_value, element_size, offset, buf.byte_len)? as usize
         };
 
         if size == 0 {
             return Ok(buf_value);
         }
 
-        bun_core::csprng(&mut buf.slice_mut()[offset as usize..][..size as usize]);
+        bun_core::csprng(&mut buf.slice_mut()[offset as usize..][..size]);
 
         Ok(buf_value)
     }

@@ -1,18 +1,13 @@
 //! `bun:test` runtime — Jest-compatible test runner, `expect()` matchers,
 //! snapshot machinery, and fake timers.
 //!
-//! Phase B-2 un-gate round: module tree is real; matcher bodies are real
-//! (each `expect/to*.rs` carries its full ported logic). The whole subtree
-//! is JSC-dense (every matcher takes `&JSGlobalObject` + `&CallFrame` and
-//! calls `JSValue` methods), so it stays behind `` until
-//! `bun_jsc` is re-enabled as a dep of `bun_runtime` (see Cargo.toml
-//! `TODO(b2-blocked)`). Flip the gate and 75 matchers + Expect compile
-//! together — no per-file stubs.
-//!
-//! Import normalization done in this round: every matcher resolves `Expect`,
-//! `get_signature`, `mock`, `DiffFormatter`, `ExpectAny` via `super::*` so
-//! the only outstanding unknowns are `bun_jsc` method-surface gaps (tracked
-//! per-file in PORT STATUS trailers).
+//! Module layout: every matcher resolves `Expect`, `get_signature`, `mock`,
+//! `DiffFormatter`, `ExpectAny` via `super::*` from the `expect` façade
+//! below. The `JSValueTestExt` / `JSGlobalObjectTestExt` extension traits are
+//! thin call-convention adapters (Phase-A drafts used a different argument
+//! order / arity than the `bun_jsc` inherents that have since landed); every
+//! body forwards to the canonical `bun_jsc::JSValue` / `JSGlobalObject`
+//! inherent so there is exactly one FFI declaration per symbol.
 
 #![allow(non_snake_case)]
 

@@ -1176,12 +1176,12 @@ impl Value {
                 *self = Value::Used;
                 new_blob
             }
-            Value::WTFStringImpl(_) => {
-                let old = core::mem::replace(self, Value::Used);
-                let Value::WTFStringImpl(wtf) = old else { unreachable!() };
+            Value::WTFStringImpl(wtf) => {
+                let wtf = *wtf;
+                *self = Value::Used;
                 // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr; the +1 we
                 // hold keeps it alive across `to_utf8_if_needed`/`latin1_slice`.
-                let wtf_ref = unsafe { &**wtf };
+                let wtf_ref = unsafe { &*wtf };
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = unsafe { &*(*VirtualMachine::get()).global };
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
@@ -1191,7 +1191,7 @@ impl Value {
                 } else {
                     Blob::init(wtf_ref.latin1_slice().to_vec(), global)
                 };
-                // wtf dropped here (deref via Drop)
+                // Zig: `defer wtf.deref()` — release the +1 the body held.
                 wtf_ref.deref();
                 new_blob
             }

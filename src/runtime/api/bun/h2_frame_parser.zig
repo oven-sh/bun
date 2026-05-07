@@ -2509,15 +2509,8 @@ pub const H2FrameParser = struct {
                     this.remoteSettings = remoteSettings;
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
 
-                    if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                        var it = this.streams.valueIterator();
-                        while (it.next()) |item| {
-                            const stream = item.*;
-                            if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
-                                stream.remoteWindowSize = remoteSettings.initialWindowSize;
-                            }
-                        }
-                    }
+                    // No delta to apply: streams are initialized with DEFAULT_WINDOW_SIZE
+                    // when remoteSettings is null, which matches the default initialWindowSize.
                     this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
                 }
             }
@@ -2529,6 +2522,11 @@ pub const H2FrameParser = struct {
             defer _ = this.flush();
             defer this.incrementWindowSizeIfNeeded();
             var remoteSettings: FullSettingsPayload = this.remoteSettings orelse .{};
+            // RFC 7540 §6.9.2: when SETTINGS_INITIAL_WINDOW_SIZE changes, apply the
+            // delta (new - old) to every open stream's send window. The previous
+            // value is whatever remoteSettings had before this frame arrived (or
+            // the default if this is the first remote SETTINGS).
+            const oldInitialWindowSize: i64 = @intCast(remoteSettings.initialWindowSize);
             var i: usize = 0;
             const payload = content.data;
             while (i < payload.len) {
@@ -2541,14 +2539,33 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
-            if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
+            // RFC 7540 §6.9.2: A SETTINGS frame can alter the initial flow-control
+            // window size for all current streams. The per-stream send window is
+            // independent of the connection-level window, so never gate this on
+            // this.remoteWindowSize. Apply delta = new - old to each stream; a value
+            // that would push any stream's window past 2^31-1 is a connection
+            // FLOW_CONTROL_ERROR.
+            const newInitialWindowSize: i64 = @intCast(remoteSettings.initialWindowSize);
+            if (newInitialWindowSize != oldInitialWindowSize) {
+                const delta: i64 = newInitialWindowSize - oldInitialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |item| {
                     const stream = item.*;
-                    if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
-                        stream.remoteWindowSize = remoteSettings.initialWindowSize;
+                    const next: i64 = @as(i64, @intCast(stream.remoteWindowSize)) + delta;
+                    if (next > MAX_WINDOW_SIZE) {
+                        this.sendGoAway(0, ErrorCode.FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                        return content.end;
                     }
+                    // A negative delta can drive the send window negative; the
+                    // spec allows that and the stream must stop sending until a
+                    // WINDOW_UPDATE brings it back above zero. We clamp at 0
+                    // here because remoteWindowSize is unsigned; the sender
+                    // already checks remoteWindowSize -| remoteUsedWindowSize
+                    // before emitting DATA, so a clamp at zero gives the same
+                    // "can't send" behavior.
+                    stream.remoteWindowSize = if (next < 0) 0 else @intCast(next);
                 }
+                log("adjusted remote stream windows by delta {} (old: {}, new: {})", .{ delta, oldInitialWindowSize, newInitialWindowSize });
             }
             this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
             return content.end;

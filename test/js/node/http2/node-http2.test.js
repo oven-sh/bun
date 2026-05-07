@@ -1979,3 +1979,113 @@ it("http2 request.destroy() with error", async () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30342
+//
+// RFC 7540 §6.9.2: when the peer sends a SETTINGS frame that changes
+// SETTINGS_INITIAL_WINDOW_SIZE, the client must apply the delta
+// (new - old) to every existing stream's remote (send) window. Per-
+// stream and connection-level windows are independent flow-control
+// mechanisms.
+//
+// The prior implementation gated the per-stream delta on the
+// connection-level remoteWindowSize, so if the peer had raised the
+// connection window first (as gRPC servers routinely do), the
+// SETTINGS change was effectively ignored and any queued DATA past
+// the default 65535-byte stream window hung forever.
+it("applies SETTINGS_INITIAL_WINDOW_SIZE delta to existing streams (GH-30342)", async () => {
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "ascii");
+  function rawFrame(type, flags, streamId, payload) {
+    const len = payload.length;
+    const buf = Buffer.alloc(9 + len);
+    buf[0] = (len >>> 16) & 0xff;
+    buf[1] = (len >>> 8) & 0xff;
+    buf[2] = len & 0xff;
+    buf[3] = type;
+    buf[4] = flags;
+    buf.writeUInt32BE(streamId >>> 0, 5);
+    payload.copy(buf, 9);
+    return buf;
+  }
+  const TYPE_DATA = 0x0;
+  const TYPE_HEADERS = 0x1;
+  const TYPE_SETTINGS = 0x4;
+  const TYPE_WINDOW_UPDATE = 0x8;
+
+  const { promise: listening, resolve: resolveListening } = Promise.withResolvers();
+  const server = net.createServer(sock => {
+    let buf = Buffer.alloc(0);
+    let gotPreface = false;
+    let secondSettingsSent = false;
+    sock.on("error", () => {});
+    sock.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!gotPreface) {
+        if (buf.length < PREFACE.length) return;
+        buf = buf.subarray(PREFACE.length);
+        gotPreface = true;
+        // Empty SETTINGS (defaults) + connection-level WINDOW_UPDATE.
+        // Raising the connection window first is the trigger: the old
+        // buggy code compared the new per-stream window against
+        // this.remoteWindowSize, so with a wide connection window the
+        // per-stream update was skipped entirely.
+        sock.write(rawFrame(TYPE_SETTINGS, 0, 0, Buffer.alloc(0)));
+        const winInc = Buffer.alloc(4);
+        winInc.writeUInt32BE(10 << 20, 0);
+        sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, winInc));
+      }
+      while (buf.length >= 9) {
+        const length = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+        if (buf.length < 9 + length) break;
+        const type = buf[3];
+        const flags = buf[4];
+        const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+        const payload = buf.subarray(9, 9 + length);
+        buf = buf.subarray(9 + length);
+        if (type === TYPE_SETTINGS) {
+          if (flags & 0x1) {
+            if (!secondSettingsSent) {
+              secondSettingsSent = true;
+              // Raise SETTINGS_INITIAL_WINDOW_SIZE to 1 MiB.
+              const p = Buffer.alloc(6);
+              p.writeUInt16BE(0x4, 0);
+              p.writeUInt32BE(1 << 20, 2);
+              sock.write(rawFrame(TYPE_SETTINGS, 0, 0, p));
+            }
+          } else {
+            sock.write(rawFrame(TYPE_SETTINGS, 0x1, 0, Buffer.alloc(0)));
+          }
+        } else if (type === TYPE_DATA) {
+          // Ack only the CONNECTION window. No per-stream WINDOW_UPDATE —
+          // the INITIAL_WINDOW_SIZE bump alone has to unblock queued DATA.
+          const inc = Buffer.alloc(4);
+          inc.writeUInt32BE(payload.length || 1, 0);
+          sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, 0, inc));
+          if (flags & 0x1) {
+            // minimal :status 200 response to close the stream
+            sock.write(rawFrame(TYPE_HEADERS, 0x4 | 0x1, streamId, Buffer.from([0x88])));
+          }
+        }
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1", () => resolveListening());
+  await listening;
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const req = client.request({ ":method": "POST", ":path": "/" });
+    // 87136 > 65535 default per-stream window — the client must queue
+    // the tail until the SETTINGS bump raises the window.
+    const body = Buffer.alloc(87136, 0x61);
+    req.on("end", resolve);
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+    await promise;
+    client.close();
+  } finally {
+    server.close();
+  }
+});

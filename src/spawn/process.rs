@@ -1,6 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-#[cfg(windows)]
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
@@ -12,16 +10,6 @@ use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-#[cfg(not(windows))]
-#[allow(non_camel_case_types)]
-mod uv {
-    //! libuv shim for non-Windows builds. The Zig source guards every `uv.*`
-    //! reference behind `if (Environment.isWindows)`; the Rust draft references
-    //! `uv::Pipe` / `uv::uv_process_t` in shared struct shapes. Phase B should
-    //! `#[cfg(windows)]`-gate those fields instead.
-    pub type Pipe = core::ffi::c_void;
-    pub type uv_pid_t = i32;
-}
 
 // ─── §Dispatch: cross-tier exit handlers ─────────────────────────────────────
 // Zig: `TaggedPointerUnion` of 12 concrete *Handler types living in higher-tier

@@ -1586,20 +1586,27 @@ fn init_extract_task(
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
         *task = Task::Task {
-            package_manager: this,
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::Extract,
-            request: crate::package_manager_task::Request::Extract {
-                network: network_task,
-                tarball: *tarball,
+            request: crate::package_manager_task::Request {
+                extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
+                    // SAFETY: `network_task` is a freshly-vended pool slot; the
+                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
+                    network: &mut *network_task,
+                    tarball: ExtractTarball {
+                        skip_verify: !this
+                            .options
+                            .do_
+                            .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
+                        ..*tarball
+                    },
+                }),
             },
             id: (*network_task).task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
         };
-        if let crate::package_manager_task::Request::Extract { tarball, .. } = &mut (*task).request {
-            tarball.skip_verify = !this.options.do_.contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY);
-        }
         task
     }
 }

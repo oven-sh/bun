@@ -2832,9 +2832,17 @@ fn transpile_source_code_inner(
             if global_object.is_null() {
                 return Err(bun_core::err!("NotSupported"));
             }
-            // TODO(b2-cycle): `jsc::API::HTMLBundle::init` — gated in
-            // `crate::api`. Spec :735-742.
-            Err(bun_core::err!("NotSupported"))
+            // SAFETY: null-checked above.
+            let global = unsafe { &*global_object };
+            let html_bundle = crate::api::HTMLBundle::init(global, path.text);
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            Ok(ResolvedSource {
+                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle.into_raw(), global),
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                tag: ResolvedSourceTag::ExportDefaultObject,
+                ..Default::default()
+            })
         }
 
         // ────────────────────────────────────────────────────────────────────

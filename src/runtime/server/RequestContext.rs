@@ -286,7 +286,10 @@ struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3:
     *mut RequestContext<ThisServer, SSL, DBG, H3>,
 )
 where
-    ThisServer: ServerLike + 'static;
+    ThisServer: ServerLike + 'static,
+    TransportFor<SSL, H3>: Transport,
+    RequestContext<ThisServer, SSL, DBG, H3>:
+        NativePromiseContext::NativePromiseContextType + RequestContextHostFns;
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> Drop
     for RequestContextRef<ThisServer, SSL, DBG, H3>

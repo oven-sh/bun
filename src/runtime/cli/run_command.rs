@@ -3223,9 +3223,9 @@ impl RunCommand {
             if let Some(defaults) = default_completions {
                 // SAFETY: callers pass `'static` const tables; erase the elided
                 // lifetime back to `'static` (Zig stored the borrowed slice).
-                shell_out.commands = unsafe {
+                shell_out.commands = std::borrow::Cow::Borrowed(unsafe {
                     ::core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(defaults)
-                };
+                });
             }
         }
 
@@ -3537,8 +3537,8 @@ impl RunCommand {
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without `Box::leak`/`mem::forget`.
         let _ = runner_arena().alloc(results);
-        shell_out.commands = runner_arena().alloc_slice_copy(&all_keys);
-        shell_out.descriptions = runner_arena().alloc_slice_copy(
+        shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
+        shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer
             // (process-lifetime); erase to `'static`.
             unsafe {

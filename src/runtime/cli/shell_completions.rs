@@ -47,14 +47,26 @@ impl Shell {
 }
 
 // File-level `@This()` struct.
-// TODO(port): lifetime — fields are borrowed views (no deinit in Zig); Phase A forbids
-// struct lifetime params, so using &'static. Phase B may need `<'a>`.
-#[derive(Default)]
+// PORT NOTE: Zig fields are `[]const []const u8` (borrowed views into either a
+// stack array or arena-allocated storage). `Cow` lets `RunCommand::completions`
+// hand back arena-backed `'static` borrows while `bun_getcompletes` supplies an
+// owned `Vec` for the `a` (add-completions) branch — no `Box::leak`.
 pub struct ShellCompletions {
-    pub commands: &'static [&'static [u8]],
-    pub descriptions: &'static [&'static [u8]],
-    pub flags: &'static [&'static [u8]],
+    pub commands: std::borrow::Cow<'static, [&'static [u8]]>,
+    pub descriptions: std::borrow::Cow<'static, [&'static [u8]]>,
+    pub flags: std::borrow::Cow<'static, [&'static [u8]]>,
     pub shell: Shell,
+}
+
+impl Default for ShellCompletions {
+    fn default() -> Self {
+        Self {
+            commands: std::borrow::Cow::Borrowed(&[]),
+            descriptions: std::borrow::Cow::Borrowed(&[]),
+            flags: std::borrow::Cow::Borrowed(&[]),
+            shell: Shell::default(),
+        }
+    }
 }
 
 impl ShellCompletions {

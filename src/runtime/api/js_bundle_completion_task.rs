@@ -272,10 +272,11 @@ impl JSBundleCompletionTask {
         // PORT NOTE: reshaped for borrowck — `to_js_error` borrows `&mut self`,
         // which would overlap a `&mut this.result` match scrutinee. Dispatch
         // the pending/err arms first, then take a fresh `&mut` for Value.
-        match this.result {
-            BundleV2Result::Pending => unreachable!(),
-            BundleV2Result::Err(_) => return Ok(this.to_js_error(promise, global_this)?),
-            BundleV2Result::Value(_) => {}
+        if matches!(this.result, BundleV2Result::Pending) {
+            unreachable!();
+        }
+        if matches!(this.result, BundleV2Result::Err(_)) {
+            return Ok(this.to_js_error(promise, global_this)?);
         }
         match &mut this.result {
             BundleV2Result::Value(build) => {

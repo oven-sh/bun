@@ -3089,6 +3089,19 @@ impl<'a> BundleV2<'a> {
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
+        // `core::mem::take` moved the real `Source` into `graph.input_files`,
+        // leaving `*source` as `Default`. Read path/contents back from the
+        // graph's stored copy (where the data now lives for the rest of the
+        // bundle pass) so the `ParseTask` below sees the actual source bytes —
+        // matches Zig, which copies `source.*` by value and then reads the
+        // still-intact original.
+        let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
+        let path_text: &'static [u8] = stored.path.text;
+        // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
+        // pass (arena lifetime); erase the borrow to `'static` to fit
+        // `ContentsOrFd::Contents`.
+        let contents: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(stored.contents()) };
         // Compute borrow-heavy fields up front so the `&self` borrow taken by
         // `allocator()` doesn't overlap `&mut self` uses inside the literal.
         let jsx = if known_target == Target::BakeServerComponentsSsr
@@ -3107,12 +3120,8 @@ impl<'a> BundleV2<'a> {
             // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
             // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
             // `namespace` are unset on a generated source anyway.
-            path: Fs::Path::init(source.path.text),
-            // SAFETY: `source.contents` borrows the bundler arena (`'a`); leak
-            // the borrowed-arm slice to `'static` to fit `ContentsOrFd::Contents`.
-            contents_or_fd: parse_task::ContentsOrFd::Contents(unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(source.contents())
-            }),
+            path: Fs::Path::init(path_text),
+            contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx,
             source_index: js_ast::Index::init(source_index.get()),

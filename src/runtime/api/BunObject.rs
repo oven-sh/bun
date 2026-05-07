@@ -443,12 +443,12 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    // bunstr derefs on Drop
+    let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell_parser::needs_escape_bunstr(bunstr) {
-        let result = bun_shell_parser::escape_bun_str::<true>(bunstr, &mut outbuf)?;
+    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
+        let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(
                 "String has invalid utf-16: {}",
@@ -529,7 +529,8 @@ pub fn braces(
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(_) => {
+        Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
+        Err(Braces::ParserError::UnexpectedToken) => {
             return Err(
                 global.throw_pretty("Unexpected token while expanding braces", format_args!("")),
             )
@@ -1148,8 +1149,10 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     }
 
     let specifier_str = specifier.to_bun_string(global_this)?;
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
-    do_resolve_with_args::<false>(global_this, specifier_str, from_str, is_esm, false)
+    let from_str = scopeguard::guard(from_str, |s| s.deref());
+    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
 }
 
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(

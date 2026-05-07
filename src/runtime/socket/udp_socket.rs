@@ -422,37 +422,19 @@ struct ConnectInfo {
     port: u16,
 }
 
-// TODO(port): placeholder for `bun_jsc::codegen::JSUDPSocket` (.classes.ts output).
-// Shape mirrors what `UDPSocket::js()` callers need: `gc.on_{data,drain,error}.{get,set}`
-// and `{address,remote_address}_set_cached`. Replace with the generated type in Phase B.
-pub mod codegen_stub {
-    use super::{JSGlobalObject, JSValue};
-
-    pub struct JSUDPSocket {
-        pub gc: Gc,
-    }
-    pub struct Gc {
-        pub on_data: GcField,
-        pub on_drain: GcField,
-        pub on_error: GcField,
-    }
-    pub struct GcField(());
-    impl GcField {
-        pub fn get(&self, _this: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
-        }
-        pub fn set(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
-        }
-    }
-    impl JSUDPSocket {
-        pub fn address_set_cached(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
-        }
-        pub fn remote_address_set_cached(&self, _this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-            todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
-        }
-    }
+/// `jsc.Codegen.JSUDPSocket` — `.classes.ts` cached accessors.
+///
+/// `values: ["on_data", "on_drain", "on_error"]` (GC-tracked WriteBarrier slots
+/// — Zig: `js.gc.on_*.{get,set}`) plus the `cache: true` getters
+/// `address` / `remoteAddress` (cleared on connect to invalidate the JS-side
+/// memo). All resolve to the C++ `UDPSocketPrototype__${prop}{Get,Set}CachedValue`
+/// shims via [`bun_jsc::codegen_cached_accessors!`].
+pub mod js {
+    bun_jsc::codegen_cached_accessors!(
+        "UDPSocket";
+        on_data, on_drain, on_error,
+        address, remoteAddress
+    );
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]

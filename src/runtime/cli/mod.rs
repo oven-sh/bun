@@ -1104,10 +1104,8 @@ pub mod command {
                             break;
                         }
                     }
-                    // PORT NOTE: ShellCompletions.commands is `&'static [&'static [u8]]`;
-                    // leak the prefilled slice (CLI process exits right after print()).
-                    completions.commands = Box::leak(
-                        prefilled_completions[0..prefilled_i].to_vec().into_boxed_slice(),
+                    completions.commands = std::borrow::Cow::Owned(
+                        prefilled_completions[0..prefilled_i].to_vec(),
                     );
                 }
             }
@@ -1220,14 +1218,19 @@ To create a project with the official Next.js scaffolding tool, run\n\
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
-            // PORT NOTE: `add_create_prefix` returns an owned NUL-terminated
-            // buffer; leak it for the process lifetime (Zig allocs into
-            // `bun.default_allocator` and never frees — process exits via exec/exit).
+            // `add_create_prefix` returns an owned NUL-terminated buffer.
+            // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
+            // the prefixed package name is a process singleton — park the owning
+            // `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
+            // without `Box::leak` (PORTING.md §Forbidden patterns).
+            static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
+                std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
-            let prefixed: &'static [u8] = Box::leak(prefixed.into_boxed_slice());
-            // SAFETY: `add_create_prefix` guarantees `prefixed[len-1] == 0`;
-            // leaked for process lifetime so the &'static borrow is sound.
-            bunx_args.push(unsafe { ZStr::from_raw(prefixed.as_ptr(), prefixed.len() - 1) });
+            bunx_args.push(
+                CREATE_PREFIX
+                    .get_or_init(|| bun_core::ZBox::from_vec_with_nul(prefixed))
+                    .as_zstr(),
+            );
             for src in &args[template_name_start..] {
                 bunx_args.push(*src);
             }

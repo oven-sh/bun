@@ -13,22 +13,7 @@
 // struct field gate must mirror `mod.rs` so the initializer below stays in sync.
 #![allow(unexpected_cfgs)]
 
-use core::mem::MaybeUninit;
-use core::sync::atomic::Ordering;
-use std::sync::OnceLock;
-
-use bun_collections::HiveArray;
-use bun_logger::Log;
-use bun_safety::ThreadLock;
-
-use super::framework_router::FrameworkRouter;
-use super::jsc;
-use super::{
-    deferred_request, route_bundle, Assets, CurrentBundle, DeferredPromise, DevServer,
-    DirectoryWatchStore, EntryPointList, EventLoopTimer, HTMLRouter,
-    HotReloadEvent, IncrementalGraph, IncrementalResult, Magic, NextBundle, Options, PluginState,
-    SourceMapStore, TestingBatchEvents, TimerTag, WatcherAtomics,
-};
+use super::{DevServer, HotReloadEvent, WatcherAtomics};
 
 // ──────────────────────────────────────────────────────────────────────────
 // WatcherContext impl — wires `bun_watcher::Watcher::init::<DevServer>`.

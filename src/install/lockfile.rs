@@ -16,8 +16,9 @@ use bun_core::fmt::PathSep;
 use bun_alloc::AllocError;
 use bun_logger as logger;
 use bun_paths::{self as Path, resolve_path, platform, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
-use bun_sys::fs::FileSystem;
+// `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
+// the real resolver `FileSystem` directly — same as `PackageManager.rs`.
+use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
 use bun_str::{strings, ZStr};
@@ -526,13 +527,9 @@ impl Lockfile {
         manager: Option<&mut PackageManager>,
         log: &mut logger::Log,
     ) -> LoadResult<'a> {
-        if cfg!(debug_assertions) {
-            // Zig: `bun.assert(FileSystem.instance_loaded);` — vtable singleton must
-            // already be installed. The opaque `bun_sys::fs::FileSystem` has no
-            // `instance_loaded()` (it asserts internally on `instance()`); just touch
-            // the singleton in debug to preserve the early-trip invariant.
-            let _ = FileSystem::instance();
-        }
+        // Zig: `bun.assert(FileSystem.instance_loaded);`
+        // SAFETY: read of a process-global flag; matches Zig's bare global read.
+        debug_assert!(unsafe { Fs::INSTANCE_LOADED });
 
         let mut lockfile_format = LockfileFormat::Text;
         let file: File = 'file: {

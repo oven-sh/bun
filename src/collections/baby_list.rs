@@ -253,7 +253,8 @@ impl<T> BabyList<T> {
     // Rust ownership makes that implicit.
 
     pub fn clear_and_free(&mut self) {
-        *self = Self::default();
+        // Drop on the taken value frees the buffer; nothing is reused.
+        drop(core::mem::take(self));
     }
 
     pub fn clear_retaining_capacity(&mut self) {
@@ -1026,7 +1027,8 @@ impl OffsetByteList {
     // PORT NOTE: `deinit` → handled by `impl Drop for ByteList` on the `byte_list` field.
 
     pub fn clear_and_free(&mut self) {
-        *self = Self::default();
+        // Drop on the taken value frees `byte_list`; nothing is reused.
+        drop(core::mem::take(self));
     }
 }
 

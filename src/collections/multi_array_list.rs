@@ -308,10 +308,13 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
 
     /// The caller owns the returned memory. Empties this MultiArrayList.
     pub fn to_owned_slice(&mut self) -> Slice<T> {
-        let result = self.slice();
-        // SAFETY: we are giving ownership of `bytes` to the Slice; reset self
-        // to empty so Drop does not double-free.
-        *self = Self::default();
+        // Ownership of `bytes` transfers to the returned `Slice`. `mem::take`
+        // leaves `self` empty; `mem::forget` skips Drop on the old value so
+        // the buffer we just handed out is not freed underneath the caller
+        // (`*self = Self::default()` would run Drop and dealloc it).
+        let old = core::mem::take(self);
+        let result = old.slice();
+        core::mem::forget(old);
         result
     }
 
@@ -637,9 +640,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     }
 
     pub fn clear_and_free(&mut self) {
-        // SAFETY: frees current buffer (if any) then resets to empty.
-        unsafe { self.free_allocated_bytes() };
-        *self = Self::default();
+        // Drop on the taken value frees the current buffer (if any); `self`
+        // is left empty. Nothing from the old value is reused.
+        drop(core::mem::take(self));
     }
 
     /// Reduce length to `new_len`.

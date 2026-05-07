@@ -34,7 +34,8 @@ impl DeferredBatchTask {
         // it is reset in place, never separately constructed.
         #[cfg(debug_assertions)]
         debug_assert!(!self.running);
-        *self = Self::default();
+        // No Drop / no owned fields — pure reset.
+        let _ = core::mem::take(self);
     }
 
     pub fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {

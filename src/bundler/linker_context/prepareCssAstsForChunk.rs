@@ -290,11 +290,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    let _ = c.log.add_error_fmt(
+                                    bun_core::handle_oom(c.log.add_error_fmt(
                                         None,
                                         Loc::EMPTY,
                                         format_args!("Error generating CSS for import: {}", e),
-                                    );
+                                    ));
                                     continue;
                                 }
                             };
@@ -302,11 +302,18 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // PORT NOTE: Zig allocated into the worker arena; here
-                            // `encode_string_as_shortest_data_url` returns a heap
-                            // `Vec<u8>`, leaked for the chunk lifetime (matches Zig
-                            // — never freed until bundle teardown).
-                            *p = Path::init(Box::leak(encoded.into_boxed_slice()));
+                            // PORT NOTE: Zig allocated into the worker arena (`allocator`).
+                            // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
+                            // copy it into the worker bump so ownership matches Zig (freed
+                            // at bundle teardown via arena reset). SAFETY: arena outlives
+                            // the chunk, so the `'bump → 'static` launder is sound — same
+                            // contract as every other CSS slice in this file.
+                            let encoded: &'static [u8] = unsafe {
+                                core::mem::transmute::<&[u8], &'static [u8]>(
+                                    bump.alloc_slice_copy(&encoded),
+                                )
+                            };
+                            *p = Path::init(encoded);
                         }
                     }
 

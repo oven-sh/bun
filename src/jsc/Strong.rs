@@ -82,16 +82,6 @@ impl Optional {
         Optional { handle: None }
     }
 
-    /// Adopt a possibly-null FFI handle (used by bindgen).
-    ///
-    /// # Safety
-    /// If `Some`, `handle` must have been produced by `Bun__StrongRef__new`
-    /// with one outstanding ref now transferred to the returned `Optional`.
-    #[inline]
-    pub unsafe fn from_raw_handle(handle: Option<NonNull<Impl>>) -> Optional {
-        Optional { handle }
-    }
-
     /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
     /// taking ownership if non-null. The handle will be destroyed on `Drop`.
     ///

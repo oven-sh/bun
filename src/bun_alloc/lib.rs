@@ -611,13 +611,17 @@ impl WTFStringImplStruct {
         self.m_ref_count > 0
     }
     #[inline]
-    pub fn ref_(self: *mut Self) {
+    /// # Safety
+    /// `self` must point to a live `WTFStringImpl` with refcount ≥ 1.
+    pub unsafe fn ref_(self: *mut Self) {
         debug_assert!(unsafe { (*self).has_at_least_one_ref() });
         // SAFETY: FFI — `Bun__WTFStringImpl__ref` increments the WTF refcount.
         unsafe { Bun__WTFStringImpl__ref(self) }
     }
     #[inline]
-    pub fn deref(self: *mut Self) {
+    /// # Safety
+    /// `self` must point to a live `WTFStringImpl` with refcount ≥ 1. May free `*self`.
+    pub unsafe fn deref(self: *mut Self) {
         debug_assert!(unsafe { (*self).has_at_least_one_ref() });
         // SAFETY: FFI — `Bun__WTFStringImpl__deref` decrements (and may free) the WTF impl.
         unsafe { Bun__WTFStringImpl__deref(self) }

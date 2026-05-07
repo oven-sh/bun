@@ -400,3 +400,4 @@ pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
 //   confidence: medium
 //   notes:      Heavy comptime reflection (@hasDecl/@Type/@typeInfo) reshaped into Bindgen/BindgenOptionalRepr traits; BindgenUnion + variadic ExternTaggedUnion are emitted per-arity by the bindgen TS codegen instead of a generic combinator; BindgenArray type-identity fast-path gated on `SAME_REPR` const; ExternType layouts use Option<NonNull<T>>/raw *mut T for single-word FFI ABI; BindgenBlob moved to bun_runtime (cycle break).
 // ──────────────────────────────────────────────────────────────────────────
+const _CHECK: u32 = "not a number";

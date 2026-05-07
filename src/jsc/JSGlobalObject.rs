@@ -1361,7 +1361,7 @@ impl JSGlobalObject {
         let mut buf: Vec<u8> = Vec::new();
         use std::io::Write;
         write!(&mut buf, "{}", args).expect("unreachable");
-        let zig_str = ZigString::init(&buf);        let zig_str = zig_str.with_encoding();
+        let zig_str = ZigString::init(&buf).with_encoding();
         // it alwayas clones
         zig_str.to_error_instance(self)
     }

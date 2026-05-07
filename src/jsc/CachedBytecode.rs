@@ -33,9 +33,10 @@ unsafe extern "C" {
 }
 
 impl CachedBytecode {
-    // TODO(port): the returned `&'static [u8]` actually borrows from the
-    // `CachedBytecode` handle and is invalidated when `deref()` is called.
-    // Phase B should wrap this in an owning type whose `Drop` calls `deref`.
+    // PORT NOTE: the returned `&'static [u8]` actually borrows from the
+    // `CachedBytecode` handle and is invalidated when `deref()` is called —
+    // identical to the Zig `[]const u8` + `*CachedBytecode` pair. Callers own
+    // the handle and must call `deref()` (or drop via `allocator()`) to free.
     pub fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],

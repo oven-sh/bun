@@ -278,11 +278,17 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             && align_of::<Child::ZigType>() <= bun_alloc::mimalloc::MI_MAX_ALIGN_SIZE
         {
             // We can reuse the allocation, but we still need to convert the elements.
+            //
+            // PORT NOTE: Zig's `@ptrCast(unmanaged.allocatedSlice())` to a `[]u8`
+            // is fine under Zig's (lack of a) memory model. In Rust, materializing
+            // a `&mut [u8]` over the full capacity would assert that every byte —
+            // including uninitialized tail elements and `ExternType` padding — is
+            // a valid `u8`, which is UB. Work entirely through raw `*mut u8` and
+            // `ptr::copy_nonoverlapping` instead; no reference to the storage is
+            // ever formed.
             let mut v = ManuallyDrop::new(unmanaged);
-            let storage_len = v.capacity() * size_of::<Child::ExternType>();
-            // SAFETY: `data` is a contiguous mimalloc block of `storage_len` bytes.
-            let mut storage: &mut [u8] =
-                unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), storage_len) };
+            let mut storage_ptr: *mut u8 = v.as_mut_ptr().cast::<u8>();
+            let mut storage_len = v.capacity() * size_of::<Child::ExternType>();
 
             // Convert the elements.
             for i in 0..length {
@@ -291,31 +297,29 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 // PORT NOTE: Rust DOES — but we keep the byte-wise copy to match behavior
                 // exactly (in-place reinterpretation of overlapping element slots).
                 let mut old_elem = core::mem::MaybeUninit::<Child::ExternType>::uninit();
-                // SAFETY: source range is within `storage` and holds a valid ExternType.
+                // SAFETY: source range lies within the mimalloc block and holds a
+                // valid (C++-initialized) `ExternType` for `i < length`.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
-                        storage
-                            .as_ptr()
-                            .add(i * size_of::<Child::ExternType>()),
+                        storage_ptr.add(i * size_of::<Child::ExternType>()),
                         old_elem.as_mut_ptr().cast::<u8>(),
                         size_of::<Child::ExternType>(),
                     );
                 }
                 // SAFETY: bytes for element `i` were just copied from initialized storage.
-                let new_elem =
-                    Child::convert_from_extern(unsafe { old_elem.assume_init() });
-                // SAFETY: dest range is within `storage`; ZigType <= ExternType in size so
-                // slot `i` of the new layout never overruns slot `i` of the old layout.
+                let new_elem = ManuallyDrop::new(Child::convert_from_extern(unsafe {
+                    old_elem.assume_init()
+                }));
+                // SAFETY: dest range lies within the block; `size_of ZigType <=
+                // size_of ExternType` so slot `i` of the new layout never overruns
+                // slot `i` of the old layout (and never clobbers slot `i+1`).
                 unsafe {
                     core::ptr::copy_nonoverlapping(
-                        (&new_elem as *const Child::ZigType).cast::<u8>(),
-                        storage
-                            .as_mut_ptr()
-                            .add(i * size_of::<Child::ZigType>()),
+                        (&*new_elem as *const Child::ZigType).cast::<u8>(),
+                        storage_ptr.add(i * size_of::<Child::ZigType>()),
                         size_of::<Child::ZigType>(),
                     );
                 }
-                core::mem::forget(new_elem);
             }
 
             let new_size_is_multiple =
@@ -323,23 +327,30 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             let new_capacity = if new_size_is_multiple {
                 capacity * (size_of::<Child::ExternType>() / size_of::<Child::ZigType>())
             } else {
-                let new_capacity = storage.len() / size_of::<Child::ZigType>();
+                let new_capacity = storage_len / size_of::<Child::ZigType>();
                 let new_alloc_size = new_capacity * size_of::<Child::ZigType>();
-                if new_alloc_size != storage.len() {
+                if new_alloc_size != storage_len {
                     // Allocation isn't a multiple of `size_of::<Child::ZigType>()`; we have to
                     // resize it.
-                    // SAFETY: `storage` was allocated by mimalloc (USE_MIMALLOC branch
-                    // above guards entry to this path); reallocating with the same
-                    // allocator to a smaller size preserves the prefix bytes.
-                    storage = bun_core::handle_oom(unsafe {
-                        bun_alloc::realloc_slice(storage, new_alloc_size)
+                    // SAFETY: `storage_ptr` is the original mimalloc block (the
+                    // `USE_MIMALLOC` guard above gates entry to this path); shrinking
+                    // with `mi_realloc` preserves the prefix bytes.
+                    storage_ptr = bun_core::handle_oom(unsafe {
+                        bun_alloc::realloc_raw(storage_ptr, new_alloc_size)
                     });
+                    storage_len = new_alloc_size;
                 }
+                let _ = storage_len;
                 new_capacity
             };
 
-            // SAFETY: storage.ptr is aligned to at least MI_MAX_ALIGN_SIZE ≥ align_of ZigType.
-            let items_ptr = storage.as_mut_ptr().cast::<Child::ZigType>();
+            // SAFETY: `storage_ptr` is aligned to ≥ `MI_MAX_ALIGN_SIZE` ≥
+            // `align_of::<ZigType>()`; the first `length` slots were just written
+            // with valid `ZigType` values; the block is mimalloc-owned and the
+            // global allocator is mimalloc (see static assert at top of file), so
+            // `Vec`'s eventual dealloc — even with `ZigType`'s layout — routes to
+            // `mi_free`, which ignores layout.
+            let items_ptr = storage_ptr.cast::<Child::ZigType>();
             let new_unmanaged: Vec<Child::ZigType> =
                 unsafe { Vec::from_raw_parts(items_ptr, length, new_capacity) };
             return Self::ZigType::from_unmanaged(new_unmanaged);

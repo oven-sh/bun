@@ -16,7 +16,6 @@ use bun_resolver::fs::{FileSystem, RealFS, Path as FsPath};
 // `.pile` filenames/hashes are interchangeable with Zig-produced caches.
 use bun_wyhash::Wyhash;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(cache, visible);
 
 /// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **

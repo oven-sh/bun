@@ -6634,9 +6634,10 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     }
 }
 
-/// Bindgen adapter for `Blob` (moved here from `bun_jsc::bindgen` to break the
-/// `bun_jsc` → `bun_runtime` dependency cycle — `Blob` lives in this crate).
-pub type BindgenBlob = bun_jsc::bindgen::BindgenExternalShared<Blob>;
+/// Bindgen adapter for `Blob`. The cycle was broken by hoisting the `Blob`
+/// struct into `bun_jsc::webcore_types`, so the canonical alias lives in
+/// `bun_jsc::bindgen`; re-export it here for `bun_runtime` callers.
+pub use bun_jsc::bindgen::BindgenBlob;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__ref(self_: &mut Blob) {

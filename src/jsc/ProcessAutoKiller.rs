@@ -104,7 +104,6 @@ impl Drop for ProcessAutoKiller {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/ProcessAutoKiller.zig (75 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Process keys are intrusive-refcounted raw ptrs; ref()/deref() method names (ref_/deref) and bun_spawn crate path may need adjusting in Phase B.
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

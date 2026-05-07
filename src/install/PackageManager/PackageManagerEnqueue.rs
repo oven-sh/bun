@@ -1757,7 +1757,10 @@ fn enqueue_git_clone(
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                let mut pt = Box::from_raw(pt);
+                // The `'a` BACKREF on `PatchTask` is the singleton
+                // `PackageManager`, which outlives every task — erase to
+                // `'static` to match the `Task<'static>` slot lifetime.
+                let mut pt = Box::from_raw(pt.cast::<PatchTask<'static>>());
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -1834,7 +1837,10 @@ pub fn enqueue_git_checkout(
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                let mut pt = Box::from_raw(pt);
+                // The `'a` BACKREF on `PatchTask` is the singleton
+                // `PackageManager`, which outlives every task — erase to
+                // `'static` to match the `Task<'static>` slot lifetime.
+                let mut pt = Box::from_raw(pt.cast::<PatchTask<'static>>());
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -2013,19 +2019,28 @@ fn get_or_put_resolved_package_with_find_result(
     success_fn: SuccessFn,
 ) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
     // TODO(port): narrow error set
-    let should_update = this.to_update
-        // If updating, only update packages in the current workspace
-        && this.lockfile.is_root_dependency(this, dependency_id)
-        // no need to do a look up if update requests are empty (`bun update` with no args)
-        && (this.update_requests.is_empty()
-            || this.updating_packages.contains(
-                dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-            ));
+    // PORT NOTE: reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
+    // borrows `this.lockfile` and `this` at once. Split via raw root.
+    let should_update = {
+        let this_ptr: *mut PackageManager = this;
+        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+        // `manager.workspace_package_json_cache` only — disjoint from
+        // `manager.lockfile`.
+        this.to_update
+            // If updating, only update packages in the current workspace
+            && unsafe { &*(*this_ptr).lockfile }
+                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // no need to do a look up if update requests are empty (`bun update` with no args)
+            && (this.update_requests.is_empty()
+                || this.updating_packages.contains(
+                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
+                ))
+    };
 
     // Was this package already allocated? Let's reuse the existing one.
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
-        if should_update { None } else { Some(version) },
+        if should_update { None } else { Some(version.clone()) },
         &Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
             version: find_result.version,
             url: find_result.package.tarball_url.value,
@@ -2297,7 +2312,7 @@ fn get_or_put_resolved_package(
                     let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
                     // SAFETY: `version.tag == Npm` checked above; `npm` is the active arm.
-                    let npm_group = unsafe { &version.value.npm }.version.clone();
+                    let npm_group = unsafe { &version.value.npm.version };
                     if this.options.link_workspace_packages
                         && ((workspace_version.is_some()
                             && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))

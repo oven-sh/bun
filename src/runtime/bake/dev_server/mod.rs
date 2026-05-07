@@ -1033,6 +1033,16 @@ pub mod directory_watch_store {
         /// To pass to `Watcher.remove`.
         pub watch_index: u16,
     }
+    impl Default for Entry {
+        fn default() -> Self {
+            Self {
+                dir: bun_sys::Fd::INVALID,
+                dir_fd_owned: false,
+                first_dep: 0,
+                watch_index: 0,
+            }
+        }
+    }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
     pub struct Dep {
         pub next: Option<u32>,

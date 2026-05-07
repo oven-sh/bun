@@ -6304,7 +6304,6 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-            } // end  — TODO(b2-blocked): bun_install auto-install path
         }
 
         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }

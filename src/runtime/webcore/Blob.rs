@@ -6292,13 +6292,7 @@ impl Default for Inline {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSDOMFile__hasInstance / FileOpener / FileCloser
-// TODO(b2-blocked): bun_jsc::* + bun_io/bun_aio surface — host_call ABI,
-// JSValue::as_<Blob>(), bun_sys::open/INVALID_FD/E, bun_io::{Tag,Request,
-// Action,Loop}, bun_aio::{FilePoll,PollFlags,Closer}.
 // ──────────────────────────────────────────────────────────────────────────
-
-mod _io_gated {
-use super::*;
 
 // TODO(port): callconv(jsc.conv) — emitted via // TODO(b2-blocked): #[bun_jsc::host_call].
 #[unsafe(no_mangle)]
@@ -6559,8 +6553,6 @@ pub trait FileCloser: Sized {
         false
     }
 }
-
-} // mod _io_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // isAllASCII / takeOwnership / heap-alloc helpers / external_shared_descriptor

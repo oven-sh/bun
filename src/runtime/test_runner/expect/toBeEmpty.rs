@@ -55,13 +55,10 @@ pub fn to_be_empty(
             }
         } else {
             let signature = Expect::get_signature("toBeEmpty", "", false);
-            return Err(global.throw_pretty(
-                signature,
-                format_args!(
-                    "\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-                    value.to_fmt(&mut formatter)
-                ),
-            ));
+            return Err(global.throw_pretty(format_args!(
+                "{signature}\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+                value.to_fmt(&mut formatter)
+            )));
         }
     } else if actual_length.is_nan() {
         return Err(global.throw(format_args!(
@@ -74,13 +71,10 @@ pub fn to_be_empty(
 
     if not && pass {
         let signature = Expect::get_signature("toBeEmpty", "", true);
-        return Err(global.throw_pretty(
-            signature,
-            format_args!(
-                "\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+        return Err(global.throw_pretty(format_args!(
+            "{signature}\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+            value.to_fmt(&mut formatter)
+        )));
     }
 
     if not {
@@ -92,23 +86,17 @@ pub fn to_be_empty(
 
     if not {
         let signature = Expect::get_signature("toBeEmpty", "", true);
-        return Err(global.throw_pretty(
-            signature,
-            format_args!(
-                "\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+        return Err(global.throw_pretty(format_args!(
+            "{signature}\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
+            value.to_fmt(&mut formatter)
+        )));
     }
 
     let signature = Expect::get_signature("toBeEmpty", "", false);
-    Err(global.throw_pretty(
-        signature,
-        format_args!(
-            "\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
-            value.to_fmt(&mut formatter)
-        ),
-    ))
+    Err(global.throw_pretty(format_args!(
+        "{signature}\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
+        value.to_fmt(&mut formatter)
+    )))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

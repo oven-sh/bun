@@ -545,11 +545,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; `root_package_json_file` owned by `pm`.
         let root_file = unsafe { (*pm_raw).root_package_json_file };
-        let read = root_file.read_to_end();
-        let package_json_contents = match read.err {
-            None => read.bytes,
-            Some(err) => return Err(err.into()),
-        };
+        let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.

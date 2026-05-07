@@ -620,7 +620,7 @@ impl UpdateInteractiveCommand {
                 manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id as usize];
             let workspace_path: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
                 // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
-                unsafe { workspace_resolution.value.workspace }.slice(string_buf)
+                unsafe { &workspace_resolution.value.workspace }.slice(string_buf)
             } else {
                 b"" // Root workspace
             };
@@ -787,7 +787,7 @@ impl UpdateInteractiveCommand {
                             let res_path: &[u8] = match res.tag {
                                 resolution::Tag::Workspace => {
                                     // SAFETY: tag == Workspace ⇒ `value.workspace` active.
-                                    unsafe { res.value.workspace }.slice(string_buf)
+                                    unsafe { &res.value.workspace }.slice(string_buf)
                                 }
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
@@ -1062,7 +1062,7 @@ impl UpdateInteractiveCommand {
                 let is_catalog = dep.version.tag == dependency::Tag::Catalog;
                 let catalog_name_str: &[u8] = if is_catalog {
                     // SAFETY: tag == Catalog ⇒ `value.catalog` active.
-                    unsafe { dep.version.value.catalog }.slice(string_buf)
+                    unsafe { &dep.version.value.catalog }.slice(string_buf)
                 } else {
                     b""
                 };

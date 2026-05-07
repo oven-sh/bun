@@ -16,10 +16,10 @@ pub fn to_throw(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — needs an RAII guard (e.g.
-    // `let _post = this.post_match_guard(global);`) because a scopeguard capturing
-    // `&mut self` here would conflict with later borrows. Phase B: add such a guard
-    // on Expect or call post_match() before every return.
+    // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
+    // post_match on drop; the body re-borrows `this` through DerefMut so post_match
+    // runs on every exit path (Ok and Err alike).
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments = frame.arguments_as_array::<1>();
@@ -88,21 +88,18 @@ pub fn to_throw(
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
                 let mut formatter2 = super::make_formatter(global);
-                return Err(global.throw_pretty(
-                    signature_no_args,
-                    format_args!(
-                        "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
-                        name.to_fmt(&mut formatter),
-                        message.to_fmt(&mut formatter2),
-                    ),
-                ));
+                return Err(global.throw_pretty(format_args!(
+                    "{signature_no_args}\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
+                    name.to_fmt(&mut formatter),
+                    message.to_fmt(&mut formatter2),
+                )));
             }
 
             // non error thrown
-            return Err(global.throw_pretty(
-                signature_no_args,
-                format_args!("\n\nThrown value: <red>{}<r>\n", result.to_fmt(&mut formatter)),
-            ));
+            return Err(global.throw_pretty(format_args!(
+                "{signature_no_args}\n\nThrown value: <red>{}<r>\n",
+                result.to_fmt(&mut formatter),
+            )));
         }
 
         if expected_value.is_string() {
@@ -386,24 +383,18 @@ pub fn to_throw(
         if let Some(received_message) = received_message_opt {
             let received_message_fmt = received_message.to_fmt(&mut formatter);
 
-            return Err(global.throw_pretty(
-                signature,
-                format_args!(
-                    "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
-                    expected_class, received_class, received_message_fmt,
-                ),
-            ));
+            return Err(global.throw_pretty(format_args!(
+                "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+                expected_class, received_class, received_message_fmt,
+            )));
         }
 
         let received_fmt = result.to_fmt(&mut formatter);
 
-        return Err(global.throw_pretty(
-            signature,
-            format_args!(
-                "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
-                expected_class, received_class, received_fmt,
-            ),
-        ));
+        return Err(global.throw_pretty(format_args!(
+            "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
+            expected_class, received_class, received_fmt,
+        )));
     }
 
     // did not throw

@@ -104,7 +104,7 @@ impl PackageManager {
                 let pm: *mut PackageManager = self;
                 let manifest = unsafe {
                     (*pm).manifests.by_name_hash(
-                        pm,
+                        &mut *pm,
                         &*scope,
                         name_hash,
                         crate::package_manager::ManifestLoad::LoadFromMemory,

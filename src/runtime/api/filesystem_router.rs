@@ -1,15 +1,5 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
-pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
-    b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
-];
-
-// Re-export the gated types so `BunObject.rs` can name them via
-// `crate::api::filesystem_router::FileSystemRouter` (JsClass impl is on the
-// `_jsc_gated` struct).
-pub use _jsc_gated::FileSystemRouter;
-pub use _jsc_gated::MatchedRoute;
-
 pub mod kind_enum {
     pub const EXACT: &[u8] = b"exact";
     pub const CATCH_ALL: &[u8] = b"catch-all";
@@ -29,9 +19,6 @@ pub mod kind_enum {
     }
 }
 
-// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
-
-mod _jsc_gated {
 use core::cell::RefCell;
 use core::ffi::c_void;
 
@@ -58,13 +45,8 @@ use crate::webcore::{Request, Response};
 use crate::api::bun_object;
 use bun_bundler as Transpiler;
 
-const DEFAULT_EXTENSIONS: &[&[u8]] = &[
-    b"tsx",
-    b"jsx",
-    b"ts",
-    b"mjs",
-    b"cjs",
-    b"js",
+pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
+    b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
 ];
 
 // ── local shims ───────────────────────────────────────────────────────────
@@ -1020,10 +1002,6 @@ impl MatchedRoute {
     }
 }
 
-mod kind_enum {
-    pub use crate::api::filesystem_router::kind_enum::classify;
-}
-
 // PORT NOTE: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
 #[cfg(windows)]
 thread_local! {
@@ -1038,8 +1016,6 @@ thread_local! {
     static QUERY_STRING_VALUE_REFS_BUF: RefCell<[ZigString; 256]> =
         const { RefCell::new([ZigString::EMPTY; 256]) };
 }
-
-} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

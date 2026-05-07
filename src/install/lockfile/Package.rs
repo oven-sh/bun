@@ -1656,8 +1656,15 @@ impl Package<u64> {
 
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
     // PERF(port): was comptime monomorphization on `group`/`tag` — profile in Phase B
+    //
+    // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
+    // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
+    // body only otherwise touches `workspace_paths` / `workspace_versions`,
+    // so accept those two maps directly and read `string_bytes` via the
+    // builder — caller can then split-borrow at the field level.
     fn parse_dependency(
-        lockfile: &mut Lockfile,
+        workspace_paths: &mut lockfile::NameHashMap,
+        workspace_versions: &mut lockfile::VersionHashMap,
         pm: &mut PackageManager,
         log: &mut logger::Log,
         source: &logger::Source,
@@ -1692,7 +1699,7 @@ impl Package<u64> {
                             let str_ = string_builder.append::<String>(version);
                             let ptr = str_.ptr();
                             path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                &mut lockfile.buffers.string_bytes
+                                &mut string_builder.string_bytes
                                     [ptr.off as usize..(ptr.off + ptr.len) as usize],
                             );
                             break 'brk str_;
@@ -1705,7 +1712,7 @@ impl Package<u64> {
             string_builder.append::<String>(version)
         };
 
-        let buf = lockfile.buffers.string_bytes.as_slice();
+        let buf = string_builder.string_bytes.as_slice();
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
@@ -1762,8 +1769,8 @@ impl Package<u64> {
         let mut workspace_path: Option<String> = None;
         let mut workspace_version = workspace_ver;
         if tag.is_none() {
-            workspace_path = lockfile.workspace_paths.get(&name_hash).copied();
-            workspace_version = lockfile.workspace_versions.get(&name_hash).copied();
+            workspace_path = workspace_paths.get(&name_hash).copied();
+            workspace_version = workspace_versions.get(&name_hash).copied();
         }
 
         if tag.is_some() {
@@ -1903,11 +1910,11 @@ impl Package<u64> {
                     }
                     dependency_version.value.workspace = path;
 
-                    let workspace_entry = lockfile.workspace_paths.get_or_put(name_hash)?;
+                    let workspace_entry = workspace_paths.get_or_put(name_hash)?;
                     let found_matching_workspace = workspace_entry.found_existing;
 
                     if let Some(ver) = workspace_version {
-                        lockfile.workspace_versions.put(name_hash, ver)?;
+                        workspace_versions.put(name_hash, ver)?;
                         for package_dep in
                             &mut package_dependencies[0..dependencies_count as usize]
                         {

@@ -673,9 +673,12 @@ pub fn install_with_manager(
         }
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
-            let mgr: *mut PackageManager = manager;
             for key in keys {
-                manager.enqueue_patch_task_pre(PatchTask::new_calc_patch_hash(mgr, key, None));
+                // PORT NOTE: erase the `'a` BACKREF lifetime via `.cast()` so the
+                // `&mut manager` borrow ends before reborrowing for the enqueue.
+                let task = PatchTask::new_calc_patch_hash(manager, key, None)
+                    .cast::<PatchTask<'static>>();
+                crate::package_manager::enqueue_patch_task_pre(manager, task);
             }
         }
         manager.enqueue_dependency_list(root.dependencies);

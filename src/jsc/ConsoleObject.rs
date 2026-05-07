@@ -3549,7 +3549,8 @@ pub mod formatter {
                     // `Function.prototype.constructor === Function`, returning
                     // "Function". The `.name` property is set to the real class
                     // name on the constructor itself. See #29225.
-                    let printable = value.get_name(self.global_this)?;
+                    // Zig: `defer printable.deref()` / `defer printable_proto.deref()`.
+                    let printable = OwnedString::new(value.get_name(self.global_this)?);
                     writer.add_for_new_line(printable.length());
 
                     // Only report `extends` when the parent is itself a class
@@ -3560,11 +3561,11 @@ pub mod formatter {
                     let proto_is_class = !proto.is_empty_or_undefined_or_null()
                         && proto.is_cell()
                         && proto.is_class(self.global_this);
-                    let printable_proto: BunString = if proto_is_class {
+                    let printable_proto = OwnedString::new(if proto_is_class {
                         proto.get_name(self.global_this)?
                     } else {
                         BunString::empty()
-                    };
+                    });
                     writer.add_for_new_line(printable_proto.length());
 
                     if printable.is_empty() {
@@ -3600,11 +3601,12 @@ pub mod formatter {
                     }
                 }
                 Tag::Function => {
-                    let printable = value.get_name(self.global_this)?;
+                    // Zig: `defer printable.deref()` / `defer func_name.deref()`.
+                    let printable = OwnedString::new(value.get_name(self.global_this)?);
 
                     let proto = value.get_prototype(self.global_this);
                     // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-                    let func_name = proto.get_name(self.global_this)?;
+                    let func_name = OwnedString::new(proto.get_name(self.global_this)?);
 
                     if printable.is_empty() || func_name.eql(&printable) {
                         if func_name.is_empty() {
@@ -3834,7 +3836,9 @@ pub mod formatter {
                     writer.write_all(b"{}");
                 }
                 Tag::JSON => {
-                    let mut str = BunString::empty();
+                    // Zig: `defer str.deref()` — `OwnedString` releases the +1 WTF
+                    // ref on every exit (incl. the `?` and the JSDate early return).
+                    let mut str = OwnedString::new(BunString::empty());
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
                     writer.add_for_new_line(str.length());
@@ -4318,9 +4322,10 @@ pub mod formatter {
                 let _ = resolve_log.msg.write_format::<C>(writer_);
                 return Ok(());
             } else if NAME_BUF.with_borrow_mut(|buf| {
-                JestPrettyFormat::print_asymmetric_matcher::<C>(
-                    self, &mut writer, writer_, buf, value,
-                )
+                bun_runtime::test_runner::pretty_format::JestPrettyFormat
+                    ::print_asymmetric_matcher::<C>(
+                        self, &mut writer, writer_, buf, value,
+                    )
             })? {
                 return Ok(());
             }

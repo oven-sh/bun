@@ -43,21 +43,25 @@ pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 // `std.fs.Dir` → `bun_sys::Dir` (thin `Fd` wrapper, see sys/lib.rs).
 type StdFsDir = sys::Dir;
 
-pub struct PatchTask<'a> {
-    pub manager: &'a PackageManager,
+pub struct PatchTask {
+    /// BACKREF (Zig: `*PackageManager`). Stored raw because the task is held
+    /// via raw pointer through the intrusive thread-pool queue while the
+    /// manager is concurrently borrowed `&mut` on the main thread; a `&`
+    /// reference here would alias that exclusive borrow under Stacked Borrows.
+    pub manager: *const PackageManager,
     pub tempdir: StdFsDir,
     pub project_dir: &'static [u8],
     pub callback: Callback,
     pub task: ThreadPoolTask,
     pub pre: bool,
-    pub next: *mut PatchTask<'a>,
+    pub next: *mut PatchTask,
 }
 
-// SAFETY: all four accessors touch the same `next: *mut PatchTask<'a>` field;
+// SAFETY: all four accessors touch the same `next: *mut PatchTask` field;
 // the atomic variants reinterpret its address as `AtomicPtr<Self>` (same layout
 // as `*mut Self`) — identical to the `NetworkTask` / `Task` impls. Zig:
 // `UnboundedQueue(PatchTask, .next)`.
-unsafe impl<'a> bun_threading::unbounded_queue::Node for PatchTask<'a> {
+unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
     #[inline]
     unsafe fn get_next(item: *mut Self) -> *mut Self {
         unsafe { (*item).next }
@@ -165,7 +169,19 @@ pub struct InstallContext {
     pub path: Vec<u8>,
 }
 
-impl<'a> PatchTask<'a> {
+impl PatchTask {
+    /// Shared-borrow the BACKREF.
+    ///
+    /// # Safety
+    /// Caller must ensure no `&mut PackageManager` is live for the duration of
+    /// the returned borrow (the task runs on a worker thread that only reads
+    /// fields the main thread does not mutate concurrently — same contract as
+    /// the Zig pointer).
+    #[inline]
+    unsafe fn manager(&self) -> &PackageManager {
+        unsafe { &*self.manager }
+    }
+
     /// Destroy a heap-allocated `PatchTask` previously created by
     /// `new_calc_patch_hash` / `new_apply_patch_hash`.
     ///
@@ -186,7 +202,7 @@ impl<'a> PatchTask<'a> {
 
     pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
-        let patch_task: &mut PatchTask<'a> = unsafe {
+        let patch_task: &mut PatchTask = unsafe {
             &mut *(task as *mut u8)
                 .sub(offset_of!(PatchTask, task))
                 .cast::<PatchTask>()

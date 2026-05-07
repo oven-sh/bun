@@ -534,10 +534,10 @@ fn tokenize_args(
             }
 
             // isLoneShortOption
-            LoneShortOption => {
+            TokenSubtype::LoneShortOption => {
                 // e.g. '-f'
                 let short_option = arg.substring_with_len(1, 2);
-                let option_idx = find_option_by_short_name(short_option, options);
+                let option_idx = find_option_by_short_name(&short_option, options);
                 let option_type: OptionValueType =
                     option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
                 let mut value = ValueRef::Jsvalue(JSValue::UNDEFINED);
@@ -572,14 +572,14 @@ fn tokenize_args(
             }
 
             // isShortOptionGroup
-            ShortOptionGroup => {
+            TokenSubtype::ShortOptionGroup => {
                 // Expand -fXzy to -f -X -z -y
                 let original_arg_idx = index;
                 let arg_len = arg.length();
                 for idx_in_optgroup in 1..arg_len {
                     let short_option =
                         arg.substring_with_len(idx_in_optgroup, idx_in_optgroup + 1);
-                    let option_idx = find_option_by_short_name(short_option, options);
+                    let option_idx = find_option_by_short_name(&short_option, options);
                     let option_type: OptionValueType =
                         option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
                     if option_type != OptionValueType::String || idx_in_optgroup == arg_len - 1 {
@@ -640,10 +640,10 @@ fn tokenize_args(
                 }
             }
 
-            ShortOptionAndValue => {
+            TokenSubtype::ShortOptionAndValue => {
                 // e.g. -fFILE
                 let short_option = arg.substring_with_len(1, 2);
-                let option_idx = find_option_by_short_name(short_option, options);
+                let option_idx = find_option_by_short_name(&short_option, options);
                 let value = arg.substring(2);
 
                 ctx.handle_token(Token::Option(OptionToken {
@@ -662,7 +662,7 @@ fn tokenize_args(
                 }))?;
             }
 
-            LoneLongOption => {
+            TokenSubtype::LoneLongOption => {
                 // e.g. '--foo'
                 let mut long_option = arg.substring(2);
 

@@ -406,7 +406,7 @@ impl bun_event_loop::Taskable for HotReloadEvent {
 }
 
 impl HotReloadEvent {
-    pub fn init_empty(owner: *const DevServer) -> HotReloadEvent {
+    pub fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
         HotReloadEvent {
             owner,
             concurrent_task: Default::default(),
@@ -613,7 +613,7 @@ impl HotReloadEvent {
         // SAFETY: caller contract — `first` is live; `owner` is a BACKREF to the
         // DevServer that owns the WatcherAtomics array containing this event;
         // DevServer outlives all HotReloadEvents it holds.
-        let dev: *mut DevServer = unsafe { (*first).owner } as *mut DevServer;
+        let dev: *mut DevServer = unsafe { (*first).owner };
         // SAFETY: see above; `magic` read is non-aliasing.
         debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");

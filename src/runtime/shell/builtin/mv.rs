@@ -428,7 +428,7 @@ enum MvFlag {
 pub struct ShellMvCheckTargetTask {
     pub cmd: NodeId,
     pub cwd: bun_sys::Fd,
-    pub target: Vec<u8>,
+    pub target: ZBox,
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
     pub result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
@@ -437,14 +437,16 @@ pub struct ShellMvCheckTargetTask {
 }
 
 impl ShellMvCheckTargetTask {
+    /// Spec: mv.zig `ShellMvCheckTargetTask.runFromThreadPool`.
     pub fn run_from_thread_pool(this: *mut ShellMvCheckTargetTask) {
-        // SAFETY: `this` is a live boxed task.
+        // SAFETY: `this` is a live boxed task held in `MvState::CheckTarget`.
         let this = unsafe { &mut *this };
-        // TODO(b2-blocked): ShellSyscall::openat(cwd, target,
-        // O_RDONLY|O_DIRECTORY). On ENOTDIR → Ok(None); on success → Ok(fd);
-        // else → Err(e).
-        let _ = (&this.cwd, &this.target);
-        this.result = Some(Ok(None));
+        let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
+        this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
+            Ok(fd) => Ok(Some(fd)),
+            Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
+            Err(e) => Err(e),
+        });
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 

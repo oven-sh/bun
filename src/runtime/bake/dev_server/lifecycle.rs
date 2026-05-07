@@ -39,7 +39,7 @@ impl bun_watcher::WatcherContext for DevServer {
 
 impl WatcherAtomics {
     /// DevServer.zig `WatcherAtomics.init`.
-    pub(crate) fn init(owner: *const DevServer) -> Self {
+    pub(crate) fn init(owner: *mut DevServer) -> Self {
         let mk_event = || HotReloadEvent::init_empty(owner);
         WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],

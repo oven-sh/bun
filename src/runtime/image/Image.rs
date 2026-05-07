@@ -8,9 +8,6 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
-#![allow(unused_imports, unreachable_code, unused_variables)]
-
-use core::ffi::c_int;
 use core::mem;
 
 use bun_core::base64;
@@ -20,7 +17,6 @@ use bun_jsc::{
     Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
 };
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
-use bun_string::ZigString;
 use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -72,40 +68,13 @@ impl GetOptionalEnum for JSValue {
     }
 }
 
-// `pub const js = jsc.Codegen.JSImage;` and the `fromJS`/`fromJSDirect`/`toJS`
-// re-exports are provided by `#[bun_jsc::JsClass]` codegen — see PORTING.md
-// §JSC types. `js.sourceJSSetCached` / `js.sourceJSGetCached` are likewise
-// codegen'd cached-property accessors on the wrapper.
-//
-// The Rust class codegen emits the same C-ABI symbols as the C++ side
-// (`ImagePrototype__sourceJS{Set,Get}CachedValue`); declare them here so the
-// pipeline doesn't depend on whether `crate::generated_classes::Image` and
-// this `Image` are unified yet.
-unsafe extern "C" {
-    fn ImagePrototype__sourceJSSetCachedValue(
-        this_value: JSValue,
-        global: *mut JSGlobalObject,
-        value: JSValue,
-    );
-    fn ImagePrototype__sourceJSGetCachedValue(this_value: JSValue) -> JSValue;
-}
-impl Image {
-    /// `Image.sourceJS` cached-value setter (GC-visited via WriteBarrier).
-    #[inline]
-    fn source_js_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: C++ stores `value` into the JSImage wrapper's `m_sourceJS`
-        // WriteBarrier slot; both pointers are live JS-heap objects.
-        unsafe { ImagePrototype__sourceJSSetCachedValue(this, global.as_mut_ptr(), value) }
-    }
-    /// `Image.sourceJS` cached-value getter; `None` when never set.
-    #[inline]
-    fn source_js_get_cached(this: JSValue) -> Option<JSValue> {
-        // SAFETY: C++ reads the wrapper's `m_sourceJS` slot; returns `.zero`
-        // (encoded empty) if it was never set.
-        let v = unsafe { ImagePrototype__sourceJSGetCachedValue(this) };
-        if v.is_empty() { None } else { Some(v) }
-    }
-}
+// `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
+// provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
+// `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
+// `generated_classes.rs::js_Image`; re-export that module here so callers use
+// `js::source_js_set_cached` / `js::source_js_get_cached` exactly as the Zig
+// did via `js.sourceJSSetCached`.
+pub use crate::generated_classes::js_Image as js;
 
 #[bun_jsc::JsClass]
 pub struct Image {
@@ -173,7 +142,9 @@ pub enum Source {
 // `Source::deinit` in Zig only frees owned fields — `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// TODO(port): move to <area>_sys
+// Faithful port of `Image.zig`'s local externs — these C++ helpers are
+// Image-specific (they pin/adopt typed-array storage for the off-thread
+// pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
@@ -442,7 +413,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         }
         // Just remember the JS object — see Source::JsBuffer for why we don't
         // cache the pointer or pin here.
-        Image::source_js_set_cached(this_value, global, value);
+        js::source_js_set_cached(this_value, global, value);
         return Ok(Source::JsBuffer);
     }
     if let Some(blob) = value.as_::<Blob>() {
@@ -701,7 +672,7 @@ impl Image {
         // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
         // not into `self`. Phase B may need a different return type.
         match &self.source {
-            Source::JsBuffer => Self::source_js_get_cached(this_value)
+            Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| {
                     // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
@@ -733,7 +704,7 @@ impl Image {
     ) -> Result<Input, PinError> {
         match &self.source {
             Source::JsBuffer => {
-                let Some(v) = Self::source_js_get_cached(this_value) else {
+                let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
                 // Classify the storage mode WITHOUT promoting it. A fresh

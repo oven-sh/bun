@@ -1919,17 +1919,24 @@ impl H2FrameParser {
         never_index: bool,
     ) -> Result<usize, bun_core::Error> {
         // TODO(port): narrow error set
-        let required = encoded_headers.len() + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        encoded_headers.reserve(required.saturating_sub(encoded_headers.len()));
-        // PORT NOTE: Zig used allocatedSlice() to write past .len then bump .len; emulate by
-        // resizing temporarily. Phase B: expose spare_capacity_mut on encode().
         let old_len = encoded_headers.len();
-        // SAFETY: we ensure capacity >= required above; encode() writes only within capacity
-        unsafe { encoded_headers.set_len(encoded_headers.capacity()) };
-        let bytes_written = self.encode(encoded_headers.as_mut_slice(), old_len, name, value, never_index)?;
-        // SAFETY: encode() returned bytes_written; [old_len, old_len+bytes_written) is initialized
-        unsafe { encoded_headers.set_len(old_len + bytes_written) };
-        Ok(bytes_written)
+        let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
+        encoded_headers.reserve(required.saturating_sub(old_len));
+        // PORT NOTE: Zig used allocatedSlice() to write past .len then bump .len. In Rust,
+        // forming &mut [u8] over uninitialized capacity is UB, so zero-fill to capacity first
+        // (hpack.encode() takes &mut [u8], not &mut [MaybeUninit<u8>]).
+        let cap = encoded_headers.capacity();
+        encoded_headers.resize(cap, 0);
+        match self.encode(encoded_headers.as_mut_slice(), old_len, name, value, never_index) {
+            Ok(bytes_written) => {
+                encoded_headers.truncate(old_len + bytes_written);
+                Ok(bytes_written)
+            }
+            Err(e) => {
+                encoded_headers.truncate(old_len);
+                Err(e)
+            }
+        }
     }
 
     pub fn decode(&mut self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
@@ -4651,9 +4658,10 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
-                        .or(sensitive_arg.get_truthy(global_object, name)?)
-                        .is_some();
+                    let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
+                        Some(_) => true,
+                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                    };
 
                     let value_slice = unsafe { (*value_str).to_slice(global_object) };
                     let value = value_slice.slice();
@@ -4679,9 +4687,10 @@ impl H2FrameParser {
                     }
                 };
 
-                let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
-                    .or(sensitive_arg.get_truthy(global_object, name)?)
-                    .is_some();
+                let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
+                    Some(_) => true,
+                    None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                };
 
                 let value_slice = unsafe { (*value_str).to_slice(global_object) };
                 let value = value_slice.slice();
@@ -5136,9 +5145,10 @@ impl H2FrameParser {
                             }
                         };
 
-                        let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
-                            .or(sensitive_arg.get_truthy(global_object, name)?)
-                            .is_some();
+                        let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
+                            Some(_) => true,
+                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                        };
 
                         let value_slice = unsafe { (*value_str).to_slice(global_object) };
                         let value = value_slice.slice();
@@ -5179,9 +5189,10 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
-                        .or(sensitive_arg.get_truthy(global_object, name)?)
-                        .is_some();
+                    let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
+                        Some(_) => true,
+                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                    };
 
                     let value_slice = unsafe { (*value_str).to_slice(global_object) };
                     let value = value_slice.slice();
@@ -5428,14 +5439,14 @@ impl H2FrameParser {
                 if encoded_headers.try_reserve(encoded_size + padding_overhead - encoded_headers.len()).is_err() {
                     return Err(global_object.throw(format_args!("Failed to allocate padding buffer")));
                 }
-                // SAFETY: capacity ensured above; we treat allocatedSlice manually
-                unsafe { encoded_headers.set_len(encoded_headers.capacity()) };
+                // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
+                // ensure the slice we hand to writer covers only initialized bytes.
+                encoded_headers.resize(encoded_size + padding_overhead, 0);
                 let buffer = encoded_headers.as_mut_slice();
-                // memmove: shift right by 1
-                // SAFETY: src/dst overlap (shift right by 1) — ptr::copy is memmove; encoded_size+1 <= capacity reserved above
-                unsafe { core::ptr::copy(buffer.as_ptr(), buffer.as_mut_ptr().add(1), encoded_size) };
+                // memmove: shift right by 1 to make room for the pad-length byte
+                buffer.copy_within(0..encoded_size, 1);
                 buffer[0] = padding;
-                let _ = writer.write(&buffer[0..encoded_size + padding_overhead]);
+                let _ = writer.write(buffer);
             } else {
                 let _ = writer.write(&encoded_headers);
             }

@@ -798,12 +798,17 @@ pub type VersionedURL = VersionedURLType<u64>;
 pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
-#[derive(Copy, Debug)]
 pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
     pub url: SemverString,
     pub version: bun_semver::VersionType<SemverInt>,
 }
 
+// Manual `Copy`/`Clone` so the inherent buffer-relative `clone(&self, buf,
+// builder)` below does not collide with a derived `clone(&self)` at
+// method-resolution time, and to avoid the spurious `SemverInt: Copy` bound
+// `#[derive]` would add (it is `Copy` via `VersionInt`, but the derive macro
+// can't see through the trait bound).
+impl<SemverInt: bun_semver::version::VersionInt> Copy for VersionedURLType<SemverInt> {}
 impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
     #[inline]
     fn clone(&self) -> Self { *self }

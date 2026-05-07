@@ -80,10 +80,9 @@ pub fn main() {
     }
 
     Output::source::Stdio::init();
-    // Zig: `defer Output.flush();` — Output is a process-global, not a scoped writer, so there is
-    // no RAII owner to attach Drop to. Normal exit goes through `Global::exit()` which already
-    // flushes; this defer covers any path that unwinds back through main.
-    scopeguard::defer! { Output::flush(); }
+    // Zig: `defer Output.flush();` — normal exit goes through `Global::exit()` which already
+    // flushes; this guard covers any path that unwinds back through main.
+    let _flush = Output::flush_guard();
     #[cfg(all(target_arch = "x86_64", unix))]
     if Environment::ENABLE_SIMD {
         // SAFETY: BUN_GITHUB_BASELINE_URL is a NUL-terminated static.

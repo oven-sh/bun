@@ -530,7 +530,7 @@ impl JSGlobalObject {
         let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path` borrow stack
         // locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
+        let result = crate::from_js_host_call(self, || unsafe {
             Bun__runOnLoadPlugins(
                 self,
                 ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
@@ -555,7 +555,7 @@ impl JSGlobalObject {
         let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path`/`&source` borrow
         // stack locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
+        let result = crate::from_js_host_call(self, || unsafe {
             Bun__runOnResolvePlugins(
                 self,
                 ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
@@ -767,7 +767,7 @@ impl JSGlobalObject {
     ) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args are passed by value
         // and rooted on the caller's stack for the duration of the call.
-        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
+        crate::from_js_host_call_generic(self, || unsafe {
             Bun__Process__emitWarning(self, warning, type_, code, ctor)
         })
     }
@@ -837,7 +837,7 @@ impl JSGlobalObject {
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
-        crate::from_js_host_call(self, Location::caller(), || unsafe {
+        crate::from_js_host_call(self, || unsafe {
             JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), message)
         })
     }
@@ -852,7 +852,7 @@ impl JSGlobalObject {
         }
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `error_array`/`message` are
         // by-value; C++ consumes `message` (BunString) by value.
-        crate::from_js_host_call(self, Location::caller(), || unsafe {
+        crate::from_js_host_call(self, || unsafe {
             JSC__JSGlobalObject__createAggregateErrorWithArray(self, error_array, message, JSValue::UNDEFINED)
         })
     }
@@ -954,7 +954,7 @@ impl JSGlobalObject {
 
     pub fn delete_module_registry_entry(&self, name_: &ZigString) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `name_` borrow outlives the call.
-        crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
+        crate::from_js_host_call_generic(self, || unsafe {
             JSC__JSGlobalObject__deleteModuleRegistryEntry(self, name_)
         })
     }
@@ -1025,7 +1025,7 @@ impl JSGlobalObject {
         // (worker terminate() or process.exit()), and the request flag may
         // already be cleared by the time we observe it. Nothing actionable here.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ catches/reports its own exceptions.
-        let _ = crate::from_js_host_call_generic(self, Location::caller(), || unsafe {
+        let _ = crate::from_js_host_call_generic(self, || unsafe {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         });
     }

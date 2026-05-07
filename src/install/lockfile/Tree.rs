@@ -393,7 +393,12 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub resolution_lists: &'a [DependencyIDSlice],
     pub queue: TreeFiller,
     pub log: &'a mut logger::Log,
-    pub lockfile: &'a Lockfile,
+    /// PORT NOTE: Zig stores `*Lockfile` alongside `&mut buffers.resolutions`
+    /// (an aliased subslice of the same struct). Hold as `*const` so the
+    /// construction site (`Lockfile::hoist`) can split-borrow `resolutions`
+    /// mutably without borrowck rejecting the overlap; reads go through
+    /// [`Builder::lockfile()`] which never touches `buffers.resolutions`.
+    pub lockfile: *const Lockfile,
     // Unresolved optional peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID

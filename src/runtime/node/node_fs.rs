@@ -1915,6 +1915,19 @@ impl ReaddirSubtask {
 impl AsyncReaddirRecursiveTask {
     pub fn new(init: Self) -> Box<Self> { Box::new(init) }
 
+    /// Borrow the owning `JSGlobalObject`.
+    ///
+    /// SAFETY: `global_object` is set from a live `&JSGlobalObject` in
+    /// `create()` (never null) and the JSC_BORROW invariant (LIFETIMES.tsv)
+    /// guarantees the global outlives every task it spawns. The pointee is a
+    /// pinned JSC heap object; `bun_vm_concurrently()` is the only method we
+    /// call off-thread and it reads init-immutable state, so a shared borrow
+    /// is sound from both the JS thread and the work pool.
+    #[inline]
+    pub fn global_object(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_object }
+    }
+
     /// `bun.default_allocator.free(this.root_path.slice())` — paired with the
     /// `dupeZ` in `create()`. Idempotent (`PathString::EMPTY` after first call).
     fn free_root_path(&mut self) {
@@ -2125,10 +2138,11 @@ impl AsyncReaddirRecursiveTask {
             }
         }
 
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
         // documented accessor for off-thread (work-pool) callers.
-        let vm = unsafe { &mut *(*self.global_object).bun_vm_concurrently() };
+        // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
+        // sole `&mut` borrow at this point on the work-pool thread.
+        let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
         vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(self as *mut Self)));
     }
 
@@ -2152,7 +2166,10 @@ impl AsyncReaddirRecursiveTask {
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
+        // NOTE: cannot route through `self.global_object()` here -- the returned
+        // borrow would be tied to `&self` and conflict with the `&mut self.*`
+        // field accesses below, and it must also stay valid past `Self::destroy`.
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         let global_object = unsafe { &*self.global_object };
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();

@@ -16,8 +16,6 @@ use bun_paths::{resolve_path, PathBuffer};
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
-// TODO(b2-blocked): `bun_standalone_graph` is not yet a `bun_runtime` dep —
-// add `bun_standalone_graph.workspace = true` when un-gating Cargo.toml.
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
 /// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps it as

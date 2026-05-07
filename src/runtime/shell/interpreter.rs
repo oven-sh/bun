@@ -1175,6 +1175,18 @@ impl Default for Bufio {
     }
 }
 
+impl Bufio {
+    /// Spec: interpreter.zig `Bufio.memoryCost` (interpreter.zig:429).
+    pub fn memory_cost(&self) -> usize {
+        match self {
+            Bufio::Owned(o) => o.memory_cost(),
+            // SAFETY: borrowed buffer points into a live parent `ShellExecEnv`
+            // (set by `dupe_for_subshell`); the parent outlives the child.
+            Bufio::Borrowed(b) => unsafe { (**b).memory_cost() },
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ShellExecEnvKind {
     #[default]
@@ -1185,6 +1197,22 @@ pub enum ShellExecEnvKind {
 }
 
 impl ShellExecEnv {
+    /// Spec: interpreter.zig `ShellExecEnv.memoryCost` (interpreter.zig:449).
+    pub fn memory_cost(&self) -> usize {
+        let mut size = core::mem::size_of::<ShellExecEnv>();
+        size += self.shell_env.memory_cost();
+        size += self.cmd_local_env.memory_cost();
+        size += self.export_env.memory_cost();
+        size += self.__cwd.capacity();
+        size += self.__prev_cwd.capacity();
+        size += self._buffered_stderr.memory_cost();
+        size += self._buffered_stdout.memory_cost();
+        // PORT NOTE: Zig `async_pids.memoryCost()` walks the SmolList; the
+        // Rust shim is `Vec`, so report its heap capacity directly.
+        size += self.async_pids.capacity() * core::mem::size_of::<PidT>();
+        size
+    }
+
     #[inline]
     pub fn cwd(&self) -> &[u8] {
         if self.__cwd.is_empty() {

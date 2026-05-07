@@ -1027,10 +1027,12 @@ pub mod command {
                             "<r><yellow>warn<r>: Filters are ignored for auto command",
                         ));
                     }
-                    // TODO(port): RunCommand::ExecOptions { log_errors, allow_fast_run_for_extensions }
-                    // collapsed to `bin_dirs_only` until run_command::exec grows the full struct.
-                    let _log_errors = !ctx.runtime_options.if_present;
-                    if RunCommand::exec(ctx, /* bin_dirs_only */ true)? {
+                    let log_errors = !ctx.runtime_options.if_present;
+                    if RunCommand::exec_with_cfg(ctx, run_command::ExecCfg {
+                        bin_dirs_only: true,
+                        log_errors,
+                        allow_fast_run_for_extensions: true,
+                    })? {
                         return Ok(());
                     }
                     return Ok(());

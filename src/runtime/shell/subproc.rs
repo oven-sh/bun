@@ -931,7 +931,13 @@ impl Writable {
                 }
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
-                    Ok(Writable::Memfd(*memfd))
+                    let fd = *memfd;
+                    // Ownership of the fd transfers to `Writable::Memfd` (Zig
+                    // sets `stdio_consumed = true` to suppress `Stdio.deinit`).
+                    // Neutralise `stdio` so its `Drop` doesn't close the fd we
+                    // just took.
+                    stdio = Stdio::Ignore;
+                    Ok(Writable::Memfd(fd))
                 }
                 Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
                 Stdio::Inherit => Ok(Writable::Inherit),

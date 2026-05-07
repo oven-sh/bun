@@ -4348,9 +4348,9 @@ impl NodeFS {
     pub fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
         #[cfg(windows)]
         {
-            let mut req = uv::fs_t::UNINITIALIZED;
-            let _d = scopeguard::guard(&mut req, |r| r.deinit());
-            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut req, args.fd.uv(), args.atime, args.mtime, None) };
+            let mut _d = scopeguard::guard(uv::fs_t::UNINITIALIZED, |mut r| r.deinit());
+            let req = &mut *_d;
+            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), req, args.fd.uv(), args.atime, args.mtime, None) };
             return if let Some(e) = rc.errno() {
                 Maybe::Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
             } else { Maybe::Ok(()) };
@@ -5794,7 +5794,7 @@ impl NodeFS {
                         return Maybe::Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
                 }
-                StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(link_path) })
+                StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: BunString::clone_utf8(link_path), ..Default::default() })
             }
         })
     }
@@ -5847,9 +5847,9 @@ impl NodeFS {
                             return Maybe::Ok(StringOrBuffer::String(s.dupe_ref()));
                         }
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
+                    StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: BunString::clone_utf8(buf), ..Default::default() })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: webcore::encoding::to_bun_string(buf, enc), ..Default::default() }),
             });
         }
 
@@ -5893,9 +5893,9 @@ impl NodeFS {
                             return Maybe::Ok(StringOrBuffer::String(s.dupe_ref()));
                         }
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
+                    StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: BunString::clone_utf8(buf), ..Default::default() })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: webcore::encoding::to_bun_string(buf, enc), ..Default::default() }),
             })
         }
     }

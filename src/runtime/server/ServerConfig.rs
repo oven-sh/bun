@@ -535,16 +535,16 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
         let route_name = &remaining[..end];
         if !route_name.is_empty() && route_name[0].is_ascii_digit() {
             return Err(global.throw_todo(
-                "Route parameter names cannot start with a number.\n\n\
-                 If you run into this, please file an issue and we will add support for it.",
+                b"Route parameter names cannot start with a number.\n\n\
+                  If you run into this, please file an issue and we will add support for it.",
             ));
         }
 
         let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
         if entry.found_existing {
             return Err(global.throw_todo(
-                "Support for duplicate route parameter names is not yet implemented.\n\n\
-                 If you run into this, please file an issue and we will add support for it.",
+                b"Support for duplicate route parameter names is not yet implemented.\n\n\
+                  If you run into this, please file an issue and we will add support for it.",
             ));
         }
 
@@ -690,11 +690,11 @@ impl ServerConfig {
         // SSLConfig drops automatically when `args` drops on error path.
 
         let Some(arg) = arguments.next() else {
-            return Err(global.throw_invalid_arguments("Bun.serve expects an object"));
+            return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
         };
 
         if !arg.is_object() {
-            return Err(global.throw_invalid_arguments("Bun.serve expects an object"));
+            return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
         }
 
         // "development" impacts other settings like bake.
@@ -734,7 +734,7 @@ impl ServerConfig {
 
         if let Some(static_) = get_routes_object(global, arg)? {
             let Some(static_obj) = static_.get_object() else {
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Bun.serve() expects 'routes' to be an object shaped like:\n\n\
                      \x20 {\n\
                      \x20   \"/path\": {\n\
@@ -745,7 +745,7 @@ impl ServerConfig {
                      \x20   \"/path3/:param1/:param2\": (req) => new Response(\"Hello\")\n\
                      \x20 }\n\n\
                      Learn more at https://bun.com/docs/api/http",
-                ));
+                )));
             };
             args.had_routes_object = true;
 
@@ -885,8 +885,8 @@ impl ServerConfig {
                 }
 
                 let Some(route) = AnyRoute::from_js(global, &path, value, &mut *init_ctx)? else {
-                    return Err(global.throw_invalid_arguments(
-                        "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>\n\n\
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'routes' expects a Record<string, Response | HTMLBundle | {{[method: string]: (req: BunRequest) => Response|Promise<Response>}}>\n\n\
                          To bundle frontend apps on-demand with Bun.serve(), import HTML files.\n\n\
                          Example:\n\n\
                          ```js\n\
@@ -915,7 +915,7 @@ impl ServerConfig {
                          });\n\
                          ```\n\n\
                          See https://bun.com/docs/api/http for more information.",
-                    ));
+                    )));
                 };
                 init_ctx.user_routes.push(StaticRouteEntry {
                     path,

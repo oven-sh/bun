@@ -27,6 +27,15 @@ impl IO {
     /// increments refcounts and copies the struct in one step.
     #[inline]
     pub fn copy(&self) -> IO { self.clone() }
+
+    /// Spec: IO.zig `memoryCost` — sum of stdin/stdout/stderr.
+    pub fn memory_cost(&self) -> usize {
+        let mut size = core::mem::size_of::<IO>();
+        size += self.stdin.memory_cost();
+        size += self.stdout.memory_cost();
+        size += self.stderr.memory_cost();
+        size
+    }
 }
 
 #[derive(Clone, Default)]

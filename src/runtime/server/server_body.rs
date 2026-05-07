@@ -2932,9 +2932,14 @@ where
                     FetchHeaders::create_from_h3(req as *mut _ as *mut c_void),
                 )
             }));
+            // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
+            // returned slices alias the same uWS-owned header buffer. Snapshot
+            // `host` into an owned buffer first so the second borrow for `url`
+            // is unconflicted.
+            let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|h| h.to_vec());
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(host) = ReqLike::header(req, b"host") {
+                if let Some(host) = host.as_deref() {
                     let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
                     let mut s = Vec::new();
                     write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();

@@ -604,23 +604,21 @@ impl<'a> ParseRenderer<'a> {
     // Block callbacks
     // ========================================
 
-    fn enter_block_impl(ptr: *mut c_void, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn enter_block_impl(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
         }
 
         if block_type == md::BlockType::H {
-            self_.heading_tracker.enter_heading();
+            self.heading_tracker.enter_heading();
         }
 
-        let array = JSValue::create_empty_array(self_.global_object, 0)?;
-        self_.marked_args.append(array);
-        self_.stack.push(ParseStackEntry {
+        let array = JSValue::create_empty_array(self.global_object, 0)?;
+        self.marked_args.append(array);
+        self.stack.push(ParseStackEntry {
             children: array,
             block_type: Some(block_type),
             data,
@@ -630,31 +628,29 @@ impl<'a> ParseRenderer<'a> {
         Ok(())
     }
 
-    fn leave_block_impl(ptr: *mut c_void, block_type: md::BlockType, _: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn leave_block_impl(&mut self, block_type: md::BlockType, _: u32) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
         }
 
-        if self_.stack.len() <= 1 {
+        if self.stack.len() <= 1 {
             return Ok(());
         }
-        let entry = self_.stack.pop().unwrap();
-        let g = self_.global_object;
+        let entry = self.stack.pop().unwrap();
+        let g = self.global_object;
 
         // Determine HTML tag index for cached string
         let tag_index = get_block_type_tag(block_type, entry.data);
 
         // For headings, compute slug before counting props
         // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
-        // and we need self_ again below for get_block_component(). Mirrors the Zig
+        // and we need self again below for get_block_component(). Mirrors the Zig
         // path which allocator-allocated the slug.
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
-            self_.heading_tracker.leave_heading().map(|s| s.to_vec())
+            self.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {
             None
         };
@@ -676,7 +672,7 @@ impl<'a> ParseRenderer<'a> {
             }
             md::BlockType::Code => {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
-                    let lang = extract_language(self_.src_text, entry.data);
+                    let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
                         props_count += 1;
                     }
@@ -692,11 +688,11 @@ impl<'a> ParseRenderer<'a> {
         }
 
         // Build React element — use component override as type if set
-        let component = self_.get_block_component(block_type, entry.data);
+        let component = self.get_block_component(block_type, entry.data);
         let type_val: JSValue = if !component.is_empty() { component } else { get_cached_tag_string(g, tag_index) };
 
         let props = JSValue::create_empty_object(g, props_count);
-        self_.marked_args.append(props);
+        self.marked_args.append(props);
 
         // Set metadata props
         match block_type {
@@ -716,7 +712,7 @@ impl<'a> ParseRenderer<'a> {
             }
             md::BlockType::Code => {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
-                    let lang = extract_language(self_.src_text, entry.data);
+                    let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
                         props.put(g, b"language", create_utf8_for_js(g, lang)?);
                     }
@@ -736,15 +732,15 @@ impl<'a> ParseRenderer<'a> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = self_.create_element(type_val, props);
+        let obj = self.create_element(type_val, props);
 
         // Push to parent's children array
-        if let Some(parent) = self_.stack.last() {
+        if let Some(parent) = self.stack.last() {
             js_array_push(parent.children, g, obj)?;
         }
 
         if block_type == md::BlockType::H {
-            self_.heading_tracker.clear_after_heading();
+            self.heading_tracker.clear_after_heading();
         }
         Ok(())
     }
@@ -753,23 +749,21 @@ impl<'a> ParseRenderer<'a> {
     // Span callbacks
     // ========================================
 
-    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
 
-        // SAFETY: `detail.href`/`.title` borrow from `self_.src_text`, which
+        // SAFETY: `detail.href`/`.title` borrow from `self.src_text`, which
         // outlives this renderer; the `RendererImpl` trait erases that
         // lifetime so we extend it here. The entry is popped (and the slices
         // consumed) in `leave_span_impl` before `src_text` is dropped.
         let detail: md::SpanDetail<'static> =
             unsafe { core::mem::transmute::<md::SpanDetail<'_>, md::SpanDetail<'static>>(detail) };
 
-        let array = JSValue::create_empty_array(self_.global_object, 0)?;
-        self_.marked_args.append(array);
-        self_.stack.push(ParseStackEntry {
+        let array = JSValue::create_empty_array(self.global_object, 0)?;
+        self.marked_args.append(array);
+        self.stack.push(ParseStackEntry {
             children: array,
             detail,
             ..Default::default()
@@ -777,18 +771,16 @@ impl<'a> ParseRenderer<'a> {
         Ok(())
     }
 
-    fn leave_span_impl(ptr: *mut c_void, span_type: md::SpanType) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn leave_span_impl(&mut self, span_type: md::SpanType) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
 
-        if self_.stack.len() <= 1 {
+        if self.stack.len() <= 1 {
             return Ok(());
         }
-        let entry = self_.stack.pop().unwrap();
-        let g = self_.global_object;
+        let entry = self.stack.pop().unwrap();
+        let g = self.global_object;
 
         let tag_index = get_span_type_tag(span_type);
 
@@ -813,11 +805,11 @@ impl<'a> ParseRenderer<'a> {
         }
 
         // Build React element: { $$typeof, type, key, ref, props }
-        let component = self_.get_span_component(span_type);
+        let component = self.get_span_component(span_type);
         let type_val: JSValue = if !component.is_empty() { component } else { get_cached_tag_string(g, tag_index) };
 
         let props = JSValue::create_empty_object(g, props_count);
-        self_.marked_args.append(props);
+        self.marked_args.append(props);
 
         // Set metadata props
         match span_type {
@@ -868,10 +860,10 @@ impl<'a> ParseRenderer<'a> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = self_.create_element(type_val, props);
+        let obj = self.create_element(type_val, props);
 
         // Push to parent's children array
-        if let Some(parent) = self_.stack.last() {
+        if let Some(parent) = self.stack.last() {
             js_array_push(parent.children, g, obj)?;
         }
         Ok(())
@@ -881,53 +873,51 @@ impl<'a> ParseRenderer<'a> {
     // Text callback
     // ========================================
 
-    fn text_impl(ptr: *mut c_void, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn text_impl(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
 
-        let g = self_.global_object;
+        let g = self.global_object;
 
         // Track plain text for slug generation when inside a heading
-        self_.heading_tracker.track_text(text_type, content);
+        self.heading_tracker.track_text(text_type, content);
 
-        if self_.stack.is_empty() {
+        if self.stack.is_empty() {
             return Ok(());
         }
-        // PORT NOTE: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self_.stack.
-        let parent_children = self_.stack.last().unwrap().children;
+        // PORT NOTE: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
+        let parent_children = self.stack.last().unwrap().children;
 
         match text_type {
             md::TextType::Br => {
-                let br_component = self_.components.br;
+                let br_component = self.components.br;
                 let br_type: JSValue = if !br_component.is_empty() { br_component } else { get_cached_tag_string(g, TagIndex::Br) };
                 let empty_props = JSValue::create_empty_object(g, 0);
-                self_.marked_args.append(empty_props);
-                let obj = self_.create_element(br_type, empty_props);
+                self.marked_args.append(empty_props);
+                let obj = self.create_element(br_type, empty_props);
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
                 let str = create_utf8_for_js(g, b"\n")?;
-                self_.marked_args.append(str);
+                self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
                 let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
-                self_.marked_args.append(str);
+                self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
                 let str = create_utf8_for_js(g, decoded)?;
-                self_.marked_args.append(str);
+                self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             _ => {
                 let str = create_utf8_for_js(g, content)?;
-                self_.marked_args.append(str);
+                self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
         }
@@ -1006,19 +996,19 @@ impl Default for CallbackStackEntry {
 
 impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
     fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> md::types::JsResult<()> {
-        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags).map_err(js_to_parser_err)
+        self.enter_block_impl(block_type, data, flags).map_err(js_to_parser_err)
     }
     fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
-        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data).map_err(js_to_parser_err)
+        self.leave_block_impl(block_type, data).map_err(js_to_parser_err)
     }
     fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> md::types::JsResult<()> {
-        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail).map_err(js_to_parser_err)
+        self.enter_span_impl(span_type, detail).map_err(js_to_parser_err)
     }
     fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
-        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type).map_err(js_to_parser_err)
+        self.leave_span_impl(span_type).map_err(js_to_parser_err)
     }
     fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
-        Self::text_impl(self as *mut Self as *mut c_void, text_type, content).map_err(js_to_parser_err)
+        self.text_impl(text_type, content).map_err(js_to_parser_err)
     }
 }
 
@@ -1139,29 +1129,27 @@ impl<'a> JsCallbackRenderer<'a> {
     // VTable implementation
     // ========================================
 
-    fn enter_block_impl(ptr: *mut c_void, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
-        // SAFETY: ptr was set from `&mut Self` in renderer().
-        let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
-        if !self_.stack_check.is_safe_to_recurse() {
-            return Err(self_.global_object.throw_stack_overflow());
+    fn enter_block_impl(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(self.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
         }
         if block_type == md::BlockType::H {
-            self_.heading_tracker.enter_heading();
+            self.heading_tracker.enter_heading();
         }
 
         // For li: record its 0-based index within the parent list, then
         // increment the parent's counter so the next sibling gets index+1.
         let mut child_index: u32 = 0;
-        if block_type == md::BlockType::Li && !self_.stack.is_empty() {
-            let parent = self_.stack.last_mut().unwrap();
+        if block_type == md::BlockType::Li && !self.stack.is_empty() {
+            let parent = self.stack.last_mut().unwrap();
             child_index = parent.child_index;
             parent.child_index += 1;
         }
 
-        self_.stack.push(CallbackStackEntry {
+        self.stack.push(CallbackStackEntry {
             block_type,
             data,
             flags,

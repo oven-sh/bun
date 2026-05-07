@@ -399,6 +399,105 @@ impl Default for SplitBundlerOptions {
     }
 }
 
+// ─── bake_body → keystone bridges ────────────────────────────────────────────
+// LAYERING: `UserOptions` (bake_body.rs) carries the `&'static [u8]`-backed
+// Phase-A duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
+// (DevServer.rs) wants the keystone Cow-backed types defined above. Both
+// mirror the single Zig `bake.Framework`/`bake.SplitBundlerOptions`. Until the
+// two struct families unify (tracked by the `convert_file_system_router_type`
+// note in ServerConfig.rs), bridge by-value here so `server/mod.rs` can hand
+// `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
+// `Cow::Borrowed` / `Box<[u8]>` projections are by-reference (no copy of the
+// underlying arena bytes).
+impl From<bake_body::FileSystemRouterType> for FileSystemRouterType {
+    fn from(src: bake_body::FileSystemRouterType) -> Self {
+        Self {
+            root: Cow::Borrowed(src.root),
+            prefix: Cow::Borrowed(src.prefix),
+            entry_client: src.entry_client.map(Cow::Borrowed),
+            entry_server: Cow::Borrowed(src.entry_server),
+            ignore_underscores: src.ignore_underscores,
+            ignore_dirs: src.ignore_dirs.iter().map(|s| Cow::Borrowed(*s)).collect(),
+            extensions: src.extensions.iter().map(|s| Cow::Borrowed(*s)).collect(),
+            style: src.style,
+            allow_layouts: src.allow_layouts,
+        }
+    }
+}
+impl From<bake_body::ServerComponents> for ServerComponents {
+    fn from(src: bake_body::ServerComponents) -> Self {
+        Self {
+            separate_ssr_graph: src.separate_ssr_graph,
+            server_runtime_import: Cow::Borrowed(src.server_runtime_import),
+            server_register_client_reference: Cow::Borrowed(src.server_register_client_reference),
+            server_register_server_reference: Cow::Borrowed(src.server_register_server_reference),
+            client_register_server_reference: Cow::Borrowed(src.client_register_server_reference),
+        }
+    }
+}
+impl From<bake_body::ReactFastRefresh> for ReactFastRefresh {
+    fn from(src: bake_body::ReactFastRefresh) -> Self {
+        Self { import_source: Cow::Borrowed(src.import_source) }
+    }
+}
+impl From<bake_body::BuiltInModule> for BuiltInModule {
+    fn from(src: bake_body::BuiltInModule) -> Self {
+        match src {
+            bake_body::BuiltInModule::Import(p) => BuiltInModule::Import(p.into()),
+            bake_body::BuiltInModule::Code(c) => BuiltInModule::Code(c.into()),
+        }
+    }
+}
+impl From<bake_body::Framework> for Framework {
+    fn from(src: bake_body::Framework) -> Self {
+        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+        for (k, v) in src.built_in_modules.into_iter() {
+            bun_core::handle_oom(built_in_modules.put(k, BuiltInModule::from(v)));
+        }
+        Self {
+            is_built_in_react: src.is_built_in_react,
+            file_system_router_types: src
+                .file_system_router_types
+                .into_iter()
+                .map(FileSystemRouterType::from)
+                .collect(),
+            server_components: src.server_components.map(ServerComponents::from),
+            react_fast_refresh: src.react_fast_refresh.map(ReactFastRefresh::from),
+            built_in_modules,
+        }
+    }
+}
+impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
+    fn from(src: bake_body::BuildConfigSubset) -> Self {
+        // PORT NOTE: keystone `BuildConfigSubset` is the field-subset
+        // `Framework::init_transpiler` actually reads today; the wider
+        // `bake_body` shape (loader/conditions/drop/env/define/source_map) is
+        // applied by `bake_body::Framework::init_transpiler_with_options` and
+        // is dropped here pending the schema-type un-gate (see TODO at the
+        // struct def below).
+        Self {
+            ignore_dce_annotations: src.ignore_dce_annotations,
+            minify_syntax: src.minify_syntax,
+            minify_identifiers: src.minify_identifiers,
+            minify_whitespace: src.minify_whitespace,
+            _blocked_tail: (),
+        }
+    }
+}
+impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
+    fn from(src: bake_body::SplitBundlerOptions) -> Self {
+        Self {
+            // `bake_body::Plugin` (= `crate::api::js_bundler::Plugin`) →
+            // keystone `jsc::Plugin` (= `c_void`): same FFI handle, erase the
+            // nominal type.
+            plugin: src.plugin.map(|p| p.cast()),
+            client: src.client.into(),
+            server: src.server.into(),
+            ssr: src.ssr.into(),
+        }
+    }
+}
+
 /// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
 /// lives in the gated `bake_body.rs` draft; struct shape un-gated so
 /// `SplitBundlerOptions` is real.

@@ -1789,6 +1789,14 @@ impl Request {
     pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
         self.headers.as_deref()
     }
+
+    /// Mutable access to the already-materialized headers (does NOT lazily
+    /// create from the underlying uWS request — see `get_fetch_headers_unless_empty`
+    /// for that). Mirrors Zig `Request.getFetchHeaders` returning `?*FetchHeaders`.
+    #[inline]
+    pub fn get_fetch_headers_mut(&mut self) -> Option<&mut FetchHeaders> {
+        self.headers.as_deref_mut()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -172,6 +172,19 @@ impl IntoHostSetterReturn for JsResult<()> {
     #[inline]
     fn into_host_setter_return(self) -> JsResult<()> { self }
 }
+// Some Zig setters return `bool` (e.g. `Comment.setText` in html_rewriter.zig)
+// where the bool is always `true` on success — semantically identical to `void`.
+// Accept it here so the same body satisfies both the `#[bun_jsc::host_fn(setter)]`
+// proc-macro shim (which threads `JsResult<bool>` to `host_fn_setter_result`) and
+// the `generated_classes.rs` thunk (which calls `host_setter_result` directly).
+impl IntoHostSetterReturn for bool {
+    #[inline]
+    fn into_host_setter_return(self) -> JsResult<()> { Ok(()) }
+}
+impl IntoHostSetterReturn for JsResult<bool> {
+    #[inline]
+    fn into_host_setter_return(self) -> JsResult<()> { self.map(|_| ()) }
+}
 
 /// Normalize a constructor body's return type to a nullable `*mut c_void`.
 pub trait IntoHostConstructReturn {

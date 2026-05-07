@@ -674,13 +674,20 @@ pub mod __macro_support {
         super::host_fn::to_js_host_call(global, move || r.into_host_fn_result())
     }
 
-    /// Setter result mapping: `JsResult<bool>` → `bool` (false on throw).
+    /// Setter result mapping: `()` / `JsResult<()>` → `bool` (false on throw).
     /// Matches generate-classes.ts setter ABI:
     /// `extern bool ${T}Prototype__${name}(void*, JSGlobalObject*, EncodedJSValue)`.
+    ///
+    /// Accepts the same [`IntoHostSetterReturn`] surface as
+    /// [`super::host_fn::host_setter_result`] so `#[host_fn(setter)]`-tagged
+    /// methods type-check against the exact signature the codegen calls.
     #[inline]
-    pub fn host_fn_setter_result(global: &JSGlobalObject, r: JsResult<bool>) -> bool {
-        match r {
-            Ok(b) => b,
+    pub fn host_fn_setter_result<R>(global: &JSGlobalObject, r: R) -> bool
+    where
+        R: super::host_fn::IntoHostSetterReturn,
+    {
+        match r.into_host_setter_return() {
+            Ok(()) => true,
             Err(JsError::OutOfMemory) => {
                 global.throw_out_of_memory_value();
                 false

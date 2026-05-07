@@ -1981,7 +1981,10 @@ impl Comment {
         html_string_to_js(unsafe { lolhtml::Comment::get_text(self.comment) }, global_object)
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
+    // emits `CommentPrototype__setText` via `host_setter_result` (which wants
+    // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
+    // `JsResult<bool>` wrapper.
     pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.comment.is_null() {
             return Ok(());
@@ -2182,7 +2185,8 @@ impl EndTag {
         html_string_to_js(unsafe { lolhtml::EndTag::get_name(self.end_tag) }, global_object)
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
+    // emits `EndTagPrototype__setName` via `host_setter_result`.
     pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.end_tag.is_null() {
             return Ok(());
@@ -2658,7 +2662,8 @@ impl Element {
         html_string_value(unsafe { lolhtml::Element::tag_name(self.element) }, global_object)
     }
 
-    #[bun_jsc::host_fn(setter)]
+    // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
+    // emits `ElementPrototype__setTagName` via `host_setter_result`.
     pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.element.is_null() {
             return Ok(());

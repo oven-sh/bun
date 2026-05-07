@@ -17,9 +17,12 @@
 
 #![allow(dead_code)]
 
-use core::ffi::c_char;
+use core::ffi::{c_char, c_void};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_sys::Fd;
+
+pub use bun_event_loop::EventLoopHandle;
 
 // ──────────────────────────────────────────────────────────────────────────
 // WaiterThread force-flag (process.zig `WaiterThread.shouldUseWaiterThread`).

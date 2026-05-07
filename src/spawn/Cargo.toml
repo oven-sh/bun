@@ -10,6 +10,4 @@ path = "lib.rs"
 libc.workspace = true
 bun_core.workspace = true
 bun_sys.workspace = true
-
-[target.'cfg(windows)'.dependencies]
 bun_event_loop.workspace = true

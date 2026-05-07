@@ -34,7 +34,10 @@ pub struct WindowsNamedPipeContext {
     // PORT NOTE: `socket` deref'd manually in `Drop` before `named_pipe` field-drop
     // — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
     socket: SocketType,
-    named_pipe: WindowsNamedPipe,
+    /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
+    /// (sibling module) can call `get_accepted_by` on the freshly-created
+    /// client — Zig had no field visibility.
+    pub(super) named_pipe: WindowsNamedPipe,
 
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     vm: &'static VirtualMachine,

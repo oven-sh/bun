@@ -212,8 +212,7 @@ impl Scripts {
         &self,
         lockfile: &Lockfile,
         lockfile_buf: &[u8],
-        // TODO(port): `bun.AbsPath(.{ .sep = .auto })` — verify Rust type in bun_paths
-        cwd_: &mut AbsPath,
+        cwd_: &mut bun_paths::AutoAbsPath,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
@@ -300,7 +299,7 @@ impl Scripts {
         &mut self,
         log: &mut logger::Log,
         lockfile: &Lockfile,
-        folder_path: &mut AbsPath,
+        folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
     ) -> Result<Option<List>, bun_core::Error> {
@@ -348,7 +347,7 @@ impl Scripts {
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut logger::Log,
-        folder_path: &mut AbsPath,
+        folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
@@ -381,7 +380,7 @@ impl Scripts {
         &mut self,
         log: &mut logger::Log,
         lockfile: &Lockfile,
-        folder_path: &mut AbsPath,
+        folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, bun_core::Error> {

@@ -2542,9 +2542,18 @@ pub const H2FrameParser = struct {
             // RFC 7540 §6.9.2: A SETTINGS frame can alter the initial flow-control
             // window size for all current streams. The per-stream send window is
             // independent of the connection-level window, so never gate this on
-            // this.remoteWindowSize. Apply delta = new - old to each stream; a value
-            // that would push any stream's window past 2^31-1 is a connection
-            // FLOW_CONTROL_ERROR.
+            // this.remoteWindowSize. Apply delta = new - old to each stream; a
+            // value that would push any stream's *available* window past 2^31-1
+            // is a connection FLOW_CONTROL_ERROR.
+            //
+            // Accounting note: stream.remoteWindowSize here is the *cumulative*
+            // credit granted by the peer (only incremented by WINDOW_UPDATE and
+            // the delta here); the actual available flow-control window is
+            // remoteWindowSize -| remoteUsedWindowSize (see the send sites).
+            // The spec's §6.9.1 2^31-1 cap applies to the available window, not
+            // the cumulative counter — long-lived streams with >2 GiB uploaded
+            // can legitimately have a cumulative total past 2^31 while the
+            // available window sits well below it.
             const newInitialWindowSize: i64 = @intCast(remoteSettings.initialWindowSize);
             if (newInitialWindowSize != oldInitialWindowSize) {
                 const delta: i64 = newInitialWindowSize - oldInitialWindowSize;
@@ -2552,17 +2561,17 @@ pub const H2FrameParser = struct {
                 while (it.next()) |item| {
                     const stream = item.*;
                     const next: i64 = @as(i64, @intCast(stream.remoteWindowSize)) + delta;
-                    if (next > MAX_WINDOW_SIZE) {
+                    const used: i64 = @intCast(stream.remoteUsedWindowSize);
+                    if (next - used > MAX_WINDOW_SIZE) {
                         this.sendGoAway(0, ErrorCode.FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
                         return content.end;
                     }
-                    // A negative delta can drive the send window negative; the
-                    // spec allows that and the stream must stop sending until a
-                    // WINDOW_UPDATE brings it back above zero. We clamp at 0
-                    // here because remoteWindowSize is unsigned; the sender
-                    // already checks remoteWindowSize -| remoteUsedWindowSize
-                    // before emitting DATA, so a clamp at zero gives the same
-                    // "can't send" behavior.
+                    // A negative delta can drive the available window below
+                    // zero; the spec allows that — the stream must stop sending
+                    // until a WINDOW_UPDATE replenishes it. The cumulative
+                    // counter model clamps at zero here and the sender's
+                    // remoteWindowSize -| remoteUsedWindowSize check gives the
+                    // same "can't send" behavior.
                     stream.remoteWindowSize = if (next < 0) 0 else @intCast(next);
                 }
                 log("adjusted remote stream windows by delta {} (old: {}, new: {})", .{ delta, oldInitialWindowSize, newInitialWindowSize });

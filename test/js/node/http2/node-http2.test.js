@@ -2180,11 +2180,12 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling (GH-30342)", () => {
 
   it("delta that overflows 2^31-1 closes the session with FLOW_CONTROL_ERROR", async () => {
     // Sequence:
-    //  1. server sends empty SETTINGS (initial=65535)
-    //  2. on the client's first DATA, server emits WINDOW_UPDATE on the
-    //     stream to push its remoteWindowSize near 2^31-1
-    //  3. server then sends SETTINGS raising INITIAL_WINDOW_SIZE by 2;
-    //     the resulting delta applied to the primed stream overflows
+    //  1. server sends empty SETTINGS (initial=65535) and ACKs client's
+    //  2. on the client's HEADERS, server emits WINDOW_UPDATE on the
+    //     stream raising its cumulative send credit to (MAX - 1)
+    //  3. server then sends SETTINGS raising INITIAL_WINDOW_SIZE by 2,
+    //     which would push the stream's available window past 2^31-1
+    //     (spec §6.9.1 cap)
     //  4. client must emit GOAWAY with NGHTTP2_FLOW_CONTROL_ERROR (3),
     //     surfaced as ERR_HTTP2_SESSION_ERROR on the 'error' event
     const MAX = 2 ** 31 - 1;
@@ -2194,16 +2195,17 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling (GH-30342)", () => {
         sock.write(rawFrame(TYPE_SETTINGS, 0, 0, Buffer.alloc(0)));
       },
       onClientSettingsAck() {},
-      onClientData(sock, streamId) {
+      onClientHeaders(sock, streamId) {
         if (primed) return;
         primed = true;
-        // Raise the stream's send window to (MAX - 1).
-        // Default is 65535, so add (MAX - 1 - 65535).
+        // Stream's cumulative remoteWindowSize starts at 65535 (default).
+        // Raise it to (MAX - 1) via a single WINDOW_UPDATE.
         const inc = Buffer.alloc(4);
         inc.writeUInt32BE(MAX - 1 - 65535, 0);
         sock.write(rawFrame(TYPE_WINDOW_UPDATE, 0, streamId, inc));
-        // Now raise INITIAL_WINDOW_SIZE from 65535 to 65537. Delta = +2,
-        // applied to a stream at (MAX - 1) overflows.
+        // Raise INITIAL_WINDOW_SIZE from 65535 to 65537. Delta = +2.
+        // next = (MAX - 1) + 2 = MAX + 1; used = 0 (no DATA sent yet);
+        // next - used = MAX + 1 > MAX → FLOW_CONTROL_ERROR.
         sock.write(rawFrame(TYPE_SETTINGS, 0, 0, settingsPayload(SETTING_INITIAL_WINDOW_SIZE, 65537)));
       },
     });
@@ -2214,9 +2216,7 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling (GH-30342)", () => {
       client.on("error", resolve);
       const req = client.request({ ":method": "POST", ":path": "/" });
       req.on("error", () => {});
-      // tiny DATA (fits in default window) so the parser registers the
-      // stream before the overflow-inducing SETTINGS arrives
-      req.write(Buffer.from([0x61]));
+      // no DATA — HEADERS alone registers the stream with the parser
       const err = await promise;
       expect(err).toBeDefined();
       expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");

@@ -2134,7 +2134,9 @@ impl AnyServer {
     pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {
         any_server_dispatch_mut!(self, |s| {
             s.inspector_server_id = id;
-            // TODO(b2-blocked): dev_server.inspector_server_id = id once DevServer is real.
+            if let Some(dev_server) = s.dev_server.as_deref_mut() {
+                dev_server.inspector_server_id = id;
+            }
         })
     }
 

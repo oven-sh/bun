@@ -433,8 +433,8 @@ impl<'a> HTMLLoader<'a> {
 /// SAFETY: `chunk` must point to a live `Chunk` that is an element of `*chunks`,
 /// and both must remain valid for the duration of this call. `chunk` is only
 /// read here; the caller retains the sole writer.
-unsafe fn generate_compile_result_for_html_chunk_impl(
-    c: &LinkerContext,
+unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
+    c: &'a LinkerContext<'a>,
     chunk: *const Chunk,
     chunks: *mut [Chunk],
 ) -> CompileResult {

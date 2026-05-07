@@ -641,6 +641,7 @@ pub use E as e;
 pub mod G {
     use super::*;
 
+    #[derive(Clone, Copy)]
     pub struct Property {
         /// `[a = 1] = []` / `class Foo { a = 1 }` initializer.
         pub initializer: Option<Expr>,

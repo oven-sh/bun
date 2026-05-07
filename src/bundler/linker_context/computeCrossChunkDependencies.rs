@@ -144,8 +144,10 @@ pub struct CrossChunkDependencies<'a> {
     resolved_exports: &'a [ResolvedExports],
     // PORT NOTE: raw — Zig stores `*LinkerContext` / `*Symbol.Map` and freely aliases
     // `c.graph` columns alongside; borrowck cannot express that split, so opt out here
-    // and reborrow at each use site in `walk`.
-    ctx: *const LinkerContext<'a>,
+    // and reborrow at each use site in `walk`. Lifetime erased (`'static`) so the
+    // outer `CrossChunkDependencies<'_>` borrow is not tied to the LinkerContext's
+    // own invariant lifetime parameter.
+    ctx: *const LinkerContext<'static>,
     symbols: *mut js_ast::ast::symbol::Map,
 }
 

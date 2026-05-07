@@ -3,7 +3,7 @@
 use core::fmt;
 use core::fmt::Write as _;
 use std::borrow::Cow;
-use std::io::Write as IoWrite;
+use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -700,12 +700,13 @@ impl UpdateInteractiveCommand {
                 let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH };
                 // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
                 // the Rust port of `install_with_manager` takes the original cwd
-                // path slice instead.
+                // path slice instead. Snapshot before the `&mut manager` borrow.
+                let root_dir_path: &'static [u8] = manager.root_dir.dir;
                 install_with_manager::install_with_manager(
                     manager,
                     &mut *ctx,
                     root_pkg_json,
-                    manager.root_dir.dir,
+                    root_dir_path,
                 )?;
             }
         }

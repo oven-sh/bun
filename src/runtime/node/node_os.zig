@@ -141,7 +141,13 @@ fn formatArmModel(buf: *[64]u8, impl_name: []const u8, part_name: []const u8) []
 
 /// Returns true if the ARM part name is a concrete known model (not "unknown" or "(unknown)").
 fn isKnownArmPart(part_name: []const u8) bool {
-    return !strings.contains(part_name, "unknown");
+    return !strings.eql(part_name, "unknown")
+        and !strings.eql(part_name, "(unknown)")
+        and !strings.eql(part_name, "Kirin (unknown)")
+        and !strings.eql(part_name, "Kryo (unknown)")
+        and !strings.eql(part_name, "Exynos (unknown)")
+        and !strings.eql(part_name, "Apple (unknown)")
+        and !strings.eql(part_name, "Tegra (unknown)");
 }
 
 /// Finalize a single CPU's model using ARM decoder or Hardware fallback.
@@ -177,7 +183,6 @@ fn finalizeCpuModel(
 fn applyModelFallback(
     globalThis: *jsc.JSGlobalObject,
     values: jsc.JSValue,
-    num_cpus: u32,
     hardware_value: ?[]const u8,
 ) !void {
     var it = try values.arrayIterator(globalThis);
@@ -278,7 +283,9 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    // Uses flexible `: ` separator parsing to handle varying whitespace formats
+    // Parses each line by finding the first ':' delimiter, then trims
+    // surrounding whitespace from both key and value. This handles
+    // "key: value", "key:\tvalue", and "key:value" variants.
     if (std.fs.cwd().openFile("/proc/cpuinfo", .{})) |file| {
         defer file.close();
 
@@ -300,7 +307,11 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             const value = strings.trim(line[colon_pos + 1 ..], " \t\r\n:");
 
             if (strings.eqlComptime(key, "processor")) {
-                // Finalize previous CPU using ARM decoder or Hardware fallback
+                // Finalize previous CPU using ARM decoder or Hardware fallback.
+                // The initial call (cpu_index == 0 with null state) is a harmless
+                // no-op: /proc/cpuinfo supplies Hardware / CPU implementer / CPU part
+                // within each processor block on all known Linux kernels, so the
+                // fallback only triggers when those fields are genuinely absent.
                 try finalizeCpuModel(globalThis, values, cpu_index, arm_impl, arm_part, hardware_value, &model_name_buf);
                 cpu_index = try std.fmt.parseInt(u32, value, 10);
                 if (cpu_index >= num_cpus) return error.too_may_cpus;
@@ -321,7 +332,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         try finalizeCpuModel(globalThis, values, cpu_index, arm_impl, arm_part, hardware_value, &model_name_buf);
 
         // Apply fallback (Hardware or "unknown") to CPUs with no model
-        try applyModelFallback(globalThis, values, num_cpus, hardware_value);
+        try applyModelFallback(globalThis, values, hardware_value);
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);

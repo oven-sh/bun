@@ -2987,7 +2987,9 @@ where
         // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
         if self.config.on_node_http_request.is_some() {
-            self.on_node_http_request_with_upgrade_ctx(req, resp, Some(upgrade_ctx));
+            // PORT NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
+            // JS, so a long-lived `&mut self` here would alias on callback.
+            Self::on_node_http_request_with_upgrade_ctx(self, req, resp, upgrade_ctx);
             return;
         }
         if self.config.on_request.is_none() {

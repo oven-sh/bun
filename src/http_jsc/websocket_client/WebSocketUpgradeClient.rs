@@ -761,12 +761,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     .map_or(core::ptr::null_mut(), |h| h.cast::<boringssl::c::SSL>());
                 // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
                 // returns a nullable borrowed C string valid for the SSL's lifetime.
-                if let Some(servername) =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
-                {
-                    // SAFETY: SSL_get_servername returns a NUL-terminated C string.
-                    let hostname = unsafe { CStr::from_ptr(servername as *const _ as *const _) }
-                        .to_bytes();
+                // Keep the raw pointer — round-tripping through `&c_char` would
+                // shrink provenance to 1 byte and make the CStr scan UB.
+                let servername = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0) };
+                if !servername.is_null() {
+                    // SAFETY: SSL_get_servername returns a NUL-terminated C string
+                    // owned by the SSL session; full provenance retained above.
+                    let hostname = unsafe { CStr::from_ptr(servername) }.to_bytes();
                     // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
                     if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                         // SAFETY: no `&mut Self` is live across this call.

@@ -693,7 +693,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 routes: Vec::new(),
                 static_routes: Default::default(),
                 dynamic_routes: Default::default(),
-                pattern_arena: Arena::new(),
+                pattern_string_arena: Arena::new(),
+                edges: Vec::new(),
+                freed_edges: Vec::new(),
             }
         );
     }

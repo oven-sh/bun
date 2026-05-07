@@ -1938,19 +1938,22 @@ pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> J
 
 pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use bun_standalone_graph::{Graph as StandaloneModuleGraph, File as GraphFile};
-    use crate::webcore::blob::Blob;
+    use crate::webcore::blob::{Blob, BlobExt as _};
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = unsafe { &*global_this.bun_vm() };
-    let Some(graph) = vm.standalone_module_graph else {
+    if vm.standalone_module_graph.is_none() {
         return JSValue::create_empty_array(global_this, 0);
-    };
+    }
     // PORT NOTE (layering): `VirtualMachine.standalone_module_graph` is
-    // type-erased to `NonNull<c_void>` so `bun_jsc` doesn't depend on
-    // `bun_standalone_graph`. Re-type here where both are in scope.
-    // SAFETY: the field is only ever assigned a `*mut StandaloneModuleGraph`
-    // (see `VirtualMachine::initWithModuleGraph` in the Zig spec).
-    let graph: &mut StandaloneModuleGraph =
-        unsafe { &mut *graph.as_ptr().cast::<StandaloneModuleGraph>() };
+    // type-erased to `&dyn bun_resolver::StandaloneModuleGraph` so `bun_jsc`
+    // doesn't depend on `bun_standalone_graph`. The concrete graph is the
+    // process singleton — `Graph::get()` returns the same instance the trait
+    // object was built from (`vm.standalone_module_graph.is_some()` ⇔
+    // `Graph::get().is_some()`).
+    let graph: &mut StandaloneModuleGraph = unsafe {
+        &mut *StandaloneModuleGraph::get()
+            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
+    };
 
     let unsorted_files = graph.files.values_mut();
     let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());

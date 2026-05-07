@@ -3367,13 +3367,20 @@ impl DuplexUpgradeContext {
                 // duplex events — skip the TLSSocket instead of calling
                 // `getHandlers()` on the freed allocation.
                 //
-                // `handleConnectError`'s `needs_deref` path consumes the
-                // owner's +1 we hold; do NOT let `IntrusiveRc::Drop` fire on
-                // top of that (over-deref → UAF on the JS wrapper's pointee).
+                // Refcount: `tls.socket` is `InternalSocket::UpgradedDuplex`
+                // here (assigned in `js_upgrade_duplex_to_tls` *before*
+                // `start_tls()` enqueues anything and before any duplex
+                // callback can dispatch), so `handle_connect_error`'s
+                // `needs_deref = !is_detached()` is `true` and it consumes
+                // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
+                // fire on top of that (over-deref → UAF on the JS wrapper's
+                // pointee).
                 let p = IntrusiveRc::into_raw(tls);
-                // SAFETY: intrusive refcount; single-threaded dispatch.
-                // `handle_connect_error` consumes the +1, so do NOT
-                // reconstruct the IntrusiveRc.
+                // SAFETY: intrusive refcount; single-threaded dispatch. The
+                // +1 transferred via `into_raw` is released by
+                // `handle_connect_error`'s `needs_deref` arm (socket is
+                // UpgradedDuplex, not Detached) — do NOT reconstruct the
+                // IntrusiveRc.
                 let _ = unsafe {
                     (*p).handle_connect_error(sys::SystemErrno::ECONNREFUSED as c_int)
                 };

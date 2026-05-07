@@ -2358,10 +2358,11 @@ where
     pub fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let mut value = BunString::clone_utf8(unix.as_bytes());
-                let r = value.to_js(global)?;
-                value.deref();
-                Ok(r)
+                let value = BunString::clone_utf8(unix.as_bytes());
+                // Zig: `defer value.deref();` — must release the cloned ref even
+                // on the `to_js` error path.
+                let value = scopeguard::guard(value, |v| v.deref());
+                value.to_js(global)
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;

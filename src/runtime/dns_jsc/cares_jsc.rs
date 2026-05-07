@@ -19,23 +19,6 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JSValue {
     bun_string_jsc::create_utf8_for_js(global, bytes).unwrap_or(JSValue::UNDEFINED)
 }
 
-/// Local shim for `bun.String.toJSArray` — not yet surfaced through the
-/// top-level `bun_jsc::bun_string_jsc` re-export module. Calls `toJS` on each
-/// element of `array` and returns a JSArray.
-#[inline]
-fn bun_string_to_js_array(global_object: &JSGlobalObject, array: &[bstr::String]) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        fn BunString__createArray(
-            global_object: *mut JSGlobalObject,
-            ptr: *const bstr::String,
-            len: usize,
-        ) -> JSValue;
-    }
-    // SAFETY: ptr/len from a live slice; `global_object` borrowed for call duration.
-    let v = unsafe { BunString__createArray(global_object.as_ptr(), array.as_ptr(), array.len()) };
-    if global_object.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
-}
-
 // ── struct_hostent ─────────────────────────────────────────────────────────
 pub fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,

@@ -426,10 +426,14 @@ impl TextDecoder {
 
                 // Decode the data
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
-                // `result.result` derefs on drop (matches `defer result.result.deref()`).
+                // `bun_string::String` is `#[derive(Copy)]` with NO `Drop` impl, and
+                // `DecodeResult` has none either — wrap the +1 ref in `OwnedString`
+                // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
+                let result_str = OwnedString::new(result.result);
 
                 // Check for errors if fatal mode is enabled
                 if result.saw_error && self.fatal {
+                    // `result_str` drops here, releasing the WTFStringImpl ref.
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
@@ -441,8 +445,9 @@ impl TextDecoder {
                         .throw());
                 }
 
-                // Return the decoded string
-                result.result.to_js(global_this)
+                // `StringJsc::to_js(&self, ...)` borrows; `result_str` drops after,
+                // releasing the +1 (JSC holds its own ref via the JSString).
+                result_str.to_js(global_this)
             }
         }
     }

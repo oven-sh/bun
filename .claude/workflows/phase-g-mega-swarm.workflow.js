@@ -100,16 +100,20 @@ Never git reset/checkout/stash/rebase/pull. **Commit explicit paths ONLY:** \`gi
 
 let history = [];
 
+// Per-glob diag dir to avoid cross-swarm clobbering
+const GLOB_ID = TEST_GLOB.replace(/[^a-z]/gi, "_").slice(0, 40);
+const GDIAG = `${DIAG}/${GLOB_ID}`;
+
 for (let round = 1; round <= MAX_ROUNDS; round++) {
-  // ── Build (ONCE) ──
+  // ── Wait for builder daemon (NO bun bd here) ──
   phase("Build");
   const build = await agent(
-    `Build ONCE in /root/bun-5. \`git -C /root/bun-5 symbolic-ref HEAD || git checkout claude/phase-a-port; bun bd --version 2>&1 | tail -10\`. Return {ok, errors}.`,
-    { label: `build-r${round}`, phase: "Build", schema: BUILD_S },
+    `Wait for builder daemon. **DO NOT run bun bd** — a daemon owns the build. \`mkdir -p ${GDIAG}; for i in $(seq 1 60); do test -f /tmp/mega-diag/.built && break; sleep 5; done; test -f /tmp/mega-diag/.built && tail -3 /tmp/mega-diag/.build.log\`. If build.log shows errors, return {ok:false, errors:"..."}. Else {ok:true}.`,
+    { label: `wait-build-r${round}`, phase: "Build", schema: BUILD_S, model: "haiku" },
   );
   if (!build?.ok) {
     await agent(
-      `Build broke in /root/bun-5. Errors: ${build?.errors}. Fix compile error → commit. \`cargo check\` allowed here.`,
+      `Build daemon reports failure. Errors: ${build?.errors}. Fix compile error → commit. \`cargo check\` allowed here. The daemon will rebuild on next loop.`,
       { label: `buildfix-r${round}`, phase: "Build" },
     );
     history.push({ round, build_broke: true });
@@ -121,11 +125,11 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey ALL tests in /root/bun-5. Round ${round}.
 
-\`mkdir -p ${DIAG}\`. List: \`ls ${TEST_GLOB} | sort > ${DIAG}/all.txt\` (~340 files).
+\`mkdir -p ${DIAG}\`. List: \`ls ${TEST_GLOB} | sort > ${GDIAG}/all.txt\` (~340 files).
 
-**Baseline (cache, only first time):** \`cat ${DIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
+**Baseline (cache, only first time):** \`cat ${GDIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
 
-**Probe (parallel 16):** ${round === 1 ? `\`cat ${DIAG}/all.txt` : `Only re-run previously-failing files (round-${round - 1} failures + 10 random previously-passing for regression check): \`{ cat ${DIAG}/failing-r${round - 1}.txt; shuf -n 10 ${DIAG}/passing.txt; }`} | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${DIAG}/results-r${round}.txt'\`. Write \`${DIAG}/failing-r${round}.txt\` and update \`${DIAG}/passing.txt\` (cumulative).
+**Probe (parallel 16):** ${round === 1 ? `\`cat ${GDIAG}/all.txt` : `Only re-run previously-failing files (round-${round - 1} failures + 10 random previously-passing for regression check): \`{ cat ${GDIAG}/failing-r${round - 1}.txt; shuf -n 10 ${GDIAG}/passing.txt; }`} | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${GDIAG}/results-r${round}.txt'\`. Write \`${GDIAG}/failing-r${round}.txt\` and update \`${GDIAG}/passing.txt\` (cumulative).
 
 **Triage (ONE shell pipeline, no per-file writes):** \`while IFS='|' read f rc; do slug=...; passing if rc==0 && pass-count matches baseline; else echo "{file,kind,summary}" to failing.json; done < results-r${round}.txt\`. kind: rc>=128→crash, rc==124→hang, else→diverge. summary = first 2 ✗ lines from .log (or backtrace tail for crash).
 

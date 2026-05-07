@@ -361,8 +361,9 @@ impl us_socket_t {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
         let raw = unsafe { c::us_socket_get_fd(self) };
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
-        // Windows; `Fd` backs as i32 / u64 respectively — explicit widen.
-        #[cfg(windows)] { Fd::from_native(raw as u64) }
+        // Windows. Tag kind=system explicitly — `from_native` would store raw
+        // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
         #[cfg(not(windows))] { Fd::from_native(raw) }
     }
 

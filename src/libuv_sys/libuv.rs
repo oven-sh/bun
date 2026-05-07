@@ -199,6 +199,17 @@ pub type uv_errno_t = c_int;
 pub type uv_loop_option = c_uint;
 pub type uv_membership = c_uint;
 pub type uv_tty_mode_t = c_uint;
+/// `uv_tty_mode_t` (uv.h) — typed wrapper for `uv_tty_set_mode` callers.
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TtyMode {
+    Normal = 0, // UV_TTY_MODE_NORMAL
+    Raw = 1,    // UV_TTY_MODE_RAW
+    Io = 2,     // UV_TTY_MODE_IO
+    /// `UV_TTY_MODE_RAW_VT` — raw mode with VT input processing left to the
+    /// terminal (Windows ENABLE_VIRTUAL_TERMINAL_INPUT). Aligns with POSIX raw.
+    Vt = 3,
+}
 pub type uv_tty_vtermstate_t = c_uint;
 pub type uv_stdio_flags = c_uint;
 pub type uv_clock_id = c_uint;
@@ -425,11 +436,11 @@ pub type uv_loop_s = Loop;
 
 // `Loop::get()` escapes a raw pointer into this TLS slot out of the
 // `LocalKey::with` closure and hands it to libuv for the thread lifetime.
-// That is sound only because the slot has NO destructor (so std registers no
-// TLS dtor that could invalidate the address) and the `const { }` initializer
-// guarantees static-TLS placement. Guard the no-Drop invariant at compile time
-// so adding `impl Drop for Loop` (or wrapping the cell) fails loudly here
-// rather than becoming silent UB.
+// That is sound only because the slot has NO destructor: with no `Drop`, std
+// registers no TLS dtor, so the `LocalKey` storage outlives every per-thread
+// caller and the escaped address stays valid until thread exit. Guard the
+// no-Drop invariant at compile time so adding `impl Drop for Loop` (or
+// wrapping the cell) fails loudly here rather than becoming silent UB.
 const _: () = assert!(!core::mem::needs_drop::<Loop>());
 const _: () = assert!(!core::mem::needs_drop::<UnsafeCell<MaybeUninit<Loop>>>());
 
@@ -1170,9 +1181,9 @@ impl uv_tty_t {
         unsafe { uv_tty_init(loop_, self, file, 0) }
     }
     #[inline]
-    pub fn set_mode(&mut self, mode: uv_tty_mode_t) -> ReturnCode {
+    pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
         // SAFETY: tty was `init`ed.
-        unsafe { uv_tty_set_mode(self, mode) }
+        unsafe { uv_tty_set_mode(self, mode as uv_tty_mode_t) }
     }
 }
 

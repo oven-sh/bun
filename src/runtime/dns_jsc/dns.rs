@@ -33,12 +33,17 @@ use bun_cares_sys::c_ares_draft as c_ares;
 use super::cares_jsc::error_to_deferred;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 
-// `sockaddr_storage` is absent from `libc` on Windows; route through the
-// libuv-sys ws2 mirror there. Layout is identical (128-byte, 8-aligned POD).
+// `sockaddr_storage` / `addrinfo` are absent from `libc` on Windows; route
+// through the libuv-sys ws2 mirror there. Layout is identical to the C side
+// (`ADDRINFOA` / 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
 type SockaddrStorage = libc::sockaddr_storage;
 #[cfg(windows)]
 type SockaddrStorage = bun_libuv_sys::sockaddr_storage;
+#[cfg(not(windows))]
+type AddrInfo = AddrInfo;
+#[cfg(windows)]
+type AddrInfo = bun_libuv_sys::addrinfo;
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
@@ -107,7 +112,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type GetAddrInfoAsyncCallback =
-    unsafe extern "C" fn(i32, *mut libc::addrinfo, *mut c_void);
+    unsafe extern "C" fn(i32, *mut AddrInfo, *mut c_void);
 
 #[cfg(windows)]
 const INET6_ADDRSTRLEN: usize = 65;
@@ -132,7 +137,7 @@ pub mod lib_info {
         *mut mach_port,
         node: *const c_char,
         service: *const c_char,
-        hints: *const libc::addrinfo,
+        hints: *const AddrInfo,
         callback: GetAddrInfoAsyncCallback,
         context: *mut c_void,
     ) -> i32;
@@ -1126,7 +1131,7 @@ pub mod get_addr_info_request {
             let cap = hostname.len() - 1;
             let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
             hostname[copied_len] = 0;
-            let mut addrinfo: *mut libc::addrinfo = ptr::null_mut();
+            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             // SAFETY: hostname[copied_len] == 0
             let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied_len) };
             let debug_timer = Output::DebugTimer::start();
@@ -1273,7 +1278,7 @@ impl GetAddrInfoRequest {
 
     pub extern "C" fn get_addr_info_async_callback(
         status: i32,
-        addr_info: *mut libc::addrinfo,
+        addr_info: *mut AddrInfo,
         arg: *mut c_void,
     ) {
         // SAFETY: arg was a *mut GetAddrInfoRequest passed to getaddrinfo_async_start
@@ -1711,7 +1716,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut libc::addrinfo) {
+    pub unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -2152,9 +2157,9 @@ pub mod internal {
     #[cfg(not(unix))]
     const DEFAULT_HINTS_ADDRCONFIG: bool = false;
 
-    fn default_hints() -> libc::addrinfo {
+    fn default_hints() -> AddrInfo {
         // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
-        let mut h: libc::addrinfo = unsafe { core::mem::zeroed() };
+        let mut h: AddrInfo = unsafe { core::mem::zeroed() };
         h.ai_family = libc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
@@ -2169,7 +2174,7 @@ pub mod internal {
         h
     }
 
-    pub fn get_hints() -> libc::addrinfo {
+    pub fn get_hints() -> AddrInfo {
         let mut hints_copy = default_hints();
         if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get().unwrap_or(false) {
             hints_copy.ai_flags &= !libc::AI_ADDRCONFIG;
@@ -2252,14 +2257,14 @@ pub mod internal {
 
     #[repr(C)]
     pub struct ResultEntry {
-        pub info: libc::addrinfo,
+        pub info: AddrInfo,
         pub addr: SockaddrStorage,
     }
 
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
-    fn process_results(info: *mut libc::addrinfo) -> Box<[ResultEntry]> {
+    fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
-        let mut info_: *mut libc::addrinfo = info;
+        let mut info_: *mut AddrInfo = info;
         while !info_.is_null() {
             count += 1;
             // SAFETY: info_ walks the libc-allocated addrinfo list; freed by caller after we return.
@@ -2331,7 +2336,7 @@ pub mod internal {
         results
     }
 
-    fn after_result(req: *mut Request, info: *mut libc::addrinfo, err: c_int) {
+    fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
             unsafe { libc::freeaddrinfo(info) };
@@ -2401,7 +2406,7 @@ pub mod internal {
         }
         #[cfg(not(windows))]
         unsafe {
-            let mut addrinfo: *mut libc::addrinfo = ptr::null_mut();
+            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             let mut hints = get_hints();
 
             let host_ptr = (*req).key.host.as_ref().map(|h| h.as_ptr() as *const c_char).unwrap_or(ptr::null());
@@ -2486,7 +2491,7 @@ pub mod internal {
         true
     }
 
-    extern "C" fn libinfo_callback(status: i32, addr_info: *mut libc::addrinfo, arg: *mut c_void) {
+    extern "C" fn libinfo_callback(status: i32, addr_info: *mut AddrInfo, arg: *mut c_void) {
         let req: *mut Request = arg.cast();
         let status_int: c_int = status;
         'retry: {

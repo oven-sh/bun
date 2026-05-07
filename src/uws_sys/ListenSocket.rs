@@ -55,7 +55,9 @@ impl ListenSocket {
     pub fn fd(&mut self) -> Fd {
         // SAFETY: self is a valid listen socket.
         let raw = unsafe { us_listen_socket_get_fd(self) };
-        #[cfg(windows)] { Fd::from_native(raw as u64) }
+        // SOCKET → kind=system (mask bit 63); `from_native` would store the
+        // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
         #[cfg(not(windows))] { Fd::from_native(raw) }
     }
 

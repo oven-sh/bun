@@ -362,10 +362,9 @@ pub mod user32 {}
 /// `std.os.windows.advapi32` (subset placeholder; Phase B fills as needed).
 pub mod advapi32 {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// libuv re-export (tier-0 sibling). Zig: `pub const libuv = @import("../../libuv_sys/libuv.zig")`
-// ──────────────────────────────────────────────────────────────────────────
-pub use bun_libuv_sys as libuv;
+// `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
+// module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
+// must not depend on `bun_libuv_sys` (would invert the tier ordering).
 
 // ──────────────────────────────────────────────────────────────────────────
 // kernel32 namespace (subset). Zig: `pub const kernel32 = windows.kernel32`

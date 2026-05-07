@@ -3619,7 +3619,7 @@ pub fn user_unique_id() -> u32 {
         return 0;
     }
     let name = &buf[0..size as usize];
-    bun_output::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
+    bun_core::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
     // SAFETY: u16 slice -> byte slice
     let bytes = unsafe { core::slice::from_raw_parts(name.as_ptr() as *const u8, name.len() * 2) };
     bun_wyhash::hash32(bytes)
@@ -4523,8 +4523,10 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_str::String) -> *mut c_vo
         EncodingNonAscii::Latin1 => {
             // Zig: bun.strings.copyU8IntoU16 — straight zero-extend per byte.
             let src = str_.latin1();
-            let dst = buf.as_mut_slice();
-            for (i, &b) in src.iter().enumerate() { dst[i] = b as u16; }
+            let dst = &mut buf.as_mut_slice()[..src.len()];
+            // zip avoids the per-iteration bounds check an indexed loop would
+            // emit, letting the optimizer vectorize the widen.
+            for (d, &b) in dst.iter_mut().zip(src) { *d = b as u16; }
             &buf.as_slice()[0..src.len()]
         }
     };
@@ -4831,7 +4833,7 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
 // The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
 // has been removed; its items belong in `bun_libuv_sys`.
 
-bun_output::declare_scope!(windowsUserUniqueId, visible);
+bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via the `pub use` at the top of this module.
 

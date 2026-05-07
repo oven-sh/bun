@@ -3,6 +3,9 @@ use core::mem::{offset_of, MaybeUninit};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_sys::windows::libuv as uv;
+// `is_closed`/`is_active`/`fd` are default trait methods on `UvHandle`;
+// the trait must be in scope for method resolution on `Box<Pipe>`/`Tty`.
+use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::Fd;
 
 bun_core::declare_scope!(PipeSource, hidden);
@@ -365,7 +368,7 @@ impl Source {
                     return bun_sys::Result::Ok(Source::File(Self::open_file(fd)));
                 }
 
-                bun_sys::Result::Err(bun_sys::Error::from_code(errno, bun_sys::Syscall::Open))
+                bun_sys::Result::Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open))
             }
         }
     }
@@ -375,7 +378,7 @@ impl Source {
             Source::Tty(tty) => {
                 if let Some(err) = Self::tty_ref(tty)
                     .set_mode(if value { uv::TtyMode::Raw } else { uv::TtyMode::Normal })
-                    .to_error(bun_sys::Syscall::UvTtySetMode)
+                    .to_error(bun_sys::Tag::uv_tty_set_mode)
                 {
                     bun_sys::Result::Err(err)
                 } else {
@@ -384,7 +387,7 @@ impl Source {
             }
             _ => bun_sys::Result::Err(bun_sys::Error {
                 errno: bun_sys::E::NOTSUP as _,
-                syscall: bun_sys::Syscall::UvTtySetMode,
+                syscall: bun_sys::Tag::uv_tty_set_mode,
                 fd: self.get_fd(),
                 // TODO(port): bun_sys::Error remaining fields default
                 ..Default::default()
@@ -416,7 +419,7 @@ pub mod stdin_tty {
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
             // SAFETY: value() points to static storage sized for uv_tty_t; lock held.
             let rc = unsafe { uv::uv_tty_init(loop_, value(), 0, 0) };
-            if let Some(err) = rc.to_error(bun_sys::Syscall::Open) {
+            if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                 INITIALIZED.store(false, Ordering::Relaxed);
                 return bun_sys::Result::Err(err);
             }
@@ -448,7 +451,7 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     // live for process lifetime. NonNull means no drop concern.
     if let Some(err) = unsafe { tty.as_ref() }
         .set_mode(if raw { uv::TtyMode::Vt } else { uv::TtyMode::Normal })
-        .to_error(bun_sys::Syscall::UvTtySetMode)
+        .to_error(bun_sys::Tag::uv_tty_set_mode)
     {
         return err.errno as c_int;
     }

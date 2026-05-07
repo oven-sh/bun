@@ -20,22 +20,31 @@ pub mod windows_sys;
 pub mod os {
     use core::ffi::c_char;
 
-    static mut ENVIRON: &'static mut [*mut c_char] = &mut [];
+    // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
+    // hands out a shared `&[_]`) never aliases a live `&mut`. Zig's
+    // `std.os.environ` is a plain slice global with no exclusivity guarantee;
+    // mirroring that with `&'static mut` would be UB the moment a reader
+    // borrows while a writer holds the swapped-out `&mut`.
+    static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
-    /// Swap in a new envp slice; returns the previous one (Zig:
+    /// Swap in a new envp slice; returns the previous (ptr, len) pair (Zig:
     /// `orig_environ = std.os.environ; std.os.environ = new`).
     /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> &'static mut [*mut c_char] {
-        unsafe { core::mem::take(&mut *core::ptr::addr_of_mut!(ENVIRON)) }
+    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
+        unsafe { core::mem::replace(&mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn set_environ(envp: &'static mut [*mut c_char]) {
-        unsafe { *core::ptr::addr_of_mut!(ENVIRON) = envp; }
+    /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
+    /// elements for the process lifetime (leaked allocation).
+    pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        unsafe { ENVIRON = (ptr, len); }
     }
     /// Borrowed view of the current envp slice (read side of `std.os.environ`).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
-        unsafe { *core::ptr::addr_of!(ENVIRON) }
+        unsafe {
+            let (p, n) = ENVIRON;
+            if p.is_null() { &[] } else { core::slice::from_raw_parts(p, n) }
+        }
     }
 }
 

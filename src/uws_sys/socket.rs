@@ -468,10 +468,15 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         set_socket_field: Option<impl FnOnce(&mut This, Self)>,
         is_ipc: bool,
     ) -> Option<Self> {
-        // `Fd::native()` is `c_int` on POSIX, `*mut c_void` (HANDLE) on
-        // Windows; `LIBUS_SOCKET_DESCRIPTOR` is `c_int` / `usize` (SOCKET)
-        // respectively — explicit cast for the Windows arm.
-        #[cfg(windows)] let fd_raw = handle.native() as crate::LIBUS_SOCKET_DESCRIPTOR;
+        // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET` (`usize`) on
+        // Windows. Do NOT route through `Fd::native()` on Windows — that calls
+        // `uv_get_osfhandle` for kind=uv fds and yields a *file* HANDLE, which
+        // is not interchangeable with a winsock SOCKET. The caller must supply
+        // a system-kind (raw SOCKET) fd here.
+        #[cfg(windows)] let fd_raw = {
+            debug_assert_eq!(handle.kind(), bun_core::FdKind::System);
+            handle.native() as crate::LIBUS_SOCKET_DESCRIPTOR
+        };
         #[cfg(not(windows))] let fd_raw = handle.native();
         let raw = g.from_fd(
             k,

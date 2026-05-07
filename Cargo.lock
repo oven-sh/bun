@@ -2372,6 +2372,7 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
+ "bun_libuv_sys",
  "bun_windows_sys",
  "const_format",
  "enum-map",
@@ -2450,7 +2451,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_libuv_sys",
  "const_format",
  "enum-map",
  "enumset",

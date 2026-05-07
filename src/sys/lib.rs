@@ -2860,19 +2860,15 @@ impl File {
         Ok(v)
     }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
-    /// closing the handle around the rename. On Windows the file must be
-    /// closed *before* `MoveFileEx`; on POSIX, close after `rename` so the
-    /// fd stays valid for `move_file_z_with_handle`'s `fcopyfile` fallback.
+    /// closing the handle after the rename so `move_file_z_with_handle`'s
+    /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
+    /// (Zig closes first on Windows because its rename uses `MoveFileExW`; the
+    /// Rust port goes through `rename_at_w` → `NtSetInformationFile` which
+    /// opens its own source handle, so keeping `self` open across the call is
+    /// fine and avoids passing a closed handle into the EXDEV fallback.)
     pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> core::result::Result<(), bun_core::Error> {
-        // Capture the handle *before* `close()` consumes `self` (Windows arm).
-        // On POSIX the handle stays open across the rename so the
-        // `fcopyfile` fallback in `move_file_z_with_handle` can use it.
-        let handle = self.handle;
-        #[cfg(windows)]
-        self.close();
         let cwd = Fd::cwd();
-        let result = move_file_z_with_handle(handle, cwd, src, cwd, dest);
-        #[cfg(unix)]
+        let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
         result
     }

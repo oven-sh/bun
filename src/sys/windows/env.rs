@@ -8,7 +8,7 @@ use bun_str::strings;
 pub static mut WTF8_ENV_BUF: Option<&'static [u8]> = None;
 /// `convert_env_to_wtf8` will set this to the original value of `std.os.environ`.
 // SAFETY: written exactly once at program startup before any threads are spawned.
-pub static mut ORIG_ENVIRON: Option<&'static mut [*mut c_char]> = None;
+pub static mut ORIG_ENVIRON: Option<(*mut *mut c_char, usize)> = None;
 
 #[cfg(feature = "ci_assert")]
 static mut ENV_CONVERTED: bool = false;
@@ -93,13 +93,12 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let envp_slice: &'static mut [*mut c_char] = Box::leak(envp.into_boxed_slice());
     let envp_nonnull_len = envp_slice.len() - 1;
-    let envp_nonnull_slice: &'static mut [*mut c_char] = &mut envp_slice[0..envp_nonnull_len];
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
         WTF8_ENV_BUF = Some(Box::leak(wtf8_buf));
         // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
         ORIG_ENVIRON = Some(bun_core::os::take_environ());
-        bun_core::os::set_environ(envp_nonnull_slice);
+        bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
 
     #[cfg(feature = "ci_assert")]

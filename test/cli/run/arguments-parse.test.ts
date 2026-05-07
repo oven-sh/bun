@@ -8,9 +8,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
   test("--define reaches the transpiler for AutoCommand", async () => {
+    using dir = tempDir("args-auto", {});
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--define", "FOO:123", "-e", "console.log(FOO)"],
       env: bunEnv,
+      cwd: String(dir),
       stderr: "pipe",
     });
     const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

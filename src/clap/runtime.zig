@@ -142,6 +142,7 @@ pub fn parse(set: *const ParamSet, opt: clap.ParseOptions) !RuntimeArgs {
         .pos = &.{},
         .passthrough_positionals = &.{},
     };
+    errdefer res.arena.deinit();
     const arena_alloc = res.arena.allocator();
 
     res.flags_storage = try arena_alloc.alloc(bool, set.n_flags);

@@ -572,19 +572,17 @@ pub fn load(
 
                 let default_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
-                lockfile
-                    .catalogs
-                    .default
-                    .ensure_total_capacity(default_deps.len())?;
+                // PORT NOTE: reshaped for borrowck — `dependency::Context` /
+                // `ArrayHashContext` borrow `lockfile.buffers.string_bytes` while
+                // we also need `&mut lockfile.catalogs`. Split the disjoint
+                // fields up front so borrowck sees sibling borrows (no raw-ptr
+                // provenance laundering). `string_bytes` is not reallocated for
+                // the remainder of this block.
+                let Lockfile { buffers, catalogs, .. } = &mut *lockfile;
+                let string_bytes: &[u8] = buffers.string_bytes.as_slice();
 
-                // PORT NOTE: reshaped for borrowck — `dependency::Context` borrows
-                // `lockfile.buffers` while we also need `&mut lockfile.catalogs`.
-                // `string_bytes` is not reallocated in this block, so a raw-ptr
-                // slice view is sound (matches Zig's aliased pointers).
-                let string_bytes: &[u8] = unsafe {
-                    let s = lockfile.buffers.string_bytes.as_slice();
-                    core::slice::from_raw_parts(s.as_ptr(), s.len())
-                };
+                catalogs.default.ensure_total_capacity(default_deps.len())?;
+
                 // Zig `String.arrayHashContext(lockfile, null)` →
                 // `{ .arg_buf = lockfile.buffers.string_bytes.items, .existing_buf = same }`.
                 let str_ctx = semver::string::ArrayHashContext {
@@ -602,7 +600,7 @@ pub fn load(
                     let value = dependency::to_dependency(*dep, &mut context);
                     drop(context);
                     // PERF(port): was assume_capacity
-                    lockfile.catalogs.default.put_assume_capacity_context(
+                    catalogs.default.put_assume_capacity_context(
                         *dep_name,
                         value,
                         |k| str_ctx.hash(*k),
@@ -612,10 +610,7 @@ pub fn load(
 
                 let catalog_names: Vec<SemverString> = buffers::read_array(stream)?;
 
-                lockfile
-                    .catalogs
-                    .groups
-                    .ensure_total_capacity(catalog_names.len())?;
+                catalogs.groups.ensure_total_capacity(catalog_names.len())?;
 
                 for catalog_name in &catalog_names {
                     let catalog_dep_names: Vec<SemverString> = buffers::read_array(stream)?;
@@ -624,13 +619,12 @@ pub fn load(
 
                     // PORT NOTE: `CatalogMap::get_or_put_group` currently takes the
                     // stub `bun_install::lockfile::Lockfile`; inline its body here
-                    // against the real `&mut lockfile.catalogs` to avoid the type
+                    // against the split `catalogs` borrow to avoid the type
                     // mismatch and the simultaneous `&mut lockfile` self-borrow.
                     let group: &mut super::catalog_map::Map = if catalog_name.is_empty() {
-                        &mut lockfile.catalogs.default
+                        &mut catalogs.default
                     } else {
-                        let entry = lockfile
-                            .catalogs
+                        let entry = catalogs
                             .groups
                             .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {

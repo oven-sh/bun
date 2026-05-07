@@ -23,7 +23,7 @@ use crate::{
     TruncatedPackageNameHash, UpdateRequest,
 };
 use crate::bun_json::{Expr, ExprAccessors, ExprData};
-use crate::dependency::{Behavior, DependencyExt as _};
+use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -1070,7 +1070,7 @@ impl Diff {
     pub fn generate(
         pm: &mut PackageManager,
         log: &mut logger::Log,
-        from_lockfile: &Lockfile,
+        from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from: &Package,
         to: &Package,
@@ -1082,14 +1082,22 @@ impl Diff {
         let is_root = id_mapping.is_some();
         // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
         // it after `parseWithJSON` (which may grow `to_lockfile.buffers
-        // .dependencies` and invalidate the old slice). Mirror that with a raw
-        // fat pointer so the `&mut to_lockfile` reborrows below don't conflict
-        // with this view; re-derive after each call that may reallocate.
+        // .dependencies` and invalidate the old slice). Mirror that with raw fat
+        // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
+        // (sort, recursive `generate`) don't conflict with these read views; the
+        // recursive call only sorts `overrides`/`catalogs` and never reallocates
+        // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
+        // pointers remain valid for the loop body.
         let mut to_deps: *const [Dependency] =
             to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
         macro_rules! to_deps { () => { unsafe { &*to_deps } } }
-        let from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.as_slice());
-        let from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.as_slice());
+        let from_deps: *const [Dependency] =
+            from.dependencies.get(from_lockfile.buffers.dependencies.as_slice());
+        let from_resolutions: *const [PackageID] =
+            from.resolutions.get(from_lockfile.buffers.resolutions.as_slice());
+        // SAFETY: see PORT NOTE above — `from_lockfile.buffers` is not
+        // reallocated for the lifetime of these references.
+        let (from_deps, from_resolutions) = unsafe { (&*from_deps, &*from_resolutions) };
         let mut to_i: usize = 0;
 
         if from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count() {
@@ -1362,9 +1370,8 @@ impl Diff {
                     break 'patched_dependencies_changed true;
                 }
             }
-            let mut iter = from_lockfile.patched_dependencies.iterator();
-            while let Some(entry) = iter.next() {
-                if !to_lockfile.patched_dependencies.contains(&*entry.key_ptr) {
+            for key in from_lockfile.patched_dependencies.keys() {
+                if !to_lockfile.patched_dependencies.contains(key) {
                     break 'patched_dependencies_changed true;
                 }
             }

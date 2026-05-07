@@ -813,7 +813,6 @@ pub use node::{NodeField, NodeListExt, NodeSliceExt};
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/isolated_install/Store.zig (590 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      MultiArrayList column-accessor API assumed (.items_<field>()); OrderedArraySet Ctx type-param dropped (ctx passed per-call); Entry.step atomic-enum needs real wrapper; Entry.debug_print_list ports stale/dead Zig debug code; Node.deinitList dropped (Drop handles it).
+//   confidence: high
+//   notes:      MultiArrayList column-accessor API assumed (.items_<field>()); OrderedArraySet Ctx type-param dropped (ctx passed per-call); Entry.step atomic-enum stored as AtomicU32 (Step::from_u32 round-trip); Entry.debug_print_list ports stale/dead Zig debug code; Node.deinitList dropped (Drop handles it).
 // ──────────────────────────────────────────────────────────────────────────

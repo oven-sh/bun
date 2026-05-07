@@ -1036,14 +1036,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive borrow's
-                                    // address; `by_name_hash_allow_expired` takes `pm`
-                                    // raw and only projects fields disjoint from
-                                    // `pm.manifests` (see its safety doc).
+                                    // address; `cache_ctx` snapshots the four
+                                    // `pm.options` / cache-dir / timestamp scalars
+                                    // before `&mut manifests` is taken, so the
+                                    // lookup holds only that disjoint field borrow.
+                                    let cache_ctx =
+                                        unsafe { &mut *this_ptr }.manifest_disk_cache_ctx();
                                     let scope: *const crate::npm::registry::Scope =
                                         unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
                                     if let Some(manifest) = unsafe {
                                         (*this_ptr).manifests.by_name_hash_allow_expired(
-                                            this_ptr,
+                                            cache_ctx,
                                             &*scope,
                                             name_hash,
                                             Some(&mut expired),

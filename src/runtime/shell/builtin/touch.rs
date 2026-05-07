@@ -300,15 +300,57 @@ impl ShellTouchTask {
         }))
     }
 
-    /// Spec: touch.zig `runFromThreadPool`.
+    /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT
+    /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub fn run_from_thread_pool(this: *mut ShellTouchTask) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        use bun_paths::resolve_path::{self, platform, Platform};
+        use bun_sys::FdExt as _;
+        // SAFETY: `this` is a live Box::into_raw'd task; the worker thread
+        // has exclusive access until `shell_task_trampoline` posts back.
         let this = unsafe { &mut *this };
-        // TODO(b2-blocked): bun_paths::join_z, NodeFS::utimes, bun_sys::open —
-        // the actual touch is `utimes(path)` falling back to
-        // `open(O_CREAT|O_WRONLY)` on ENOENT.
-        let _ = (&this.filepath, &this.cwd_path, this.opts);
-        // Bounce-back is posted by `shell_task_trampoline`.
+
+        // We have to give an absolute path.
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+            // Re-terminate into the path buffer (`filepath` is the bare argv
+            // bytes without the trailing NUL).
+            resolve_path::join_z_buf::<platform::Auto>(buf.as_mut_slice(), &[&this.filepath])
+        } else {
+            resolve_path::join_z_buf::<platform::Auto>(
+                buf.as_mut_slice(),
+                &[&this.cwd_path, &this.filepath],
+            )
+        };
+
+        // Zig went via `NodeFS{}.utimes(args, .sync)`; that wrapper just
+        // forwards to `Syscall.utimens` (uv_fs_utime on Windows), so call
+        // the bun_sys layer directly to avoid the heavyweight NodeFS state.
+        let milliseconds = bun_core::time::milli_timestamp();
+        let atime = bun_sys::TimeLike {
+            sec: milliseconds.div_euclid(1_000),
+            nsec: milliseconds.rem_euclid(1_000) * 1_000_000,
+        };
+        let mtime = atime;
+        if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
+            'out: {
+                if err.get_errno() == bun_sys::E::ENOENT {
+                    const PERM: bun_sys::Mode = 0o664;
+                    match bun_sys::open(filepath, bun_sys::O::CREAT | bun_sys::O::WRONLY, PERM) {
+                        Ok(fd) => {
+                            fd.close();
+                            break 'out;
+                        }
+                        Err(e) => {
+                            this.err = Some(e.with_path(filepath.as_bytes()));
+                            break 'out;
+                        }
+                    }
+                }
+                this.err = Some(err.with_path(filepath.as_bytes()));
+            }
+        }
+        // Worker→main bounce-back is posted by `shell_task_trampoline` after
+        // this returns (Zig: `event_loop.enqueueTaskConcurrent(...)`).
     }
 
     pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &mut Interpreter) {
@@ -375,6 +417,6 @@ impl FlagParser for Opts {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/touch.zig (414 lines)
-//   confidence: medium (NodeId style; thread-pool body stubbed)
-//   blocked_on: NodeFS::utimes, bun_sys::open, WorkPool, IOWriter::enqueue body
+//   confidence: high (NodeId style; thread-pool body ported)
+//   blocked_on: IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

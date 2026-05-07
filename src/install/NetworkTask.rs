@@ -363,6 +363,16 @@ impl From<ForManifestError> for bun_core::Error {
         }
     }
 }
+impl PartialEq<bun_core::Error> for ForManifestError {
+    fn eq(&self, other: &bun_core::Error) -> bool {
+        <&'static str>::from(self) == other.name()
+    }
+}
+impl bun_core::output::ErrName for ForManifestError {
+    fn name(&self) -> &[u8] {
+        <&'static str>::from(self).as_bytes()
+    }
+}
 
 impl NetworkTask {
     pub fn for_manifest(
@@ -640,6 +650,16 @@ impl From<ForTarballError> for bun_core::Error {
             ForTarballError::OutOfMemory => bun_core::err!(OutOfMemory),
             ForTarballError::InvalidURL => bun_core::err!(InvalidURL),
         }
+    }
+}
+impl PartialEq<bun_core::Error> for ForTarballError {
+    fn eq(&self, other: &bun_core::Error) -> bool {
+        <&'static str>::from(self) == other.name()
+    }
+}
+impl bun_core::output::ErrName for ForTarballError {
+    fn name(&self) -> &[u8] {
+        <&'static str>::from(self).as_bytes()
     }
 }
 

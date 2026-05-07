@@ -663,26 +663,25 @@ pub fn install_with_manager(
 
     if needs_new_lockfile {
         root = Default::default();
-        manager.lockfile.init_empty_in_place();
+        manager.lockfile.init_empty();
 
-        if manager.options.enable.frozen_lockfile && !matches!(load_result, lockfile::LoadResult::NotFound) {
+        if manager.options.enable.frozen_lockfile() && !matches!(load_result, lockfile::LoadResult::NotFound) {
             if log_level != Options::LogLevel::Silent {
                 Output::pretty_errorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen");
             }
             Global::crash();
         }
 
-        let log = manager.log_mut();
+        // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
         let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-            log,
+            unsafe { &mut *manager.log },
             root_package_json_path.as_bytes(),
             Default::default(),
         ) {
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager
-                        .log_mut()
+                    unsafe { &*manager.log }
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
@@ -691,8 +690,7 @@ pub fn install_with_manager(
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    manager
-                        .log_mut()
+                    unsafe { &*manager.log }
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
@@ -709,7 +707,7 @@ pub fn install_with_manager(
             // SAFETY: `mgr` is the sole provenance root; `parse` reborrows
             // disjoint fields (`lockfile`, `log`) through it. No other live
             // `&mut` to `*mgr` exists across the call.
-            let log = unsafe { (*mgr).log.unwrap().as_ptr() };
+            let log = unsafe { (*mgr).log };
             root.parse(
                 unsafe { &mut (*mgr).lockfile },
                 unsafe { &mut *mgr },
@@ -729,17 +727,21 @@ pub fn install_with_manager(
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             for key in keys {
-                let task = PatchTask::new_calc_patch_hash(manager, key, None);
-                crate::package_manager::enqueue_patch_task_pre(manager, task);
+                // PORT NOTE: erase the `'a` BACKREF lifetime via `.cast()` so the
+                // `&mut manager` borrow ends before reborrowing for the enqueue.
+                let task = PatchTask::new_calc_patch_hash(manager, key, None)
+                    .cast::<PatchTask<'static>>();
+                enqueue_patch_task_pre(manager, task);
             }
         }
-        manager.enqueue_dependency_list(root.dependencies);
+        enqueue_dependency_list(manager, root.dependencies);
     } else {
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             for key in keys {
-                let task = PatchTask::new_calc_patch_hash(manager, key, None);
-                crate::package_manager::enqueue_patch_task_pre(manager, task);
+                let task = PatchTask::new_calc_patch_hash(manager, key, None)
+                    .cast::<PatchTask<'static>>();
+                enqueue_patch_task_pre(manager, task);
             }
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
@@ -793,12 +795,12 @@ pub fn install_with_manager(
         }
     }
 
-    let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager
-        .log_mut()
+    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+    let had_errors_before_cleaning_lockfile = unsafe { &*manager.log }.has_errors();
+    unsafe { &*manager.log }
         .print(Output::error_writer() as *mut _)
         .map_err(|_| bun_core::err!("WriteFailed"))?;
-    manager.log_mut().reset();
+    unsafe { &mut *manager.log }.reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // PORT NOTE: Zig copies the `*Lockfile` pointer, leaving `manager.lockfile` intact so both
@@ -812,9 +814,10 @@ pub fn install_with_manager(
         // and its preinstall_state, so a single raw provenance root keeps all
         // reborrows under one tag (PORTING.md §Aliasing-split-borrow).
         unsafe {
-            let log: *mut logger::Log = (*mgr).log;
+            let log = (*mgr).log;
             let exact_versions = (*mgr).options.enable.exact_versions();
-            (*mgr).lockfile.clean_with_logger(
+            Lockfile::clean_with_logger(
+                &mut (*mgr).lockfile,
                 &mut *mgr,
                 &mut (*mgr).update_requests,
                 &mut *log,

@@ -398,9 +398,9 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 .add_element_content_handlers(
                     // SAFETY: `selector` was just returned by `parse`.
                     unsafe { &mut *selector },
-                    Some(&mut tag_user_datas[i]),
-                    None::<&mut TagUserData<T>>,
-                    None::<&mut TagUserData<T>>,
+                    Some(NonNull::from(&mut tag_user_datas[i])),
+                    None::<NonNull<TagUserData<T>>>,
+                    None::<NonNull<TagUserData<T>>>,
                 )
                 .map_err(lol_err)?;
         }
@@ -415,9 +415,9 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                     .add_element_content_handlers(
                         // SAFETY: `head_selector` was just returned by `parse`.
                         unsafe { &mut *head_selector },
-                        Some(&mut doc_user_datas[i]),
-                        None::<&mut DocTagUserData<T>>,
-                        None::<&mut DocTagUserData<T>>,
+                        Some(NonNull::from(&mut doc_user_datas[i])),
+                        None::<NonNull<DocTagUserData<T>>>,
+                        None::<NonNull<DocTagUserData<T>>>,
                     )
                     .map_err(lol_err)?;
             }

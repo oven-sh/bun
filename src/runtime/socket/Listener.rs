@@ -1010,16 +1010,34 @@ impl Listener {
         }
 
         // SecureContext was already borrowed above; build the SSL_CTX from
-        // SSLConfig only if no SecureContext was passed.
+        // SSLConfig only if no SecureContext was passed. doConnect hands
+        // `socket.owned_ssl_ctx` to the per-VM connect group.
         if ssl_enabled && ssl_ctx_guard.is_none() {
-            if let Some(_ssl_cfg) = socket_config.ssl.as_ref() {
-                // `bun_jsc::rare_data::SSLContextCache` is an opaque stub; the
-                // real `get_or_create` lives in `crate::api::bun::SSLContextCache`
-                // and the RareData→runtime bridge isn't wired yet.
-                let _ = &mut *ssl_ctx_guard;
-                todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create");
+            if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
+                // Per-VM weak `SSLContextCache`: identical configs (including the
+                // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
+                // cases — those fields aren't in the digest because they're
+                // applied per-SSL, not per-CTX) share one `SSL_CTX*`. The
+                // `requires_custom_request_ctx` gate is gone; the cache makes the
+                // default-vs-custom distinction by content.
+                let mut create_err = uws::create_bun_socket_error_t::none;
+                // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache field
+                // inside the boxed `RuntimeState`; address-stable until VM teardown.
+                let cache = unsafe { &mut *vm_ssl_ctx_cache() };
+                match cache.get_or_create(ssl_cfg, &mut create_err) {
+                    Some(ctx) => {
+                        *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
+                    }
+                    None => {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        ));
+                    }
+                }
             }
         }
+        // (errdefer for owned_ssl_ctx already armed at the earlier lookup site;
+        // duplicating it here would double-free on error.)
 
         default_data.ensure_still_alive();
 

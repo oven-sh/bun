@@ -294,27 +294,19 @@ impl<'a> Parser<'a> {
     fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
         // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
-        let _level = match expr_as_string(expr, self.bump).unwrap_or(b"") {
-            b"debug" | b"error" | b"warn" | b"info" => (),
+        let level = match expr_as_string(expr, self.bump).unwrap_or(b"") {
+            b"debug" => api::MessageLevel::Debug,
+            b"error" => api::MessageLevel::Err,
+            b"warn" => api::MessageLevel::Warn,
+            b"info" => api::MessageLevel::Info,
             _ => {
-                self.add_error(
+                return self.add_error(
                     expr.loc,
                     b"Invalid log level, must be one of debug, error, or warn",
-                )?;
-                unreachable!()
+                );
             }
         };
-        // TODO(b2-blocked): api::TransformOptions.log_level / api::MessageLevel (peechy codegen)
-        
-        {
-            self.ctx.args.log_level = Some(match expr_as_string(expr, self.bump).unwrap() {
-                b"debug" => api::MessageLevel::Debug,
-                b"error" => api::MessageLevel::Err,
-                b"warn" => api::MessageLevel::Warn,
-                b"info" => api::MessageLevel::Info,
-                _ => unreachable!(),
-            });
-        }
+        self.ctx.args.log_level = Some(level);
         Ok(())
     }
 

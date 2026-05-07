@@ -278,8 +278,7 @@ impl BuiltinIO {
                         bun_sys::Tag::write,
                     ));
                 }
-                let len = buf.len();
-                let write_len = if idx + len > total { total - idx } else { len };
+                let write_len = (total - idx).min(buf.len());
                 let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
                 dst.copy_from_slice(&buf[..write_len]);
                 *i = i.saturating_add(write_len as u32);
@@ -876,45 +875,8 @@ impl Builtin {
             IoKind::Stderr => &mut me.stderr,
             IoKind::Stdin => return Ok(0),
         };
-        match out {
-            BuiltinIO::Fd(_) => panic!(
-                "write_no_io called on fd output; caller must check needs_io()"
-            ),
-            BuiltinIO::Buf => {
-                // PORT NOTE: Zig appended to a local `io.buf` and flushed in
-                // `done()`. The NodeId port writes straight to the shell env's
-                // captured buffer (same observable result; one less copy).
-                // SAFETY: shell env outlives the Cmd node; single-threaded.
-                let captured = unsafe {
-                    match io_kind {
-                        IoKind::Stdout => (*shell).buffered_stdout(),
-                        _ => (*shell).buffered_stderr(),
-                    }
-                };
-                // SAFETY: `captured` points into a live `ShellExecEnv` Bufio.
-                bun_core::handle_oom(unsafe { (*captured).append_slice(buf) });
-                Ok(buf.len())
-            }
-            BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                // Spec: Builtin.zig writeNoIO .arraybuf — `len = buf.len` stays
-                // usize so `i + len > byte_len` is computed at usize width and
-                // cannot overflow. Mirror that here; only the stored cursor is u32.
-                let idx = *i as usize;
-                let total = arraybuf.array_buffer.byte_len as usize;
-                if idx >= total {
-                    return Err(bun_sys::Error::from_code(
-                        bun_sys::E::ENOSPC,
-                        bun_sys::Tag::write,
-                    ));
-                }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
-                Ok(write_len)
-            }
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
-        }
+        // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
+        unsafe { out.write_no_io_to(shell, io_kind, buf) }
     }
 
     /// Shell exec env of the owning Cmd.

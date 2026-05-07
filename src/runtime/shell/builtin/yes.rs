@@ -1,8 +1,9 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, Impl, IoKind, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
@@ -90,26 +91,38 @@ impl Yes {
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
     /// thread. Spec: yes.zig `writeNoIO`.
     fn write_no_io_loop(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        for _ in 0..4 {
-            // PORT NOTE: reshaped for borrowck — clone the slice each
-            // iteration so write_no_io can take &mut Interpreter.
-            let chunk = {
-                let me = Self::state_mut(interp, cmd);
-                me.buffer[..me.buffer_used].to_vec()
-            };
-            // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
-            // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
-            // `writeFailingError`.
-            if let Err(e) = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk) {
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    Some(Kind::Yes),
-                    format_args!("{}\n", bstr::BStr::new(e.name())),
-                )
-                .to_vec();
-                return Self::write_failing_error(interp, cmd, &buf, 1);
+        // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
+        // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
+        // `writeFailingError`.
+        //
+        // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
+        // are accessible simultaneously — Zig passes `this.buffer[0..]`
+        // zero-copy, and matching that matters for `yes` throughput.
+        let err = {
+            let cmd_node = interp.as_cmd_mut(cmd);
+            let shell = cmd_node.base.shell;
+            let Exec::Builtin(me) = &mut cmd_node.exec else { unreachable!() };
+            let (stdout, yes) = Self::split_stdout_state(me);
+            let chunk = &yes.buffer[..yes.buffer_used];
+            let mut err = None;
+            for _ in 0..4 {
+                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
+                if let Err(e) = unsafe { stdout.write_no_io_to(shell, IoKind::Stdout, chunk) } {
+                    err = Some(e);
+                    break;
+                }
             }
+            err
+        };
+        if let Some(e) = err {
+            let buf = Builtin::fmt_error_arena(
+                interp,
+                cmd,
+                Some(Kind::Yes),
+                format_args!("{}\n", bstr::BStr::new(e.name())),
+            )
+            .to_vec();
+            return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
@@ -131,14 +144,11 @@ impl Yes {
         cmd: NodeId,
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
-        let chunk = {
-            let me = Self::state_mut(interp, cmd);
-            me.buffer[..me.buffer_used].to_vec()
-        };
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        Builtin::of_mut(interp, cmd)
-            .stdout
-            .enqueue(child, &chunk, safeguard)
+        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
+        // so the tiled buffer is enqueued zero-copy (Zig passes a slice).
+        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
     pub fn write_failing_error(
@@ -157,7 +167,10 @@ impl Yes {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if e.is_some() {
+        if let Some(e) = e {
+            // Spec: yes.zig `defer e.deref()` — release the SystemError's
+            // owned BunString fields (no `Drop` impl on `bun_sys::SystemError`).
+            e.deref();
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
@@ -171,9 +184,17 @@ impl Yes {
     #[inline]
     fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Yes {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
-            crate::shell::builtin::Impl::Yes(y) => &mut **y,
+            Impl::Yes(y) => &mut **y,
             _ => unreachable!(),
         }
+    }
+
+    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields
+    /// are disjoint so this is a sound reborrow without `unsafe`.
+    #[inline]
+    fn split_stdout_state(me: &mut Builtin) -> (&mut BuiltinIO, &mut Yes) {
+        let Impl::Yes(yes) = &mut me.impl_ else { unreachable!() };
+        (&mut me.stdout, &mut **yes)
     }
 }
 

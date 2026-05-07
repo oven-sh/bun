@@ -617,7 +617,7 @@ pub enum EntryKindHint {
 }
 
 /// Spec: rm.zig `ShellRmTask`. One per filepath argument; owns the root
-/// [`DirTask`] inline and tracks the cross-thread error state.
+/// [`DirTask`] and tracks the cross-thread error state.
 pub struct ShellRmTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -625,7 +625,13 @@ pub struct ShellRmTask {
     /// Windows only: resolved absolute path of `cwd` (heap-owned).
     #[cfg(windows)]
     pub cwd_path: Option<ZBox>,
-    pub root_task: DirTask,
+    /// PORT NOTE: in Zig the root DirTask is an inline field. Here it lives in
+    /// its own `Box::into_raw`'d allocation so that `&ShellRmTask` (held as
+    /// the `&self` receiver throughout `remove_entry*`) never overlaps the
+    /// `&mut DirTask` borrows those methods take on the root — embedding it
+    /// would make every `verbose_deleted` call on the root UB under Stacked
+    /// Borrows. Freed in `Drop`.
+    pub root_task: *mut DirTask,
     pub root_path: ZBox,
     pub root_is_absolute: bool,
     pub error_signal: *const AtomicBool,
@@ -646,7 +652,8 @@ pub struct ShellRmTask {
 }
 
 /// Spec: rm.zig `ShellRmTask.DirTask`. One per directory in the recursive
-/// walk; the root is embedded in [`ShellRmTask`], children are heap-allocated.
+/// walk; root and children alike are heap-allocated (see PORT NOTE on
+/// [`ShellRmTask::root_task`]).
 pub struct DirTask {
     pub task_manager: *mut ShellRmTask,
     pub parent_task: *mut DirTask,
@@ -684,29 +691,31 @@ impl ShellRmTask {
     ) -> *mut ShellRmTask {
         let root_path_z = ZBox::from_bytes(root_path);
         let join_style = JoinStyle::from_path(root_path);
+        // Separate allocation — see PORT NOTE on `root_task`.
+        let root_task = Box::into_raw(Box::new(DirTask {
+            // task_manager is fixed up below once we have the ShellRmTask address.
+            task_manager: core::ptr::null_mut(),
+            parent_task: core::ptr::null_mut(),
+            path: ZBox::from_bytes(root_path),
+            is_absolute: false,
+            subtask_count: AtomicUsize::new(1),
+            need_to_wait: AtomicBool::new(false),
+            deleting_after_waiting_for_children: AtomicBool::new(false),
+            kind_hint: EntryKindHint::Idk,
+            deleted_entries: Vec::new(),
+            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
+            work_task: WorkPoolTask {
+                node: Default::default(),
+                callback: DirTask::work_pool_callback,
+            },
+        }));
         let mut boxed = Box::new(ShellRmTask {
             cmd,
             opts,
             cwd,
             #[cfg(windows)]
             cwd_path: None,
-            // root_task.task_manager is fixed up below once we have the box address.
-            root_task: DirTask {
-                task_manager: core::ptr::null_mut(),
-                parent_task: core::ptr::null_mut(),
-                path: ZBox::from_bytes(root_path),
-                is_absolute: false,
-                subtask_count: AtomicUsize::new(1),
-                need_to_wait: AtomicBool::new(false),
-                deleting_after_waiting_for_children: AtomicBool::new(false),
-                kind_hint: EntryKindHint::Idk,
-                deleted_entries: Vec::new(),
-                concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
-                work_task: WorkPoolTask {
-                    node: Default::default(),
-                    callback: DirTask::work_pool_callback,
-                },
-            },
+            root_task,
             root_path: root_path_z,
             root_is_absolute: is_absolute,
             error_signal,
@@ -719,8 +728,8 @@ impl ShellRmTask {
         });
         boxed.task.interp = interp;
         let raw = Box::into_raw(boxed);
-        // SAFETY: freshly leaked; exclusive.
-        unsafe { (*raw).root_task.task_manager = raw };
+        // SAFETY: both freshly leaked; exclusive.
+        unsafe { (*root_task).task_manager = raw };
         raw
     }
 
@@ -756,7 +765,7 @@ impl ShellRmTask {
         };
         // SAFETY: `this` is a live Box::into_raw'd task; the worker thread has
         // exclusive access to `root_task` until it spawns subtasks.
-        unsafe { DirTask::run_from_thread_pool_impl(&raw mut (*this).root_task) };
+        unsafe { DirTask::run_from_thread_pool_impl((*this).root_task) };
     }
 
     /// Spec: rm.zig `finishConcurrently` — post this task to the main-thread
@@ -846,16 +855,26 @@ impl ShellRmTask {
     }
 
     /// Spec: rm.zig `verboseDeleted`.
-    fn verbose_deleted(&self, dir_task: &mut DirTask, path: &[u8]) -> bun_sys::Maybe<()> {
+    ///
+    /// Takes `dir_task` as a raw pointer (not `&mut DirTask`) so callers in
+    /// `remove_entry*` — which already hold `&self: &ShellRmTask` and a
+    /// `&ZStr` borrowed from `dir_task.path` — never materialise an aliasing
+    /// `&mut DirTask`. Only the disjoint `deleted_entries` field is reborrowed
+    /// mutably here.
+    fn verbose_deleted(&self, dir_task: *mut DirTask, path: &[u8]) -> bun_sys::Maybe<()> {
         if !self.opts.verbose {
             return Ok(());
         }
-        if dir_task.deleted_entries.is_empty() {
+        // SAFETY: the calling worker thread has exclusive access to
+        // `dir_task`'s non-atomic fields; `deleted_entries` is disjoint from
+        // every other live borrow (`&self`, `path`).
+        let entries = unsafe { &mut (*dir_task).deleted_entries };
+        if entries.is_empty() {
             // SAFETY: `output_count` points into the boxed `Rm` ExecState.
             unsafe { (*self.output_count).fetch_add(1, Ordering::SeqCst) };
         }
-        dir_task.deleted_entries.extend_from_slice(path);
-        dir_task.deleted_entries.push(b'\n');
+        entries.extend_from_slice(path);
+        entries.push(b'\n');
         Ok(())
     }
 
@@ -939,8 +958,7 @@ impl ShellRmTask {
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                // SAFETY: see above.
-                                return self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes());
+                                return self.verbose_deleted(dir_task, path.as_bytes());
                             }
                             return Err(self.error_with_path(e, path.as_bytes()));
                         }
@@ -969,8 +987,7 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        // SAFETY: see above.
-                        return self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes());
+                        return self.verbose_deleted(dir_task, path.as_bytes());
                     }
                     return Err(self.error_with_path(e, path.as_bytes()));
                 }
@@ -1053,15 +1070,11 @@ impl ShellRmTask {
         }
 
         match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
-            Ok(()) => {
-                // SAFETY: `dir_task` is live; this thread owns it.
-                self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes())
-            }
+            Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        // SAFETY: see above.
-                        return self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes());
+                        return self.verbose_deleted(dir_task, path.as_bytes());
                     }
                     Err(self.error_with_path(e, path.as_bytes()))
                 }
@@ -1087,15 +1100,13 @@ impl ShellRmTask {
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => {
-                        // SAFETY: see above.
-                        let _ = self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes());
+                        let _ = self.verbose_deleted(dir_task, path.as_bytes());
                         return Ok(true);
                     }
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                // SAFETY: see above.
-                                let _ = self.verbose_deleted(unsafe { &mut *dir_task }, path.as_bytes());
+                                let _ = self.verbose_deleted(dir_task, path.as_bytes());
                                 return Ok(true);
                             }
                             return Err(self.error_with_path(e, path.as_bytes()));

@@ -564,7 +564,9 @@ impl SourceMapStore {
             map_log!("dec {:x}, {} | {} -> {}", key, count, rc + count, rc);
         }
         if self.entries.values()[index].ref_count == 0 {
-            // Drop runs Entry::drop (was e.deinit()).
+            // Zig: e.deinit(); store.entries.swapRemoveAt(index);
+            // `swap_remove_at` drops the Entry, freeing `files`/`paths`;
+            // the `ref_count == 0` invariant is the branch condition itself.
             self.entries.swap_remove_at(index);
         }
     }

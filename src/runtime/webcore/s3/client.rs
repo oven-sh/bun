@@ -1048,8 +1048,8 @@ pub fn download_stream(
             // — same calling convention; the receiver never observes a null pointer.
             unsafe {
                 core::mem::transmute::<
-                    fn(*mut S3HttpDownloadStreamingTask, &mut bun_http::AsyncHTTP, bun_http::HTTPClientResult<'_>),
-                    fn(*mut S3HttpDownloadStreamingTask, *mut bun_http::AsyncHTTP, bun_http::HTTPClientResult<'_>),
+                    fn(*mut S3HttpDownloadStreamingTask, &mut bun_http::AsyncHTTP<'static>, bun_http::HTTPClientResult<'_>),
+                    fn(*mut S3HttpDownloadStreamingTask, *mut bun_http::AsyncHTTP<'static>, bun_http::HTTPClientResult<'_>),
                 >(S3HttpDownloadStreamingTask::http_callback)
             },
         ),

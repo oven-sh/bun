@@ -139,12 +139,7 @@ pub fn view(
             BStr::new(encoded_name),
         ),
     );
-    // SAFETY: `AsyncHTTP::init_sync` over-restricts to `URL<'static>` (port
-    // artifact); the request is driven to completion via `send_sync()` below
-    // while `path_buf` is still live on this stack frame, matching the Zig
-    // original which passes a stack `bun.PathBuffer` slice.
-    let url: URL<'static> =
-        unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(URL::parse(url_slice)) };
+    let url = URL::parse(url_slice);
 
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");

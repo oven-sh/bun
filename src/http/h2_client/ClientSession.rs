@@ -67,7 +67,7 @@ pub struct ClientSession {
 
     /// Cold-start coalesced requests parked until the server's first SETTINGS
     /// frame arrives so the real MAX_CONCURRENT_STREAMS cap can be honoured.
-    pub pending_attach: Vec<*mut HTTPClient>, // BACKREF: client owns itself; session only borrows
+    pub pending_attach: Vec<*mut HTTPClient<'static>>, // BACKREF: client owns itself; session only borrows
 
     pub preface_sent: bool,
     pub settings_received: bool,
@@ -258,7 +258,7 @@ impl ClientSession {
         // shouldn't risk a REFUSED_STREAM. The leader bypasses adopt() and
         // attaches directly so the preface still goes out.
         if self.delivering || !self.settings_received {
-            self.pending_attach.push(client as *mut _);
+            self.pending_attach.push(client.as_erased_ptr().as_ptr());
             self.rearm_timeout();
             return;
         }
@@ -282,9 +282,9 @@ impl ClientSession {
 
     /// Park a coalesced request until the server's SETTINGS arrive. Abort
     /// is routed via the session socket so `abortByHttpId` can find it.
-    pub fn enqueue(&mut self, client: &mut HTTPClient) {
+    pub fn enqueue(&mut self, client: &mut HTTPClient<'_>) {
         client.h2_register_abort_tracker(self.socket);
-        self.pending_attach.push(client as *mut _);
+        self.pending_attach.push(client.as_erased_ptr().as_ptr());
         self.rearm_timeout();
     }
 
@@ -356,7 +356,7 @@ impl ClientSession {
         let stream = Box::into_raw(Stream::new(
             self.next_stream_id,
             self as *mut _,
-            Some(NonNull::from(&mut *client)),
+            Some(client.as_erased_ptr()),
             send_window,
         ));
         super::live_streams.fetch_add(1, Ordering::Relaxed);

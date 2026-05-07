@@ -24,30 +24,31 @@ use crate::ssl_config::SharedPtr as SSLConfigSharedPtr;
 
 bun_core::declare_scope!(AsyncHTTP, visible);
 
-// PORT NOTE: Phase-A draft had `<'a>` for `response_buffer`/`request_header_buf`/
-// `real`. Per PORTING.md ("never put a lifetime param on a struct in Phase A")
-// and because AsyncHTTP is stored in static intrusive queues + raw `*mut` ext
-// slots, the borrowed fields are kept as raw pointers. LIFETIMES.tsv classes
-// `real`/`next` as INTRUSIVE.
-pub struct AsyncHTTP {
+// Lifetime `'a` covers every borrowed input the caller hands in: `url`,
+// `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
+// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
+// fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
+// HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
+pub struct AsyncHTTP<'a> {
     pub request: Option<picohttp::Request<'static>>,
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
     pub response_headers: headers::EntryList,
     // TODO(port): lifetime — caller-owned response buffer; never freed here.
     pub response_buffer: *mut MutableString,
-    pub request_body: HTTPRequestBody,
+    pub request_body: HTTPRequestBody<'a>,
     // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc is used everywhere.
-    // TODO(port): lifetime — borrows external buffer for the request lifetime.
-    pub request_header_buf: *const [u8],
+    pub request_header_buf: &'a [u8],
     pub method: Method,
-    pub url: URL<'static>,
-    pub http_proxy: Option<URL<'static>>,
-    // TODO(port): lifetime — backref to the JS-thread `real` AsyncHTTP this
-    // HTTP-thread copy mirrors. Cleared in finalize.
-    pub real: Option<NonNull<AsyncHTTP>>,
+    pub url: URL<'a>,
+    pub http_proxy: Option<URL<'a>>,
+    // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
+    // Cleared in finalize. Same `'a` — the copy never outlives the original.
+    pub real: Option<NonNull<AsyncHTTP<'a>>>,
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
-    pub next: *mut AsyncHTTP,
+    /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
+    /// borrow scopes; consumers never read borrowed fields through `next`.
+    pub next: *mut AsyncHTTP<'static>,
 
     pub task: thread_pool::Task,
     pub result_callback: HTTPClientResultCallback,
@@ -57,7 +58,7 @@ pub struct AsyncHTTP {
     pub response_encoding: Encoding,
     pub verbose: HTTPVerboseLevel,
 
-    pub client: HTTPClient,
+    pub client: HTTPClient<'a>,
     pub waiting_deffered: bool,
     pub finalized: bool,
     pub err: Option<bun_core::Error>,
@@ -72,7 +73,9 @@ pub struct AsyncHTTP {
 
 // SAFETY: intrusive `next` link for `UnboundedQueue(AsyncHTTP, .next)`. All four
 // accessors target the same field; atomic variants treat it as `AtomicPtr`.
-unsafe impl bun_threading::unbounded_queue::Node for AsyncHTTP {
+// Only implemented for the lifetime-erased form — the queue is heterogeneous
+// over borrow scopes and `next` is always stored as `*mut AsyncHTTP<'static>`.
+unsafe impl bun_threading::unbounded_queue::Node for AsyncHTTP<'static> {
     unsafe fn get_next(item: *mut Self) -> *mut Self {
         unsafe { (*item).next }
     }
@@ -100,7 +103,7 @@ pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 // helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn noop_result_callback(_: *mut (), _: *mut AsyncHTTP, _: HTTPClientResult<'_>) {}
+fn noop_result_callback(_: *mut (), _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {}
 
 #[inline(always)]
 const fn noop_callback() -> HTTPClientResultCallback {
@@ -108,17 +111,6 @@ const fn noop_callback() -> HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
     }
-}
-
-/// Erase a borrowed byte slice's lifetime to `'static`.
-///
-/// # Safety
-/// The returned reference must not outlive the storage `s` borrows from. All
-/// uses in this module are for header/body buffers whose ownership is held by
-/// the JS-thread `AsyncHTTP` (or its `real` parent) for the entire request.
-#[inline(always)]
-unsafe fn erase<'a>(s: &'a [u8]) -> &'static [u8] {
-    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(s) }
 }
 
 /// Free a `URL.href` slice that the caller marked as owned.
@@ -196,18 +188,18 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
 /// Construct an `HTTPClient` with all defaults except the supplied fields.
 /// `HTTPClient` has no `Default` (it has a `Drop` impl with side-effects), so
 /// this is the single place that enumerates the field set.
-fn make_client(
+fn make_client<'a>(
     method: Method,
-    url: URL<'static>,
+    url: URL<'a>,
     header_entries: headers::EntryList,
-    header_buf: &'static [u8],
-    hostname: Option<&'static [u8]>,
+    header_buf: &'a [u8],
+    hostname: Option<&'a [u8]>,
     signals: Signals,
     async_http_id: u32,
-    http_proxy: Option<URL<'static>>,
+    http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,
-) -> HTTPClient {
+) -> HTTPClient<'a> {
     HTTPClient {
         method,
         header_entries,
@@ -249,7 +241,7 @@ fn make_client(
 /// client out of an `AsyncHTTP` (e.g. to run its `Drop` before the user
 /// callback) without leaving the field uninitialized.
 #[inline]
-fn blank_client() -> HTTPClient {
+fn blank_client<'a>() -> HTTPClient<'a> {
     make_client(
         Method::GET,
         URL::default(),
@@ -309,11 +301,11 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct Options {
-    pub http_proxy: Option<URL<'static>>,
+pub struct Options<'a> {
+    pub http_proxy: Option<URL<'a>>,
     pub proxy_headers: Option<Headers>,
     // PORT NOTE: Zig had `?[]u8` (mutable slice); only ever read, so `&[u8]` here.
-    pub hostname: Option<&'static [u8]>,
+    pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
     pub unix_socket_path: Option<ZigStringSlice>,
     pub disable_timeout: Option<bool>,
@@ -328,7 +320,14 @@ pub struct Options {
 // impl AsyncHTTP — basic state
 // ──────────────────────────────────────────────────────────────────────────
 
-impl AsyncHTTP {
+impl<'a> AsyncHTTP<'a> {
+    /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
+    /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
+    #[inline(always)]
+    pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
+        self as *const Self as *mut AsyncHTTP<'static>
+    }
+
     /// Accessor for the global concurrent-request cap (Zig:
     /// `AsyncHTTP.max_simultaneous_requests`). Returned as a static so callers
     /// can `.load()` / `.store()` directly.
@@ -363,7 +362,7 @@ impl AsyncHTTP {
     /// `on_async_http_callback`, and the `client` flags/counters used for
     /// shutdown decisions and error formatting. Owned allocations stay with
     /// `src` (the HTTP-thread copy keeps running while `has_more`).
-    pub fn sync_progress_from(&mut self, src: &AsyncHTTP) {
+    pub fn sync_progress_from(&mut self, src: &AsyncHTTP<'a>) {
         self.url = src.url.clone();
         self.redirected = src.redirected;
         self.elapsed = src.elapsed;
@@ -399,14 +398,14 @@ struct Preconnect {
     // `self.response_buffer`. Zig relied on stable heap addresses from
     // `bun.TrivialNew`. Kept as `MaybeUninit` so we can write the field after
     // the heap address is fixed.
-    async_http: MaybeUninit<AsyncHTTP>,
+    async_http: MaybeUninit<AsyncHTTP<'static>>,
     response_buffer: MutableString,
     url: URL<'static>,
     is_url_owned: bool,
 }
 
 impl Preconnect {
-    fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP, _: HTTPClientResult<'_>) {
+    fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
         // SAFETY: `this` was produced by `Box::into_raw` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
@@ -473,18 +472,18 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 // impl AsyncHTTP — init / reset / schedule
 // ──────────────────────────────────────────────────────────────────────────
 
-impl AsyncHTTP {
+impl<'a> AsyncHTTP<'a> {
     pub fn init(
         method: Method,
-        url: URL<'static>,
+        url: URL<'a>,
         headers: headers::EntryList,
-        headers_buf: &'static [u8],
+        headers_buf: &'a [u8],
         response_buffer: *mut MutableString,
-        request_body: &'static [u8],
+        request_body: &'a [u8],
         callback: HTTPClientResultCallback,
         redirect_type: FetchRedirect,
-        options: Options,
-    ) -> AsyncHTTP {
+        options: Options<'a>,
+    ) -> AsyncHTTP<'a> {
         let async_http_id = if options
             .signals
             .as_ref()
@@ -525,7 +524,7 @@ impl AsyncHTTP {
             response_headers: headers::EntryList::default(),
             response_buffer,
             request_body: HTTPRequestBody::Bytes(request_body),
-            request_header_buf: headers_buf as *const [u8],
+            request_header_buf: headers_buf,
             method,
             url,
             http_proxy,
@@ -584,46 +583,34 @@ impl AsyncHTTP {
     /// [`send_sync`].
     ///
     /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`,
-    /// `hostname`) must remain valid until `send_sync` returns. This matches
-    /// Zig's `AsyncHTTP.initSync`, which borrows stack-allocated buffers
-    /// (`var print_buf … defer print_buf.deinit()`, npm.zig:24-86) and
-    /// completes the request before they fall out of scope.
-    ///
-    /// `AsyncHTTP` is internally lifetime-erased (raw pointers /
-    /// `URL<'static>` fields, see PORT NOTE on the struct); the erasure here
-    /// is the same as the existing `request_header_buf: *const [u8]` and
-    /// [`erase`] paths used by `init`.
+    /// `hostname`) are tied to lifetime `'a` and must outlive the returned
+    /// value — in practice they live on the calling stack frame and the
+    /// request is driven to completion via `send_sync` before that frame
+    /// returns (mirrors Zig `AsyncHTTP.initSync`).
     pub fn init_sync(
         method: Method,
-        url: URL<'_>,
+        url: URL<'a>,
         headers: headers::EntryList,
-        headers_buf: &[u8],
+        headers_buf: &'a [u8],
         response_buffer: *mut MutableString,
-        request_body: &[u8],
-        http_proxy: Option<URL<'_>>,
-        hostname: Option<&[u8]>,
+        request_body: &'a [u8],
+        http_proxy: Option<URL<'a>>,
+        hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
-    ) -> AsyncHTTP {
-        // SAFETY: caller guarantees all borrowed inputs outlive the returned
-        // `AsyncHTTP` (they are kept on the calling stack frame and the request
-        // is driven to completion via `send_sync` before the frame returns).
-        // `AsyncHTTP` stores them as raw pointers / `'static` (port-erased).
-        let url: URL<'static> = unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(url) };
-        let http_proxy: Option<URL<'static>> = http_proxy
-            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
+    ) -> AsyncHTTP<'a> {
         Self::init(
             method,
             url,
             headers,
-            unsafe { erase(headers_buf) },
+            headers_buf,
             response_buffer,
-            unsafe { erase(request_body) },
+            request_body,
             // PORT NOTE: Zig passed `undefined` for callback in sync mode.
             noop_callback(),
             redirect_type,
             Options {
                 http_proxy,
-                hostname: hostname.map(|h| unsafe { erase(h) }),
+                hostname,
                 ..Options::default()
             },
         )
@@ -705,7 +692,7 @@ impl SingleHTTPChannel {
 
 fn send_sync_callback(
     this: *mut SingleHTTPChannel,
-    async_http: *mut AsyncHTTP,
+    async_http: *mut AsyncHTTP<'static>,
     result: HTTPClientResult<'_>,
 ) {
     // SAFETY: `async_http` is the HTTP-thread copy (inside ThreadlocalAsyncHTTP)
@@ -745,7 +732,7 @@ fn send_sync_callback(
     }
 }
 
-impl AsyncHTTP {
+impl<'a> AsyncHTTP<'a> {
     pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
         crate::http_thread::init(&Default::default());
 
@@ -781,8 +768,8 @@ impl AsyncHTTP {
     /// `Callback::new::<AsyncHTTP>` adapter — `*mut Self` ctx + raw `*mut`
     /// async_http arg, matching `HTTPClientResultCallbackFunction`.
     fn on_async_http_callback_raw(
-        this: *mut AsyncHTTP,
-        async_http: *mut AsyncHTTP,
+        this: *mut AsyncHTTP<'static>,
+        async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult<'_>,
     ) {
         // PORT NOTE: kept as raw `*mut` throughout — `this == async_http` (set in
@@ -862,10 +849,10 @@ impl AsyncHTTP {
     /// holding `&mut self` across the dealloc of `self`'s storage.
     pub fn on_async_http_callback(
         &mut self,
-        async_http: *mut AsyncHTTP,
+        async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult<'_>,
     ) {
-        Self::on_async_http_callback_raw(self as *mut AsyncHTTP, async_http, result);
+        Self::on_async_http_callback_raw(self.as_erased_ptr(), async_http, result);
     }
 }
 
@@ -881,21 +868,21 @@ impl AsyncHTTP {
 /// `schedule()`.
 pub unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above.
-    let this: *mut AsyncHTTP = unsafe {
+    let this: *mut AsyncHTTP<'static> = unsafe {
         (task as *mut u8)
-            .sub(offset_of!(AsyncHTTP, task))
-            .cast::<AsyncHTTP>()
+            .sub(offset_of!(AsyncHTTP<'static>, task))
+            .cast::<AsyncHTTP<'static>>()
     };
     unsafe { (*this).on_start() };
 }
 
-impl AsyncHTTP {
+impl<'a> AsyncHTTP<'a> {
     pub fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
         self.err = None;
         self.state.store(State::Sending, Ordering::Relaxed);
-        self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP>(
-            self as *mut AsyncHTTP,
+        self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(
+            self.as_erased_ptr(),
             AsyncHTTP::on_async_http_callback_raw,
         );
 
@@ -909,21 +896,10 @@ impl AsyncHTTP {
         let response_buffer = unsafe { &mut *self.response_buffer };
 
         // PORT NOTE: `HTTPRequestBody` is not `Clone` (the `Stream` arm holds an
-        // intrusive refcount). Zig passed it by value (shallow copy). For the
-        // `Bytes`/`Sendfile` arms a bitwise read is fine; for `Stream` we move
-        // the buffer into the client and leave a detached placeholder so Drop
-        // on `self.request_body` is a no-op.
-        let body = match &mut self.request_body {
-            HTTPRequestBody::Bytes(b) => HTTPRequestBody::Bytes(b),
-            HTTPRequestBody::Sendfile(sf) => {
-                // SAFETY: SendFile is POD (#[repr(C)] file descriptors + sizes).
-                HTTPRequestBody::Sendfile(unsafe { core::ptr::read(sf) })
-            }
-            HTTPRequestBody::Stream(s) => HTTPRequestBody::Stream(crate::http_request_body::Stream {
-                buffer: s.buffer.take(),
-                ended: s.ended,
-            }),
-        };
+        // intrusive refcount). Zig passed it by value (shallow copy). Move owned
+        // payloads into the client and leave a detached placeholder so Drop on
+        // `self.request_body` is a no-op.
+        let body = core::mem::replace(&mut self.request_body, HTTPRequestBody::Bytes(b""));
         self.client.start(body, response_buffer);
     }
 }
@@ -936,20 +912,20 @@ impl AsyncHTTP {
 // `bun_threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
 // `HTTPChannel` here boxes the pair and ships the pointer (which IS `Copy`) through
 // a static-buffer channel. The receiver takes ownership of the Box.
-pub type HTTPCallbackPair = (*mut AsyncHTTP, HTTPClientResult<'static>);
+pub type HTTPCallbackPair = (*mut AsyncHTTP<'static>, HTTPClientResult<'static>);
 
 pub type HTTPChannel = bun_threading::Channel<
     *mut HTTPCallbackPair,
     bun_collections::linear_fifo::StaticBuffer<*mut HTTPCallbackPair, 1000>,
 >;
 
-pub struct HTTPChannelContext {
-    pub http: AsyncHTTP,
+pub struct HTTPChannelContext<'a> {
+    pub http: AsyncHTTP<'a>,
     // TODO(port): lifetime — no init/assignment found in src/http/; appears unused.
     pub channel: Option<NonNull<HTTPChannel>>,
 }
 
-impl HTTPChannelContext {
+impl HTTPChannelContext<'_> {
     pub fn callback(data: HTTPCallbackPair) {
         // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
         let this: &mut HTTPChannelContext = unsafe {

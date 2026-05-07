@@ -1,10 +1,15 @@
 use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
-pub enum HTTPRequestBody {
-    // TODO(port): lifetime — Zig `[]const u8` is borrowed (deinit does not free it);
-    // using &'static for Phase A per PORTING.md (no struct lifetime params).
-    Bytes(&'static [u8]),
+/// Request body payload. Parameterized over `'a` so callers can hand in
+/// stack-/arena-borrowed bytes without the `&'static` transmute that the
+/// Phase-A port used at every `AsyncHTTP::init` call site.
+pub enum HTTPRequestBody<'a> {
+    /// Borrowed bytes — caller guarantees they outlive the request.
+    Bytes(&'a [u8]),
+    /// Owned bytes — the request takes ownership (e.g. a serialized JSON body
+    /// built on the fly). Freed when the body is dropped.
+    Owned(Vec<u8>),
     Sendfile(SendFile),
     Stream(Stream),
 }
@@ -35,14 +40,28 @@ impl Drop for Stream {
     }
 }
 
-impl HTTPRequestBody {
+impl<'a> HTTPRequestBody<'a> {
+    pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");
+
     pub fn is_stream(&self) -> bool {
         matches!(self, HTTPRequestBody::Stream(_))
+    }
+
+    /// Borrow the in-memory byte payload, if any. `Sendfile` / `Stream` have no
+    /// contiguous slice and return `b""` (callers branch on the variant before
+    /// reaching for this).
+    pub fn slice(&self) -> &[u8] {
+        match self {
+            HTTPRequestBody::Bytes(bytes) => bytes,
+            HTTPRequestBody::Owned(bytes) => bytes.as_slice(),
+            _ => b"",
+        }
     }
 
     pub fn len(&self) -> usize {
         match self {
             HTTPRequestBody::Bytes(bytes) => bytes.len(),
+            HTTPRequestBody::Owned(bytes) => bytes.len(),
             HTTPRequestBody::Sendfile(sendfile) => sendfile.content_size,
             // unknown amounts
             HTTPRequestBody::Stream(_) => usize::MAX,

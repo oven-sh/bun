@@ -116,7 +116,7 @@ pub struct S3HttpSimpleTask {
     // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
-    pub http: core::mem::MaybeUninit<AsyncHTTP>,
+    pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     pub vm: *mut VirtualMachine,
     pub sign_result: SignResult,
     pub headers: Headers,
@@ -395,7 +395,7 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(this: *mut Self, async_http: *mut AsyncHTTP, result: HTTPClientResult<'_>) {
+    pub fn http_callback(this: *mut Self, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult<'_>) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
         let this = unsafe { &mut *this };

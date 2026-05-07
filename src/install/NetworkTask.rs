@@ -43,7 +43,9 @@ pub fn filename_store_appender() -> FilenameStoreAppender<'static> {
 }
 
 pub struct NetworkTask {
-    pub unsafe_http_client: AsyncHTTP,
+    // Self-referential: borrows `url_buf` / leaked header content owned by
+    // sibling fields, so the lifetime is erased to `'static`.
+    pub unsafe_http_client: AsyncHTTP<'static>,
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
     // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
@@ -150,7 +152,7 @@ impl NetworkTask {
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
-    pub fn notify(this: *mut NetworkTask, async_http: *mut AsyncHTTP, mut result: HTTPClientResult<'_>) {
+    pub fn notify(this: *mut NetworkTask, async_http: *mut AsyncHTTP<'static>, mut result: HTTPClientResult<'_>) {
         // SAFETY: `this` is the `&mut NetworkTask` that was erased into the
         // callback ctx in `get_completion_callback`; the HTTP thread is the
         // sole writer for the duration of this call.

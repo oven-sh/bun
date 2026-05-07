@@ -17,8 +17,8 @@ pub struct PendingConnect {
     pub port: u16,
     // TODO(port): lifetime — compared by pointer identity only, never derefed/freed here
     pub ssl_config: Option<NonNull<SSLConfig>>,
-    // TODO(port): lifetime — waiters are borrowed HTTP clients owned elsewhere
-    pub waiters: Vec<NonNull<HTTPClient>>,
+    // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
+    pub waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
 
 impl Default for PendingConnect {

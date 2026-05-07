@@ -2198,18 +2198,11 @@ impl Example {
             }
         }
 
-        // SAFETY: `api_url` borrows from the `static mut GITHUB_REPOSITORY_URL_BUF` and
-        // `http_proxy` borrows from env_loader's leaked map — both are process-static.
-        // `init_sync` requires `'static` URLs; erase the local borrow lifetimes.
-        let api_url: URL<'static> =
-            unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(api_url) };
-        let http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(&api_url)
-            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
+        let http_proxy = env_loader.get_http_proxy_for(&api_url);
         let mutable = Box::leak(Box::new(MutableString::init(8192)?));
 
         // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
@@ -2219,7 +2212,7 @@ impl Example {
             http_proxy,
             None,
             HTTP::FetchRedirect::Follow,
-        )));
+        ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -2462,24 +2455,14 @@ impl Example {
         env_loader: &mut DotEnv::Loader,
         progress_node: Option<&mut ProgressNode>,
     ) -> Result<Box<[Example]>, bun_core::Error> {
-        // SAFETY: single-threaded CLI access to static URL_
-        unsafe {
-            URL_ = Some(URL::parse(Self::EXAMPLES_URL));
-        }
-
-        // SAFETY: single-threaded CLI access to static URL_ (set just above);
-        // proxy URL borrows from the env loader's leaked map — erase to
-        // `'static` for `AsyncHTTP::init_sync` (same as `fetch_from_github`).
-        let http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*(&raw const URL_)).as_ref().unwrap() })
-            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
+        let url = URL::parse(Self::EXAMPLES_URL);
+        let http_proxy = env_loader.get_http_proxy_for(&url);
 
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
-        let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
-            // SAFETY: single-threaded CLI access to static URL_ (set just above)
-            unsafe { (*(&raw const URL_)).clone() }.unwrap(),
+            url,
             Default::default(),
             b"",
             mutable,
@@ -2487,7 +2470,7 @@ impl Example {
             http_proxy,
             None,
             HTTP::FetchRedirect::Follow,
-        )));
+        ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {

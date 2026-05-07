@@ -18,7 +18,7 @@ bun_core::declare_scope!(S3, hidden);
 pub struct S3HttpDownloadStreamingTask {
     // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
     // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
-    pub http: core::mem::MaybeUninit<AsyncHTTP>,
+    pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     // PORT NOTE: `*mut` (not `&'static`) to match `VirtualMachine::get()`'s return type and to
     // permit a null-but-never-read placeholder in `Default` (Zig has no field default for `vm`).
     pub vm: *mut VirtualMachine,
@@ -205,7 +205,7 @@ impl S3HttpDownloadStreamingTask {
     /// should only be called when already locked
     fn update_state(
         &mut self,
-        async_http: &mut AsyncHTTP,
+        async_http: &mut AsyncHTTP<'static>,
         // PORT NOTE: reshaped for borrowck — Zig passed `result` by value; Rust borrows so the
         // caller (process_http_callback) can still read `result.body` afterward.
         result: &HTTPClientResult,
@@ -251,7 +251,7 @@ impl S3HttpDownloadStreamingTask {
     /// we should enqueue another task
     fn process_http_callback(
         &mut self,
-        async_http: &mut AsyncHTTP,
+        async_http: &mut AsyncHTTP<'static>,
         result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
@@ -318,7 +318,7 @@ impl S3HttpDownloadStreamingTask {
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
     pub fn http_callback(
         this: *mut Self,
-        async_http: &mut AsyncHTTP,
+        async_http: &mut AsyncHTTP<'static>,
         result: HTTPClientResult,
     ) {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only

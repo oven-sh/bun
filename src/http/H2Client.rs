@@ -86,7 +86,7 @@ pub(crate) mod bridge {
         socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0
     }
 
-    impl HTTPClient {
+    impl HTTPClient<'_> {
         #[inline]
         pub fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
             self.register_abort_tracker::<true>(socket);

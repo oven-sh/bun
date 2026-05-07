@@ -297,7 +297,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     // SAFETY: stream.client is a live HTTPClient back-ref while set.
     let client = unsafe { &mut *client_ptr.as_ptr() };
     match &mut client.state.original_request_body {
-        HTTPRequestBody::Bytes(_) => {
+        HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
             let pending = stream.pending_body();
             let sent = write_data_windowed(session, stream, pending, true, cap);
             // SAFETY: pending_body[sent..] is a suffix of the original slice.

@@ -3072,7 +3072,8 @@ struct RemoteImageDownload {
     // prefetchRemoteImages (can't be set in the literal because
     // AsyncHTTP.init needs a pointer to response_buffer, which only
     // has a stable address once the owning struct is live).
-    async_http: bun_http::AsyncHTTP,
+    // Self-referential: borrows from `url: Box<[u8]>` below.
+    async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_string::MutableString,
     url: Box<[u8]>,
     done: *const DoneChannel,
@@ -3081,7 +3082,7 @@ struct RemoteImageDownload {
 impl RemoteImageDownload {
     fn on_done(
         this: *mut RemoteImageDownload,
-        async_http: *mut bun_http::AsyncHTTP,
+        async_http: *mut bun_http::AsyncHTTP<'static>,
         _result: bun_http::HTTPClientResult<'_>,
     ) {
         // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's

@@ -99,7 +99,7 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
     const NAME: &'static str = "DeadSocket";
 }
-impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for HTTPClient {
+impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for HTTPClient<'static> {
     const TAG: bun_ptr::tagged_pointer::TagType = 1023;
     const NAME: &'static str = "HTTPClient";
 }
@@ -704,7 +704,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             Self::KIND,
             if SSL { self.secure } else { None },
             socket_path,
-            ActiveSocket::<SSL>::init(client as *const HTTPClient).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
             false, // dont allow half-open sockets
         )?;
         client.allow_retry = false;
@@ -751,10 +751,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let cfg_nn = cfg.and_then(|p| NonNull::new(p as *mut SSLConfig));
                 for pc in &mut self.pending_h2_connects {
                     if pc.matches(hostname, port, cfg_nn) {
-                        // SAFETY: client outlives the pending connect (resolved
-                        // before its terminal callback fires).
-                        pc.waiters
-                            .push(unsafe { NonNull::new_unchecked(client as *mut HTTPClient) });
+                        // client outlives the pending connect (resolved before
+                        // its terminal callback fires).
+                        pc.waiters.push(client.as_erased_ptr());
                         return Ok(None);
                     }
                 }
@@ -788,7 +787,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(ctx) = sock.ext::<*mut c_void>() {
                     // SAFETY: ext slot stores the ActiveSocket tagged-pointer word.
                     unsafe {
-                        *ctx = ActiveSocket::<SSL>::init(client as *const HTTPClient).ptr();
+                        *ctx = ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr();
                     }
                 }
                 client.allow_retry = true;
@@ -845,7 +844,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if SSL { self.secure } else { None },
             hostname,
             port as c_int,
-            ActiveSocket::<SSL>::init(client as *const HTTPClient).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
             false,
         )?;
         client.allow_retry = false;

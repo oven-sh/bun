@@ -81,10 +81,10 @@ pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type HttpsContext = http_context::HTTPContext<true>;
 pub type HttpContext = http_context::HTTPContext<false>;
-pub type HttpClient = HTTPClient;
+pub type HttpClient<'a> = HTTPClient<'a>;
 pub type HttpThread = HTTPThread;
-pub type AsyncHttp = AsyncHTTP;
-pub type ThreadlocalAsyncHttp = ThreadlocalAsyncHTTP;
+pub type AsyncHttp<'a> = AsyncHTTP<'a>;
+pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use HTTPClientResult as http_client_result;
 pub use bun_http_types::Method::Method;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
@@ -378,7 +378,7 @@ impl<'a> HTTPClientResult<'a> {
 }
 
 pub type HTTPClientResultCallbackFunction =
-    fn(*mut (), *mut AsyncHTTP, HTTPClientResult<'_>);
+    fn(*mut (), *mut AsyncHTTP<'static>, HTTPClientResult<'_>);
 
 #[derive(Copy, Clone)]
 pub struct HTTPClientResultCallback {
@@ -387,7 +387,7 @@ pub struct HTTPClientResultCallback {
 }
 
 impl HTTPClientResultCallback {
-    pub fn run(self, async_http: *mut AsyncHTTP, result: HTTPClientResult<'_>) {
+    pub fn run(self, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult<'_>) {
         (self.function)(self.ctx, async_http, result);
     }
 
@@ -395,7 +395,7 @@ impl HTTPClientResultCallback {
     // type-returning fn that wrapped a typed callback in *anyopaque erasure.
     pub fn new<T>(
         this: *mut T,
-        callback: fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>),
+        callback: fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
     ) -> Self {
         // SAFETY: fn-pointer transmute over *mut T → *mut () first arg; same
         // calling convention, the receiver casts `ctx` back before use.
@@ -403,7 +403,7 @@ impl HTTPClientResultCallback {
             Self {
                 ctx: this as *mut (),
                 function: core::mem::transmute::<
-                    fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>),
+                    fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
                 >(callback),
             }
@@ -412,12 +412,12 @@ impl HTTPClientResultCallback {
 }
 
 // Exists for heap stats reasons.
-pub struct ThreadlocalAsyncHTTP {
-    pub async_http: AsyncHTTP,
+pub struct ThreadlocalAsyncHTTP<'a> {
+    pub async_http: AsyncHTTP<'a>,
 }
 
-impl ThreadlocalAsyncHTTP {
-    pub fn new(async_http: AsyncHTTP) -> Box<Self> {
+impl<'a> ThreadlocalAsyncHTTP<'a> {
+    pub fn new(async_http: AsyncHTTP<'a>) -> Box<Self> {
         Box::new(Self { async_http })
     }
 }
@@ -461,12 +461,19 @@ use bun_string::ZigStringSlice;
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
-pub struct HTTPClient {
+//
+// Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
+// `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
+// payload — to the caller's storage. Phase-A erased these to `'static` and
+// `transmute`d at every call site; threading the lifetime removes that hazard.
+// Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
+// lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
+pub struct HTTPClient<'a> {
     pub method: Method,
     pub header_entries: headers::EntryList,
-    pub header_buf: &'static [u8], // TODO(port): lifetime — borrows external buffer
-    pub url: URL<'static>,
-    pub connected_url: URL<'static>,
+    pub header_buf: &'a [u8],
+    pub url: URL<'a>,
+    pub connected_url: URL<'a>,
     // allocator param dropped — global mimalloc
     pub verbose: HTTPVerboseLevel,
     pub remaining_redirect_count: i8,
@@ -487,7 +494,7 @@ pub struct HTTPClient {
 
     pub flags: Flags,
 
-    pub state: InternalState,
+    pub state: InternalState<'a>,
     pub tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
     /// Set by HTTPThread.connect() when using custom TLS configs.
@@ -498,10 +505,10 @@ pub struct HTTPClient {
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that.
-    pub if_modified_since: &'static [u8], // TODO(port): lifetime
+    pub if_modified_since: &'a [u8],
     pub request_content_len_buf: [u8; b"-4294967295".len()],
 
-    pub http_proxy: Option<URL<'static>>,
+    pub http_proxy: Option<URL<'a>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
     // TODO(port): ProxyTunnel is intrusive-refcounted (RefPtr); raw NonNull until
@@ -519,12 +526,24 @@ pub struct HTTPClient {
     pub pending_h2: Option<Box<h2::PendingConnect>>,
     pub signals: Signals,
     pub async_http_id: u32,
-    // TODO(port): lifetime — set by AsyncHTTP, not freed here (Zig deinit never frees `hostname`)
-    pub hostname: Option<&'static [u8]>,
+    pub hostname: Option<&'a [u8]>,
     pub unix_socket_path: ZigStringSlice,
 }
 
-impl Drop for HTTPClient {
+impl<'a> HTTPClient<'a> {
+    /// Erase the borrow lifetime for storage in intrusive data structures
+    /// (socket ext slots, h2/h3 stream backrefs, proxy-tunnel ctx). Lifetimes
+    /// are a compile-time fiction on raw pointers; consumers re-derive a
+    /// short-lived `&mut` when accessing. Centralizing the cast keeps every
+    /// such erasure auditable at one definition.
+    #[inline(always)]
+    pub fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
+        // SAFETY: `self` is a valid reference (non-null, aligned).
+        unsafe { NonNull::new_unchecked(self as *const Self as *mut HTTPClient<'static>) }
+    }
+}
+
+impl Drop for HTTPClient<'_> {
     fn drop(&mut self) {
         // redirect / prev_redirect are Vec<u8> — dropped automatically.
         // proxy_authorization: Option<Vec<u8>> — dropped automatically.
@@ -844,7 +863,7 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
 /// Priority: tls_props.server_name > client.hostname > client.url.hostname
 /// The Host header value (client.hostname) may contain a port suffix which
 /// must be stripped because it is not part of the DNS name in certificates.
-fn get_tls_hostname(client: &HTTPClient, allow_proxy_url: bool) -> &[u8] {
+fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
@@ -1195,9 +1214,9 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 // The Zig struct stored raw pointers (`*MutableString`, `*ProxyTunnel`); the
 // Rust struct uses `Option<NonNull<_>>`. These helpers centralize the unsafe
 // deref so the state-machine bodies stay readable.
-impl HTTPClient {
+impl<'a> HTTPClient<'a> {
     #[inline]
-    fn request_body(&self) -> &'static [u8] {
+    fn request_body(&self) -> &[u8] {
         // SAFETY: request_body is a slice into `original_request_body` which is
         // a field of `self`. Lifetime erased only to thread through Zig-shaped
         // borrowck (mutates other state fields while reading this).
@@ -1234,7 +1253,7 @@ impl HTTPClient {
 
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
-impl HTTPClient {
+impl<'a> HTTPClient<'a> {
     pub fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1760,10 +1779,9 @@ impl HTTPClient {
         }
     }
 
-    pub fn header_str(&self, ptr: StringPointer) -> &'static [u8] {
-        // PORT NOTE: header_buf is `&'static [u8]`; explicit reborrow so the
-        // returned slice doesn't tie up `&self` for borrowck.
-        let buf: &'static [u8] = self.header_buf;
+    pub fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
+        // Reborrow at `'a` so the returned slice doesn't tie up `&self`.
+        let buf: &'a [u8] = self.header_buf;
         &buf[ptr.offset as usize..][..ptr.length as usize]
     }
 
@@ -2069,7 +2087,7 @@ impl HTTPClient {
         self.url.is_https()
     }
 
-    pub fn start(&mut self, body: HTTPRequestBody, body_out_str: &mut MutableString) {
+    pub fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
         // TODO(port): body_out_str ownership — Zig stores *MutableString in state
         body_out_str.reset();
 
@@ -2520,7 +2538,7 @@ impl HTTPClient {
                 self.set_timeout(socket, 5);
 
                 match &mut self.state.original_request_body {
-                    HTTPRequestBody::Bytes(_) => {
+                    HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
                         let to_send = self.request_body();
                         if !to_send.is_empty() {
                             let sent = match write_to_socket::<IS_SSL>(socket, to_send) {
@@ -2574,7 +2592,7 @@ impl HTTPClient {
                     // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
                     let proxy = unsafe { &mut *proxy_ptr.as_ptr() };
                     match &self.state.original_request_body {
-                        HTTPRequestBody::Bytes(_) => {
+                        HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
                             self.set_timeout(socket, 5);
 
                             let to_send = self.request_body();
@@ -3494,14 +3512,16 @@ impl HTTPClient {
         );
     }
 
-    /// `@fieldParentPtr("client", this)` — recover the AsyncHTTP that embeds this client.
+    /// `@fieldParentPtr("client", this)` — recover the AsyncHTTP that embeds this
+    /// client. Returns the lifetime-erased pointer form expected by
+    /// `HTTPClientResultCallback::run`.
     #[inline]
-    fn parent_async_http(&mut self) -> *mut AsyncHTTP {
+    fn parent_async_http(&mut self) -> *mut AsyncHTTP<'static> {
         // SAFETY: HTTPClient is always embedded as `client` field of AsyncHTTP
         unsafe {
             (self as *mut Self as *mut u8)
-                .sub(offset_of!(AsyncHTTP, client))
-                .cast::<AsyncHTTP>()
+                .sub(offset_of!(AsyncHTTP<'static>, client))
+                .cast::<AsyncHTTP<'static>>()
         }
     }
 
@@ -4160,9 +4180,10 @@ impl HTTPClient {
                                 }
                                 let normalized_url_str = normalized_url.to_owned_slice();
 
-                                // SAFETY: self.redirect (set below) keeps `normalized_url_str` alive.
-                                let new_url: URL<'static> =
-                                    unsafe { core::mem::transmute(URL::parse(&normalized_url_str)) };
+                                // SAFETY: self-borrow — `normalized_url_str` is moved into
+                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
+                                let new_url: URL<'a> =
+                                    unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&normalized_url_str)) };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 // connected_url still borrows from the previous hop's buffer
@@ -4213,9 +4234,10 @@ impl HTTPClient {
                                 }
                                 let normalized_url_str = normalized_url.to_owned_slice();
 
-                                // SAFETY: self.redirect (set below) keeps `normalized_url_str` alive.
-                                let new_url: URL<'static> =
-                                    unsafe { core::mem::transmute(URL::parse(&normalized_url_str)) };
+                                // SAFETY: self-borrow — `normalized_url_str` is moved into
+                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
+                                let new_url: URL<'a> =
+                                    unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&normalized_url_str)) };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 debug_assert!(self.prev_redirect.is_empty());
@@ -4234,8 +4256,9 @@ impl HTTPClient {
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
-                                // SAFETY: self.redirect (set below) keeps `new_url` alive.
-                                self.url = unsafe { core::mem::transmute(URL::parse(&new_url)) };
+                                // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
+                                // below, which lives as long as `self` (≥ `'a`).
+                                self.url = unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&new_url)) };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(self.url.origin), strings::without_trailing_slash(original_url.origin), true);
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =

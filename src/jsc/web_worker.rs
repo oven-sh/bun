@@ -1147,15 +1147,22 @@ impl WebWorker {
         let mut global_object: *const JSGlobalObject = core::ptr::null();
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
-            // other thread can dereference it now — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
+            // other thread can dereference it now. Do NOT bind a long-lived
+            // `&mut VirtualMachine` here — `cron_clear_all_teardown` and
+            // `close_all_socket_groups` re-derive from `vm_ptr` (the hook body
+            // does `&mut *vm`), which under Stacked Borrows would pop a prior
+            // `&mut`'s Unique tag and make any later read through it UB.
+            // Per-expression `(*vm_ptr)` derefs keep each autoref scoped to a
+            // single statement, mirroring `spin()`.
+            //
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
-            // SAFETY: jsc_vm is a valid JSC::VM*.
-            unsafe { (*vm.jsc_vm).clear_has_termination_request() };
-            vm.is_shutting_down = true;
-            vm.on_exit();
+            unsafe { (*(*vm_ptr).jsc_vm).clear_has_termination_request() };
+            // SAFETY: vm_ptr valid; sole owner on this thread.
+            unsafe { (*vm_ptr).is_shutting_down = true };
+            // SAFETY: vm_ptr valid; on_exit re-enters JS.
+            unsafe { (*vm_ptr).on_exit() };
             // PORT NOTE (layering): `CronJob` lives in `bun_runtime::api::cron`.
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract — `vm_ptr` is the live per-thread VM.
@@ -1170,8 +1177,9 @@ impl WebWorker {
                 // SAFETY: vm_ptr valid; sole owner on this thread.
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
-            exit_code = i32::from(vm.exit_handler.exit_code);
-            global_object = vm.global;
+            // SAFETY: vm_ptr valid; plain field reads.
+            exit_code = i32::from(unsafe { (*vm_ptr).exit_handler.exit_code });
+            global_object = unsafe { (*vm_ptr).global };
         }
 
         // ---- 3. JSC VM teardown ----------------------------------------------

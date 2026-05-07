@@ -26,51 +26,6 @@ use js_ast::ExprData as Data;
 use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
-// `Expr::join_with_comma` lives in a still-gated `impl Expr` block
-// (Expr.rs `` @793 — depends on `IntoExprData` for `E::Binary`).
-// The visit pass needs the trivial 2-ary form now; provide it locally and
-// build the binary node via `Expr::init`, which does have an ungated path.
-#[inline]
-fn join_with_comma(a: Expr, b: Expr) -> Expr {
-    if matches!(a.data, Data::EMissing(_)) {
-        return b;
-    }
-    if matches!(b.data, Data::EMissing(_)) {
-        return a;
-    }
-    Expr::init(E::Binary { op: Op::BinComma, left: a, right: b }, a.loc)
-}
-
-// Same story as `join_with_comma` — `Expr::has_value_for_this_in_call` is in
-// the gated `impl Expr` @1481. Body is trivial; mirror the Zig.
-#[inline]
-fn has_value_for_this_in_call(expr: &Expr) -> bool {
-    matches!(expr.data.tag(), Tag::EDot | Tag::EIndex)
-}
-
-// Zig: `p.options.macro_context.call(record.path.text, source_dir, log, source,
-// range, expr, name) catch ...` — the real `MacroContext::call` is FFI into
-// `bun_js_parser_jsc::Macro` (a tier above this crate). `js_parser` only sees
-// the opaque `MacroContext` handle (lib.rs). Thread the call through a free
-// fn so the visit-pass body is a faithful port of visitExpr.zig:415/1443; the
-// dispatch itself returns `Err` until the higher-tier crate wires a callback,
-// which lands on the spec's `catch return expr` path.
-#[inline]
-fn macro_context_call(
-    _ctx: Option<&mut crate::Macro::MacroContext>,
-    _path_text: &[u8],
-    _log: &mut logger::Log,
-    _source: &logger::Source,
-    _range: logger::Range,
-    _caller: Expr,
-    _function_name: &[u8],
-) -> Result<Expr, ()> {
-    // Real body lives in src/js_parser_jsc/Macro.rs (`MacroContext::call`);
-    // bridged at link time once the `_jsc` crate threads a fn-pointer through
-    // `MacroContext`. Behave as the Zig `catch` arm: propagate failure.
-    Err(())
-}
-
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
@@ -331,7 +286,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if def.can_be_removed_if_unused() {
                     e_.can_be_removed_if_unused = true;
                 }
-                if def.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                if def.call_can_be_unwrapped_if_unused() == E::CallUnwrap::IfUnused
                     && !p.options.ignore_dce_annotations
                 {
                     e_.call_can_be_unwrapped_if_unused = true;

@@ -1859,6 +1859,21 @@ pub struct SourceMapHandlerGetter<'a> {
 }
 
 impl<'a> SourceMapHandlerGetter<'a> {
+    /// Construct directly from raw pointers — used by the off-JS-thread
+    /// transpiler worker (`TranspilerJob::run`) which must never materialize a
+    /// `&mut VirtualMachine` (the VM is concurrently live on the JS thread and
+    /// the job slot itself is stored *inside* `vm.transpiler_store`).
+    ///
+    /// SAFETY: caller guarantees `vm` outlives `'a` and that only worker-safe
+    /// leaf fields (`source_mappings`, `debugger`) are touched via `get()`.
+    #[inline]
+    pub(crate) unsafe fn from_raw(
+        vm: *mut VirtualMachine,
+        printer: *mut bun_js_printer::BufferPrinter,
+    ) -> Self {
+        Self { vm, printer, _marker: core::marker::PhantomData }
+    }
+
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
         // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
         // `source_map_handler`; the getter's lifetime `'a` bounds the borrow.

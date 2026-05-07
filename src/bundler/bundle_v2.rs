@@ -1924,8 +1924,8 @@ impl<'a> ReachableFileVisitor<'a> {
 
 impl<'a> BundleV2<'a> {
     pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
-        let trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
-        drop(trace); // TODO(port): scope guard for trace.end()
+        // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
+        let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
 
         // Create a quick index for server-component boundaries.
         // We need to mark the generated files as reachable, or else many files will appear missing.
@@ -2714,6 +2714,17 @@ impl<'a> BundleV2<'a> {
 
     pub fn allocator(&self) -> &bun_alloc::Arena {
         &self.graph.heap
+    }
+
+    /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
+    /// a raw pointer. Mirrors Zig `allocator.create(T)` — the arena owns the
+    /// slab and reclaims it on `deinit_without_freeing_arena` / `heap.reset()`.
+    /// Returning `*mut T` (not `&'_ mut T`) releases the `&self` borrow at the
+    /// call site so callers can immediately reborrow `&mut self` (PORTING.md
+    /// §Allocators: `bump.alloc(init)` → `&'bump mut T`).
+    #[inline]
+    fn arena_create<T>(&self, value: T) -> *mut T {
+        self.allocator().alloc(value) as *mut T
     }
 
     pub fn increment_scan_counter(&mut self) {

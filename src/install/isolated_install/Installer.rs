@@ -809,8 +809,10 @@ impl Task {
                     let pkg_cache_dir_subpath_init = match pkg_res.tag {
                         ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
-                                // SAFETY: `tag == Folder` discriminates the active variant.
-                                ResolutionTag::Folder => unsafe { pkg_res.value.folder }.slice(string_buf),
+                                ResolutionTag::Folder => {
+                                    // SAFETY: `tag == Folder` discriminates the active variant.
+                                    unsafe { &pkg_res.value.folder }.slice(string_buf)
+                                }
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };

@@ -939,9 +939,25 @@ pub struct SecurityScanSubprocess<'a> {
     json_writer: Option<Rc<StaticPipeWriter>>,
 }
 
-// TODO(port): jsc.Subprocess.NewStaticPipeWriter(@This()) is a comptime type generator parameterized
-// on the parent type; map to a generic StaticPipeWriter<Parent> in bun_sys::subprocess.
+// Zig: `pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());`
+// The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
+// monomorphize on `'static` because the writer stores `*mut P` (raw backref —
+// lifetime is erased anyway) and the type alias must name a concrete `P`.
 pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
+
+// Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
+// because the call is re-entrant: it may fire synchronously inside
+// `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
+// the stack (small JSON fits the pipe buffer → write completes → close).
+impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
+    unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
+        // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
+        // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
+        // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
+        // (it clones the `Rc` first), so this `&mut` is unique for the call.
+        unsafe { (*this).on_close_io(kind) };
+    }
+}
 
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {

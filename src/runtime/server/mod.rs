@@ -446,6 +446,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests += 1;
     }
 
+    /// `server.zig:getURLAsString`.
+    pub fn get_url_as_string(&self) -> Result<bun_str::String, bun_alloc::AllocError> {
+        use bun_core::fmt::{URLFormatter, URLProto};
+        use std::io::Write as _;
+        let fmt = match &self.config.address {
+            server_config::Address::Unix(unix) => {
+                let unix = unix.to_bytes();
+                if unix.len() > 1 && unix[0] == 0 {
+                    // abstract domain socket, let's give it an "abstract" URL
+                    URLFormatter { proto: URLProto::Abstract, hostname: Some(&unix[1..]), port: None }
+                } else {
+                    URLFormatter { proto: URLProto::Unix, hostname: Some(unix), port: None }
+                }
+            }
+            server_config::Address::Tcp { port, hostname } => {
+                let mut port = *port;
+                if let Some(listener) = self.listener {
+                    // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it.
+                    port = unsafe { (*listener).get_local_port() } as u16;
+                } else if Self::HAS_H3 {
+                    if let Some(h3l) = self.h3_listener {
+                        // SAFETY: h3 listener handle live until stop_listening() nulls it.
+                        port = unsafe { (*h3l).get_local_port() } as u16;
+                    }
+                }
+                URLFormatter {
+                    proto: if SSL { URLProto::Https } else { URLProto::Http },
+                    hostname: hostname.as_ref().map(|h| h.as_bytes()),
+                    port: Some(port),
+                }
+            }
+        };
+
+        let mut buf = Vec::new();
+        write!(&mut buf, "{}", fmt).map_err(|_| bun_alloc::AllocError)?;
+        Ok(bun_str::String::clone_utf8(&buf))
+    }
+
     /// `server.zig:jsValueAssertAlive`.
     pub fn js_value_assert_alive(&self) -> JSValue {
         debug_assert!(self.js_value.is_not_empty());

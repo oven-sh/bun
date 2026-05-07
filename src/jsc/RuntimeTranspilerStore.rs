@@ -26,8 +26,9 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_string::{strings, MutableString, String};
-use bun_sys::Fd;
+use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
+use bun_threading::Mutex;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::{WatchItemColumns, WatchItemField, Watcher};
 
@@ -36,7 +37,7 @@ use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{create_if_different, VirtualMachine};
+use crate::virtual_machine::{create_if_different, SourceMapHandlerGetter, VirtualMachine};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource, RuntimeTranspilerCache};
 
 #[allow(non_upper_case_globals)]

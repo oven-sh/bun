@@ -395,10 +395,13 @@ impl NetworkTask {
             };
 
             // MOVE_DOWN(b0): bun_jsc::url::join → bun_url::join (WHATWG URL FFI moves out of jsc).
-            let tmp = bun_url::join(
+            // `OwnedString` derefs the WTF-backed result on scope exit (Zig:
+            // `defer tmp.deref()`, NetworkTask.zig:216) — covers both the
+            // success path and the InvalidURL early returns below.
+            let tmp = bun_str::OwnedString::new(bun_url::join(
                 &bun_str::String::borrow_utf8(&scope.url.href),
                 &bun_str::String::borrow_utf8(encoded_name),
-            );
+            ));
 
             if tmp.tag() == bun_str::Tag::Dead {
                 if !is_optional {
@@ -432,7 +435,7 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
+                            *tmp
                         ),
                     )?;
                 } else {
@@ -441,7 +444,7 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
+                            *tmp
                         ),
                     )?;
                 }
@@ -575,12 +578,9 @@ impl NetworkTask {
         }
 
         self.callback = Callback::PackageManifest {
-            // TODO(port): `initAppendIfNeeded` takes a comptime `*FilenameStore`
-            // type + instance pair — model as a generic over a `StringStore`
-            // trait in Phase B.
             name: strings::StringOrTinyString::init_append_if_needed(
                 name,
-                &mut DirnameStoreAppender(FileSystem::instance().dirname_store()),
+                &mut filename_store_appender(),
             )?,
             loaded_manifest: loaded_manifest.cloned(),
             is_extended_manifest: needs_extended,

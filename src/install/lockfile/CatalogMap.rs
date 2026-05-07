@@ -335,7 +335,7 @@ impl CatalogMap {
     // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
     // collections whose `Drop` recursively frees the nested maps.
 
-    pub fn count(&mut self, lockfile: &mut Lockfile, builder: &mut StringBuilder) {
+    pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let mut deps_iter = self.default.iterator();
         while let Some(entry) = deps_iter.next() {
@@ -355,11 +355,13 @@ impl CatalogMap {
         }
     }
 
+    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder.lockfile`
+    /// already is `new` — read `new.buffers.string_bytes` through it instead
+    /// so the call site doesn't alias `&mut new` twice.
     pub fn clone(
-        &mut self,
+        &self,
         pm: &mut PackageManager,
-        old: &mut Lockfile,
-        new: &mut Lockfile,
+        old: &Lockfile,
         builder: &mut StringBuilder,
     ) -> Result<CatalogMap, bun_core::Error> {
         let mut new_catalog = CatalogMap::default();
@@ -367,7 +369,7 @@ impl CatalogMap {
         new_catalog.default.ensure_total_capacity(self.default.count())?;
 
         let old_buf = old.buffers.string_bytes.as_slice();
-        let new_buf = new.buffers.string_bytes.as_slice();
+        let new_buf = builder.lockfile.buffers.string_bytes.as_slice();
         let new_ctx = ctx(new_buf);
 
         let mut deps_iter = self.default.iterator();

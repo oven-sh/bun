@@ -26,3 +26,4 @@ bun_paths.workspace = true
 bun_spawn = { path = "../spawn" }
 bun_string.workspace = true
 bun_sys.workspace = true
+bun_which.workspace = true

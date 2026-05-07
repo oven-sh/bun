@@ -1838,13 +1838,19 @@ pub fn git_diff_internal(
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // PORT NOTE: Zig used `std.process.Child` directly (spawn + collectOutput +
-    // wait). PORTING.md bans `std::process`; route through `bun_spawn::sync`
-    // (= `bun.spawnSync`) which captures stdout/stderr when `Stdio::Buffer`.
-    // Zig's `collectOutput` enforced a 4 MiB cap; `bun_spawn::sync` reads to
-    // EOF unbounded — acceptable for the test-only `makeDiff` caller.
-    const ARGV: &[&[u8]] = &[
+    // Zig used `std.process.Child`, which searches `$PATH` for argv[0].
+    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
+    // resolve `git` here — same as `patchCommit`'s `bun.which` call.
+    let mut gitbuf = PathBuffer::uninit();
+    let git = bun_which::which(
+        &mut gitbuf,
+        bun_core::env_var::PATH.get().unwrap_or(b""),
+        b"",
         b"git",
+    )
+    .ok_or_else(|| bun_core::err!(FileNotFound))?;
+
+    const ARGV: &[&[u8]] = &[
         b"-c",
         b"core.safecrlf=false",
         b"diff",
@@ -1855,7 +1861,8 @@ pub fn git_diff_internal(
         b"--full-index",
         b"--no-index",
     ];
-    let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
+    let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 3);
+    argv.push(Box::from(git.as_bytes()));
     for s in ARGV {
         argv.push(Box::from(*s));
     }

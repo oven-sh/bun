@@ -229,17 +229,17 @@ impl YesTask {
         // SAFETY: caller contract.
         let evtloop = unsafe { (*this).evtloop };
         match evtloop {
-            EventLoopHandle::Js { owner, vtable } => {
-                // SAFETY: vtable contract — `owner` is the live `*mut jsc::EventLoop`.
-                unsafe { (vtable.tick)(owner) };
+            EventLoopHandle::Js { owner } => {
+                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
+                unsafe { bun_event_loop::any_event_loop::js::tick(owner) };
                 // SAFETY: caller contract; `concurrent_task` was initialised
                 // as `Js` via `EventLoopTask::from_event_loop`.
                 let ct: *mut ConcurrentTask = match unsafe { &mut (*this).concurrent_task } {
                     EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                     EventLoopTask::Mini(_) => unreachable!(),
                 };
-                // SAFETY: vtable contract.
-                unsafe { (vtable.enqueue_task_concurrent)(owner, ct) };
+                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
+                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct) };
             }
             EventLoopHandle::Mini(mini) => {
                 // SAFETY: `mini` is a live backref; `loop_` is the live uws loop.

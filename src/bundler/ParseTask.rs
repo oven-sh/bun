@@ -2666,10 +2666,10 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     let any_loop = r#loop.expect("BundleV2.linker.loop must be set before scheduling ParseTask");
     // SAFETY: BACKREF — `any_loop` outlives this parse task.
     match unsafe { &mut *any_loop.as_ptr() } {
-        bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
-            // SAFETY: vtable populated by runtime; `owner` is a live `*mut jsc::EventLoop`.
+        bun_event_loop::AnyEventLoop::Js { owner } => {
+            // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
             unsafe {
-                (vtable.enqueue_task_concurrent)(
+                bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
                     *owner,
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                         result,

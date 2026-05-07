@@ -1704,10 +1704,9 @@ impl<'a> BundleV2<'a> {
             .as_ptr();
         // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
         match unsafe { &*any_loop } {
-            bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
-                // SAFETY: vtable populated by runtime; `owner` is a live
-                // erased `*mut jsc::EventLoop`.
-                unsafe { (vtable.enqueue_task_concurrent)(*owner, task) };
+            bun_event_loop::AnyEventLoop::Js { owner } => {
+                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
+                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(*owner, task) };
             }
             bun_event_loop::AnyEventLoop::Mini(_) => {
                 panic!("No JavaScript event loop for transpiler plugins to run on");

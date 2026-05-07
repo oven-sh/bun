@@ -1383,10 +1383,9 @@ pub mod js_bundler {
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { owner, vtable } => {
-                        // SAFETY: vtable populated by runtime; `owner` is the
-                        // erased `*mut jsc::EventLoop`.
-                        (vtable.enqueue_task_concurrent)(
+                    bun_event_loop::AnyEventLoop::Js { owner } => {
+                        // SAFETY: `owner` is the erased live `*mut jsc::EventLoop`.
+                        bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
                             *owner,
                             ConcurrentTask::from_callback(ctx, on_notify_defer_raw),
                         );

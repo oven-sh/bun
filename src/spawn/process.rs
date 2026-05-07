@@ -1291,7 +1291,7 @@ pub mod waiter_thread_posix {
                         remove = true;
 
                         match T::event_loop(process) {
-                            EventLoopHandle::Js { owner, vtable } => {
+                            EventLoopHandle::Js { owner } => {
                                 let ct = ConcurrentTask::create(Task::new(
                                     T::TASK_TAG,
                                     ResultTask::<T>::new(ResultTask {
@@ -1301,8 +1301,8 @@ pub mod waiter_thread_posix {
                                     })
                                     .cast(),
                                 ));
-                                // SAFETY: vtable contract.
-                                unsafe { (vtable.enqueue_task_concurrent)(owner, ct) };
+                                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
+                                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct) };
                             }
                             EventLoopHandle::Mini(mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {

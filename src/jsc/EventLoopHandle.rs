@@ -9,7 +9,7 @@
 //! `bun_jsc`. The type was therefore MOVED DOWN to
 //! [`bun_event_loop::any_event_loop`] (`src/event_loop/AnyEventLoop.rs`),
 //! where the `.js` arm holds an erased `*mut ()` and dispatches through a
-//! manual [`JsEventLoopVTable`] registered at startup by `bun_runtime::init()`.
+//! link-time `extern "Rust"` shims defined in `bun_jsc::event_loop`.
 //!
 //! This module is the thin shim that keeps the `bun_jsc::event_loop_handle`
 //! path (and the `jsc.EventLoopHandle` namespace shape) compiling. All
@@ -33,8 +33,7 @@
 //!   `EventLoopTask` / `EventLoopTaskPtr` → re-exported verbatim
 
 pub use bun_event_loop::any_event_loop::{
-    EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr, JsEventLoopVTable,
-    JS_EVENT_LOOP_CURRENT, JS_EVENT_LOOP_VTABLE,
+    EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

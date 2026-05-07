@@ -42,6 +42,6 @@ pub use AutoFlusher as auto_flusher;
 pub use DeferredTaskQueue as deferred_task_queue;
 
 pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr, JsEventLoopVTable,
+    AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
 pub use MiniEventLoop::{EventLoopKind, PlatformEventLoop, MINI_EVENT_LOOP_CTX_VTABLE};

@@ -29,7 +29,7 @@ use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
 use crate::lockfile::package::PackageListExt as _;
 
-use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
+use super::{Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
 use super::{directories, enqueue};
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path

@@ -363,25 +363,28 @@ impl<'a> PatchTask<'a> {
                     let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
                         .behavior
                         .is_required();
-                    let pkg_again: Package = manager.lockfile.packages.get(pkg_id);
-                    let network_task = manager
-                        .generate_network_task_for_tarball(
+                    let pkg_again: Package = manager.lockfile.packages.get(pkg_id as usize);
+                    let network_task: *mut crate::NetworkTask =
+                        package_manager::generate_network_task_for_tarball(
+                            manager,
                             // TODO: not just npm package
                             task_id,
                             url,
                             is_required,
                             dep_id,
-                            &pkg_again,
+                            pkg_again,
                             Some(name_and_version_hash),
                             match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => Authorization::AllowAuthorization,
+                                crate::resolution_real::Tag::Npm => {
+                                    Authorization::AllowAuthorization
+                                }
                                 _ => Authorization::NoAuthorization,
                             },
                         )?
                         .unwrap_or_else(|| unreachable!());
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        manager.enqueue_network_task(network_task);
+                        package_manager::enqueue_network_task(manager, network_task);
                     }
                 }
                 PreinstallState::ApplyPatch => {
@@ -403,7 +406,7 @@ impl<'a> PatchTask<'a> {
                     ) as *mut PatchTask<'static>;
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        manager.enqueue_patch_task(patch_task);
+                        package_manager::enqueue_patch_task(manager, patch_task);
                     }
                 }
                 _ => {}
@@ -481,9 +484,8 @@ impl<'a> PatchTask<'a> {
 
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
-            let resolution =
+            let resolution: &Resolution =
                 &self.manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
-            // TODO(port): `packages.items(.resolution)` MultiArrayList column accessor name.
             let mut label = Vec::<u8>::new();
             use std::io::Write as _;
             write!(
@@ -514,7 +516,7 @@ impl<'a> PatchTask<'a> {
         // per `PackageInstall.zig`).
         let mut dest_subpath_buf = [0u8; 1024];
         let mut pkg_install = PackageInstall {
-            cache_dir: sys::Dir { fd: patch.cache_dir },
+            cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
             destination_dir_subpath_buf: &mut dest_subpath_buf[..],
@@ -528,7 +530,7 @@ impl<'a> PatchTask<'a> {
             lockfile: &self.manager.lockfile,
         };
 
-        match pkg_install.install(true, sys::Dir { fd: system_tmpdir }, InstallMethod::Copyfile, resolution_tag) {
+        match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 return log.add_error_fmt_opts(
@@ -544,7 +546,7 @@ impl<'a> PatchTask<'a> {
 
         {
             let patch_pkg_dir = match sys::openat(
-                system_tmpdir,
+                system_tmpdir.fd,
                 tempdir_name,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -624,9 +626,9 @@ impl<'a> PatchTask<'a> {
             )
         };
         if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir,
+            system_tmpdir.fd,
             path_in_tmpdir,
-            patch.cache_dir,
+            patch.cache_dir.fd,
             cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,

@@ -2537,6 +2537,6 @@ mod tests {
 // PORT STATUS
 //   source:     src/router/router.zig (1918 lines)
 //   confidence: medium
-//   todos:      24
-//   notes:      Routes/RouteLoader self-reference Box<Route> via raw *const Route into list columns; Route string fields treated as &'static (DirnameStore-backed); test harness (make_test/Test::make + 4 fixture-driven tests) stubbed pending bun_sys/bun_resolver; Route::Sorter nested-module shim is invalid Rust syntax — Phase B must hoist callers; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
+//   todos:      5
+//   notes:      Routes/RouteLoader self-reference Box<Route> via raw *const Route into list columns; Route PathString fields are DirnameStore-interned — `arena_slice()` re-widens to &'static at the SoA copy points; AbsPath is uniformly PathString (Windows interns the posix-normalized path into DirnameStore instead of a Box<[u8]> dup); RouteConfig moved down here, bun_bundler::options re-exports it; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
 // ──────────────────────────────────────────────────────────────────────────

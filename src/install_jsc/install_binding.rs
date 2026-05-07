@@ -39,7 +39,7 @@ pub mod bun_install_js_bindings {
         use bun_install::lockfile::{LoadResult, Lockfile};
         use bun_logger as logger;
         use bun_paths::resolve_path;
-        use bun_string::String as BunString;
+        use bun_string::{OwnedString, String as BunString};
         use bun_sys::FdExt as _;
 
         let mut log = logger::Log::init();
@@ -120,7 +120,10 @@ pub mod bun_install_js_bindings {
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        let mut str = BunString::clone_utf8(&stringified);
+        // Zig: `defer str.deref()`. `bun_string::String` is `Copy` (no `Drop`),
+        // so the +1 from `clone_utf8` must be released via `OwnedString`'s RAII
+        // — `to_js_by_parse_json` borrows, it does not consume.
+        let mut str = OwnedString::new(BunString::clone_utf8(&stringified));
 
         bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global)
     }

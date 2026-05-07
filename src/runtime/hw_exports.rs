@@ -256,7 +256,7 @@ pub(crate) mod sql_hooks {
     unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
         // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
         unsafe {
-            crate::webcore::Blob::Bun__Blob__sharedView(
+            crate::webcore::blob::Bun__Blob__sharedView(
                 this as *const crate::webcore::Blob,
                 out_len,
             )

@@ -678,20 +678,23 @@ pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 #[bun_jsc::host_fn]
 pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let args_buf = callframe.arguments_old::<4>();
-    let arguments = args_buf.slice();
-    if arguments.is_empty() {
+    if args_buf.len == 0 {
         return BunString::empty().to_js(global_this);
     }
 
-    for arg in arguments {
+    for arg in args_buf.slice() {
         arg.protect();
     }
-    let prot: Vec<JSValue> = arguments.to_vec();
-    let _unprotect = scopeguard::guard(prot, |prot| {
-        for arg in prot.iter() {
+    // Spec BunObject.zig:450 — `defer { for (arguments) |a| a.unprotect(); }`.
+    // `arguments_old::<4>` is a stack `[JSValue; 4]`; move it into the guard
+    // and re-slice instead of heap-allocating a `Vec` per call — `Bun.inspect`
+    // is the inner-loop of error-gc-test.test.js (100k calls).
+    let args_buf = scopeguard::guard(args_buf, |buf| {
+        for arg in buf.slice() {
             arg.unprotect();
         }
     });
+    let arguments = args_buf.slice();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,

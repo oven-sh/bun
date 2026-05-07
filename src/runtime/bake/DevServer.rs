@@ -3962,6 +3962,20 @@ pub fn finalize_bundle(
                 }
             }
         };
+        // PORT NOTE: `make_array_for_server_components_patch` needs `&mut self`
+        // while reading `self.incremental_result.client_components_{added,removed}`.
+        // It only touches `server_graph.bundled_files.keys()`, so reborrow the
+        // index slices via `dev_ptr` (disjoint fields).
+        // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
+        // `make_array_for_server_components_patch`.
+        let added = unsafe {
+            let s = &(*dev_ptr).incremental_result.client_components_added;
+            ::core::slice::from_raw_parts(s.as_ptr(), s.len())
+        };
+        let removed = unsafe {
+            let s = &(*dev_ptr).incremental_result.client_components_removed;
+            ::core::slice::from_raw_parts(s.as_ptr(), s.len())
+        };
         let errors = match dev
             .server_register_update_callback
             .get()
@@ -3971,20 +3985,14 @@ pub fn finalize_bundle(
                 global.to_js_value(),
                 &[
                     server_modules,
-                    dev.make_array_for_server_components_patch(
-                        global,
-                        &dev.incremental_result.client_components_added,
-                    )?,
-                    dev.make_array_for_server_components_patch(
-                        global,
-                        &dev.incremental_result.client_components_removed,
-                    )?,
+                    dev.make_array_for_server_components_patch(global, added)?,
+                    dev.make_array_for_server_components_patch(global, removed)?,
                 ],
             ) {
             Ok(v) => v,
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                unsafe { &*dev.vm }.print_error_like_object_to_console(global.take_exception(err));
+                dev.vm_mut().print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
                 );

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 // Bun.cron.parse() and the in-process Bun.cron(schedule, handler) interpret
 // schedules in UTC. The OS-level Bun.cron(path, schedule, title) overload
@@ -23,7 +23,9 @@ describe("Bun.cron.parse — UTC", () => {
       expect(stdout).toBe("2026-06-15T09:00:00.000Z");
       expect(exitCode).toBe(0);
     }
-  });
+    // Three sequential debug-build subprocesses (~1.7s startup each under
+    // ASAN) push this past the 5s default, so give it headroom there.
+  }, isDebug ? 30_000 : undefined);
 
   test("weekday matching uses UTC day-of-week", () => {
     // 2026-06-15 is a Monday in UTC.

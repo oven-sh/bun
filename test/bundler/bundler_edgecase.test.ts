@@ -183,10 +183,16 @@ describe("bundler", () => {
         capture(globalThis.process?.env?.NODE_ENV);
         capture(globalThis.process?.env?.NODE_ENV === 'production');
         capture(globalThis.process?.env?.NODE_ENV === 'development');
+        capture(globalThis["process"].env.NODE_ENV);
+        capture(globalThis["process"].env.NODE_ENV === 'production');
+        capture(globalThis["process"].env.NODE_ENV === 'development');
       `,
     },
     target: "browser",
     capture: [
+      '"development"',
+      "false",
+      "true",
       '"development"',
       "false",
       "true",

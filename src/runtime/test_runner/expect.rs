@@ -268,8 +268,14 @@ impl Expect {
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
-        message_fmt: &'static str,
-        message_args: fmt::Arguments<'_>,
+        // PORT NOTE: Zig took `comptime message_fmt: string` + `message_args` and
+        // concatenated `message_fmt` onto the signature template before
+        // substitution. Rust can't splice runtime args into a const format
+        // string, so callers pre-render the message body (prose + args) into a
+        // single `fmt::Arguments` here. `<tag>` markers in the rendered body
+        // are still rewritten by `throw_pretty`'s post-render `pretty_fmt_rt`
+        // pass, so the prose may contain `<r>`/`<red>`/etc.
+        message: fmt::Arguments<'_>,
     ) -> JsError {
         // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile in Phase B
         let colors = Output::enable_ansi_colors_stderr();

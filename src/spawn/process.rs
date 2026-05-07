@@ -3749,29 +3749,23 @@ pub mod sync {
         // setsid+double-fork escapees as long as each intermediate's uniqueid
         // was recorded before it died. The `begin()` call below seeds the
         // scan root after spawn.
+        // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
+        // (which scans via m_kq) and the releaseKq() defer below.
         #[allow(unused_mut, unused_variables)]
-        let mut no_orphans_kq: Fd = spawn_sys::INVALID_FD;
+        let mut no_orphans_kq = AutoCloseFd::invalid();
         #[cfg(target_os = "macos")]
         if no_orphans {
             // SAFETY: kqueue syscall
             let kq = unsafe { libc::kqueue() };
             if kq >= 0 {
-                no_orphans_kq = Fd::from_native(kq);
-            }
-        }
-        // LIFO: this runs LAST — after killSyncScriptTree() (which scans via
-        // m_kq) and releaseKq().
-        #[cfg(target_os = "macos")]
-        scopeguard::defer! {
-            if no_orphans_kq != spawn_sys::INVALID_FD {
-                no_orphans_kq.close();
+                no_orphans_kq = AutoCloseFd::new(Fd::from_native(kq));
             }
         }
         // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
-        // its NOTE_FORK-drain rescan), before the close above.
+        // its NOTE_FORK-drain rescan), before `no_orphans_kq` drops/closes.
         #[cfg(target_os = "macos")]
         scopeguard::defer! {
-            if no_orphans_kq != spawn_sys::INVALID_FD {
+            if no_orphans_kq.fd() != spawn_sys::INVALID_FD {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_releaseKq() };
             }

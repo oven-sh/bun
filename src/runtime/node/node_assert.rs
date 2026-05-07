@@ -4,7 +4,7 @@ use bun_str::strings::EncodingNonAscii;
 use bun_str::String as BunString;
 
 use super::assert::myers_diff as MyersDiff;
-use super::assert::myers_diff::{Diff, Line};
+use super::assert::myers_diff::{Diff, DiffKind, Line};
 
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.
@@ -91,38 +91,37 @@ fn diff_chars<T>(global: &JSGlobalObject, actual: &[T], expected: &[T]) -> JsRes
 where
     T: Line + FromAny,
 {
-    type Differ<T> = MyersDiff::Differ<T, false>;
-    let diff: MyersDiff::DiffList<T> =
-        Differ::<T>::diff(actual, expected).map_err(|err| map_diff_error(global, err))?;
-    diff_list_to_js::<T>(global, diff)
+    let diff: MyersDiff::DiffList<T> = MyersDiff::Differ::<T, false>::diff(actual, expected)
+        .map_err(|err| map_diff_error(global, err))?;
+    diff_list_to_js(global, diff)
 }
 
-fn diff_lines<'a, T>(
+fn diff_lines<'s, T>(
     global: &JSGlobalObject,
-    actual: &'a [T],
-    expected: &'a [T],
+    actual: &'s [T],
+    expected: &'s [T],
     check_comma_disparity: bool,
 ) -> JsResult<JSValue>
 where
     T: PartialEq + Copy + From<u8>,
-    &'a [T]: Line + FromAny,
+    &'s [T]: Line + FromAny,
 {
     let a = MyersDiff::split::<T>(actual);
     let e = MyersDiff::split::<T>(expected);
 
-    let diff: MyersDiff::DiffList<&'a [T]> = if check_comma_disparity {
-        MyersDiff::Differ::<&'a [T], true>::diff(a.as_slice(), e.as_slice())
+    let diff: MyersDiff::DiffList<&'s [T]> = if check_comma_disparity {
+        MyersDiff::Differ::<&'s [T], true>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     } else {
-        MyersDiff::Differ::<&'a [T], false>::diff(a.as_slice(), e.as_slice())
+        MyersDiff::Differ::<&'s [T], false>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     };
-    diff_list_to_js::<&'a [T]>(global, diff)
+    diff_list_to_js(global, diff)
 }
 
 fn diff_list_to_js<T>(global: &JSGlobalObject, diff_list: MyersDiff::DiffList<T>) -> JsResult<JSValue>
 where
-    T: Copy + FromAny,
+    T: FromAny + Copy,
 {
     let array = JSValue::create_empty_array(global, diff_list.len())?;
     for (i, line) in diff_list.iter().enumerate() {
@@ -135,19 +134,18 @@ where
     Ok(array)
 }
 
-// PORT NOTE: Zig's `JSObject.createNullProto` reflects over `Diff(T)`'s fields
-// via `@typeInfo` and encodes each with `JSValue.fromAny`. Rust has no field
-// reflection, so we hand-roll the two-field POJO here. `kind` follows the Zig
-// enum arm of `fromAny` (`jsNumberWithType(u32, @intFromEnum(value))`); `value`
-// dispatches through `FromAny` per `T`.
-impl<T: Copy + FromAny> PojoFields for Diff<T> {
+/// Field reflection for `Diff<T>` so [`JSObject::create_null_proto`] can
+/// marshal it. Mirrors Zig's `inline for` over `@typeInfo(Diff(T))`:
+/// `kind` is a fieldless enum → `jsNumber(@intFromEnum)`; `value` routes
+/// through `JSValue::from_any` per `T`.
+impl<T: FromAny + Copy> PojoFields for Diff<T> {
     const FIELD_COUNT: usize = 2;
     fn put_fields(
         &self,
         global: &JSGlobalObject,
         mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
     ) -> JsResult<()> {
-        put(b"kind", JSValue::from(self.kind as u32))?;
+        put(b"kind", JSValue::js_number_from_int32(self.kind as i32))?;
         put(b"value", JSValue::from_any(global, self.value)?)?;
         Ok(())
     }
@@ -165,9 +163,18 @@ fn map_diff_error(global: &JSGlobalObject, err: MyersDiff::Error) -> JsError {
     }
 }
 
+// Ensure `DiffKind`'s discriminants match the JS-side `DiffType` enum
+// (Insert=0, Delete=1, Equal=2). Zig's `@intFromEnum` uses declaration order.
+const _: () = {
+    assert!(DiffKind::Insert as i32 == 0);
+    assert!(DiffKind::Delete as i32 == 1);
+    assert!(DiffKind::Equal as i32 == 2);
+};
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_assert.zig (128 lines)
 //   confidence: high
-//   notes:      Zig diffChars mixed-encoding branch ignores its own utf8 conversion (preserved verbatim — likely upstream bug).
+//   todos:      0
+//   notes:      Zig diffChars mixed-encoding branch ignores its own utf8 conversion (preserved verbatim).
 // ──────────────────────────────────────────────────────────────────────────

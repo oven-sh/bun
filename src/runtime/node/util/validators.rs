@@ -166,7 +166,7 @@ pub fn validate_integer_or_big_int(
         return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
 
-    let int = value.to_int64();
+    let int = value.as_int52();
     if int < min || int > max {
         return Err(throw_range_error_min_max(global_this, int, name, min, max));
     }
@@ -235,7 +235,7 @@ pub fn validate_uint32(
             ),
         ));
     }
-    let num: i64 = value.to_int64();
+    let num: i64 = value.as_int52();
     let min: i64 = if greater_than_zero { 1 } else { 0 };
     let max: i64 = i64::from(u32::MAX);
     if num < min || num > max {
@@ -486,7 +486,6 @@ pub fn validate_undefined(
 /// `@tagName`. Rust has no field reflection; enums opt in via this trait.
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.
-// TODO(port): consider a `#[derive(StringEnum)]` proc-macro to generate this.
 pub trait StringEnum: Sized {
     /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
     const VALUES_INFO: &'static str;

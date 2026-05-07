@@ -107,7 +107,7 @@ impl Yes {
             let mut err = None;
             for _ in 0..4 {
                 // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, IoKind::Stdout, chunk) } {
+                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
                     err = Some(e);
                     break;
                 }

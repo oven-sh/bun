@@ -199,11 +199,12 @@ impl BuiltinIO {
     /// From the Cmd's IO::OutKind. Spec: Builtin.zig `init` stdin/stdout/stderr
     /// switch — `.fd` → `dupeRef`, `.pipe` → `.buf`, `.ignore` → `.ignore`.
     /// `Arc::clone` (via `OutFd: Clone`) IS the `dupeRef` — it bumps the
-    /// `IOWriter` refcount; `Drop` decrements it symmetrically.
-    fn from_out_kind(ok: &OutKind) -> BuiltinIO {
+    /// `IOWriter` refcount; `Drop` decrements it symmetrically. `target` is
+    /// the shell-env bytelist this stream flushes to (Stdout or Stderr).
+    fn from_out_kind(ok: &OutKind, target: IoKind) -> BuiltinIO {
         match ok {
             OutKind::Fd(fd) => BuiltinIO::Fd(fd.clone()),
-            OutKind::Pipe => BuiltinIO::Buf,
+            OutKind::Pipe => BuiltinIO::Buf(target),
             OutKind::Ignore => BuiltinIO::Ignore,
         }
     }
@@ -211,10 +212,13 @@ impl BuiltinIO {
     /// Spec: Builtin.zig `BuiltinIO.Output.ref` — bump refcounts and return a
     /// shallow copy. Only reachable from the `duplicate_out` path, which fires
     /// before any `.jsbuf` redirect, so `ArrayBuf`/`Blob` are unreachable here.
+    /// The `Buf` target is copied verbatim: in Zig `stderr = stdout.ref().*`
+    /// shallow-copies stdout's ArrayList so stderr writes accumulate in (and
+    /// flush from) stdout's buffer; here that aliasing is the carried `IoKind`.
     fn dup_ref(&self) -> BuiltinIO {
         match self {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
-            BuiltinIO::Buf => BuiltinIO::Buf,
+            BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
             BuiltinIO::Blob(b) => BuiltinIO::Blob(b.clone()),
             BuiltinIO::ArrayBuf { .. } => {
@@ -245,7 +249,6 @@ impl BuiltinIO {
     pub unsafe fn write_no_io_to(
         &mut self,
         shell: *mut crate::shell::interpreter::ShellExecEnv,
-        io_kind: IoKind,
         buf: &[u8],
     ) -> bun_sys::Result<usize> {
         if buf.is_empty() {
@@ -255,16 +258,19 @@ impl BuiltinIO {
             BuiltinIO::Fd(_) => panic!(
                 "write_no_io called on fd output; caller must check needs_io()"
             ),
-            BuiltinIO::Buf => {
+            BuiltinIO::Buf(target) => {
                 // PORT NOTE: Zig appended to a local `io.buf` and flushed in
-                // `done()`. The NodeId port writes straight to the shell env's
-                // captured buffer (same observable result; one less copy).
+                // `done()` to `buffered_{stdout,stderr}` keyed on which field
+                // the buffer lives in. The NodeId port writes straight through;
+                // `target` is that field identity, fixed at construction and
+                // preserved across `dup_ref` so `2>&1` lands in stdout's
+                // bytelist (matching Zig's shallow-copied ArrayList aliasing).
                 // SAFETY: caller contract — shell env outlives the Cmd node;
                 // single-threaded.
                 let captured = unsafe {
-                    match io_kind {
+                    match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
-                        _ => (*shell).buffered_stderr(),
+                        IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
                     }
                 };
                 // SAFETY: `captured` points into a live `ShellExecEnv` Bufio.
@@ -398,8 +404,8 @@ impl Builtin {
             (
                 argv,
                 BuiltinInput::from_in_kind(&me.io.stdin),
-                BuiltinIO::from_out_kind(&me.io.stdout),
-                BuiltinIO::from_out_kind(&me.io.stderr),
+                BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
+                BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
             )
         };
 
@@ -881,7 +887,7 @@ impl Builtin {
             IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, io_kind, buf) }
+        unsafe { out.write_no_io_to(shell, buf) }
     }
 
     /// Shell exec env of the owning Cmd.

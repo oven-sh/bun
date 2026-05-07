@@ -10,7 +10,7 @@ use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 use crate::webcore::blob::BlobExt as _;
-// TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
+// `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
 use bun_sha_hmac::sha as hashers;
 
 // `std.crypto.hash.{sha3,blake2}` — pure-Zig stdlib algos with no BoringSSL
@@ -769,10 +769,10 @@ impl CryptoHasher {
                     return Err(Self::throw_hmac_consumed(global));
                 };
                 // `this.hmac = null; defer hmac.deinit();` — `take()` + Drop on `hmac`.
+                // PORT NOTE: `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
+                // returns a subslice of `out`, not `self`, so dropping `hmac` at scope end
+                // does not invalidate the returned borrow.
                 break 'brk Ok(hmac.r#final(output_digest_slice));
-                // TODO(port): lifetime — `hmac.final_` must write into `output_digest_slice`
-                // and return a subslice of it; the returned borrow must NOT borrow `hmac`
-                // (which is dropped at scope end). Mirror Zig: HMAC.final returns slice of arg.
             }
             CryptoHasher::Evp(inner) => Ok(inner.r#final(
                 boring_engine(global),

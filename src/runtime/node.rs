@@ -139,6 +139,9 @@ pub mod node_assert;
 #[path = "node/node_assert_binding.rs"]
 pub mod node_assert_binding;
 
+#[path = "node/node_error_binding.rs"]
+pub mod node_error_binding;
+
 #[path = "node/node_zlib_binding.rs"]
 pub mod node_zlib_binding;
 

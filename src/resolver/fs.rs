@@ -359,16 +359,18 @@ impl FileSystem {
         }
     }
 
-    pub fn init(top_level_dir: Option<&'static [u8]>) -> Result<*mut FileSystem, bun_core::Error> {
+    pub fn init(top_level_dir: Option<&[u8]>) -> Result<*mut FileSystem, bun_core::Error> {
         Self::init_with_force::<false>(top_level_dir)
     }
 
     pub fn init_with_force<const FORCE: bool>(
-        top_level_dir_: Option<&'static [u8]>,
+        top_level_dir_: Option<&[u8]>,
     ) -> Result<*mut FileSystem, bun_core::Error> {
         // TODO(port): Environment.isBrowser branch
         let top_level_dir: &'static [u8] = match top_level_dir_ {
-            Some(d) => d,
+            // PORT NOTE: intern into the process-lifetime `DirnameStore` so the
+            // stored slice is `'static` without forcing every caller to leak.
+            Some(d) => DirnameStore::instance().append(d)?,
             None => {
                 #[cfg(target_arch = "wasm32")]
                 {

@@ -3051,7 +3051,12 @@ pub mod serializer {
                 let resolutions: &[Resolution<SemverIntType>] =
                     unsafe { sliced.items::<Resolution<SemverIntType>>(field) };
                 for val in resolutions {
-                    let copy = *val;
+                    // `ResolutionType::copy` builds a fresh zero-initialised
+                    // `Resolution` and writes only the active union member,
+                    // matching Zig `val.copy()`. A bare `*val` would serialise
+                    // garbage in the inactive union bytes (non-deterministic
+                    // lockfile output).
+                    let copy = val.copy();
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
                     writer.write_all(unsafe {
                         core::slice::from_raw_parts(
@@ -3105,12 +3110,12 @@ pub mod serializer {
             ));
         }
 
-        let field_count = reader.read_int_le::<u64>()?;
+        let field_count = reader.read_int_le::<u64>()? as usize;
         match field_count {
-            n if n == SIZES.bytes.len() as u64 => {}
+            FIELD_COUNT => {}
             // "scripts" field is absent before v0.6.8
             // we will back-fill from each package.json
-            n if n == SIZES.bytes.len() as u64 - 1 => {}
+            n if n == FIELD_COUNT - 1 => {}
             _ => {
                 return Err(bun_core::err!(
                     "Lockfile validation failed: unexpected number of package fields"

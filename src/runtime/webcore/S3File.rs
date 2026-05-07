@@ -306,13 +306,10 @@ fn construct_s3_file_internal_store(
     // get credentials from env
     // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
     // and live for the VM lifetime.
-    let _existing_credentials =
-        unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials() };
-    let _ = (path, options);
-    // `get_s3_credentials()` yields `&S3Credentials` (intrusive-refcounted, not `Clone`);
-    // `construct_s3_file_with_s3_credentials` wants an owned `S3Credentials`. Phase B
-    // must thread `IntrusiveRc<S3Credentials>` through here.
-    todo!("blocked_on: bun_s3_signing::S3Credentials owned-handle from env (IntrusiveRc/dupe)")
+    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+        (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
+    });
+    construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
 }
 
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it

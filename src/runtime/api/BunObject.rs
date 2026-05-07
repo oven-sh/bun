@@ -1063,66 +1063,6 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     })
 }
 
-pub fn get_public_path(to: &[u8], origin: URL, writer: &mut (impl bun_io::Write + ?Sized)) {
-    get_public_path_with_asset_prefix(
-        to,
-        // SAFETY: VirtualMachine::get() returns the live per-thread singleton; `fs` is
-        // the process-lifetime resolver FileSystem singleton.
-        unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir },
-        origin,
-        b"",
-        writer,
-        path::Platform::Loose,
-    )
-}
-
-pub fn get_public_path_with_asset_prefix(
-    to: &[u8],
-    dir: &[u8],
-    origin: URL,
-    asset_prefix: &[u8],
-    writer: &mut (impl bun_io::Write + ?Sized),
-    platform: path::Platform,
-) {
-    // TODO(port): `comptime platform` was a const-generic in Zig; demoted to runtime arg.
-    // PERF(port): was comptime monomorphization — profile in Phase B
-    let _ = platform;
-    let relative_path = if strings::has_prefix(to, dir) {
-        strings::without_trailing_slash(&to[dir.len()..])
-    } else {
-        // PORT NOTE: `FileSystem::relative_platform` is not yet on the
-        // upstream `bun_bundler::bun_fs::FileSystem`; fall through to the
-        // stateless `bun_paths::relative` (matches the un-gated impl above).
-        bun_paths::resolve_path::relative(dir, to)
-    };
-    if origin.is_absolute() {
-        if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-            if writer.write_all(origin.origin).is_err() {
-                return;
-            }
-            if writer.write_all(b"/abs:").is_err() {
-                return;
-            }
-            if bun_paths::is_absolute(to) {
-                let _ = writer.write_all(to);
-            } else {
-                // SAFETY: `transpiler.fs` is the process-lifetime resolver singleton.
-                let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
-                let _ = writer.write_all(fs.abs(&[to]));
-            }
-        } else {
-            // PORT NOTE: `URL::join_write` is generic over `bun_url::bun_io::Write`
-            // (a re-exported copy that doesn't unify with the caller's
-            // `bun_io::Write` bound). Route through a local Vec, then forward.
-            let mut buf: Vec<u8> = Vec::new();
-            let _ = origin.join_write(&mut buf, asset_prefix, b"", relative_path, b"");
-            let _ = writer.write_all(&buf);
-        }
-    } else {
-        let _ = writer.write_all(strings::trim_left(relative_path, b"/"));
-    }
-}
-
 #[bun_jsc::host_fn]
 pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();

@@ -23,6 +23,8 @@
 // Bring BodyMixin into scope so codegen UFCS calls like
 // `Request::get_text(&mut *this, …)` / `Response::get_blob(…)` resolve to the
 // trait default methods (Zig: `BodyMixin(@This())` comptime mixin).
-use crate::webcore::body::BodyMixin as _;
+// NOTE: must be a named import — `as _` only covers `.method()` dot-call
+// resolution, not the `Type::method(…)` qualified-path form the codegen emits.
+use crate::webcore::body::BodyMixin;
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"));

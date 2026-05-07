@@ -413,14 +413,16 @@ impl Route {
         let global = unsafe { &*self.bundle.global };
         let server = self.server.get().expect("server set");
         let development = server.config().development;
-        let vm = global.bun_vm();
+        // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a Bun-owned
+        // global; single-threaded JS thread, no other &mut alias active.
+        let vm = unsafe { &mut *global.bun_vm() };
 
         let mut config = JSBundlerConfig::default();
         // PORT NOTE: `errdefer config.deinit(allocator)` — `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
         let xform = &vm.transpiler.options.transform_options;
-        if let Some(public_path) = &xform.serve_public_path {
+        if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
                 config.public_path.append_slice(public_path)?;
             } else {
@@ -531,12 +533,12 @@ impl Route {
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
-                        let writer = bun_output::error_writer_buffered();
-                        if bun_output::enable_ansi_colors_stderr() {
-                            let _ = log.print_with_enable_ansi_colors::<true>(writer);
-                        } else {
-                            let _ = log.print_with_enable_ansi_colors::<false>(writer);
-                        }
+                        // `Output.errorWriterBuffered()` → `&'static mut io::Writer`;
+                        // `Log::print` accepts it via the `*mut io::Writer`
+                        // `IntoLogWrite` adapter and dispatches on
+                        // `enable_ansi_colors_stderr` internally.
+                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                        let _ = log.print(writer);
                         bun_output::flush();
                     }
                 }
@@ -583,18 +585,22 @@ impl Route {
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
                 for i in 0..output_files.len() {
-                    let blob = AnyBlob::Blob(bun_core::handle_oom(output_file_to_blob(
-                        &mut output_files[i],
-                        global_this,
-                    )));
+                    let blob =
+                        AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
                     let mut headers = Headers::default();
+                    let mut fallback_mime;
                     let content_type: &[u8] = match &blob {
-                        AnyBlob::Blob(b) => b.content_type_or_mime_type().unwrap_or_else(|| {
-                            debug_assert!(false); // should be populated by `output_file_to_blob`
-                            output_files[i].loader.to_mime_type(&[]).value
-                        }),
+                        AnyBlob::Blob(b) => match b.content_type_or_mime_type() {
+                            Some(ct) => ct,
+                            None => {
+                                debug_assert!(false); // should be populated by `output_file.to_blob`
+                                fallback_mime = output_files[i].loader.to_mime_type(&[]);
+                                &fallback_mime.value
+                            }
+                        },
                         _ => unreachable!(),
                     };
+                    let _ = &mut fallback_mime;
                     headers.append(b"Content-Type", content_type);
                     // Do not apply etags to html.
                     if output_files[i].loader != Loader::Html

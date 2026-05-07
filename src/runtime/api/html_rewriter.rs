@@ -35,6 +35,7 @@ use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use crate::webcore::{self, Blob, Body, Response};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
+use bun_jsc::call_frame::ArgumentsSlice;
 use bun_str::String as BunString;
 use bun_sys;
 
@@ -739,7 +740,7 @@ impl BufferOutputSink {
         unsafe { (*sink).response_value.set(global, response_js_value) };
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
-        unsafe { (*result).set_url((*original).get_url().clone()) };
+        unsafe { (*result).set_url((*original).url()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };

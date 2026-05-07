@@ -230,7 +230,7 @@ impl Address {
     /// `Owner` is the userdata pointer stashed in the socket ext (the
     /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
     /// pulls back out on event dispatch).
-    pub fn connect<Owner>(
+    pub fn connect(
         &self,
         client: *mut ValkeyClient,
         group: &mut SocketGroup,

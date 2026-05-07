@@ -44,6 +44,14 @@ use crate::webcore::{Request, Response};
 use crate::api::bun_object;
 use bun_bundler as Transpiler;
 
+// PORT NOTE: `FrameworkFileSystemRouter` is declared in this file's
+// `filesystem_router.classes.ts`, so codegen looks for the backing struct here
+// (`crate::api::filesystem_router::FrameworkFileSystemRouter`). In Zig the
+// implementation lives in `bake/FrameworkRouter.zig` as `JSFrameworkRouter` and
+// is wired via `generated_classes_list.zig`. Re-export the real type so the
+// codegen-generated thunks resolve without a stub.
+pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
+
 pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
     b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js",
 ];

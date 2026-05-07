@@ -1343,7 +1343,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
         DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
         DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
         DevHandlerId::NotFound => on_not_found(dev, req, resp),
-        DevHandlerId::Request => on_request_any(dev, req, resp),
+        DevHandlerId::Request => on_request(dev, req, resp),
         #[cfg(feature = "bake_debugging_features")]
         DevHandlerId::IncrementalVisualizer => on_incremental_visualizer(dev, req, resp),
         #[cfg(feature = "bake_debugging_features")]
@@ -2920,7 +2920,7 @@ impl DevServer {
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
             }
-            agent.notify_bundle_start(self.inspector_server_id, &trigger_files);
+            agent.notify_bundle_start(self.inspector_server_id, &mut trigger_files);
             for s in &mut trigger_files {
                 s.deref();
             }
@@ -4463,7 +4463,10 @@ impl DevServer {
                     let self_ptr: *mut DevServer = self;
                     let mut current: &mut HotReloadEvent = event;
                     loop {
-                        current.process_file_list(self_ptr.cast(), &mut entry_points);
+                        // SAFETY: `self_ptr` is `self`; `current` borrows
+                        // `self.watcher_atomics.events[_]`, disjoint from the
+                        // graph/watcher fields `process_file_list` mutates.
+                        current.process_file_list(unsafe { &mut *self_ptr }, &mut entry_points);
                         let Some(next) = self
                             .watcher_atomics
                             .recycle_event_from_dev_server(current as *mut HotReloadEvent)
@@ -4887,8 +4890,8 @@ impl DevServer {
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is byte-identical to
             // Zig's `BunString.initLatin1OrASCIIView`.
-            let s = OwnedString::new(BunString::borrow_utf8(failures_encoded));
-            agent.notify_bundle_failed(self.inspector_server_id, &s);
+            let mut s = BunString::borrow_utf8(failures_encoded);
+            agent.notify_bundle_failed(self.inspector_server_id, &mut s);
         }
         Ok(())
     }
@@ -4969,7 +4972,7 @@ impl DevServer {
             DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
-                let mut headers = bun_http::Headers::from(
+                let mut headers = <bun_http::Headers as bun_http::headers::HeadersExt>::from(
                     None,
                     bun_http::headers::Options {
                         body: Some(crate::webcore::headers_ref::any_blob_ref(&any_blob)),

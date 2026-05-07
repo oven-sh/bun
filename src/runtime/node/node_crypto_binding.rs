@@ -29,10 +29,6 @@ fn vm_ctx() -> bun_aio::EventLoopCtx {
 }
 
 unsafe extern "C" {
-    fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: *const JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
     fn Bun__Process__queueNextTick2(
         global: *const JSGlobalObject,
         func: JSValue,
@@ -41,9 +37,9 @@ unsafe extern "C" {
     );
 }
 
-/// Local extension surface for `JSValue` methods not yet on the `bun_jsc` stub.
+/// Local extension surface for `JSValue` methods not yet on `bun_jsc::JSValue`.
+/// (`with_async_context_if_needed` graduated to an inherent method upstream.)
 pub(crate) trait JSValueCryptoExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn is_safe_integer(self) -> bool;
     fn call_next_tick_2(
         self,
@@ -54,12 +50,6 @@ pub(crate) trait JSValueCryptoExt {
 }
 
 impl JSValueCryptoExt for JSValue {
-    #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is a live opaque ZST handle; FFI returns a valid encoded JSValue.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
-    }
-
     /// Port of `JSValue.isSafeInteger` (JSValue.zig:140) — Number.isSafeInteger semantics.
     #[inline]
     fn is_safe_integer(self) -> bool {
@@ -1331,7 +1321,7 @@ pub fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
 }
 } // mod _impl
 
-pub use _impl::timing_safe_equal;
+pub use _impl::{create_node_crypto_binding_zig, timing_safe_equal};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

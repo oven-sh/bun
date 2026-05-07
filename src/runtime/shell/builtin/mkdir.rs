@@ -1,5 +1,7 @@
-use core::ffi::{c_char, CStr};
+use core::ffi::CStr;
 
+use crate::node::fs::{args as fs_args, MkdirCtx, NodeFS};
+use crate::node::types::PathLike;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
     parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,

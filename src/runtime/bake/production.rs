@@ -675,7 +675,7 @@ pub fn build_with_vm(
         let client_ptr: *mut Transpiler = &mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
             // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            unsafe { ssr_transpiler.assume_init_mut() } as *mut Transpiler
+            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
         } else {
             server_ptr
         };

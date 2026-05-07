@@ -1084,7 +1084,7 @@ struct KqEntry {
     fd: Fd,
     /// Relative to watcher.path; empty for the root. Owned.
     subpath: Box<ZStr>,
-    gen: usize,
+    generation: usize,
     is_file: bool,
 }
 
@@ -1160,7 +1160,7 @@ impl Kqueue {
         // SAFETY: caller holds manager.mutex; exclusive access to `next_gen`/`entries`.
         // `kq` is immutable after init. Project fields via raw ptr (never `&mut Kqueue`)
         // so this can coexist with the reader thread's `&AtomicBool` borrow of `running`.
-        let gen = unsafe {
+        let generation = unsafe {
             let g = (*plat).next_gen;
             (*plat).next_gen = g.wrapping_add(1);
             g
@@ -1174,7 +1174,7 @@ impl Kqueue {
         kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
         kev.fflags =
             NOTE::WRITE | NOTE::DELETE | NOTE::RENAME | NOTE::EXTEND | NOTE::ATTRIB | NOTE::LINK | NOTE::REVOKE;
-        kev.udata = gen;
+        kev.udata = generation;
         let mut changes = [kev];
         let krc = sys::syscall::kevent(kq.native(), changes.as_mut_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null());
         if krc < 0 {
@@ -1200,7 +1200,7 @@ impl Kqueue {
                     watcher: watcher as *mut PathWatcher,
                     fd,
                     subpath: ZStr::from_bytes(subpath),
-                    gen,
+                    r#gen,
                     is_file,
                 },
             );
@@ -1265,7 +1265,7 @@ impl Kqueue {
                 let Some(entry) = entries.get(&(i32::try_from(kev.ident).unwrap())) else {
                     continue;
                 };
-                if entry.gen != kev.udata {
+                if entry.generation != kev.udata {
                     continue;
                 }
                 // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a

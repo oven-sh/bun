@@ -5880,7 +5880,8 @@ impl NodeFS {
     pub fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         if let Some(graph) = standalone_module_graph_get() {
-            if let Some(result) = graph.stat(path.as_bytes()) {
+            // SAFETY: see `standalone_module_graph_get`.
+            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
                 return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }

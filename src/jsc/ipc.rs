@@ -1352,7 +1352,7 @@ impl SendQueue {
                 callbacks: CallbackList::None,
             });
             let last = self.queue.len() - 1;
-            let _ = self.queue[last].data.write(bytes);
+            handle_oom(self.queue[last].data.write(bytes));
             log!("IPC call continueSend() from version packet");
             self.continue_send(global, ContinueSendReason::NewMessageAppended);
         }
@@ -1773,7 +1773,7 @@ fn handle_ipc_message(
                     handle: None,
                     callbacks: CallbackList::AckNack,
                 };
-                let _ = handle.data.write(packet);
+                handle_oom(handle.data.write(packet));
 
                 // Insert at appropriate position in send queue
                 send_queue.insert_message(handle);
@@ -1914,7 +1914,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                                 else {
                                     unreachable!()
                                 };
-                                let _ = adv_buf.write(data);
+                                handle_oom(adv_buf.write(data));
                                 log!("hit NotEnoughBytes");
                                 return;
                             }

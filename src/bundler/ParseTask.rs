@@ -2403,19 +2403,19 @@ fn run_with_source_code(
                     server_register_client_reference: std::borrow::Cow::Owned(
                         sc.server_register_client_reference.to_vec(),
                     ),
-                    // bake_types subset omits these — keep parser-side defaults.
-                    server_register_server_reference: std::borrow::Cow::Borrowed(
-                        b"registerServerReference",
+                    server_register_server_reference: std::borrow::Cow::Owned(
+                        sc.server_register_server_reference.to_vec(),
                     ),
-                    client_register_server_reference: std::borrow::Cow::Borrowed(
-                        b"registerServerReference",
+                    client_register_server_reference: std::borrow::Cow::Owned(
+                        sc.client_register_server_reference.to_vec(),
                     ),
                 }
             }),
-            // bake_types subset omits `react_fast_refresh`; the bundler gates
-            // fast-refresh via `topts.react_fast_refresh` (already read into
-            // `opts.features.react_fast_refresh` above).
-            react_fast_refresh: None,
+            react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
+                js_parser::options::ReactFastRefresh {
+                    import_source: std::borrow::Cow::Owned(rfr.import_source.to_vec()),
+                }
+            }),
         };
         // SAFETY: ARENA — bump outlives the parse; `'static` erasure per
         // `leak_static` convention.

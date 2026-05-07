@@ -6458,7 +6458,7 @@ pub trait FileCloser: Sized {
     fn set_close_after_io(&mut self, v: bool);
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
-    fn io_poll(&mut self) -> &mut bun_aio::FilePoll;
+    fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     fn update(&mut self);
     #[cfg(windows)]
@@ -6470,7 +6470,7 @@ pub trait FileCloser: Sized {
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
     fn on_io_request_closed(this: &mut Self) {
-        this.io_poll().flags.remove(bun_aio::PollFlag::WasEverRegistered);
+        this.io_poll().flags.remove(bun_io::Flags::WasEverRegistered);
         *this.task() = bun_jsc::WorkPoolTask {
             node: Default::default(),
             callback: Self::on_close_io_request,

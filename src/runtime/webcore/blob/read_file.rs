@@ -205,16 +205,7 @@ impl FileCloser for ReadFile {
     fn set_close_after_io(&mut self, v: bool) { self.close_after_io = v; }
     fn state(&self) -> &AtomicU8 { &self.state }
     fn io_request(&mut self) -> Option<&mut bun_io::Request> { Some(&mut self.io_request) }
-    fn io_poll(&mut self) -> &mut bun_aio::FilePoll {
-        // ReadFile uses bun_io::Poll, not bun_aio::FilePoll; FileCloser only
-        // touches io_poll() in on_io_request_closed (after close_after_io path),
-        // which ReadFile drives through its own io_poll. The flag clear is a
-        // no-op here — return a dummy via unreachable since ReadFile's close
-        // path never reaches on_io_request_closed without going through the
-        // io::Request callback first.
-        // TODO(port): split FileCloser into io::Poll vs aio::FilePoll variants.
-        unreachable!("ReadFile uses io::Poll; on_io_request_closed not reached on this path")
-    }
+    fn io_poll(&mut self) -> &mut bun_io::Poll { &mut self.io_poll }
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
     fn update(&mut self) { ReadFile::update(self) }
     #[cfg(windows)]

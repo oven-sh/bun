@@ -301,7 +301,7 @@ pub fn srv_reply_to_js_response(
 pub fn srv_reply_to_js(
     this: &mut c_ares::struct_ares_srv_reply,
     global_this: &JSGlobalObject,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);
 
     obj.put(global_this, b"priority", JSValue::js_number(this.priority as f64));
@@ -310,9 +310,9 @@ pub fn srv_reply_to_js(
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
     let host = unsafe { CStr::from_ptr(this.host as *const c_char) }.to_bytes();
-    obj.put(global_this, b"name", utf8_to_js(global_this, host));
+    obj.put(global_this, b"name", utf8_to_js(global_this, host)?);
 
-    obj
+    Ok(obj)
 }
 
 // ── struct_ares_mx_reply ───────────────────────────────────────────────────
@@ -337,7 +337,7 @@ pub fn mx_reply_to_js_response(
     while !mx.is_null() {
         // SAFETY: mx walks the c-ares-owned linked list.
         let node = unsafe { &mut *mx };
-        array.put_index(global_this, i, mx_reply_to_js(node, global_this))?;
+        array.put_index(global_this, i, mx_reply_to_js(node, global_this)?)?;
         mx = node.next;
         i += 1;
     }

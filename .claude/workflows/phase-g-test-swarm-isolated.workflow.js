@@ -115,9 +115,13 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     `Survey test files in **isolated worktree ${WT}** (cgroup ${CG}). Shard ${SHARD}/${NSHARDS} round ${round}.
 
 1. \`cd ${WT}\`. List: \`ls ${TEST_GLOB}\`. Take every ${NSHARDS}th starting at ${SHARD}.
-2. For each (in cgroup, timeout 30s): \`${RUN_IN_CG} timeout 30 bun bd test <file> 2>&1\`
-3. Categorize: completing (exit 0/1, "X pass"), crashing (SIGSEGV/panic/ASAN/ASSERT — extract signature), hanging (timeout).
-4. Dedup crash signatures.
+2. For each (in cgroup, timeout 30s): \`${RUN_IN_CG} timeout 30 bun bd test <file> 2>&1\` AND \`USE_SYSTEM_BUN=1 timeout 30 bun test <file> 2>&1\` (baseline).
+3. Categorize:
+   - **completing** = exit 0/1 AND pass/fail counts match system-bun baseline
+   - **crashing** = SIGSEGV/panic/ASAN/ASSERT (extract signature: file:line + msg)
+   - **hanging** = timeout (signature: "hang:<file>" — needs gdb attach to find loop)
+   - **diverging** = exit 0/1 BUT pass/fail differs from baseline (signature: "diverge:<file>:<first failing test name>")
+4. Put hanging+diverging into crashing[] with their signatures so the fix phase handles them.
 
 Return {completing:[files], crashing:[{file,signature}], hanging:[files], total:N}. DO NOT edit src/.`,
     { label: `survey-s${SHARD}-r${round}`, phase: "Survey", schema: SURVEY_S },

@@ -504,30 +504,12 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                // PORT NOTE: `JSValue::to_enum_from_map` is not yet exposed by
-                // bun_jsc; do the case-insensitive phf lookup locally (mirrors
-                // `EVP::by_name_and_engine`).
-                let chosen_algorithm: evp::Algorithm = {
-                    let s = algorithm.slice();
-                    let mut buf = [0u8; 32];
-                    let key_bytes: &[u8] = if s.len() <= buf.len() {
-                        for (i, &b) in s.iter().enumerate() {
-                            buf[i] = b.to_ascii_lowercase();
-                        }
-                        &buf[..s.len()]
-                    } else {
-                        s
-                    };
-                    match evp::MAP.get(key_bytes).copied() {
-                        Some(a) => a,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "algorithm '{}' is not supported",
-                                algorithm
-                            )));
-                        }
-                    }
-                };
+                let chosen_algorithm: evp::Algorithm = algorithm_name.to_enum_from_map(
+                    global,
+                    "algorithm",
+                    &evp::MAP,
+                    evp::ALGORITHM_ONE_OF,
+                )?;
 
                 break 'brk CryptoHasher::Hmac(Some(match HMAC::init(chosen_algorithm, key.slice()) {
                     Some(h) => h,

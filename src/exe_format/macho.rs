@@ -795,7 +795,7 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 /// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
 fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    bun_sha_hmac::sha::SHA256::hash(bytes, out, None);
+    bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut());
 }
 
 /// Reinterpret a `#[repr(C)]` POD value as bytes (port of `std.mem.asBytes`).

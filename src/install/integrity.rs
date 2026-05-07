@@ -164,7 +164,7 @@ impl Integrity {
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().unwrap(), None);
+        Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().unwrap(), core::ptr::null_mut());
         Integrity { tag: Tag::SHA512, value }
     }
 
@@ -181,25 +181,25 @@ impl Integrity {
             Tag::SHA1 => {
                 const LEN: usize = SHA1_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA1::hash(bytes, ptr, None);
+                Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA512::hash(bytes, ptr, None);
+                Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA256::hash(bytes, ptr, None);
+                Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
-                Crypto::SHA384::hash(bytes, ptr, None);
+                Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             _ => false,

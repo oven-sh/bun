@@ -3010,7 +3010,7 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest, None);
+        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest, core::ptr::null_mut());
 
         Ok(digest)
     }

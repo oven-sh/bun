@@ -959,11 +959,11 @@ impl<C: SourceContext> NewSource<C> {
                 streams::StreamError::Error(e) => {
                     Err(global_this.throw_value(e.to_js(global_this)))
                 }
-                // Zig spec reads `err.JSValue` unconditionally in the else arm — UB on
-                // `.WeakJSValue`/`.AbortReason`. Preserve the *intent* (always throw on
-                // `.err`) without the union-pun: route through `to_js_weak`, which
-                // returns the JS error value plus whether it was a strong (protected)
-                // ref that needs `unprotect()`.
+                // Zig's else arm reads `err.JSValue` directly — implicitly assumes only
+                // `.Error`/`.JSValue` reach `processResult` (would safety-panic on
+                // `.WeakJSValue`/`.AbortReason`). Preserve the intent (always throw on
+                // `.err`) defensively via `to_js_weak`, which handles all four variants
+                // and reports whether the value was strong-protected (needs `unprotect()`).
                 _ => {
                     let (js_err, was_strong) = err.to_js_weak(global_this);
                     js_err.ensure_still_alive();

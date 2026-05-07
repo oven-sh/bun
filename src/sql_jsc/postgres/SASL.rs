@@ -139,7 +139,7 @@ impl SASL {
         // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
         // `None` falls through to BoringSSL's default engine, which is
         // functionally equivalent for SHA256. Swap once bun_jsc compiles.
-        SHA256::hash(client_key, &mut sha_digest, None);
+        SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut());
         hmac(&sha_digest, auth_string).unwrap()
     }
 

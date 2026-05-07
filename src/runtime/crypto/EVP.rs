@@ -106,6 +106,12 @@ const ALL: [Algorithm; 19] = [
     Algorithm::Shake256,
 ];
 
+/// Zig `JSValue.toEnumFromMap`'s comptime `one_of` literal for `EVP.Algorithm` —
+/// `enumFieldNames` joined as `"'a', 'b', … 'y' or 'z'"` (declaration order).
+pub const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'md4', 'md5', \
+'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
+'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
+
 pub static MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
     b"blake2b256" => Algorithm::Blake2b256,
     b"blake2b512" => Algorithm::Blake2b512,

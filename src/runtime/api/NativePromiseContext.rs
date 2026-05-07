@@ -76,23 +76,27 @@ pub trait NativePromiseContextType {
     const TAG: Tag;
 }
 
-impl NativePromiseContextType for HTTPServerRequestContext {
-    const TAG: Tag = Tag::HTTPServerRequestContext;
+// PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY server
+// type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
+// the tag depends only on (SSL, DBG, H3), never on the server type. This is
+// the Zig semantics (the Zig Tag enum cases name the (ssl,debug,h3) tuple).
+const fn npc_tag_for(ssl: bool, dbg: bool, h3: bool) -> Tag {
+    match (ssl, dbg, h3) {
+        (false, false, false) => Tag::HTTPServerRequestContext,
+        (true, false, false) => Tag::HTTPSServerRequestContext,
+        (false, true, false) => Tag::DebugHTTPServerRequestContext,
+        (true, true, false) => Tag::DebugHTTPSServerRequestContext,
+        (true, false, true) => Tag::HTTPSServerH3RequestContext,
+        (true, true, true) => Tag::DebugHTTPSServerH3RequestContext,
+        // H3 requires TLS; (false, _, true) is never instantiated. Map to a
+        // valid tag so const-eval succeeds; runtime never observes this.
+        (false, _, true) => Tag::HTTPServerRequestContext,
+    }
 }
-impl NativePromiseContextType for HTTPSServerRequestContext {
-    const TAG: Tag = Tag::HTTPSServerRequestContext;
-}
-impl NativePromiseContextType for DebugHTTPServerRequestContext {
-    const TAG: Tag = Tag::DebugHTTPServerRequestContext;
-}
-impl NativePromiseContextType for DebugHTTPSServerRequestContext {
-    const TAG: Tag = Tag::DebugHTTPSServerRequestContext;
-}
-impl NativePromiseContextType for HTTPSServerH3RequestContext {
-    const TAG: Tag = Tag::HTTPSServerH3RequestContext;
-}
-impl NativePromiseContextType for DebugHTTPSServerH3RequestContext {
-    const TAG: Tag = Tag::DebugHTTPSServerH3RequestContext;
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromiseContextType
+    for server::NewRequestContext<ThisServer, SSL, DBG, H3>
+{
+    const TAG: Tag = npc_tag_for(SSL, DBG, H3);
 }
 impl NativePromiseContextType for body::ValueBufferer<'_> {
     const TAG: Tag = Tag::BodyValueBufferer;

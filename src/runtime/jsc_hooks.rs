@@ -84,9 +84,11 @@ pub struct RuntimeState {
     /// `Box::leak`'d per-VM (PORTING.md §Forbidden: `Box::leak` only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub transpiler_arena: Box<bun_alloc::Arena>,
-    // TODO(b2-cycle): `body_value_hive_allocator: webcore::Body::Value::HiveAllocator`
-    // — `HiveAllocator` is ``-gated in `webcore/Body.rs`. Add the
-    // field (and `HiveAllocator::init()` in `init_runtime_state`) once un-gated.
+    /// `vm.body_value_hive_allocator` — pooled storage for `Body.Value`
+    /// (`Request.body` payloads). Spec VirtualMachine.zig:45 value field.
+    /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
+    /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
+    pub body_value_hive_allocator: Box<crate::webcore::body::HiveAllocator>,
 }
 
 thread_local! {
@@ -151,6 +153,7 @@ unsafe fn init_runtime_state(
         editor_context: Default::default(),
         entry_point: ServerEntryPoint::default(),
         transpiler_arena: Box::new(bun_alloc::Arena::new()),
+        body_value_hive_allocator: Box::new(crate::webcore::body::HiveAllocator::init()),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

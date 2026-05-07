@@ -37,12 +37,6 @@ struct ScriptConfig {
     elide_count: Option<usize>,
 }
 
-impl ScriptConfig {
-    fn cmp(_: (), a: &Self, b: &Self) -> bool {
-        strings::cmp_strings_asc(&(), &a.package_name, &b.package_name)
-    }
-}
-
 // Anonymous struct in Zig: `process: ?struct { ptr, status }`
 struct ProcessInfo {
     // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches

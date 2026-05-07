@@ -456,6 +456,17 @@ pub struct DependencyMap {
     pub source_buf: &'static [u8],
 }
 
+impl Clone for DependencyMap {
+    /// Zig copies `DependencyMap` by value (the inner `ArrayHashMap` is a
+    /// pointer + len, so the copy aliases the same backing storage). Rust
+    /// owns the storage, so we deep-clone the small key/value vecs instead —
+    /// `SemverString`/`Dependency` are POD over `source_buf`, so semantics
+    /// match the Zig shallow copy.
+    fn clone(&self) -> Self {
+        Self { map: self.map.clone().expect("OOM"), source_buf: self.source_buf }
+    }
+}
+
 // PORT NOTE: Zig had `DependencyMap.HashMap` as a nested decl; Rust inherent impls cannot carry associated type aliases (stable), so use a free alias.
 pub type DependencyHashMap = ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 // TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false

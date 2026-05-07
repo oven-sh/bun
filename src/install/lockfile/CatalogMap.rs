@@ -147,12 +147,14 @@ impl CatalogMap {
             found_any = true;
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let dep_name_str = item.key.unwrap().as_utf8_string_literal().unwrap();
+                    let key = item.key.as_ref().unwrap();
+                    let value = item.value.as_ref().unwrap();
+                    let dep_name_str = key.as_utf8_string_literal().unwrap();
 
                     let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                     let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
 
-                    if let ExprData::EString(version_str) = &item.value.unwrap().data {
+                    if let ExprData::EString(version_str) = &value.data {
                         let version_literal = builder.append::<String>(version_str.data);
 
                         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -163,12 +165,12 @@ impl CatalogMap {
                             dep_name_hash,
                             version_sliced.slice,
                             &version_sliced,
-                            log,
-                            Some(pm),
+                            &mut *log,
+                            Some(&mut *pm),
                         ) else {
                             log.add_error(
                                 Some(source),
-                                item.value.unwrap().loc,
+                                value.loc,
                                 b"Invalid dependency version",
                             )?;
                             continue;
@@ -178,11 +180,7 @@ impl CatalogMap {
                         let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                         if entry.found_existing {
-                            log.add_error(
-                                Some(source),
-                                item.key.unwrap().loc,
-                                b"Duplicate catalog",
-                            )?;
+                            log.add_error(Some(source), key.loc, b"Duplicate catalog")?;
                             continue;
                         }
 
@@ -202,20 +200,21 @@ impl CatalogMap {
             found_any = true;
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
-                    let catalog_name_str =
-                        catalog.key.unwrap().as_utf8_string_literal().unwrap();
+                    let catalog_key = catalog.key.as_ref().unwrap();
+                    let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
                     let catalog_name = builder.append::<String>(catalog_name_str);
 
                     let group = self.get_or_put_group(lockfile, catalog_name)?;
 
-                    if let ExprData::EObject(obj) = &catalog.value.unwrap().data {
+                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
-                            let dep_name_str =
-                                item.key.unwrap().as_utf8_string_literal().unwrap();
+                            let key = item.key.as_ref().unwrap();
+                            let value = item.value.as_ref().unwrap();
+                            let dep_name_str = key.as_utf8_string_literal().unwrap();
                             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                             let dep_name =
                                 builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
-                            if let ExprData::EString(version_str) = &item.value.unwrap().data {
+                            if let ExprData::EString(version_str) = &value.data {
                                 let version_literal =
                                     builder.append::<String>(version_str.data);
                                 let buf = lockfile.buffers.string_bytes.as_slice();
@@ -226,12 +225,12 @@ impl CatalogMap {
                                     dep_name_hash,
                                     version_sliced.slice,
                                     &version_sliced,
-                                    log,
-                                    Some(pm),
+                                    &mut *log,
+                                    Some(&mut *pm),
                                 ) else {
                                     log.add_error(
                                         Some(source),
-                                        item.value.unwrap().loc,
+                                        value.loc,
                                         b"Invalid dependency version",
                                     )?;
                                     continue;
@@ -243,7 +242,7 @@ impl CatalogMap {
                                 if entry.found_existing {
                                     log.add_error(
                                         Some(source),
-                                        item.key.unwrap().loc,
+                                        key.loc,
                                         b"Duplicate catalog",
                                     )?;
                                     continue;

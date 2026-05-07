@@ -254,7 +254,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const u64).read_unaligned() };
-        Ok(from_uint64_no_truncate(global_object, value))
+        Ok(JSValue::from_uint64_no_truncate(global_object, value))
     }
 
     // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────
@@ -338,7 +338,7 @@ pub mod reader {
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
         // SAFETY: global is non-null, JS thread.
-        from_uint64_no_truncate(unsafe { &*global }, value)
+        JSValue::from_uint64_no_truncate(unsafe { &*global }, value)
     }
     #[bun_jsc::host_call]
     pub extern fn i64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
@@ -670,7 +670,10 @@ pub fn to_buffer(
                 ));
             }
 
-            Ok(create_buffer_with_ctx(global_this, slice, core::ptr::null_mut(), None))
+            // Spec (FFIObject.zig:596): `jsc.JSValue.createBuffer(globalThis, slice)`
+            // — installs `MarkedArrayBuffer_deallocator` so the slice is `mi_free`d
+            // on GC. Matches Zig exactly (including the free-foreign-memory footgun).
+            Ok(JSValue::create_buffer(global_this, slice))
         }
     }
 }
@@ -779,7 +782,7 @@ mod fields {
         let mut iter = args.slice().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        Ok(FFI::open(global, name, object))
+        Ok(FfiImpl::open(global, name, object))
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>

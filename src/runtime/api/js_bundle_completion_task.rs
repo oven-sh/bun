@@ -24,7 +24,7 @@ use bun_ptr::{RefCount, RefCounted};
 use bun_string::String as BunString;
 use bun_threading::WorkPool;
 
-use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt as _};
+use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::server::html_bundle;

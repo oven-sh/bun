@@ -42,9 +42,9 @@ pub type WeakRef = bun_ptr::WeakPtr<Request>;
 // not yet wired for Request). Mirrors the Blob.rs pattern — bind the
 // generated C++ shims by link-name and wrap.
 const _: () = {
-    // Request is #[repr(C)] but holds Option<Arc<_>> (niche-opt, not formally
-    // FFI-safe). C++ only ever sees *mut Request as an opaque pointer, so
-    // suppress the field-level lint here.
+    // Request is #[repr(C)] but holds Box/BunString/Option<NonNull> fields the
+    // ctypes lint flags as improper. C++ only ever sees *mut Request as an
+    // opaque pointer (never dereferenced on the C++ side), so suppress here.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
         #[link_name = "Request__fromJS"]
@@ -346,19 +346,6 @@ impl Request {
         Ok(None)
     }
 }
-
-// TODO(b2-blocked): bun_jsc::* — every block below until `Flags`-adjacent
-// `init`/accessors depends on JSC method surface (JSValue::is_number/to/call,
-// Strong::create/get, request_context methods, JsRef::try_get, codegen
-// gc.stream slots, etc.). Struct + Flags + InternalJSEventCallback type are
-// kept un-gated; impl bodies gated.
-
-mod _jsc_gated {
-use super::*;
-use bun_jsc::StringJsc as _;
-use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
-use crate::webcore::blob::ZigStringBlobExt as _;
 
 impl Request {
     pub fn memory_cost(&self) -> usize {
@@ -1672,8 +1659,6 @@ impl Request {
         let _ = self.request_context.set_timeout(seconds);
     }
 }
-
-} // mod _jsc_gated
 
 #[derive(Default)]
 pub struct InternalJSEventCallback {

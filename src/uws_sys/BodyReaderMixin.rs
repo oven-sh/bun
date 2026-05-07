@@ -64,10 +64,22 @@ pub trait BodyReaderHandler: Sized + 'static {
     const MIXIN_OFFSET: usize;
 
     /// `body` is freed after this function returns.
-    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error>;
+    ///
+    /// Receives the original `Box::into_raw`'d pointer (full-allocation
+    /// provenance) rather than `&mut self`: implementors typically free `Self`
+    /// (`Box::from_raw`) on the success path, and doing so through a
+    /// `&mut self`-derived pointer is UB under Stacked/Tree Borrows. This
+    /// mirrors Zig's `fn(*Wrap, ...)` callback shape exactly.
+    ///
+    /// SAFETY: `this` is the pointer previously passed to
+    /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
+    /// mixin until this call (no other `&mut` into the allocation is live).
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error>;
 
-    /// Called on error or request abort.
-    fn on_error(&mut self);
+    /// Called on error or request abort. Same provenance contract as `on_body`.
+    ///
+    /// SAFETY: see `on_body`.
+    unsafe fn on_error(this: *mut Self);
 }
 
 pub struct BodyReaderMixin<Wrap: BodyReaderHandler> {
@@ -127,9 +139,10 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         // SAFETY: wrap was registered via read_body and remains alive for the
         // request duration; mixin_of yields an in-bounds field pointer.
         unsafe { (*Self::mixin_of(wrap)).body = Vec::new() };
-        // SAFETY: wrap is live; the temporary &mut to the mixin field above has
-        // ended, so this is the sole live mutable access into the allocation.
-        unsafe { (*wrap).on_error() };
+        // SAFETY: wrap is the original Box::into_raw'd pointer; the temporary
+        // &mut to the mixin field above has ended, so on_error receives sole
+        // ownership of the allocation and may Box::from_raw it.
+        unsafe { Wrap::on_error(wrap) };
     }
 
     fn on_data(

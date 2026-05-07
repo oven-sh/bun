@@ -2041,7 +2041,7 @@ impl<'a> Drop for ValueBufferer<'a> {
         self.readable_stream_ref.deinit();
 
         if let Some(mut buffer_stream) = self.js_sink.take() {
-            buffer_stream.detach(self.global);
+            buffer_stream.detach_self(self.global);
             // PORT NOTE: Zig `wrapper.sink.destroy()` frees the JSSink wrapper
             // allocation (sink is at offset 0). In Rust the wrapper is a
             // `Box<JSSink<ArrayBufferSink>>`; dropping it frees the box and

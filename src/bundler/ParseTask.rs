@@ -2724,18 +2724,14 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 // PORT STATUS
 //   source:     src/bundler/ParseTask.zig (1496 lines)
 //   confidence: medium
-//   todos:      21
-//   notes:      `parse_worker` module un-gated B-2: get_runtime_source +
-//               task_callback/io_task_callback + FFI structs (OnBeforeParse*,
-//               BunLogOptions) + on_complete are real. Per-function gates
-//               remain on getAST/getCodeForParseTask*/runWithSourceCode/
-//               runFromThreadPool bodies — blocked on `crate::ThreadPool`
-//               (gated bundler-worker module), opaque `JSBundlerPlugin`/
-//               `FileMap` forward-decls, and `parser::options` ↔
-//               `BundleOptions` type-mirror unification (ModuleType, jsx::
-//               Pragma, AllowUnresolved, Framework). `init()` gated on the
-//               same TYPE_ONLY divergence. Arena lifetimes for &[u8] fields
-//               placeholdered as &'static. errdefer scopeguards reshaped for
-//               borrowck (Phase-B verify). OnBeforeParseResultWrapper.check
-//               field layout differs in release.
+//   todos:      12
+//   notes:      `parse_worker` module fully un-gated. TYPE_ONLY mirrors
+//               (jsx::Pragma, AllowUnresolved, Framework) bridged via
+//               `From`/re-export (options.rs). Zig errdefers (.zig:1123/1148)
+//               reshaped into explicit Err-match cleanup. CSS-module symbols
+//               bridged field-by-field (css_symbols_to_parser_symbols) until
+//               `bun_logger::Symbol`/`bun_js_parser::Symbol` unify. Arena
+//               lifetimes for &[u8] fields placeholdered as &'static.
+//               OnBeforeParseResultWrapper.check field layout differs in
+//               release.
 // ──────────────────────────────────────────────────────────────────────────

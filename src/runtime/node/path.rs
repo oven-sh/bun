@@ -1,4 +1,3 @@
-// TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 use bun_paths::{self, Platform, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZigString};

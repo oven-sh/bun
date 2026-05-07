@@ -85,12 +85,16 @@ impl StaticRoute {
     }
 
     /// Ownership of `blob` is transferred to this function.
-    pub fn init_from_any_blob(blob: &AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
+    // PORT NOTE: Zig takes `*const AnyBlob` and bit-copies (`blob.*`) into the
+    // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
+    // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
+    // and double-free when the caller's value drops. Take by value instead.
+    pub fn init_from_any_blob(blob: AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
         // UFCS: `Headers::from` would resolve to `core::convert::From::from`
         // (prelude); the two-arg constructor lives on `HeadersExt`.
         let mut headers = <Headers as HeadersExt>::from(
             options.headers.map(fetch_headers_ref),
-            HeadersFromOptions { body: Some(any_blob_ref(blob)) },
+            HeadersFromOptions { body: Some(any_blob_ref(&blob)) },
         );
         if headers.get_content_type().is_none() {
             if let Some(mime_type) = options.mime_type {
@@ -110,9 +114,7 @@ impl StaticRoute {
         let cached_blob_size = blob.size();
         Box::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
-            // SAFETY: doc-contract — ownership of `*blob` is transferred to this
-            // function (Zig: `blob.*` struct copy); caller must not use it again.
-            blob: unsafe { core::ptr::read(blob) },
+            blob,
             cached_blob_size,
             has_content_disposition: false,
             headers,
@@ -122,7 +124,7 @@ impl StaticRoute {
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
-    pub fn send_blob_then_deinit(resp: AnyResponse, blob: &AnyBlob, options: InitFromBytesOptions<'_>) {
+    pub fn send_blob_then_deinit(resp: AnyResponse, blob: AnyBlob, options: InitFromBytesOptions<'_>) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
         // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute (ref_count=1)
         // with write provenance; on()/deref_() consume it via that same *mut.

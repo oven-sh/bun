@@ -4120,8 +4120,14 @@ pub fn write_file_with_source_destination(
             unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
-                destination_blob.dupe(),
-                source_blob.dupe(),
+                // PORT NOTE: Zig passes bitwise `*` copies (no ref bumps).
+                // `borrowed_view()` clones only the `StoreRef` (+1, balanced by
+                // `StoreRef::drop` in `WriteFileWindows::deinit`); `name` /
+                // `content_type` are aliased (unused by `WriteFile*`, no Drop).
+                // `dupe()` would leak the `name` WTF ref and a boxed
+                // `content_type` since `Blob` has no `Drop` impl.
+                destination_blob.borrowed_view(),
+                source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -4136,8 +4142,14 @@ pub fn write_file_with_source_destination(
         #[cfg(not(windows))]
         {
             let file_copier = write_file_mod::WriteFile::create(
-                destination_blob.dupe(),
-                source_blob.dupe(),
+                // PORT NOTE: Zig passes bitwise `*` copies (no ref bumps).
+                // `borrowed_view()` clones only the `StoreRef` (+1, balanced by
+                // `StoreRef::drop` in `WriteFile::then`); `name`/`content_type`
+                // are aliased (unused by `WriteFile`, no Drop). `dupe()` would
+                // leak the `name` WTF ref and a boxed `content_type` since
+                // `Blob` has no `Drop` impl.
+                destination_blob.borrowed_view(),
+                source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),

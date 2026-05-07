@@ -505,14 +505,14 @@ pub fn view(
     }
 
     if let Some(mut iter) = json.get_array(b"maintainers") {
-        Output::prettyln(format_args!("\nmaintainers<r><d>:<r>"));
+        prettyln!("\nmaintainers<r><d>:<r>");
         while let Some(m) = iter.next() {
             let nm: &[u8] = m.get_string_cloned(&bump, b"name").ok().flatten().unwrap_or(b"");
             let em: &[u8] = m.get_string_cloned(&bump, b"email").ok().flatten().unwrap_or(b"");
             if !em.is_empty() {
-                Output::prettyln(format_args!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em)));
+                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em));
             } else if !nm.is_empty() {
-                Output::prettyln(format_args!("<d>-<r> {}", BStr::new(nm)));
+                prettyln!("<d>-<r> {}", BStr::new(nm));
             }
         }
     }

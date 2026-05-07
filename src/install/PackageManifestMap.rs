@@ -232,7 +232,7 @@ impl PackageManifestMap {
                     // `cache_directory_*` / `options` / `env`, all disjoint
                     // from `self`; see its safety doc.
                     let cache_fd =
-                        unsafe { crate::package_manager::directories::get_cache_directory_raw(pm) }
+                        unsafe { crate::package_manager_real::directories::get_cache_directory_raw(pm) }
                             .fd();
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope,

@@ -720,22 +720,18 @@ fn print_node_modules_folder_structure(
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
     {
-        let mut i: usize = 0;
-        while i < depth {
+        for i in 0..depth {
             if i == depth - 1 {
                 if more_packages[i] {
                     Output::pretty(format_args!("<d>├──<r>"));
                 } else {
                     Output::pretty(format_args!("<d>└──<r>"));
                 }
+            } else if more_packages[i] {
+                Output::pretty(format_args!("<d>│<r>   "));
             } else {
-                if more_packages[i] {
-                    Output::pretty(format_args!("<d>│<r>   "));
-                } else {
-                    Output::pretty(format_args!("    "));
-                }
+                Output::pretty(format_args!("    "));
             }
-            i += 1;
         }
 
         let mut resolution_buf = [0u8; 512];
@@ -744,12 +740,10 @@ fn print_node_modules_folder_structure(
 
             if depth != 0 {
                 Output::pretty(format_args!(" "));
-                let mut temp_depth = depth;
-                while temp_depth > 0 {
+                for _ in 0..depth {
                     if let Some(j) = strings::index_of(path, b"node_modules") {
                         path = &path[j + b"node_modules".len() + 1..];
                     }
-                    temp_depth -= 1;
                 }
             }
             let directory_version = buf_print(
@@ -859,14 +853,12 @@ fn print_node_modules_folder_structure(
             continue;
         }
 
-        let mut i: usize = 0;
-        while i < depth {
+        for i in 0..depth {
             if more_packages[i] {
                 Output::pretty(format_args!("<d>│<r>   "));
             } else {
                 Output::pretty(format_args!("    "));
             }
-            i += 1;
         }
 
         if more_packages[depth] {
@@ -894,16 +886,15 @@ fn print_node_modules_folder_structure(
 }
 
 /// Helper: write `args` into `buf` and return the written subslice.
-/// Mirrors `std.fmt.bufPrint(buf, fmt, args)`.
+/// Mirrors `std.fmt.bufPrint(buf, fmt, args)` — Zig's `error.NoSpaceLeft`
+/// becomes a panic here (512 bytes is ample for a Resolution formatter, and
+/// both behaviours crash the CLI).
 fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
     let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
+    let mut cursor: &mut [u8] = &mut *buf;
     cursor.write_fmt(args).expect("buf_print overflow");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    // PORT NOTE: reshaped for borrowck — re-slice from the original buffer.
-    // SAFETY: `written` bytes were just written contiguously starting at buf[0].
-    unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) }
+    let written = total - cursor.len();
+    &buf[..written]
 }
 
 // ──────────────────────────────────────────────────────────────────────────

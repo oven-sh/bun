@@ -1,54 +1,13 @@
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, UUID};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, UUID};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str as strings;
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local shims — upstream `bun_jsc::JSGlobalObject::throw_not_enough_arguments`
-// so provide module-local extension traits until those land.
-// ──────────────────────────────────────────────────────────────────────────
-trait JSGlobalObjectObjUrlExt {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue>;
-}
-impl JSGlobalObjectObjUrlExt for JSGlobalObject {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue> {
-        Err(self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        )))
-    }
-}
-
-trait BunStringPrefixExt {
-    fn has_prefix(&self, prefix: &'static [u8]) -> bool;
-}
-impl BunStringPrefixExt for bun_str::String {
-    fn has_prefix(&self, prefix: &'static [u8]) -> bool {
-        if self.length() < prefix.len() {
-            return false;
-        }
-        if self.is_8bit() {
-            strings::strings::has_prefix_comptime(self.latin1(), prefix)
-        } else {
-            strings::strings::has_prefix_comptime_utf16(self.utf16(), prefix)
-        }
-    }
-}
 
 // PORT NOTE: reshaped for borrowck — Zig had separate `lock: bun.Mutex` and
 // `map: AutoHashMap` fields with manual lock()/unlock() around every access.
@@ -161,7 +120,7 @@ pub fn bun_create_object_url(
 ) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();
     if arguments.len < 1 {
-        return global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len);
+        return Err(global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len));
     }
     let Some(blob) = arguments.ptr[0].as_::<Blob>() else {
         return Err(global_object
@@ -184,7 +143,7 @@ pub fn bun_revoke_object_url(
 ) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();
     if arguments.len < 1 {
-        return global_object.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len);
+        return Err(global_object.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len));
     }
     if !arguments.ptr[0].is_string() {
         return Err(global_object
@@ -193,7 +152,7 @@ pub fn bun_revoke_object_url(
     let str = arguments.ptr[0]
         .to_bun_string(global_object)
         .expect("unreachable");
-    if !str.has_prefix(b"blob:") {
+    if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -230,7 +189,7 @@ pub fn js_function_resolve_object_url(
         return Ok(JSValue::ZERO);
     }
 
-    if !str.has_prefix(b"blob:") || str.length() < SPECIFIER_LEN {
+    if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -245,13 +204,12 @@ pub fn js_function_resolve_object_url(
 pub const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
 
 pub fn is_blob_url(url: &[u8]) -> bool {
-    url.len() >= SPECIFIER_LEN && strings::strings::has_prefix(url, b"blob:")
+    url.len() >= SPECIFIER_LEN && strings::strings::has_prefix_comptime(url, b"blob:")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/ObjectURLRegistry.zig (176 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      lock+map merged into Guarded<HashMap>; host_fn export names need macro support
+//   confidence: high
+//   notes:      lock+map merged into Guarded<HashMap>; export names attached via #[unsafe(export_name)]
 // ──────────────────────────────────────────────────────────────────────────

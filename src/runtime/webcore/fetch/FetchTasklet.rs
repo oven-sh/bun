@@ -560,7 +560,11 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    let headers = response.get_fetch_headers();
+                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
+                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
+                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
+                    // response.body) and outlives this block.
+                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
                     // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                     // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`

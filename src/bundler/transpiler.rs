@@ -1103,6 +1103,7 @@ pub(crate) fn resolver_bundle_options_subset(
         compile: src.compile,
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,
+        allow_runtime: src.allow_runtime,
     }
 }
 

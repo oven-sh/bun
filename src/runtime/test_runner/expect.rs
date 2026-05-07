@@ -369,7 +369,7 @@ impl Expect {
         let Some(value) = super::expect::js::captured_value_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "Internal error: the expect(value) was garbage collected but it should not have been!",
-                format_args!(""),
+                (),
             ));
         };
         value.ensure_still_alive();
@@ -416,15 +416,16 @@ impl Expect {
                             Promise::Rejects => {
                                 if !silent {
                                     let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                                    let message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{f}<r>\n";
                                     return Err(Self::throw_pretty_matcher_error(
                                         global_this,
                                         custom_label,
                                         matcher_name,
                                         matcher_params,
                                         flags,
-                                        message,
-                                        format_args!("{}", value.to_fmt(&mut formatter)),
+                                        format_args!(
+                                            "Expected promise that rejects<r>\nReceived promise that resolved: <red>{}<r>\n",
+                                            value.to_fmt(&mut formatter),
+                                        ),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -436,15 +437,16 @@ impl Expect {
                             Promise::Resolves => {
                                 if !silent {
                                     let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                                    let message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{f}<r>\n";
                                     return Err(Self::throw_pretty_matcher_error(
                                         global_this,
                                         custom_label,
                                         matcher_name,
                                         matcher_params,
                                         flags,
-                                        message,
-                                        format_args!("{}", value.to_fmt(&mut formatter)),
+                                        format_args!(
+                                            "Expected promise that resolves<r>\nReceived promise that rejected: <red>{}<r>\n",
+                                            value.to_fmt(&mut formatter),
+                                        ),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -459,15 +461,16 @@ impl Expect {
                 } else {
                     if !silent {
                         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                        let message = "Expected promise<r>\nReceived: <red>{f}<r>\n";
                         return Err(Self::throw_pretty_matcher_error(
                             global_this,
                             custom_label,
                             matcher_name,
                             matcher_params,
                             flags,
-                            message,
-                            format_args!("{}", value.to_fmt(&mut formatter)),
+                            format_args!(
+                                "Expected promise<r>\nReceived: <red>{}<r>\n",
+                                value.to_fmt(&mut formatter),
+                            ),
                         ));
                     }
                     Err(JsError::Thrown)
@@ -1159,10 +1162,10 @@ impl Expect {
 
         if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
             let mut formatter = ConsoleObject::Formatter::new(global_this);
-            return Err(global_this.throw2(
-                "Failed to pretty format value: {f}",
-                format_args!("{}", value.to_fmt(&mut formatter)),
-            ));
+            return Err(global_this.throw(format_args!(
+                "Failed to pretty format value: {}",
+                value.to_fmt(&mut formatter),
+            )));
         }
         Ok(())
     }
@@ -1189,31 +1192,33 @@ impl Expect {
                 let buntest = buntest_strong.get();
                 // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
                 let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
+                let test_file_path = bstr::BStr::new(test_file_path);
                 return Err(match err {
                     e if e == bun_core::err!("FailedToOpenSnapshotFile") => {
-                        global_this.throw2("Failed to open snapshot file for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw(format_args!("Failed to open snapshot file for test file: {test_file_path}"))
                     }
                     e if e == bun_core::err!("FailedToMakeSnapshotDirectory") => {
-                        global_this.throw2("Failed to make snapshot directory for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw(format_args!("Failed to make snapshot directory for test file: {test_file_path}"))
                     }
                     e if e == bun_core::err!("FailedToWriteSnapshotFile") => {
-                        global_this.throw2("Failed write to snapshot file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
                     }
                     e if e == bun_core::err!("SyntaxError") || e == bun_core::err!("ParseError") => {
-                        global_this.throw2("Failed to parse snapshot file for: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
                     }
                     e if e == bun_core::err!("SnapshotCreationNotAllowedInCI") => {
                         let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
                         if let Some(name) = snapshot_name {
-                            global_this.throw2(
-                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {s}",
-                                format_args!("{} {}", bstr::BStr::new(&name), bstr::BStr::new(&pretty_value)),
-                            )
+                            global_this.throw(format_args!(
+                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{}\"\nReceived: {}",
+                                bstr::BStr::new(&name),
+                                bstr::BStr::new(&pretty_value),
+                            ))
                         } else {
-                            global_this.throw2(
-                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}",
-                format_args!("{}", bstr::BStr::new(&pretty_value)),
-                            )
+                            global_this.throw(format_args!(
+                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {}",
+                                bstr::BStr::new(&pretty_value),
+                            ))
                         }
                     }
                     e if e == bun_core::err!("SnapshotInConcurrentGroup") => {
@@ -1224,7 +1229,7 @@ impl Expect {
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);
-                        global_this.throw2("Failed to snapshot value: {f}", format_args!("{}", value.to_fmt(&mut formatter)))
+                        global_this.throw(format_args!("Failed to snapshot value: {}", value.to_fmt(&mut formatter)))
                     }
                 });
             }
@@ -1537,7 +1542,6 @@ impl Expect {
             matcher_name,
             matcher_params,
             Flags::default(),
-            "{f}",
             format_args!("{}", message_text.get()),
         ))
     }

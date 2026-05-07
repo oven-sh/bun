@@ -355,9 +355,8 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     array_buffer = match arg.as_array_buffer(global) {
                         Some(ab) => ab,
                         None => {
-                            return Err(
-                                global.throw_invalid_arguments("ArrayBuffer conversion error"),
-                            );
+                            return Err(global
+                                .throw_invalid_arguments(format_args!("ArrayBuffer conversion error")));
                         }
                     };
                     input = array_buffer.byte_slice();

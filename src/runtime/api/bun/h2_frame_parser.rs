@@ -5716,10 +5716,8 @@ impl H2FrameParser {
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<*mut H2FrameParser> {
-        // PORT NOTE: the JsClass codegen calls `constructor(global, frame)` (2 args);
-        // recover the wrapper JSValue from the callframe to seed the cached handlers.
-        let this_value = callframe.this();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected 1 argument")));

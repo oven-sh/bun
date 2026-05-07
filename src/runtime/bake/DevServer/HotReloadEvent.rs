@@ -141,27 +141,18 @@ impl HotReloadEvent {
 
                     while let Some(index) = it {
                         // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
-                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex
-                        let (source_file_index, specifier, next) = {
+                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
+                        let (source_file_path, specifier, next) = {
                             let dep =
                                 &dev.directory_watchers.dependencies[index as usize];
                             (dep.source_file_path, &*dep.specifier as *const [u8], dep.next)
                         };
                         it = next;
 
-                        // PORT NOTE: mod.rs `Dep.source_file_path` is a `FileIndex` into the
-                        // server graph; the Zig original stores the path slice directly. Look
-                        // the path up here. Raw ptr to dodge borrowck across the resolver call.
-                        let source_file_path: *const [u8] = &*dev
-                            .server_graph
-                            .bundled_files
-                            .keys()[source_file_index.0 as usize]
-                            as *const [u8];
-
-                        // SAFETY: server_transpiler initialized in DevServer::init; the
-                        // `source_file_path`/`specifier` raw-ptr borrows point into
-                        // `dev.server_graph` / `dev.directory_watchers.dependencies`, neither of
-                        // which is mutated until after `resolve` returns.
+                        // SAFETY: server_transpiler initialized in DevServer::init.
+                        // `source_file_path` is a live IncrementalGraph key slice (BORROWED per
+                        // `Dep` doc); `specifier` points into the dep's owned `Box<[u8]>` — neither
+                        // is mutated until after `resolve` returns.
                         if unsafe { dev.server_transpiler.assume_init_mut() }
                             .resolver
                             .resolve(
@@ -171,15 +162,14 @@ impl HotReloadEvent {
                                 unsafe { &*specifier },
                                 bun_options_types::ImportKind::Stmt,
                             )
-                            .ok()
-                            .is_some()
+                            .is_ok()
                         {
                             // this resolution result is not preserved as passing it
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
-                            // SAFETY: server_graph keys not mutated between lookup and here.
                             // PORT NOTE: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
+                            // SAFETY: IncrementalGraph keys not mutated between lookup and here.
                             let _ = self.files.get_or_put(unsafe { &*source_file_path });
                             dev.directory_watchers.free_dependency_index(index);
                         } else {

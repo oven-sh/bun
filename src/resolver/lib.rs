@@ -3502,6 +3502,7 @@ pub mod options {
         pub compile: bool,
         pub supports_multiple_outputs: bool,
         pub tree_shaking: bool,
+        pub allow_runtime: bool,
     }
 
     impl Default for BundleOptions {
@@ -3540,6 +3541,7 @@ pub mod options {
                 compile: false,
                 supports_multiple_outputs: true,
                 tree_shaking: false,
+                allow_runtime: true,
                 production: false,
                 force_node_env: ForceNodeEnv::default(),
             }

@@ -3385,14 +3385,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 }
 
 /// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToUTF16Error {
-    InvalidByteSequence,
-    OutOfMemory,
-}
-impl From<AllocError> for ToUTF16Error {
-    fn from(_: AllocError) -> Self { ToUTF16Error::OutOfMemory }
-}
+///
+/// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
+/// (defined there) and `to_utf16_alloc` (defined here) share a single error
+/// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
+pub use unicode_draft::ToUTF16Error;
 impl From<ToUTF16Error> for bun_core::Error {
     fn from(e: ToUTF16Error) -> Self {
         match e {

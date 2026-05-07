@@ -10,7 +10,7 @@ use bun_jsc::{
 };
 use bun_logger as logger;
 use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
-use bun_str::{String as BunString, ZigString};
+use bun_str::{OwnedString, String as BunString, ZigString};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
@@ -92,7 +92,9 @@ pub struct Stringifier {
 pub enum Space {
     Minified,
     Number(u32),
-    Str(BunString),
+    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
+    /// `Space.deinit() → str.deref()`).
+    Str(OwnedString),
 }
 
 impl Space {
@@ -110,7 +112,7 @@ impl Space {
         }
 
         if space.is_string() {
-            let str = space.to_bun_string(global)?;
+            let str = OwnedString::new(space.to_bun_string(global)?);
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -120,8 +122,6 @@ impl Space {
         Ok(Space::Minified)
     }
 }
-
-// deinit: `Str` payload is `bun_str::String` which drops itself; no explicit `impl Drop` needed.
 
 #[repr(u8)]
 pub enum AnchorOrigin {
@@ -226,7 +226,8 @@ impl Stringifier {
         })
     }
 
-    // deinit: all fields have Drop; no explicit impl needed.
+    // deinit: all fields have Drop (`space: Space::Str` holds an
+    // `OwnedString`); no explicit impl needed.
 
     pub fn find_anchors_and_aliases(
         &mut self,
@@ -391,7 +392,7 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let value_str = unwrapped.to_bun_string(global)?;
+            let value_str = OwnedString::new(unwrapped.to_bun_string(global)?);
             self.append_string(&value_str);
             return Ok(());
         }
@@ -601,10 +602,10 @@ impl Stringifier {
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
 
-                let clamped = if space_str.length() > 10 {
+                let clamped: BunString = if space_str.length() > 10 {
                     space_str.substring_with_len(0, 10)
                 } else {
-                    *space_str
+                    **space_str
                 };
 
                 self.builder
@@ -1014,10 +1015,12 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
         if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
             break 'input v;
         }
-        let mut str = input_value.to_bun_string(global)?;
+        let mut str = OwnedString::new(input_value.to_bun_string(global)?);
         // PORT NOTE: Zig's `str.toSlice(allocator)` is a `SliceWithUnderlyingString`
         // bundling the (possibly-transcoded) UTF-8 view with its backing
-        // `bun.String` ref.
+        // `bun.String` ref. Rust's `to_slice` moves the +1 into `.underlying`
+        // and leaves `str` as `EMPTY`, so the `OwnedString` drop is a no-op —
+        // it exists to match Zig's `defer str.deref()` on the type level.
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
     };
 
@@ -1187,7 +1190,7 @@ impl<'a> ParserCtx<'a> {
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
 
-                    let key_str = key.to_bun_string(self.global)?;
+                    let key_str = OwnedString::new(key.to_bun_string(self.global)?);
                     obj.put_may_be_index(self.global, &key_str, value)?;
                 }
 

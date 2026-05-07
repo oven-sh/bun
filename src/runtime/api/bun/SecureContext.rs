@@ -166,7 +166,7 @@ impl SecureContext {
                 if code != 0 {
                     return Err(global.throw_value(err_to_js(global, code)));
                 }
-                return Err(global.throw("Failed to create SSL context"));
+                return Err(global.throw(format_args!("Failed to create SSL context")));
             }
             return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
         };

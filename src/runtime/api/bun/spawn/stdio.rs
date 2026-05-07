@@ -141,11 +141,11 @@ impl Stdio {
             if !spawn_sys::can_use_memfd() {
                 return false;
             }
-            let label: &'static [u8] = match index {
-                0 => b"spawn_stdio_stdin",
-                1 => b"spawn_stdio_stdout",
-                2 => b"spawn_stdio_stderr",
-                _ => b"spawn_stdio_memory_file",
+            let label: &core::ffi::CStr = match index {
+                0 => c"spawn_stdio_stdin",
+                1 => c"spawn_stdio_stdout",
+                2 => c"spawn_stdio_stderr",
+                _ => c"spawn_stdio_memory_file",
             };
 
             let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {

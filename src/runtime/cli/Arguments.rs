@@ -1280,7 +1280,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 Bun__Node__CAStore = BunCAStore::Openssl;
             } else if use_system_ca {
                 Bun__Node__CAStore = BunCAStore::System;
-            } else if env_var::NODE_USE_SYSTEM_CA.get() {
+            } else if env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
                 Bun__Node__CAStore = BunCAStore::System;
             }
 

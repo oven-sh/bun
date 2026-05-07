@@ -4,6 +4,7 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
+#[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
     pub remain: usize,

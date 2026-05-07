@@ -116,7 +116,7 @@ pub extern "C" fn BakeResponseClass__constructRedirect(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JSValue {
-    bun_jsc::to_js_host_call(global_object, construct_redirect(global_object, call_frame))
+    bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
 }
 
 pub fn construct_redirect(
@@ -147,7 +147,7 @@ pub extern "C" fn BakeResponseClass__constructRender(
     call_frame: &CallFrame,
 ) -> JSValue {
     // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-    bun_jsc::to_js_host_call(global_object, construct_render(global_object, call_frame))
+    bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
 }
 
 /// This function is only available on JSBakeResponse

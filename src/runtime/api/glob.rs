@@ -365,10 +365,12 @@ impl Glob {
         // `pattern: Box<[u8]>` freed by Drop (was `bun.default_allocator.free(this.pattern)`).
     }
 
-    #[bun_jsc::host_call]
-    pub extern "C" fn has_pending_activity(this: *mut Self) -> bool {
-        // SAFETY: GC-thread read of an atomic field only; `this` is valid while wrapper is live.
-        unsafe { (*this).has_pending_activity.load(Ordering::SeqCst) > 0 }
+    /// Called on the GC thread concurrently with the mutator. Reads only the
+    /// atomic counter; never allocates, locks, or touches JS. The codegen shim
+    /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
+    /// `&*this`.
+    pub fn has_pending_activity(&self) -> bool {
+        self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 }
 

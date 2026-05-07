@@ -21,7 +21,7 @@ impl InstallCommand {
                 // startup in `Cli::start()` before any command (including this
                 // one) is dispatched; no other `&mut` to it is live here.
                 let log = unsafe { (*(&raw mut Cli::LOG_)).assume_init_mut() };
-                let _ = log.print(Output::error_writer());
+                let _ = log.print(Output::error_writer() as *mut _);
                 Global::exit(1);
             }
             Err(e) => Err(e),

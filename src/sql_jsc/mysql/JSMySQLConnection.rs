@@ -656,12 +656,12 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            // SAFETY: `mysql_group` returns a non-null `*mut SocketGroup` owned
-            // by RareData (lives for the VM's lifetime); reborrow for the
-            // connect call. `vm` reborrowed via raw ptr to avoid the
-            // `rare_data(&mut vm)` / `mysql_group(.., &vm)` aliasing conflict.
+            // SAFETY: `mysql_group` returns the embedded `&mut SocketGroup`
+            // owned by RareData (lives for the VM's lifetime). `vm` reborrowed
+            // via raw ptr to avoid the `rare_data(&mut vm)` /
+            // `mysql_group(.., &vm)` aliasing conflict.
             let vm_p = vm as *mut VirtualMachine;
-            let group = unsafe { &mut *(*vm_p).rare_data().mysql_group(&*vm_p, false) };
+            let group = unsafe { (*vm_p).rare_data().mysql_group::<false>(&*vm_p) };
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr, false)
             } else {

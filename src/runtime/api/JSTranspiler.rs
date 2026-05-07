@@ -739,6 +739,11 @@ impl<'a> TransformTask<'a> {
             core::ptr::read(&transpiler.transpiler)
         });
 
+        // PORT NOTE: capture the raw pointer for `IntrusiveRc::init_ref` BEFORE the
+        // struct literal — `tsconfig` below borrows `*transpiler` immutably for `'a`,
+        // which would otherwise conflict with the mutable reborrow at `init_ref`.
+        let js_instance_ptr: *mut JSTranspiler = transpiler;
+
         let mut transform_task = Box::new(TransformTask {
             input_code,
             output_code: BunString::empty(),

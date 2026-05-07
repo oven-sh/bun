@@ -59,13 +59,10 @@ macro_rules! log {
 }
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
-/// Reuses the vtable defined in the parent `websocket_client` module.
+/// Forwards to the canonical fully-populated vtable in `bun_jsc`.
 #[inline]
 fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_aio::EventLoopCtx {
-    bun_aio::EventLoopCtx {
-        owner: vm as *mut (),
-        vtable: &crate::websocket_client::WS_VM_EVENT_LOOP_CTX_VTABLE,
-    }
+    bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm)
 }
 
 /// `uws.NewSocketHandler(ssl)`

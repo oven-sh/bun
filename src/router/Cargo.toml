@@ -23,16 +23,15 @@ bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_http_types.workspace = true
 bun_paths.workspace = true
+# `bun_resolver` is acyclic from this crate (resolver does not depend on
+# router); router consumes the real `bun_resolver::fs::{FileSystem,DirEntry}`
+# now that the `bun_sys::fs::DirEntry` opaque-seam workaround is gone.
+bun_resolver.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
 
 [dev-dependencies]
-# Test harness (Test::make / Test::make_routes) needs the real resolver +
-# logger + AST stores. dev-deps don't participate in the dep-graph cycle
-# check, so this is the architecturally-correct home for the Zig
-# `router.zig` test fixture wiring.
-bun_resolver.workspace = true
-bun_logger.workspace = true
+# Test harness (Test::make / Test::make_routes) needs the AST stores.
 bun_js_parser.workspace = true

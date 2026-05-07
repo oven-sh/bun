@@ -152,36 +152,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 }
 
 /// `bun_aio::KeepAlive::{ref,unref}` take an erased `EventLoopCtx` (manual
-/// vtable to break the T3→T6 cycle). `bun_jsc` doesn't ship a
-/// `VirtualMachine → EventLoopCtx` adapter yet, so define one locally: only
-/// `platform_event_loop` is reached on the `KeepAlive` paths used here.
-// TODO(port): hoist into `bun_jsc::virtual_machine` once that crate exports
-// the canonical vtable; this is a faithful subset.
-pub(crate) static WS_VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
-    platform_event_loop: {
-        unsafe fn f(owner: *mut ()) -> *mut bun_aio::Loop {
-            // SAFETY: `owner` is `&VirtualMachine` (erased in `vm_loop_ctx`).
-            let vm = unsafe { &*(owner as *const jsc::virtual_machine::VirtualMachine) };
-            vm.uws_loop()
-        }
-        f
-    },
-    // Unreached by `KeepAlive::{ref_, unref}` (only `platform_event_loop`).
-    file_polls: { unsafe fn f(_: *mut ()) -> *mut bun_aio::file_poll::Store { unreachable!() } f },
-    alloc_file_poll: { unsafe fn f(_: *mut ()) -> *mut bun_aio::FilePoll { unreachable!() } f },
-    is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
-    increment_pending_unref_counter: { unsafe fn f(_: *mut ()) { unreachable!() } f },
-    ref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
-    unref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
-    after_event_loop_callback: {
-        unsafe fn f(_: *mut ()) -> Option<bun_aio::OpaqueCallback> { unreachable!() }
-        f
-    },
-    set_after_event_loop_callback: {
-        unsafe fn f(_: *mut (), _: Option<bun_aio::OpaqueCallback>, _: *mut c_void) { unreachable!() }
-        f
-    },
-};
+/// vtable to break the T3→T6 cycle). The canonical fully-populated instance
+/// lives in `bun_jsc` — re-export so `WebSocketUpgradeClient` keeps its
+/// existing path.
+pub(crate) use jsc::virtual_machine::VM_EVENT_LOOP_CTX_VTABLE as WS_VM_EVENT_LOOP_CTX_VTABLE;
 
 impl<const SSL: bool> WebSocket<SSL> {
     #[inline]
@@ -190,14 +164,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // it from `bun_vm_ptr()` (FFI `*mut VirtualMachine`, see
         // `JSGlobalObject.zig:617`) rather than `bun_vm()`'s `&VirtualMachine`
         // so the stored pointer carries write provenance instead of being
-        // laundered through a shared-ref `*const _ as *mut` hop. The local
-        // vtable (`WS_VM_EVENT_LOOP_CTX_VTABLE`) currently only reborrows it
-        // as `&VirtualMachine` in `platform_event_loop`, but keeping mut
-        // provenance matches the Zig spec and the `EventLoopCtxVTable` shape.
-        bun_aio::EventLoopCtx {
-            owner: global_this.bun_vm() as *mut (),
-            vtable: &WS_VM_EVENT_LOOP_CTX_VTABLE,
-        }
+        // laundered through a shared-ref `*const _ as *mut` hop — the vtable
+        // slots (`file_polls`, `set_after_event_loop_callback`) write through
+        // it.
+        jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm())
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {

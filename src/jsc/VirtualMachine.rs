@@ -6046,23 +6046,30 @@ pub fn plugin_runner_on_resolve_jsc(
                 break 'brk bun_string::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"file") {
+                namespace_str.deref();
                 break 'brk bun_string::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"bun") {
+                namespace_str.deref();
                 break 'brk bun_string::String::static_(b"bun");
             }
             if namespace_str.eql_comptime(b"node") {
+                namespace_str.deref();
                 break 'brk bun_string::String::static_(b"node");
             }
             break 'brk namespace_str;
         }
         break 'brk bun_string::String::static_(b"file");
     };
+    // Spec PluginRunner.zig:212 `defer user_namespace.deref()` — `bun_string::String`
+    // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
+    // early-return paths.
+    let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
 
     // Our slow way of cloning the string into memory owned by JSC.
     use std::io::Write as _;
     let mut combined_string: Vec<u8> = Vec::new();
-    write!(&mut combined_string, "{}:{}", user_namespace, file_path).expect("unreachable");
+    write!(&mut combined_string, "{}:{}", *user_namespace, file_path).expect("unreachable");
     let out_ = bun_string::String::borrow_utf8(&combined_string);
     let jsval = match out_.to_js(global) {
         Ok(v) => v,

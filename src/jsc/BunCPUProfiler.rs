@@ -5,7 +5,7 @@ use crate::VM;
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
 use bun_paths::PathBuffer;
-use bun_string::String as BunString;
+use bun_string::{OwnedString, String as BunString};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -80,7 +80,11 @@ pub fn stop_and_write_profile(
             if config.md_format { &mut text_string as *mut BunString } else { core::ptr::null_mut() },
         );
     }
-    // (defer json_string.deref() / text_string.deref() — handled by Drop on bun_str::String)
+    // C++ handed back +1 refs into json_string/text_string. `bun_string::String`
+    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()` —
+    // the Rust spelling of Zig's `defer json_string.deref(); defer text_string.deref();`.
+    let json_string = OwnedString::new(json_string);
+    let text_string = OwnedString::new(text_string);
 
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {

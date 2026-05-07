@@ -266,21 +266,13 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// `fail` overload for type-erased `bun_core::Error` (interned-name form of
-    /// the Zig error set). The precise `ERR_POSTGRES_*` code mapping requires
-    /// the `AnyPostgresError` enum, which is lost across this boundary, so we
-    /// fall back to a generic PostgresError with the raw error name as `errno`.
-    fn fail_err(&mut self, message: &[u8], err: bun_core::Error) {
-        debug!("failed: {}: {}", bstr::BStr::new(message), err.name());
-        let js = match create_postgres_error(
-            self.global(),
-            message,
-            PostgresErrorOptions { errno: Some(err.name().as_bytes()), ..Default::default() },
-        ) {
-            Ok(v) => v,
-            Err(e) => self.global().take_error(e),
-        };
-        self.fail_with_js_value(js);
+    /// Dispatch `set_timeout` across the `AnySocket` variants (method missing on the enum).
+    #[inline]
+    fn socket_set_timeout(&self, seconds: core::ffi::c_uint) {
+        match &self.socket {
+            Socket::SocketTcp(s) => s.set_timeout(seconds),
+            Socket::SocketTls(s) => s.set_timeout(seconds),
+        }
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
@@ -759,7 +751,7 @@ impl PostgresSQLConnection {
             options: Data::Temporary(unsafe { &*self.options }),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
-            self.fail_err(b"Failed to write startup message", err);
+            self.fail(b"Failed to write startup message", AnyPostgresError::from(err));
         }
     }
 
@@ -919,7 +911,7 @@ impl PostgresSQLConnection {
                         self.read_buffer.get_mut().write(&data[offset..]).expect("failed to write to read buffer");
                     } else {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail_err(b"Failed to read data", err.into());
+                        self.fail(b"Failed to read data", err);
                     }
                 }
             }
@@ -941,7 +933,7 @@ impl PostgresSQLConnection {
                 Err(err) => {
                     if err != AnyPostgresError::ShortRead {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail_err(b"Failed to read data", err.into());
+                        self.fail(b"Failed to read data", err);
                     } else {
                         #[cfg(debug_assertions)]
                         {
@@ -1407,11 +1399,7 @@ impl PostgresSQLConnection {
             (*this).stop_timers();
             for stmt_ptr in (*this).statements.values() {
                 // statements map owns a ref to each statement.
-                // TODO(port): blocked_on PostgresSQLStatement::deref — intrusive
-                // refcount decrement; field is `pub ref_count: Cell<u32>`. Phase B
-                // should add IntrusiveRc::deref. Manual decrement (no free) here.
-                let rc = &(**stmt_ptr).ref_count;
-                rc.set(rc.get().saturating_sub(1));
+                PostgresSQLStatement::deref(*stmt_ptr);
             }
             // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
             // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
@@ -2283,9 +2271,7 @@ impl PostgresSQLConnection {
                 self.set_status(Status::Connected);
                 self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                // TODO(port): AnySocket has no set_timeout; Zig forwarded to the typed socket.
-                // self.socket.set_timeout(300);
-                let _ = 300u32;
+                self.socket_set_timeout(300);
 
                 if let Some(request_ptr) = self.current() {
                     // SAFETY: valid queue item.
@@ -2671,10 +2657,9 @@ impl PostgresSQLConnection {
                         stmt.error_response =
                             Some(crate::postgres::postgres_sql_statement::Error::Protocol(err));
                         if self.statements.remove(&bun_wyhash::hash(&stmt.signature.name)).is_some() {
-                            // TODO(port): blocked_on PostgresSQLStatement::deref — intrusive
-                            // refcount decrement (see `deinit` for the same workaround).
-                            let rc = &stmt.ref_count;
-                            rc.set(rc.get().saturating_sub(1));
+                            // SAFETY: `stmt_ptr` is a live `Box`-allocated statement; the
+                            // request still holds its own ref so this cannot drop to 0.
+                            unsafe { PostgresSQLStatement::deref(stmt_ptr) };
                         }
                     }
                 }

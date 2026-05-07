@@ -2203,15 +2203,14 @@ mod tests {
     // ──────────────────────────────────────────────────────────────────────
 
     /// vtable mapping `bun_resolver::DirInfo::get_entries_const` onto the
-    /// opaque `bun_sys::fs::DirEntry` handle the router walks.
+    /// `bun_resolver::fs::DirEntry` listing the router walks.
     static RESOLVER_DIR_INFO_VTABLE: DirInfoVTable = DirInfoVTable {
         get_entries_const: |owner| {
             // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo`
             // produced by `dir_info_ref` below; the resolver guarantees it
             // outlives the router walk.
             let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
-            di.get_entries_const()
-                .map(|e| e as *const bun_resolver::fs::DirEntry as *const Fs::DirEntry)
+            di.get_entries_const().map(|e| e as *const Fs::DirEntry)
         },
     };
 
@@ -2226,14 +2225,12 @@ mod tests {
 
     impl<'a> ResolverLike for TestResolver<'a> {
         fn fs(&self) -> &'static FileSystem {
-            // SAFETY: `bun_sys::fs::FileSystem` is a `#[repr(C)]` ZST opaque
-            // handle whose documented backing type is the resolver singleton —
-            // the cast is the intended bridge (PORTING.md §Dispatch).
-            unsafe { &*(self.0.fs() as *const bun_sys::fs::FileSystem) }
+            // SAFETY: process-static singleton (see `FileSystem::instance`).
+            unsafe { &*self.0.fs() }
         }
-        fn fs_impl(&self) -> *mut core::ffi::c_void {
-            // SAFETY: `&fs.fs` — the `Implementation` field, type-erased.
-            unsafe { (&mut (*self.0.fs()).fs) as *mut _ as *mut core::ffi::c_void }
+        fn fs_impl(&self) -> *mut Fs::Implementation {
+            // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
+            unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation }
         }
         fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
@@ -2265,9 +2262,8 @@ mod tests {
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
 
             // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: see `TestResolver::fs` — opaque-handle cast to the ZST view.
-            let fs_opaque: &'static FileSystem =
-                unsafe { &*(fs as *const bun_sys::fs::FileSystem) };
+            // SAFETY: process-static singleton just initialized above.
+            let fs_opaque: &'static FileSystem = unsafe { &*fs };
             let router = Router::init(
                 fs_opaque,
                 RouteConfig {

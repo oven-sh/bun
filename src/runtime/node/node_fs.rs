@@ -3418,7 +3418,8 @@ pub mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding).unwrap_or(encoding);
                 } else if arg.is_object() {
-                    // TODO(port): Zig calls getEncoding(arg, ctx) with 2 args here (bug?); preserve behavior
+                    // PORT NOTE: Zig calls `getEncoding(arg, ctx)` (two args) — relies on
+                    // Zig's default-param coercion to `Encoding.utf8`. Preserve behaviour.
                     if let Ok(e) = get_encoding(arg, ctx, encoding) { encoding = e; }
                     if let Some(bs) = arg.get(ctx, "bufferSize")? {
                         buffer_size = bs.to_int32();

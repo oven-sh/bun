@@ -1201,6 +1201,6 @@ const TRUSTED_DEPENDENCIES_STRING: &[u8] = b"trustedDependencies";
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageJSONEditor.zig (799 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      AST EString.data is `'static [u8]` (Phase-A); owned strings are `Box::leak`ed (matches Zig leaked-singleton allocator). G::Property is non-Clone (`@memcpy` ported as key/value-only copy via `copy_property`). UpdateRequest.e_string raw-ptr deferred-write pattern + *[]UpdateRequest in-place shrink need Phase-B review. resolve_catalog_dependency stubbed on lockfile until lockfile_real un-gates.
+//   todos:      0
+//   notes:      AST EString.data is `'static [u8]` (Phase-A); owned strings are `Box::leak`ed (matches Zig leaked-singleton allocator). G::Property is non-Clone (`@memcpy` ported as key/value-only copy via `copy_property`). UpdateRequest.e_string raw-ptr deferred-write pattern + *[]UpdateRequest in-place shrink need Phase-B review.
 // ──────────────────────────────────────────────────────────────────────────

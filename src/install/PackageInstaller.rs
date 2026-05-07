@@ -15,6 +15,16 @@ use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
+
+/// SAFETY helper: deref `self.progress` (BACKREF into `manager.progress`).
+/// Callers hold `&mut self` so no other live `&mut Progress` aliases.
+macro_rules! progress {
+    ($self:ident) => {
+        // SAFETY: `progress` is a BACKREF to `manager.progress`; the install
+        // pass is single-threaded and `&mut self` is held.
+        unsafe { &mut *$self.progress }
+    };
+}
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // PORT NOTE: `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
@@ -56,7 +66,10 @@ pub struct PendingLifecycleScript {
 pub struct PackageInstaller<'a> {
     pub manager: &'a mut PackageManager,
     pub lockfile: &'a mut Lockfile,
-    pub progress: &'a Progress,
+    /// Zig: `*Progress` — raw pointer because it aliases `manager.progress`
+    /// (BACKREF). Borrowed mutably across `&mut self` calls; modeled as a raw
+    /// pointer per PORTING.md §BACKREF to avoid double-mut-borrow with `manager`.
+    pub progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
     pub node_modules: NodeModulesFolder,

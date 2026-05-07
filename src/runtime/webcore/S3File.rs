@@ -859,15 +859,24 @@ pub fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> boo
 }
 
 // @export block — symbols exported with C linkage and JSC calling convention.
-// TODO(port): these need #[unsafe(export_name = "...")] on the raw ABI shims that #[bun_jsc::host_fn] emits.
-// JSS3File__presign   -> raw shim wrapping get_presign_url (method-with-context)
-// JSS3File__construct -> construct
+// JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
+// JSS3File__construct   -> construct
 // JSS3File__hasInstance -> has_instance
-// JSS3File__bucket    -> get_bucket
-// JSS3File__stat      -> raw shim wrapping get_stat (method-with-context)
+// JSS3File__bucket      -> get_bucket
+// JSS3File__stat        -> raw shim wrapping get_stat (method-with-context)
 
 pub mod exports {
     use super::*;
+
+    /// `@export(&hasInstance, .{ .name = "JSS3File__hasInstance" })` —
+    /// `customHasInstance` hook (`callconv(jsc.conv)`, `(EncodedJSValue,
+    /// *JSGlobalObject, EncodedJSValue) -> bool`).
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn JSS3File__hasInstance(this: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
+        // SAFETY: JSC passes the live global to `customHasInstance`.
+        super::has_instance(this, unsafe { &*global }, value)
+    }
 
     /// `@export(&construct, .{ .name = "JSS3File__construct" })` — bare ctor,
     /// not routed through `toJSHostFn` (returns `?*Blob`, not `JSValue`).

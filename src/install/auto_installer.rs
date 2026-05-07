@@ -250,7 +250,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn path_for_resolution<'b>(
-        &self,
+        &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
@@ -265,15 +265,7 @@ impl hooks::AutoInstaller for PackageManager {
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *(buf.as_mut_ptr() as *mut bun_paths::PathBuffer) };
         let r = *resolution_from_hooks(resolution);
-        // SAFETY: `path_for_resolution` only mutates `self` to populate the
-        // cache directory; the resolver call site holds no other borrow.
-        let this: *const Self = self;
-        let out = directories::path_for_resolution(
-            unsafe { &mut *(this as *mut Self) },
-            package_id,
-            r,
-            path_buf,
-        )?;
+        let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
         Ok(&*out)
     }
 

@@ -1058,8 +1058,10 @@ pub fn edit(
                         if let Some(entry) =
                             manager.updating_packages.fetch_swap_remove(request.name)
                         {
-                            let mut alias_at_index: Option<usize> = None;
-
+                            // Zig declares `alias_at_index` here and assigns it inside the
+                            // `version_literal` block but never reads it afterwards (dead
+                            // store, vestigial from the earlier `editUpdateNoArgs` copy).
+                            // The Rust port omits the variable entirely.
                             let new_version: Vec<u8> = 'new_version: {
                                 // SAFETY: `tag == Npm` matched above.
                                 let version_fmt = unsafe {
@@ -1085,7 +1087,6 @@ pub fn edit(
                                         &entry.value.original_version_literal,
                                         b'@',
                                     ) {
-                                        alias_at_index = Some(at_index);
                                         break 'version_literal &entry
                                             .value
                                             .original_version_literal
@@ -1111,10 +1112,6 @@ pub fn edit(
                                 }
                                 v
                             };
-
-                            // `alias_at_index` is set above only as a side effect of
-                            // computing `version_literal`; the Zig original never reads it.
-                            drop(alias_at_index);
 
                             if entry.value.is_alias {
                                 let dep_literal = &entry.value.original_version_literal;

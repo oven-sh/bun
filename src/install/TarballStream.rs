@@ -174,8 +174,12 @@ impl TarballStream {
     ) -> *mut TarballStream {
         // SAFETY: caller guarantees `extract_task` is live for the lifetime
         // of this stream (it is published back to the main thread only in
-        // `finish()`); see Zig `init` which takes `*Task`.
-        let tarball = unsafe { &(*extract_task).request.extract.tarball };
+        // `finish()`); see Zig `init` which takes `*Task`. `request` is an
+        // untagged union; `extract` is the active variant for streaming
+        // tarballs (set by `enqueueExtractNPMPackage`). Explicit `&` (no
+        // implicit autoref through the raw-ptr deref) for the
+        // `ManuallyDrop` → `ExtractRequest` deref.
+        let tarball = unsafe { &(&(*extract_task).request.extract).tarball };
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
@@ -624,7 +628,10 @@ impl TarballStream {
 
     fn open_destination(&mut self) -> Result<(), bun_core::Error> {
         // SAFETY: `extract_task` is live until `finish()` publishes it.
-        let tarball = unsafe { &(*self.extract_task).request.extract.tarball };
+        // `request` is an untagged union; `extract` is the active variant.
+        // Explicit `&` (no implicit autoref through the raw-ptr deref) for
+        // the `ManuallyDrop` → `ExtractRequest` deref.
+        let tarball = unsafe { &(&(*self.extract_task).request.extract).tarball };
         let (_, basename) = tarball.name_and_basename();
         let mut buf = PathBuffer::uninit();
         let tmpname = FileSystem::tmpname(
@@ -933,10 +940,11 @@ impl TarballStream {
             if let Some(d) = (*this).dest.take() {
                 d.close();
             }
-            // SAFETY: task is live (see above).
-            let _ = (*task)
-                .request
-                .extract
+            // SAFETY: task is live (see above). `request` is an untagged
+            // union; `extract` is the active variant. Explicit `&` (no
+            // implicit autoref through the raw-ptr deref) for the
+            // `ManuallyDrop` → `ExtractRequest` deref.
+            let _ = (&(*task).request.extract)
                 .tarball
                 .temp_dir
                 .delete_tree((*this).tmpname.as_bytes());

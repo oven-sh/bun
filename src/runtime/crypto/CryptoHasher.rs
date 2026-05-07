@@ -382,17 +382,19 @@ impl CryptoHasher {
 
         if let Some(output_buf) = &output {
             let size = evp.size() as usize;
-            let bytes = output_buf.byte_slice();
-            if bytes.len() < size {
+            let bytes_len = output_buf.byte_slice().len();
+            if bytes_len < size {
                 return Err(global.throw_invalid_arguments(
                     format_args!("TypedArray must be at least {} bytes", size),
                 ));
             }
             // PORT NOTE: reshaped for borrowck — Zig rebinds the slice into the output buffer.
-            // SAFETY: output_buf outlives this function frame; we drop output_digest_slice
-            // borrow of the stack buffer and reborrow into the JS-owned buffer.
+            // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
+            // (`bytes_len >= size` checked above; not detached since len > 0);
+            // borrowed for this frame only. Build the `&mut` directly from the
+            // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice = unsafe {
-                core::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, size)
+                core::slice::from_raw_parts_mut(output_buf.ptr, size)
             };
         }
 
@@ -694,17 +696,20 @@ impl CryptoHasher {
         let buf_len = output_digest_buf.len();
         let output_digest_slice: &mut [u8];
         if let Some(output_buf) = &output {
-            let bytes = output_buf.byte_slice();
-            if bytes.len() < buf_len {
+            let bytes_len = output_buf.byte_slice().len();
+            if bytes_len < buf_len {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     boring_ssl::EVP_MAX_MD_SIZE
                 )));
             }
-            // PORT NOTE: reshaped for borrowck
-            // SAFETY: bytes.len() >= EVP_MAX_MD_SIZE checked above; output_buf backing storage outlives this frame.
+            // PORT NOTE: reshaped for borrowck.
+            // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
+            // is the JSC-owned writable backing store, outliving this frame. Build
+            // the `&mut` directly from the raw `*mut u8` field — never via
+            // `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice = unsafe {
-                core::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, bytes.len())
+                core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len)
             };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.

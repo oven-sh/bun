@@ -17,12 +17,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc};
 use bun_str::String as BunString;
 use bun_uws::Loop as UwsLoop;
 
-use crate::jsc::generated::JSImmediate;
-use crate::jsc::{Debugger, EnsureStillAlive};
-
 use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, KindBig, TimeoutObject, TimeoutWarning,
+    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
     TimerObjectInternals, ID,
 };
 

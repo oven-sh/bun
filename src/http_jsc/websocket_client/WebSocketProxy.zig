@@ -8,8 +8,11 @@ const WebSocketProxy = @This();
 #target_host: []const u8,
 /// Whether target uses TLS (wss://)
 #target_is_https: bool,
+target_port: u16,
 /// WebSocket upgrade request to send after CONNECT succeeds
 #websocket_request_buf: []u8,
+kind: SocksProxy.Kind = .http,
+socks: ?SocksProxy = null,
 /// TLS tunnel for wss:// through HTTP proxy
 #tunnel: ?*WebSocketProxyTunnel = null,
 
@@ -17,13 +20,23 @@ const WebSocketProxy = @This();
 pub fn init(
     target_host: []const u8,
     target_is_https: bool,
+    target_port: u16,
     websocket_request_buf: []u8,
+    kind: SocksProxy.Kind,
+    socks: ?SocksProxy,
 ) WebSocketProxy {
     return .{
         .#target_host = target_host,
         .#target_is_https = target_is_https,
+        .target_port = target_port,
         .#websocket_request_buf = websocket_request_buf,
+        .kind = kind,
+        .socks = socks,
     };
+}
+
+pub fn isSocks(self: *const WebSocketProxy) bool {
+    return self.kind.isSocks();
 }
 
 /// Get the target hostname for SNI during TLS handshake
@@ -60,6 +73,10 @@ pub fn deinit(self: *WebSocketProxy) void {
     if (self.#websocket_request_buf.len > 0) {
         bun.default_allocator.free(self.#websocket_request_buf);
     }
+    if (self.socks) |*socks| {
+        socks.deinit();
+        self.socks = null;
+    }
     if (self.#tunnel) |tunnel| {
         self.#tunnel = null;
         tunnel.shutdown();
@@ -68,4 +85,5 @@ pub fn deinit(self: *WebSocketProxy) void {
 }
 
 const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");
+const SocksProxy = @import("../../http/SocksProxy.zig");
 const bun = @import("bun");

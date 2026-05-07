@@ -4,7 +4,7 @@ import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
-import { createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
+import { createConnectProxy, createSocksProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
@@ -804,5 +804,86 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("WebSocket through SOCKS5 proxy", () => {
+  let socksProxy: net.Server;
+  let socksAuthProxy: net.Server;
+  let socksPort: number;
+  let socksAuthPort: number;
+  const records: { atyp: number; host: string; port: number; username?: string; password?: string }[] = [];
+  const authRecords: { atyp: number; host: string; port: number; username?: string; password?: string }[] = [];
+
+  beforeAll(async () => {
+    socksProxy = createSocksProxy({ records });
+    socksPort = await startProxy(socksProxy);
+    socksAuthProxy = createSocksProxy({ requireAuth: true, records: authRecords });
+    socksAuthPort = await startProxy(socksAuthProxy);
+  });
+
+  afterAll(() => {
+    socksProxy?.close();
+    socksAuthProxy?.close();
+  });
+
+  test("ws:// through socks5h proxy", async () => {
+    records.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via socks");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via socks");
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: wsPort });
+  });
+
+  test("wss:// through socks5h proxy", async () => {
+    records.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via secure socks");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via secure socks");
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: wssPort });
+  });
+
+  test("ws:// through socks5 proxy with username/password", async () => {
+    authRecords.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `socks5://proxy_user:proxy_pa%73s@127.0.0.1:${socksAuthPort}`,
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via socks auth");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via socks auth");
+    expect(authRecords[0]).toMatchObject({ username: "proxy_user", password: "proxy_pass" });
   });
 });

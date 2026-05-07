@@ -112,6 +112,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Proxy parameters
             proxy_host: ?*const bun.String,
             proxy_port: u16,
+            proxy_kind: u8,
+            proxy_username: ?*const bun.String,
+            proxy_password: ?*const bun.String,
             proxy_authorization: ?*const bun.String,
             proxy_header_names: ?[*]const bun.String,
             proxy_header_values: ?[*]const bun.String,
@@ -194,6 +197,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var proxy_state: ?WebSocketProxy = null;
             var connect_request: []u8 = &[_]u8{};
             if (using_proxy) {
+                const kind = SocksProxy.Kind.fromInt(proxy_kind);
                 // Parse proxy authorization (temporary, freed after building CONNECT request)
                 var proxy_auth_slice: ?[]const u8 = null;
                 var proxy_auth_decoded: ?jsc.ZigString.Slice = null;
@@ -204,27 +208,49 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     proxy_auth_slice = proxy_auth_decoded.?.slice();
                 }
 
-                // Parse proxy headers (temporary, freed after building CONNECT request)
-                var proxy_hdrs: ?Headers = null;
-                defer if (proxy_hdrs) |*hdrs| hdrs.deinit();
+                var socks: ?SocksProxy = null;
+                if (kind.isSocks()) {
+                    var username_slice: ?jsc.ZigString.Slice = null;
+                    defer if (username_slice) |s| s.deinit();
+                    if (proxy_username) |username| username_slice = username.toUTF8(allocator);
 
-                // Headers8Bit.init / toHeaders only return Allocator.Error;
-                // OOM should crash, not silently become a connection failure.
-                const proxy_extra_headers = Headers8Bit.init(allocator, proxy_header_names, proxy_header_values, proxy_header_count) catch |err| bun.handleOom(err);
-                defer proxy_extra_headers.deinit();
+                    var password_slice: ?jsc.ZigString.Slice = null;
+                    defer if (password_slice) |s| s.deinit();
+                    if (proxy_password) |password| password_slice = password.toUTF8(allocator);
 
-                if (proxy_header_count > 0) {
-                    proxy_hdrs = proxy_extra_headers.toHeaders(allocator) catch |err| bun.handleOom(err);
+                    socks = SocksProxy.initWithCredentials(
+                        allocator,
+                        kind,
+                        if (username_slice) |s| s.slice() else "",
+                        if (password_slice) |s| s.slice() else "",
+                    ) catch return null;
+                    socks.?.begin() catch |err| bun.handleOom(err);
+                    connect_request = allocator.dupe(u8, socks.?.write_buffer.slice()) catch |err| bun.handleOom(err);
+                    socks.?.write_buffer.cursor = socks.?.write_buffer.list.items.len;
+                    socks.?.write_buffer.reset();
+                } else {
+                    // Parse proxy headers (temporary, freed after building CONNECT request)
+                    var proxy_hdrs: ?Headers = null;
+                    defer if (proxy_hdrs) |*hdrs| hdrs.deinit();
+
+                    // Headers8Bit.init / toHeaders only return Allocator.Error;
+                    // OOM should crash, not silently become a connection failure.
+                    const proxy_extra_headers = Headers8Bit.init(allocator, proxy_header_names, proxy_header_values, proxy_header_count) catch |err| bun.handleOom(err);
+                    defer proxy_extra_headers.deinit();
+
+                    if (proxy_header_count > 0) {
+                        proxy_hdrs = proxy_extra_headers.toHeaders(allocator) catch |err| bun.handleOom(err);
+                    }
+
+                    // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this).
+                    // buildConnectRequest only returns Allocator.Error; crash on OOM.
+                    connect_request = buildConnectRequest(
+                        host_slice.slice(),
+                        port,
+                        proxy_auth_slice,
+                        proxy_hdrs,
+                    ) catch |err| bun.handleOom(err);
                 }
-
-                // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this).
-                // buildConnectRequest only returns Allocator.Error; crash on OOM.
-                connect_request = buildConnectRequest(
-                    host_slice.slice(),
-                    port,
-                    proxy_auth_slice,
-                    proxy_hdrs,
-                ) catch |err| bun.handleOom(err);
 
                 // Duplicate target_host (needed for SNI during TLS handshake).
                 // allocator.dupe only returns Allocator.Error; crash on OOM.
@@ -235,7 +261,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     // Use target_is_secure from C++, not ssl template parameter
                     // (ssl may be true for HTTPS proxy even with ws:// target)
                     target_is_secure,
+                    port,
                     body,
+                    kind,
+                    socks,
                 );
             }
 
@@ -578,6 +607,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // Handle proxy handshake response
             if (this.state == .proxy_handshake) {
+                if (this.proxy) |*p| {
+                    if (p.isSocks()) {
+                        this.handleSocksProxyResponse(socket, data);
+                        return;
+                    }
+                }
                 this.handleProxyResponse(socket, data);
                 return;
             }
@@ -715,6 +750,45 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (remain_buf.len > 0) {
                 this.handleData(socket, remain_buf);
             }
+        }
+
+        fn handleSocksProxyResponse(this: *HTTPClient, socket: Socket, data: []const u8) void {
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            const socks = if (p.socks) |*s| s else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+
+            const result = socks.receive(data, p.getTargetHost(), p.target_port) catch |err| {
+                this.terminate(socksErrorCode(err));
+                return;
+            };
+            socks.flush(socket) catch {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            };
+            if (result != .connected) return;
+
+            this.body.clearRetainingCapacity();
+            if (p.isTargetHttps()) {
+                this.startProxyTLSHandshake(socket, socks.read_buffer.slice());
+                return;
+            }
+
+            this.state = .reading;
+            if (this.input_body_buf.len > 0) {
+                bun.default_allocator.free(this.input_body_buf);
+            }
+            this.input_body_buf = p.takeWebsocketRequestBuf();
+            const wrote = socket.write(this.input_body_buf);
+            if (wrote < 0) {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            }
+            this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
         }
 
         /// Start TLS handshake inside the proxy tunnel for wss:// connections
@@ -1532,6 +1606,14 @@ pub fn freeSSLConfig(config: *SSLConfig) callconv(.c) void {
     bun.default_allocator.destroy(config);
 }
 
+fn socksErrorCode(err: anyerror) ErrorCode {
+    return switch (err) {
+        error.SocksAuthenticationFailed, error.SocksNoAcceptableAuthMethod => .proxy_authentication_required,
+        error.SocksConnectionRefused => .proxy_connection_refused,
+        else => .proxy_connect_failed,
+    };
+}
+
 comptime {
     @export(&parseSSLConfig, .{ .name = "Bun__WebSocket__parseSSLConfig" });
     @export(&freeSSLConfig, .{ .name = "Bun__WebSocket__freeSSLConfig" });
@@ -1540,6 +1622,7 @@ comptime {
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const WebSocketProxy = @import("./WebSocketProxy.zig");
 const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");
+const SocksProxy = @import("../../http/SocksProxy.zig");
 const std = @import("std");
 const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
 

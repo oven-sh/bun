@@ -59,49 +59,6 @@ pub struct SecureContext {
     pub extra_memory: usize,
 }
 
-// `#[bun_jsc::host_fn]` (Free, no receiver) emits a shim that calls the wrapped
-// fn by bare name, so these must live at module scope — not inside `impl`.
-
-/// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
-/// digest so identical configs return the same `JSSecureContext` cell while
-/// it's alive; falls through to `create()` (which itself hits the native
-/// `SSLContextCache`) on miss. Returning the same cell is what makes
-/// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
-/// pointer-compare without a JS-side WeakRef map.
-#[bun_jsc::host_fn]
-pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
-
-    // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-    let vm = unsafe { &mut *global.bun_vm() };
-    let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
-    // `defer config.deinit()` — handled by Drop.
-
-    let ctx_opts = config.as_usockets();
-    let d = ctx_opts.digest();
-    let key = u64::from_le_bytes(d[0..8].try_into().unwrap());
-
-    // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
-    let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };
-    if !cached.is_empty() {
-        if let Some(existing) = SecureContext::from_js(cached) {
-            // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
-            // cert to a connection. Full-digest compare is 32 bytes; cheap.
-            // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
-            if strings::eql_long(unsafe { &(*existing).digest }, &d, false) {
-                return Ok(cached);
-            }
-        }
-    }
-
-    let sc = SecureContext::create_with_digest(global, ctx_opts, d)?;
-    let value = (*sc).to_js(global);
-    // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
-    unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
-    Ok(value)
-}
-
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
 #[bun_jsc::host_fn]

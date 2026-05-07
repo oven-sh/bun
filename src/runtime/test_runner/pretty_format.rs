@@ -74,47 +74,6 @@ fn is_latin1_identifier_utf16(name: &[u16]) -> bool {
     true
 }
 
-/// Local extension over `ZigString` for the handful of slice ops the .zig spec
-/// uses (`indexOfAny`, `charAt`, `substring`, `substringWithLen`) that have not
-/// landed on `bun_str::ZigString` yet. Kept here to avoid touching the sibling
-/// `bun_str` crate this round.
-trait ZigStringPrettyExt {
-    fn index_of_any(&self, chars: &[u8]) -> Option<usize>;
-    fn char_at(&self, i: usize) -> u8;
-    fn substring(&self, start: usize) -> ZigString;
-    fn substring_with_len(&self, start: usize, len: usize) -> ZigString;
-}
-impl ZigStringPrettyExt for ZigString {
-    fn index_of_any(&self, chars: &[u8]) -> Option<usize> {
-        if self.is_16bit() {
-            self.utf16_slice()
-                .iter()
-                .position(|&c| c < 256 && chars.contains(&(c as u8)))
-        } else {
-            self.slice().iter().position(|c| chars.contains(c))
-        }
-    }
-    #[inline]
-    fn char_at(&self, i: usize) -> u8 {
-        if self.is_16bit() { self.utf16_slice()[i] as u8 } else { self.slice()[i] }
-    }
-    #[inline]
-    fn substring(&self, start: usize) -> ZigString {
-        self.substring_with_len(start, self.len.saturating_sub(start))
-    }
-    fn substring_with_len(&self, start: usize, len: usize) -> ZigString {
-        if self.is_16bit() {
-            ZigString::from16_slice(&self.utf16_slice()[start..start + len])
-        } else {
-            let mut z = ZigString::init(&self.slice()[start..start + len]);
-            if self.is_utf8() {
-                z.mark_utf8();
-            }
-            z
-        }
-    }
-}
-
 /// Port of Zig `@tagName(array_buffer.typed_array_type)` — `JSType` has no
 /// `Into<&'static str>` upstream, so map the typed-array variants locally
 /// (mirrors `ConsoleObject.rs::typed_array_type_name`).

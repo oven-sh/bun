@@ -8,7 +8,7 @@ use bun_jsc::{
 use bun_str::String as BunString;
 
 use super::interpreter::ShellArgs;
-use super::shell_body::shell_cmd_from_js;
+use super::shell_body::{shell_cmd_from_js, JsStrings};
 use super::{EnvMap, EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
@@ -233,20 +233,9 @@ fn create_parsed_shell_script_impl(
     let mut template_args = template_args_js.array_iterator(global)?;
 
     // PERF(port): was std.heap.stackFallback(@sizeOf(bun.String) * 4, arena) — profile in Phase B
-    let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-    // Zig: `defer { for jsstrings |s| s.deref(); jsstrings.deinit() }`. `bun.String` is
-    // `Copy` (no `Drop`) so the per-element `deref` is explicit; the guard's pointer
-    // capture sidesteps the `&mut` borrow `shell_cmd_from_js` takes below.
-    let _jsstrings_guard = scopeguard::guard((), {
-        let p = &mut jsstrings as *mut Vec<BunString>;
-        move |()| {
-            // SAFETY: `jsstrings` is a stack local that outlives this guard
-            // (guard drops first); no other borrow is live at scope exit.
-            for s in unsafe { (*p).iter() } {
-                s.deref();
-            }
-        }
-    });
+    // Zig: `defer { for jsstrings |s| s.deref(); jsstrings.deinit() }` — handled by
+    // `JsStrings`'s `Drop` (per-element `bun.String::deref()` then Vec free).
+    let mut jsstrings = JsStrings::with_capacity(4);
 
     // PORT NOTE: in Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
     // Shell is an AST crate (arena-backed); Phase A uses global Vec to sidestep the
@@ -292,9 +281,7 @@ fn create_parsed_shell_script_impl(
                 }
 
                 if let Some(p) = out_parser.as_mut() {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(!p.errors.is_empty());
-                    }
+                    debug_assert!(!p.errors.is_empty());
                     let errstr = p.combine_errors();
                     return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
                 }

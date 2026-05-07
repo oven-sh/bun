@@ -218,17 +218,31 @@ impl FSWatchTaskPosix {
     }
 }
 
-impl Drop for FSWatchTaskPosix {
-    fn drop(&mut self) {
-        self.clean_entries();
+impl FSWatchTaskPosix {
+    /// `FSWatchTaskPosix.deinit` (node_fs_watcher.zig:61). **Not** `impl Drop`:
+    /// this is only ever called on heap clones produced by `enqueue()` (via the
+    /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
+    /// the assert below enforces that. A `Drop` impl would also fire on
+    /// `*self = Self{..}` in `append()` and on `Box::from_raw` in `finalize`,
+    /// where `self` *is* `current_task`, which would always trip the assert.
+    ///
+    /// # Safety
+    /// `this` must be the unique `Box::into_raw` pointer produced by
+    /// `enqueue()`; called from the JS-thread task dispatcher only.
+    pub unsafe fn deinit(this: *mut Self) {
+        // SAFETY: caller contract — `this` is the live heap clone.
+        let this_ref = unsafe { &mut *this };
+        this_ref.clean_entries();
         #[cfg(debug_assertions)]
         {
             // SAFETY: ctx is valid for the lifetime of any task (BACKREF).
             debug_assert!(!core::ptr::eq(
-                unsafe { core::ptr::addr_of!((*self.ctx).current_task) },
-                self as *const _ as *const FSWatchTask
+                unsafe { core::ptr::addr_of!((*this_ref.ctx).current_task) },
+                this as *const FSWatchTask
             ));
         }
+        // SAFETY: paired with `Box::into_raw` in `enqueue()`.
+        drop(unsafe { Box::from_raw(this) });
     }
 }
 
@@ -386,6 +400,20 @@ impl FSWatchTaskWindows {
     #[cfg(not(windows))]
     fn run_path<const EVENT_TYPE: EventType>(_ctx: &mut FSWatcher, _path: &mut EventPathString) {
         unreachable!("FSWatchTaskWindows::run is windows-only")
+    }
+
+    /// `FSWatchTaskWindows.deinit` (node_fs_watcher.zig:259). Explicit, not
+    /// `impl Drop`, to mirror `FSWatchTaskPosix::deinit` so the dispatcher can
+    /// call `FSWatchTask::deinit` uniformly.
+    ///
+    /// # Safety
+    /// `this` must be the unique `Box::into_raw` pointer produced by
+    /// `append_abort()` / `on_path_update_windows()`.
+    pub unsafe fn deinit(this: *mut Self) {
+        // `Event` (and `StringOrBytesToDecode`) free their payloads via Drop,
+        // so dropping the Box is `event.deinit() + bun.destroy(this)`.
+        // SAFETY: paired with `Box::into_raw` at the enqueue site.
+        drop(unsafe { Box::from_raw(this) });
     }
 }
 
@@ -946,16 +974,30 @@ impl FSWatcher {
         ctx_ref.current_task.ctx = ctx;
 
         ctx_ref.path_watcher = if args.signal.map_or(true, |s| !s.aborted()) {
-            // SAFETY: `vm` is the live per-thread VirtualMachine returned by
-            // `bun_vm()`.
-            match path_watcher::watch(
+            // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
+            // and both backends `@compileError` if they aren't exactly
+            // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
+            // those parameters (only one valid value each), so the call is
+            // cfg-split by arity.
+            #[cfg(windows)]
+            // SAFETY: `vm` is the live per-thread VirtualMachine returned by `bun_vm()`.
+            let r = path_watcher::watch(
+                unsafe { &*vm },
+                file_path,
+                args.recursive,
+                ctx as *mut c_void,
+            );
+            #[cfg(not(windows))]
+            // SAFETY: `vm` is the live per-thread VirtualMachine returned by `bun_vm()`.
+            let r = path_watcher::watch(
                 unsafe { &*vm },
                 file_path,
                 args.recursive,
                 FSWatcher::ON_PATH_UPDATE,
                 FSWatcher::on_update_end,
                 ctx as *mut c_void,
-            ) {
+            );
+            match r {
                 Ok(r) => Some(r),
                 Err(err) => {
                     // SAFETY: ctx is the only owner; finalize frees the Box.

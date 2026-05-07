@@ -288,6 +288,7 @@ impl ReadFile {
         Ok(read_file)
     }
 
+    #[cfg(not(windows))]
     pub fn create<C: 'static>(
         store: StoreRef,
         off: SizeType,
@@ -295,11 +296,6 @@ impl ReadFile {
         context: *mut C,
         callback: fn(ctx: *mut C, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>,
     ) -> Result<Box<ReadFile>, Error> {
-        #[cfg(windows)]
-        {
-            compile_error!("dont call this function on windows");
-        }
-
         // Zig used a local `Handler` struct to erase the type and swallow the
         // JSTerminated error. We do the same with a monomorphized shim.
         // TODO(port): properly propagate exception upwards (matches Zig TODO).
@@ -406,26 +402,23 @@ impl ReadFile {
         }
     }
 
-    fn remaining_buffer<'b>(&'b self, stack_buffer: &'b mut [u8]) -> &'b mut [u8] {
-        // PORT NOTE: reshaped for borrowck — Zig indexed raw ptr range
-        // `items.ptr[items.len..capacity]`; Rust uses spare_capacity_mut().
-        // SAFETY: we treat uninit spare capacity as &mut [u8]; bytes are POD
-        // and we never read them before writing via read(2).
+    /// Returns a raw fat pointer into either `stack_buffer` or `self.buffer`'s
+    /// spare capacity. Raw (not `&mut [u8]`) so the caller in `do_read_loop`
+    /// can hold it across the `&mut self` `do_read` call without borrowck
+    /// conflicts; the caller materializes `&mut *ptr` only at the read site.
+    // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
+    fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> *mut [u8] {
         let spare_len = self.buffer.capacity() - self.buffer.len();
-        let remaining: &mut [u8] = if spare_len < stack_buffer.len() {
-            stack_buffer
+        let (ptr, len) = if spare_len < stack_buffer.len() {
+            (stack_buffer.as_mut_ptr(), stack_buffer.len())
         } else {
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    (self.buffer.as_ptr() as *mut u8).add(self.buffer.len()),
-                    spare_len,
-                )
-            }
+            let cur = self.buffer.len();
+            // SAFETY: `as_mut_ptr()+cur` addresses spare capacity within the
+            // allocation; bytes are POD and never read before write via read(2).
+            (unsafe { self.buffer.as_mut_ptr().add(cur) }, spare_len)
         };
-        let cap = remaining
-            .len()
-            .min((self.max_length.saturating_sub(self.read_off)) as usize);
-        &mut remaining[..cap]
+        let cap = len.min((self.max_length.saturating_sub(self.read_off)) as usize);
+        core::ptr::slice_from_raw_parts_mut(ptr, cap)
     }
 
     pub fn do_read(&mut self, buffer: &mut [u8], read_len: &mut usize, retry: &mut bool) -> bool {
@@ -737,8 +730,9 @@ impl ReadFile {
             // PORT NOTE: reshaped for borrowck — capture stack_buffer ptr to
             // compare against `read.ptr` after the &mut self call.
             let stack_ptr = stack_buffer.as_ptr();
-            let buffer: *mut [u8] = self.remaining_buffer(stack_buffer);
-            // SAFETY: buffer points either at stack_buffer or at self.buffer's spare capacity;
+            let buffer = self.remaining_buffer(stack_buffer);
+            // SAFETY: `buffer` points either at `stack_buffer` or at `self.buffer`'s
+            // spare capacity (derived from `as_mut_ptr()` so writes are permitted);
             // both outlive this loop iteration and are not aliased until set_len/extend below.
             let buffer: &mut [u8] = unsafe { &mut *buffer };
 
@@ -1105,16 +1099,15 @@ impl<'a> ReadFileUV<'a> {
         this.queue_read();
     }
 
-    fn remaining_buffer(&self) -> &mut [u8] {
-        // SAFETY: spare capacity bytes are POD; libuv writes into them.
-        let spare_len = self.buffer.capacity() - self.buffer.len();
-        let ptr = unsafe { (self.buffer.as_ptr() as *mut u8).add(self.buffer.len()) };
-        let remaining = unsafe { core::slice::from_raw_parts_mut(ptr, spare_len) };
-        let cap = remaining
-            .len()
-            .min((self.max_length.saturating_sub(self.read_off)) as usize);
-        // SAFETY: subslice of spare capacity.
-        unsafe { core::slice::from_raw_parts_mut(ptr, cap) }
+    fn remaining_buffer(&mut self) -> &mut [u8] {
+        let cur = self.buffer.len();
+        let spare_len = self.buffer.capacity() - cur;
+        let cap = spare_len.min((self.max_length.saturating_sub(self.read_off)) as usize);
+        // SAFETY: `as_mut_ptr()+cur..+cur+cap` addresses spare capacity within
+        // the allocation; bytes are POD and libuv writes into them before any
+        // read. `as_mut_ptr()` (from `&mut self`) yields write-permitted
+        // provenance, unlike the prior `&self → as_ptr() as *mut` UB pattern.
+        unsafe { core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr().add(cur), cap) }
     }
 
     pub fn queue_read(&mut self) {

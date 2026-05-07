@@ -209,7 +209,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            if let Some(slash) = bun_core::index_of_any_t(pathname, sep_chars()) {
+            if let Some(slash) = bun_core::strings::index_of_any_t(pathname, sep_chars()) {
                 let stripped = &pathname[slash + 1..];
                 if stripped.is_empty() {
                     continue;
@@ -225,7 +225,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                if bun_core::index_of_any_t(stripped, sep_chars()).is_none() {
+                if bun_core::strings::index_of_any_t(stripped, sep_chars()).is_none() {
                     // check for package.json, readme.md, ...
                     let filename = &pathname[slash + 1..];
 

@@ -1211,15 +1211,7 @@ pub mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         // PERF(port): was stack-fallback (4 BunString) — profile in Phase B
-        let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        let _jsstrings_guard = scopeguard::guard(&mut jsstrings as *mut _, |p| {
-            // SAFETY: pointer valid for scope
-            let v: &mut Vec<BunString> = unsafe { &mut *p };
-            for bunstr in v.iter() {
-                bunstr.deref();
-            }
-        });
-        // TODO(port): scopeguard captures &mut over the same Vec used below — borrowck conflict.
+        let mut jsstrings = JsStrings::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
 
@@ -1304,8 +1296,7 @@ pub mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         // PERF(port): was stack-fallback
-        let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // TODO(port): defer-loop dereffing jsstrings (same scopeguard issue as above)
+        let mut jsstrings = JsStrings::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
         let mut script: Vec<u8> = Vec::new();

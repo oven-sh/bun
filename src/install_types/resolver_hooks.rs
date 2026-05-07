@@ -448,6 +448,38 @@ impl Clone for Dependency {
     }
 }
 
+impl Dependency {
+    /// Sorting order for dependencies is:
+    /// 1. [`peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies`]
+    /// 2. name ASC
+    /// "name" must be ASC so that later, when we rebuild the lockfile, we
+    /// insert it back in reverse order without an extra sorting pass.
+    ///
+    /// MOVE_DOWN of `install/dependency.zig` `isLessThan` so the lockfile
+    /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
+    /// `bun_install` edge or an extension trait.
+    pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
+        let behavior = lhs.behavior.cmp(rhs.behavior);
+        if behavior != Ordering::Equal {
+            return behavior == Ordering::Less;
+        }
+        let lhs_name = lhs.name.slice(string_buf);
+        let rhs_name = rhs.name.slice(string_buf);
+        bun_string::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+    }
+
+    /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
+    /// accepts a strict-weak `lessThan`; Rust's sort requires a full
+    /// `Ordering`). Same key as [`is_less_than`](Self::is_less_than).
+    pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
+        let behavior = lhs.behavior.cmp(rhs.behavior);
+        if behavior != Ordering::Equal {
+            return behavior;
+        }
+        lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
+    }
+}
+
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────
 // MOVE_DOWN from `bun_install::npm` (port of `install/npm.zig`) so both
 // `bun_resolver` (package.json `os`/`cpu` arrays) and `bun_install` (manifest

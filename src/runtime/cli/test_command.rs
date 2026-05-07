@@ -980,12 +980,11 @@ impl CommandLineReporter {
     ) {
         // PERF(port): was comptime monomorphization on `status` — profile in Phase B
         let Some(cmd_reporter) = buntest.reporter else { return; };
-        // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
-        // shared borrow is treated as a raw pointer here (single-threaded test
-        // runner, exclusive access for the duration of the callback).
-        #[allow(invalid_reference_casting)]
-        let cmd_reporter: &mut CommandLineReporter =
-            unsafe { &mut *(core::ptr::from_ref(cmd_reporter) as *mut CommandLineReporter) };
+        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+        // provenance from `enter_file`'s `&mut`; single-threaded test runner,
+        // exclusive access for the duration of this callback (mirrors Zig
+        // `?*CommandLineReporter`).
+        let cmd_reporter: &mut CommandLineReporter = unsafe { &mut *cmd_reporter.as_ptr() };
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
 
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();

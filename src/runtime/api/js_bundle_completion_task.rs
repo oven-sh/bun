@@ -825,10 +825,10 @@ impl CompletionStruct for JSBundleCompletionTask {
     /// (everything after `transpiler.* = try Transpiler.init(...)`).
     /// `Transpiler::init` itself is called by `create_and_configure_transpiler`
     /// (Rust cannot zero-init `Transpiler<'a>` and write it in place).
-    fn configure_bundler(
+    fn configure_bundler<'a>(
         &mut self,
-        transpiler: &mut Transpiler<'_>,
-        bump: &Arena,
+        transpiler: &mut Transpiler<'a>,
+        bump: &'a Arena,
     ) -> Result<(), bun_core::Error> {
         let config = &mut self.config;
 

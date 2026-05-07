@@ -271,9 +271,14 @@ impl PathWatcher {
     /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
     /// slot, so no further callbacks will fire and `destroy()` is safe.
     pub fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
-        // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`.
-        let w = unsafe { &mut *this };
-        let Some(manager) = w.manager else {
+        // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
+        // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
+        // we hold `manager.mutex` — on macOS the CF thread may concurrently raw-read
+        // the same field inside `on_fs_event` (see that fn's SAFETY note).
+        let Some(manager) = (unsafe { (*this).manager }) else {
+            // No manager → never registered (or already unlinked); we are sole owner.
+            // SAFETY: sole owner; no other thread can reach `this`.
+            let w = unsafe { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() == 0 {
                 // SAFETY: `this` was created via PathWatcher::new (Box::into_raw).
@@ -283,25 +288,36 @@ impl PathWatcher {
         };
 
         manager.mutex.lock();
-        w.handlers.swap_remove(&ctx);
-        if w.handlers.len() > 0 {
-            manager.mutex.unlock();
-            return;
-        }
-
-        // Last handler gone — make this watcher unreachable before dropping the lock.
-        manager.unlink_watcher_locked(this);
-        w.manager = None;
-        #[cfg(not(target_os = "macos"))]
+        // SAFETY: holding manager.mutex; the reader/CF threads only form their own
+        // `&mut PathWatcher` while holding this lock, so ours is exclusive. Scope
+        // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
+        // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
         {
-            Platform::remove_watch(manager, w);
+            let w = unsafe { &mut *this };
+            w.handlers.swap_remove(&ctx);
+            if w.handlers.len() > 0 {
+                manager.mutex.unlock();
+                return;
+            }
+
+            // Last handler gone — make this watcher unreachable before dropping the lock.
+            manager.unlink_watcher_locked(this);
+            w.manager = None;
+            #[cfg(not(target_os = "macos"))]
+            {
+                Platform::remove_watch(manager, w);
+            }
         }
         manager.mutex.unlock();
 
         #[cfg(target_os = "macos")]
         {
             // Takes fsevents_loop.mutex; must not hold manager.mutex (see doc comment).
-            Platform::remove_watch(manager, w);
+            // Pass the raw pointer: the CF thread (holding the FSEvents loop mutex
+            // that `deinit` is about to block on) may concurrently take
+            // `manager.mutex`, raw-read `(*this).manager`, observe `None`, and bail
+            // — so no `&mut PathWatcher` may be live across that call.
+            Platform::remove_watch(manager, this);
         }
         // SAFETY: `this` was created via PathWatcher::new (Box::into_raw); no other thread
         // can reach it after unlink + remove_watch above.
@@ -332,8 +348,10 @@ pub fn watch(
     // The callback/updateEnd are comptime so the emit path can call them directly
     // without an indirect-call-per-event; assert they're what node_fs_watcher passes.
     // PERF(port): was comptime monomorphization — Zig asserted at compile time.
-    debug_assert!(callback as usize == on_path_update_fn as usize);
-    debug_assert!(update_end as usize == on_update_end_fn as usize);
+    // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
+    // which would be distinct fn items with distinct addresses).
+    debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
+    debug_assert!(update_end as usize == FSWatcher::on_update_end as usize);
     let _ = vm;
 
     let manager = PathWatcherManager::get()?;
@@ -1385,18 +1403,6 @@ impl WindowsStub {
         Err(sys::Error::from_code(E::ENOTSUP, Tag::watch))
     }
     fn remove_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) {}
-}
-
-// ────────────────────────────────────────────────────────────────────────────────
-
-// Re-exports of the FSWatcher callback fns called directly from emit paths.
-#[inline]
-fn on_path_update_fn(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-    (FSWatcher::ON_PATH_UPDATE)(ctx, event, is_file)
-}
-#[inline]
-fn on_update_end_fn(ctx: Option<*mut c_void>) {
-    FSWatcher::on_update_end(ctx)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

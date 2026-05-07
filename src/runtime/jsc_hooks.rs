@@ -3161,20 +3161,85 @@ unsafe fn fetch_builtin_module(
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
-    // Spec ModuleLoader.zig:1187-1221. `vm.standalone_module_graph` is
-    // `Option<NonNull<c_void>>` until `bun_bundler::StandaloneModuleGraph`
-    // un-gates; the per-file fields (`loader`, `bytecode`, `module_info`,
-    // `module_format`, `toWTFString`) are all on that gated type.
-    
-    // TODO(b2-cycle): `StandaloneModuleGraph` + `ResolvedSource` field ctor.
-    {
-        // SAFETY: per fn contract.
-        if let Some(graph) = unsafe { (*jsc_vm).standalone_module_graph } {
-            let graph = graph.as_ptr().cast::<bun_standalone_graph::Graph>();
-            if let Some(file) = unsafe { (*graph).files.get(spec) } {
-                let _ = file;
-                // … sqlite synthetic-import wrapper / bytecode-cache fields …
+    // Spec ModuleLoader.zig:1189-1228. The VM field is the resolver's
+    // read-only `&dyn StandaloneModuleGraph`; for `File::to_wtf_string`
+    // (mutates the lazy `wtf_string` cache) we need write provenance, so
+    // reach the concrete `Graph` via its `UnsafeCell` singleton accessor —
+    // same path as `load_standalone_sourcemap` / `node_fs`.
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if unsafe { (*jsc_vm).standalone_module_graph.is_some() } {
+        let graph = bun_standalone_graph::Graph::get()
+            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
+        // Spec uses `graph.files.getPtr(spec)` (no virtual-root prefix
+        // check). SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
+        // process-lifetime singleton; this hook runs on the JS thread and
+        // the only mutation below (`to_wtf_string`) is the per-`File`
+        // idempotent `wtf_string` cache.
+        if let Some(file) = unsafe { (*graph).files.get_mut(spec) } {
+            use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
+
+            if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
+                const SQLITE_MODULE_SOURCE: &[u8] = b"\
+/* Generated code */
+import {Database} from 'bun:sqlite';
+import {readFileSync} from 'node:fs';
+export const db = new Database(readFileSync(import.meta.path));
+
+export const __esModule = true;
+export default db;
+";
+                // SAFETY: per fn contract — `out` is a valid out-param.
+                unsafe {
+                    *out = ErrorableResolvedSource::ok(ResolvedSource {
+                        allocator: core::ptr::null_mut(),
+                        source_code: bun_string::String::static_(SQLITE_MODULE_SOURCE),
+                        specifier: *specifier,
+                        source_url: specifier.dupe_ref(),
+                        source_code_needs_deref: false,
+                        ..ResolvedSource::default()
+                    });
+                }
+                return FetchBuiltinResult::Found;
             }
+
+            let bytecode_len = file.bytecode.len();
+            let module_info_len = file.module_info.len();
+            // SAFETY: per fn contract — `out` is a valid out-param.
+            // `file.module_info` is a live subrange of the embedded section
+            // (set in `Graph::from_bytes`); `create_from_cached_record`
+            // copies out of it before returning.
+            unsafe {
+                *out = ErrorableResolvedSource::ok(ResolvedSource {
+                    allocator: core::ptr::null_mut(),
+                    source_code: file.to_wtf_string(),
+                    specifier: *specifier,
+                    source_url: specifier.dupe_ref(),
+                    bytecode_origin_path: if !file.bytecode_origin_path.is_empty() {
+                        bun_string::String::from_bytes(file.bytecode_origin_path)
+                    } else {
+                        bun_string::String::empty()
+                    },
+                    source_code_needs_deref: false,
+                    bytecode_cache: if bytecode_len > 0 {
+                        file.bytecode.cast::<u8>()
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                    bytecode_cache_size: bytecode_len,
+                    module_info: if module_info_len > 0 {
+                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                            ::create_from_cached_record(&*file.module_info)
+                            .map(Box::into_raw)
+                            .unwrap_or(core::ptr::null_mut())
+                            .cast::<c_void>()
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                    is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+                    ..ResolvedSource::default()
+                });
+            }
+            return FetchBuiltinResult::Found;
         }
     }
 

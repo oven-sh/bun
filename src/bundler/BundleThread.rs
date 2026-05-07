@@ -88,11 +88,14 @@ pub struct BundleThread<C: Node> {
 /// Rust those become trait accessors so the generic `BundleThread<C>` stays
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
-    /// Zig: `completion.configureBundler(transpiler, allocator)`
-    fn configure_bundler(
+    /// Zig: `completion.configureBundler(transpiler, allocator)` — `allocator`
+    /// is the per-build mimalloc heap that backs `transpiler`, so the two
+    /// share lifetime `'a` (option fields like `optimize_imports: &'a StringSet`
+    /// borrow from `bump`).
+    fn configure_bundler<'a>(
         &mut self,
-        transpiler: &mut Transpiler<'_>,
-        bump: &Arena,
+        transpiler: &mut Transpiler<'a>,
+        bump: &'a Arena,
     ) -> Result<(), bun_core::Error>;
     /// Zig: `completion.completeOnBundleThread()`
     fn complete_on_bundle_thread(&mut self);

@@ -911,23 +911,11 @@ impl FSWatcher {
         }
 
         if let Some(watcher) = self.path_watcher.take() {
-            // SAFETY: `watcher` is the live `*mut PathWatcher` returned by
-            // `path_watcher::watch`; `detach` removes our handler and
-            // self-destroys on the last one.
-            //
-            // PORT NOTE: cfg-split because the posix backend's `detach` takes a
-            // raw `*mut PathWatcher` (it self-destroys via `Box::from_raw`),
-            // while the Windows backend takes `&mut self`. Same Zig signature
-            // (`*PathWatcher`), different Rust receiver to keep the posix
-            // free-after-last-handler path sound.
-            #[cfg(not(windows))]
-            unsafe {
-                path_watcher::PathWatcher::detach(watcher, self as *mut Self as *mut c_void)
-            };
-            #[cfg(windows)]
-            unsafe {
-                (*watcher).detach(self as *mut Self as *mut c_void)
-            };
+            // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
+            // (it self-destroys via `Box::from_raw` on the last handler, so it cannot
+            // soundly take `&mut self`). `watcher` is the live pointer returned by
+            // `path_watcher::watch`.
+            path_watcher::PathWatcher::detach(watcher, self as *mut Self as *mut c_void);
         }
 
         if self.persistent {

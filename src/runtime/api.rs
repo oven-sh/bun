@@ -153,6 +153,8 @@ pub mod archive;
 pub mod filesystem_router;
 #[path = "api/html_rewriter.rs"]
 pub mod html_rewriter;
+#[path = "api/lolhtml_jsc.rs"]
+pub mod lolhtml_jsc;
 #[path = "api/JSTranspiler.rs"]
 pub mod js_transpiler;
 #[path = "api/JSBundler.rs"]

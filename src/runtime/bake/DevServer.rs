@@ -5138,9 +5138,26 @@ impl DevServer {
         self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::BINARY);
     }
 
+    /// Recover the per-VM `timer::All` heap. Zig spelt this `dev.vm.timer`;
+    /// `bun_jsc::VirtualMachine.timer` is a `()` cycle-break placeholder (T4
+    /// `bun_jsc` cannot name T6 `bun_runtime::timer::All`), so the real heap is
+    /// stored on the high-tier `RuntimeState` instead. This is the same path
+    /// every other intrusive-timer user in this crate takes
+    /// (`EventLoopDelayMonitor`, `DateHeaderTimer`). Single VM ⇒ single timer
+    /// heap, so no per-`DevServer` lookup is needed.
+    #[inline]
+    fn timer_heap(&self) -> &mut crate::timer::All {
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+        // `timer` is an embedded `timer::All` at a stable address. JS-thread
+        // exclusive access — same contract as Zig `dev.vm.timer`.
+        unsafe { &mut *core::ptr::addr_of_mut!((*state).timer) }
+    }
+
     pub fn emit_memory_visualizer_message_timer(timer: &mut EventLoopTimer, _: &bun_core::Timespec) {
-        #[cfg(not(feature = "bake_debugging_features"))]
-        return;
+        if !cfg!(feature = "bake_debugging_features") {
+            return;
+        }
         // SAFETY: timer is the .memory_visualizer_timer field of DevServer
         let dev: &mut DevServer = unsafe {
             &mut *((timer as *mut _ as *mut u8)
@@ -5150,22 +5167,13 @@ impl DevServer {
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
         timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
-        // LAYERING: `VirtualMachine.timer` is a `()` cycle-break placeholder
-        // (T4 `bun_jsc` cannot name T6 `bun_runtime::timer::All`). Recover the
-        // real heap via `RuntimeState`, same as the other intrusive-timer
-        // callers in this crate (see `timer::EventLoopDelayMonitor`).
-        let timer_all = {
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-            // `timer` is an embedded `timer::All` at a stable address.
-            unsafe { &mut *core::ptr::addr_of_mut!((*state).timer) }
-        };
-        timer_all.insert(timer);
+        dev.timer_heap().insert(timer);
     }
 
     pub fn emit_memory_visualizer_message_if_needed(&mut self) {
-        #[cfg(not(feature = "bake_debugging_features"))]
-        return;
+        if !cfg!(feature = "bake_debugging_features") {
+            return;
+        }
         if self.emit_memory_visualizer_events == 0 {
             return;
         }
@@ -5282,12 +5290,31 @@ impl DevServer {
         emit_files!(bake::Side::Client, &self.client_graph);
         emit_files!(bake::Side::Server, &self.server_graph);
 
-        // TODO(b2-blocked): `incremental_graph::IncrementalGraph` keystone has no
-        // `edges_free_list`/iterable `edges` yet (lives in `incremental_graph_body`).
-        // Emit zero-length edge sections so the wire shape stays valid.
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        let _ = (&self.client_graph, &self.server_graph);
+        // PORT NOTE: Zig used `inline for` over a `[2]bake.Side` tuple — written
+        // out as a small macro to avoid duplicating the per-side body while
+        // still monomorphizing on the const-generic graph type.
+        macro_rules! emit_edges {
+            ($g:expr) => {{
+                let g = $g;
+                let live = g.edges.len() - g.edges_free_list.len();
+                payload.extend_from_slice(&u32::try_from(live).unwrap().to_le_bytes());
+                let mut emitted = 0usize;
+                for (i, edge) in g.edges.iter().enumerate() {
+                    if g.edges_free_list
+                        .iter()
+                        .any(|free| free.get() as usize == i)
+                    {
+                        continue;
+                    }
+                    payload.extend_from_slice(&edge.dependency.get().to_le_bytes());
+                    payload.extend_from_slice(&edge.imported.get().to_le_bytes());
+                    emitted += 1;
+                }
+                debug_assert_eq!(emitted, live);
+            }};
+        }
+        emit_edges!(&self.client_graph);
+        emit_edges!(&self.server_graph);
         Ok(())
     }
 

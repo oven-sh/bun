@@ -1348,20 +1348,21 @@ mod posix_impl {
                 return statx_fallback(fd, path, flags);
             }
             if rc < 0 {
-                let errno = errno::errno();
+                let raw_errno = last_errno();
+                let errno = SystemErrno::init(raw_errno as _);
                 // Retry on EINTR.
-                if errno == E::EINTR { continue; }
+                if errno == Some(E::EINTR) { continue; }
                 // Fall back on the same errnos libuv does (deps/uv/src/unix/fs.c):
                 //   ENOSYS:     kernel < 4.11
                 //   EOPNOTSUPP: filesystem doesn't support it
                 //   EPERM:      seccomp filter rejects statx (libseccomp < 2.3.3,
                 //               docker < 18.04, various CI sandboxes)
                 //   EINVAL:     old Android builds
-                if matches!(errno, E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL) {
+                if matches!(errno, Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)) {
                     SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
                     return statx_fallback(fd, path, flags);
                 }
-                return Err(Error { errno: errno as _, syscall: Tag::statx, ..Default::default() });
+                return Err(Error { errno: raw_errno as _, syscall: Tag::statx, ..Default::default() });
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.

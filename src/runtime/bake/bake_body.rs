@@ -126,7 +126,7 @@ fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static s
 /// so the bytes are valid for the program-relevant lifetime; Phase B threads
 /// a real `'bump` parameter through `Framework`/`FileSystemRouterType`.
 #[inline(always)]
-fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
+pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
     // PORTING.md sanctions this only inside the bake `from_js` self-referential
     // pattern — do NOT generalize.

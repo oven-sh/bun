@@ -1345,10 +1345,12 @@ pub mod dispatch {
         }
     }
 
-    /// Bytecode generation hook (jsc::CachedBytecode + jsc::initialize +
-    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). Registered
-    /// by runtime at init; null = bytecode disabled.
-    pub static BYTECODE_HOOK: AtomicPtr<BytecodeVTable> = AtomicPtr::new(null_mut());
+    /// Bytecode generation vtable (jsc::CachedBytecode + jsc::initialize +
+    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). The high
+    /// tier (`bun_runtime`) provides a `&'static` instance and stores it on
+    /// `LinkerOptions.bytecode` when constructing the bundle; `None` =
+    /// bytecode disabled (mirrors Zig's comptime `bun.jsc` link check).
+    /// PERF(port): was inline switch.
     pub struct BytecodeVTable {
         pub set_bundler_thread: unsafe fn(bool),
         pub initialize_jsc: unsafe fn(bool),
@@ -1360,13 +1362,12 @@ pub mod dispatch {
         ) -> Option<(Box<[u8]>, Box<[u8]>)>,
     }
 
-    /// Debug hook: bundler state dump for crash handler.
-    pub static DUMP_BUNDLER: AtomicPtr<()> = AtomicPtr::new(null_mut());
-
     /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is
-    /// a T6 generic instantiated over a T5 type. The bundler stores it as an
-    /// erased `NonNull<()>`; this hook lets `on_load_complete` register watched
-    /// files without naming the concrete reloader type.
+    /// a T6 generic instantiated over a T5 type. The bundler stores the erased
+    /// owner together with its `&'static` vtable so `on_load_complete` can call
+    /// `add_file` without naming the concrete reloader type. Constructed by the
+    /// high tier (`bun_runtime`) and written into `BundleV2.bun_watcher`.
+    /// PERF(port): was inline switch.
     pub struct WatcherVTable {
         /// `watcher.add_file(fd, path, hash, loader, dir_fd, package_json, copy)`
         /// (Watcher.zig:addFile).
@@ -1381,37 +1382,104 @@ pub mod dispatch {
             copy_file_path: bool,
         ) -> Result<(), bun_core::Error>,
     }
-    pub static WATCHER_HOOK: AtomicPtr<WatcherVTable> = AtomicPtr::new(null_mut());
+    #[derive(Copy, Clone)]
+    pub struct WatcherHandle {
+        pub owner: core::ptr::NonNull<()>,
+        pub vtable: &'static WatcherVTable,
+    }
+    // SAFETY: erased `*mut hot_reloader::Watcher` — Zig passed it across the
+    // worker pool freely; callee fns handle internal synchronization.
+    unsafe impl Send for WatcherHandle {}
+    unsafe impl Sync for WatcherHandle {}
+    impl WatcherHandle {
+        #[inline]
+        pub fn add_file(
+            &self,
+            fd: bun_sys::Fd,
+            file_path: &[u8],
+            hash: u32,
+            loader: bun_options_types::Loader,
+            dir_fd: bun_sys::Fd,
+            package_json: Option<*const ()>,
+            copy_file_path: bool,
+        ) -> Result<(), bun_core::Error> {
+            // SAFETY: vtable contract — `owner` is a live erased watcher.
+            unsafe {
+                (self.vtable.add_file)(
+                    self.owner.as_ptr(),
+                    fd,
+                    file_path,
+                    hash,
+                    loader,
+                    dir_fd,
+                    package_json,
+                    copy_file_path,
+                )
+            }
+        }
+    }
+
+    /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` (JSBundler.zig) — the
+    /// concrete struct lives in `bun_runtime` (its fields name `Config`/
+    /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
+    /// from it (`result == .err` and `jsc_event_loop.enqueueTaskConcurrent`),
+    /// so the high tier hands the bundler an erased owner + `&'static` vtable
+    /// pair (same shape as [`DevServerHandle`]). PERF(port): was direct field
+    /// access in Zig.
+    pub struct CompletionDispatch {
+        /// Zig: `completion.result == .err`
+        pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
+        /// Zig: `completion.jsc_event_loop.enqueueTaskConcurrent(task)` — folds
+        /// the field access + enqueue so the bundler needn't name `*jsc.EventLoop`.
+        pub enqueue_task_concurrent: unsafe fn(
+            core::ptr::NonNull<super::JSBundleCompletionTask>,
+            *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+        ),
+    }
+    #[derive(Copy, Clone)]
+    pub struct CompletionHandle {
+        pub owner: core::ptr::NonNull<super::JSBundleCompletionTask>,
+        pub vtable: &'static CompletionDispatch,
+    }
+    // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
+    // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
+    // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
+    unsafe impl Send for CompletionHandle {}
+    unsafe impl Sync for CompletionHandle {}
+    impl CompletionHandle {
+        #[inline]
+        pub fn result_is_err(&self) -> bool {
+            // SAFETY: vtable contract.
+            unsafe { (self.vtable.result_is_err)(self.owner) }
+        }
+        #[inline]
+        pub fn enqueue_task_concurrent(
+            &self,
+            task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+        ) {
+            // SAFETY: vtable contract.
+            unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
+        }
+    }
 }
 
 // CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
 // is a T6 generic type instantiated over a T5 type. bundler stores it opaquely;
 // runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
-pub type Watcher = *mut (); // TODO(b0-genuine): hot_reloader — opaque until runtime owns lifecycle
+pub type Watcher = dispatch::WatcherHandle;
 
-/// `bun.jsc.AnyEventLoop` — erased handle. Re-export the linker's alias
-/// (`Option<NonNull<()>>`). The Js/Mini discriminant lives in T6.
+/// `bun.jsc.AnyEventLoop` — re-export the linker's alias
+/// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
 pub use crate::ungate_support::EventLoop;
 
-/// Mirrors `AnyEventLoop.tick` — drives the loop until `is_done` returns true.
-/// T5 cannot name the concrete loop, so this spins on the bundle-thread
-/// `is_done` predicate. The JS loop runs microtasks between checks (T6).
-fn event_loop_tick<Ctx>(_loop: &mut EventLoop, ctx: *mut Ctx, is_done: fn(&mut Ctx) -> bool) {
-    // SAFETY: ctx is a live `&mut BundleV2` for the duration of the tick.
-    while !is_done(unsafe { &mut *ctx }) {
-        std::thread::yield_now();
-    }
-}
-
 /// `JSBundleCompletionTask` (JSBundler.zig) — typed-ptr marker for
-/// `BundleV2.completion`. The concrete struct lives in `bun_runtime`
-/// (its fields name `Config`/`Plugin`/`HTMLBundle::Route`), so the bundler
-/// holds it as a `*mut JSBundleCompletionTask` only and routes every field
-/// read through the `COMPLETION_DISPATCH` vtable. Never dereferenced.
-#[repr(C)]
-pub struct JSBundleCompletionTask {
-    _opaque: [u8; 0],
-    _marker: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+/// `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
+/// fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
+/// holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
+/// and never dereferences it. This is a forward-declared extern type, not a
+/// stand-in struct — it has no size/layout in this crate.
+unsafe extern "C" {
+    pub type JSBundleCompletionTask;
 }
 
 type IndexInt = u32; // Index.Int

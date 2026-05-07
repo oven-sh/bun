@@ -1452,7 +1452,7 @@ impl Lockfile {
         }
 
         let pkgs = self.packages.slice();
-        let len = pkgs.len;
+        let len = pkgs.len();
 
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();

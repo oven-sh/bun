@@ -625,9 +625,14 @@ pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws_sys::NewAppRespon
 pub enum AnyRoute {
     /// Serve a static file
     /// "/robots.txt": new Response(...),
-    Static(Rc<StaticRoute>),
+    // PORT NOTE (layering): StaticRoute/FileRoute carry an intrusive
+    // `ref_count: Cell<u32>` and are heap-allocated via `Box::into_raw`; their
+    // constructors return `*mut Self`. `Rc<T>` would add a second header and
+    // break the round-trip with uws callback userdata. Hold them as raw
+    // intrusive-refcounted pointers (matches Zig `*StaticRoute` / `*FileRoute`).
+    Static(NonNull<StaticRoute>),
     /// Serve a file from disk
-    File(Rc<FileRoute>),
+    File(NonNull<FileRoute>),
     /// Bundle an HTML import
     /// import html from "./index.html";
     /// "/": html,
@@ -643,8 +648,10 @@ pub enum AnyRoute {
 impl AnyRoute {
     pub fn memory_cost(&self) -> usize {
         match self {
-            AnyRoute::Static(static_route) => static_route.memory_cost(),
-            AnyRoute::File(file_route) => file_route.memory_cost(),
+            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
+            AnyRoute::Static(p) => unsafe { p.as_ref() }.memory_cost(),
+            // SAFETY: see above.
+            AnyRoute::File(p) => unsafe { p.as_ref() }.memory_cost(),
             // SAFETY: RefPtr.data is a live NonNull while held in the route table.
             AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.memory_cost(),
             AnyRoute::FrameworkRouter(_) => mem::size_of::<bake::FileSystemRouterType>(),
@@ -653,8 +660,10 @@ impl AnyRoute {
 
     pub fn set_server(&self, server: Option<super::AnyServer>) {
         match self {
-            AnyRoute::Static(static_route) => static_route.server.set(server),
-            AnyRoute::File(file_route) => file_route.set_server(server),
+            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
+            AnyRoute::Static(p) => unsafe { p.as_ref() }.server.set(server),
+            // SAFETY: see above.
+            AnyRoute::File(p) => unsafe { p.as_ref() }.set_server(server),
             // SAFETY: RefPtr.data is a live NonNull while held in the route table.
             AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer contains .server field
@@ -662,10 +671,11 @@ impl AnyRoute {
     }
 
     pub fn deref_(&self) {
-        // PORT NOTE: Rc<> handles Static/File via Drop; only the intrusive
-        // RefPtr<html_bundle::Route> needs an explicit decrement here.
         match self {
-            AnyRoute::Static(_) | AnyRoute::File(_) => {} // Rc-managed
+            // SAFETY: intrusive refcount; ptr was Box::into_raw'd with rc=1.
+            AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
+            // SAFETY: see above.
+            AnyRoute::File(p) => unsafe { FileRoute::deref_(p.as_ptr()) },
             AnyRoute::Html(html_bundle_route) => html_bundle_route.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -673,7 +683,10 @@ impl AnyRoute {
 
     pub fn ref_(&self) {
         match self {
-            AnyRoute::Static(_) | AnyRoute::File(_) => {} // Rc-managed; callers .clone() the Rc
+            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
+            AnyRoute::Static(p) => unsafe { p.as_ref() }.ref_(),
+            // SAFETY: see above.
+            AnyRoute::File(p) => unsafe { p.as_ref() }.ref_(),
             AnyRoute::Html(html_bundle_route) => {
                 // SAFETY: RefPtr.data is a live NonNull while held in the route table.
                 unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(html_bundle_route.data.as_ptr()) };
@@ -1433,6 +1446,79 @@ impl<'a, Ctx: RequestCtx> PreparedRequestFor<'a, Ctx> {
         // `*mut Response<_>` types. The generic `Ctx` here erases those, so
         // this body is deferred until the trait surface is widened.
         todo!("blocked_on: bun_runtime::server::request_context::RequestContext::to_async (generic dispatch)")
+    }
+}
+
+// PORT NOTE (layering): `ServerLike` is the trait `RequestContext<ThisServer,..>`
+// bounds on. mod.rs implements it for its own `NewServer`; this draft module
+// has a parallel `NewServer` (Phase-A duplication) that needs the same impl so
+// `ServerRequestContext<SSL,DEBUG>` (= `RequestContext<server_body::NewServer,..>`)
+// can call `create`/`on_response`/`deinit`/etc.
+impl<const SSL: bool, const DEBUG: bool> super::ServerLike for NewServer<SSL, DEBUG> {
+    const SSL_ENABLED: bool = SSL;
+    const DEBUG_MODE: bool = DEBUG;
+    fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
+    fn vm(&self) -> &jsc::VirtualMachine { self.vm }
+    fn vm_mut(&self) -> *mut jsc::VirtualMachine { jsc::VirtualMachine::get() }
+    fn config(&self) -> &ServerConfig { &self.config }
+    fn on_request_complete(&mut self) { Self::on_request_complete(self) }
+    fn dev_server(&self) -> Option<&DevServer> { self.dev_server.as_deref() }
+    fn js_value(&self) -> &jsc::JsRef { &self.js_value }
+    fn h3_alt_svc(&self) -> Option<&[u8]> { Self::h3_alt_svc(self) }
+    fn terminated(&self) -> bool { self.flags.contains(ServerFlags::TERMINATED) }
+    fn release_request_context(&self, ctx: *mut c_void, is_h3: bool) {
+        // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`.
+        unsafe {
+            if is_h3 {
+                (*self.h3_request_pool_allocator)
+                    .put(&mut *(ctx as *mut ServerH3RequestContext<SSL, DEBUG>));
+            } else {
+                (*self.request_pool_allocator)
+                    .put(&mut *(ctx as *mut ServerRequestContext<SSL, DEBUG>));
+            }
+        }
+    }
+}
+
+// `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
+// `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
+impl<const SSL: bool, const DEBUG: bool> uws_sys::WebSocketUpgradeServer<SSL>
+    for NewServer<SSL, DEBUG>
+{
+    fn on_websocket_upgrade(
+        &mut self,
+        res: *mut uws_sys::NewAppResponse<SSL>,
+        req: &mut uws_sys::Request,
+        context: &mut WebSocketUpgradeContext,
+        id: usize,
+    ) {
+        // SAFETY: uWS passes a live response handle for the upgrade callback.
+        Self::on_web_socket_upgrade(self, unsafe { &mut *res }, req, context, id);
+    }
+}
+
+impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
+    /// Construct the cross-module `super::AnyServer` back-reference. Routes
+    /// (StaticRoute/FileRoute/HTMLBundle) store this so they can call back
+    /// into `on_pending_request` / `on_static_request_complete`.
+    ///
+    /// PORT NOTE: `super::AnyServer` dispatches by casting `ptr` to
+    /// `super::NewServer<SSL,DEBUG>`. This module's `NewServer` is a Phase-A
+    /// duplicate that is not yet field-layout-identical. Until the two structs
+    /// are unified, callbacks routed through `super::AnyServer` from routes
+    /// owned by THIS server type are incorrect — but no such route is
+    /// constructed by `set_routes` here yet (the static-route table belongs to
+    /// `super::NewServer`). The correct value is still produced for tag/ptr.
+    /// TODO(port): unify server_body::NewServer with super::NewServer (draft dissolution).
+    #[inline]
+    fn as_any_server(&self) -> super::AnyServer {
+        let tag = match (SSL, DEBUG) {
+            (false, false) => super::AnyServerTag::HTTPServer,
+            (true, false) => super::AnyServerTag::HTTPSServer,
+            (false, true) => super::AnyServerTag::DebugHTTPServer,
+            (true, true) => super::AnyServerTag::DebugHTTPSServer,
+        };
+        super::AnyServer { tag, ptr: self as *const Self as *mut () }
     }
 }
 

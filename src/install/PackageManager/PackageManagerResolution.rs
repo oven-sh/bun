@@ -86,6 +86,10 @@ impl PackageManager {
         name_hash: PackageNameHash,
         resolution: Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
+        // Zig forwards `package_name` → `scopeForPackageName` → `byNameHash`,
+        // but the `.load_from_memory` arm never reads scope; keep the param for
+        // signature parity.
+        let _ = package_name;
         match resolution.tag {
             ResolutionTag::Npm => {
                 // SAFETY: tag-guarded union access (`resolution.tag == Npm` matched above).
@@ -95,24 +99,14 @@ impl PackageManager {
                     return None;
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig passed `this` to
-                // `manifests.byNameHash` while also borrowing `this.manifests`.
-                // Compute `scope`/`needs_ext` first, then split the borrow via
-                // a raw self-pointer (singleton; matches Zig's non-exclusive `*PackageManager`).
-                let needs_extended = self.options.minimum_release_age_ms.is_some();
-                let scope = self.scope_for_package_name(package_name) as *const npm::registry::Scope;
-                // SAFETY: `manifests` and the rest of `*self` are disjoint; `by_name_hash`
-                // only touches `pm.options.enable` / `pm.get_cache_directory()`.
-                let pm: *mut PackageManager = self;
-                let manifest = unsafe {
-                    (*pm).manifests.by_name_hash(
-                        &mut *pm,
-                        &*scope,
-                        name_hash,
-                        crate::package_manager::ManifestLoad::LoadFromMemory,
-                        needs_extended,
-                    )
-                }?;
+                // PORT NOTE: reshaped for borrowck — Zig calls
+                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`,
+                // which in Rust would require simultaneous `&mut self.manifests`
+                // (receiver) and `&mut self` (arg). The memory-only path touches
+                // nothing on `PackageManager` besides the map, so use the
+                // disjoint-borrow helper and read `self.options` / `self.lockfile`
+                // alongside the held `&mut self.manifests` field borrow.
+                let manifest = self.manifests.by_name_hash_in_memory(name_hash)?;
 
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(
@@ -254,15 +248,12 @@ impl PackageManager {
         // TODO: make this fewer passes
         {
             let tags_slice: &[u8] = tags_buf.as_slice();
-            installed_versions.sort_by(|a, b| {
-                // Zig std.sort.pdq with `sortGt` comparator (returns true if a > b) ⇒ descending.
-                if semver::Version::sort_gt(tags_slice, *a, *b) {
-                    core::cmp::Ordering::Less
-                } else {
-                    core::cmp::Ordering::Greater
-                }
-            });
-            // TODO(port): verify sort_gt signature/ordering matches Semver.Version.sortGt exactly.
+            // Zig: `std.sort.pdq(..., sortGt)` — `sortGt` is `order == .gt`, so
+            // pdq sorts descending. Use the total-order helper with swapped args
+            // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
+            // closure is not antisymmetric and may panic since Rust 1.81.
+            installed_versions
+                .sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
         }
         // SAFETY: tag-guarded union access (`version.tag == Npm` checked above).
         let npm_query = unsafe { &*version.value.npm };
@@ -450,6 +441,6 @@ impl PackageManager {
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerResolution.zig (243 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths fixed; arena/stack-fallback dropped per guide.
+//   todos:      1
+//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths fixed; arena/stack-fallback dropped per guide; manifests lookup uses disjoint by_name_hash_in_memory (no aliased &mut pm).
 // ──────────────────────────────────────────────────────────────────────────

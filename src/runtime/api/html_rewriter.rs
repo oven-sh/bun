@@ -691,8 +691,16 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        // PORT NOTE: Zig `defer sink_error.ensureStillAlive()` reads the *live*
+        // stack local at scope exit. A `move` closure would copy the current
+        // ZERO value, so capture by raw pointer instead — the stack slot
+        // outlives the guard (the guard is dropped before this fn returns).
+        let sink_error_ptr: *const JSValue = &sink_error;
         let _vm_guard = scopeguard::guard((), move |_| {
-            sink_error.ensure_still_alive();
+            // SAFETY: `sink_error_ptr` points at a stack local that outlives
+            // this guard (sync stack frame; guard runs at scope exit before
+            // the local is dropped).
+            unsafe { (*sink_error_ptr).ensure_still_alive() };
             // SAFETY: VM outlives this guard (sync stack frame).
             let vm = unsafe { &mut *global_static.bun_vm() };
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;

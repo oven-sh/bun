@@ -93,6 +93,7 @@ const HARD = `**HARD RULES:** Work in /root/bun-5 on branch claude/phase-a-port.
 
 **FIX LAYERING.** Low-tier needs high-tier type → MOVE down or \`extern "Rust"\`. NEVER hooks/c_void round-trips/dup types.
 **NO NEW \`unsafe {}\` outside FFI.** Reaching for \`unsafe { &mut *ptr }\` → change signature to \`&mut T\`.
+**FFI unsafe goes in ONE place.** If you add an \`extern "Rust"/"C"\` function, wrap it in ONE safe inline fn that does \`unsafe { extern_fn(...) }\`; call sites use the wrapper. Adding \`unsafe {}\` at N>2 call sites for the same extern is wrong.
 **NO JUSTIFICATION COMMENTS.** Do NOT add \`// PORT NOTE: reshaped for borrowck\` / \`// TODO(port):\` / long \`// SAFETY:\` essays explaining why a workaround is OK. If you need a paragraph to justify it, the code is wrong — fix the code instead. A good fix needs at most a one-line "why" that a Rust dev would write, not a port history.
 
 Never git reset/checkout/stash/rebase/pull. **Commit explicit paths ONLY:** \`git -c core.hooksPath=/dev/null add <exact files you edited> && git commit -q -m "..."\` (not \`add 'src/'\` — only YOUR files). NO push.`;

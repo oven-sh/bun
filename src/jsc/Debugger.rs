@@ -16,7 +16,7 @@ use bun_aio::posix_event_loop::{get_vm_ctx, AllocatorType};
 use bun_aio::KeepAlive;
 use bun_string::String as BunString;
 
-use crate::virtual_machine::{runtime_hooks, RuntimeHooks, VirtualMachine};
+use crate::virtual_machine::{runtime_hooks, VirtualMachine};
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);

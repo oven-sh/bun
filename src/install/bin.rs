@@ -11,8 +11,7 @@ use bun_semver::{ExternalString, String};
 use bun_str::{strings, w, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
-use crate::bun_json;
-use crate::bun_json::ExprAccessors;
+use crate::bun_json::JsonExprView;
 use crate::dependency::Dependency;
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
@@ -194,26 +193,25 @@ impl Bin {
         }
     }
 
-    /// Used for packages read from text lockfile.
-    pub fn parse_append(
-        bin_expr: bun_json::Expr,
+    /// Used for packages read from text lockfile / pnpm migration.
+    ///
+    /// Generic over `JsonExprView` so both `bun_logger::js_ast::Expr` (T2,
+    /// JSON parser) and `bun_js_parser::Expr` (T4, YAML / package.json cache)
+    /// share this one body — Zig has a single `Bin.parseAppend` because both
+    /// trees are the same `js_ast.Expr` type there.
+    pub fn parse_append<E: JsonExprView>(
+        bin_expr: &E,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        match bin_expr.data {
-            bun_json::ExprData::EObject(obj) => match obj.properties.len as usize {
+        if let Some(props) = bin_expr.json_object_props() {
+            match props.len() {
                 0 => {}
                 1 => {
-                    // PORT NOTE: `Expr` has an inherent `as_string(&Bump)` that shadows
-                    // the no-arg `ExprAccessors::as_string`; call the trait via UFCS.
-                    let Some(bin_name) =
-                        ExprAccessors::as_string(obj.properties.slice()[0].key.as_ref().unwrap())
-                    else {
+                    let Some(bin_name) = E::prop_key_str(&props[0]) else {
                         return Ok(Bin::default());
                     };
-                    let Some(value) =
-                        ExprAccessors::as_string(obj.properties.slice()[0].value.as_ref().unwrap())
-                    else {
+                    let Some(value) = E::prop_value_str(&props[0]) else {
                         return Ok(Bin::default());
                     };
 
@@ -227,19 +225,17 @@ impl Bin {
                 }
                 _ => {
                     let current_len = extern_strings.len();
-                    let num_props: usize = obj.properties.len as usize * 2;
+                    let num_props: usize = props.len() * 2;
                     extern_strings
                         .reserve_exact((current_len + num_props).saturating_sub(extern_strings.len()));
                     // PORT NOTE: reshaped for borrowck — Zig wrote into the spare-capacity
                     // region by raw pointer; here we push into the Vec.
                     let mut i: usize = 0;
-                    for bin_prop in obj.properties.slice() {
-                        let key = bin_prop.key.as_ref().unwrap();
-                        let value = bin_prop.value.as_ref().unwrap();
-                        let Some(key_str) = ExprAccessors::as_string(key) else {
+                    for bin_prop in props {
+                        let Some(key_str) = E::prop_key_str(bin_prop) else {
                             return Ok(Bin::default());
                         };
-                        let Some(value_str) = ExprAccessors::as_string(value) else {
+                        let Some(value_str) = E::prop_value_str(bin_prop) else {
                             return Ok(Bin::default());
                         };
                         extern_strings.push(buf.append_external(key_str)?);
@@ -247,9 +243,7 @@ impl Bin {
                         extern_strings.push(buf.append_external(value_str)?);
                         i += 1;
                     }
-                    if cfg!(debug_assertions) {
-                        debug_assert!(i == num_props);
-                    }
+                    debug_assert!(i == num_props);
                     let new = &extern_strings[current_len..current_len + num_props];
                     return Ok(Bin {
                         tag: Tag::Map,
@@ -259,28 +253,26 @@ impl Bin {
                         },
                     });
                 }
-            },
-            bun_json::ExprData::EString(str_) => {
-                if !str_.data.is_empty() {
-                    return Ok(Bin {
-                        tag: Tag::File,
-                        _padding_tag: [0; 3],
-                        value: Value {
-                            file: buf.append(str_.data)?,
-                        },
-                    });
-                }
             }
-            _ => {}
+        } else if let Some(str_) = bin_expr.json_utf8_string() {
+            if !str_.is_empty() {
+                return Ok(Bin {
+                    tag: Tag::File,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        file: buf.append(str_)?,
+                    },
+                });
+            }
         }
         Ok(Bin::default())
     }
 
-    pub fn parse_append_from_directories(
-        bin_expr: bun_json::Expr,
+    pub fn parse_append_from_directories<E: JsonExprView>(
+        bin_expr: &E,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
-        if let Some(bin_str) = ExprAccessors::as_string(&bin_expr) {
+        if let Some(bin_str) = bin_expr.json_utf8_string() {
             return Ok(Bin {
                 tag: Tag::Dir,
                 _padding_tag: [0; 3],

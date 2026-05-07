@@ -1475,10 +1475,13 @@ pub use crate::ungate_support::EventLoop;
 /// `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
 /// fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
 /// holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
-/// and never dereferences it. This is a forward-declared extern type, not a
-/// stand-in struct — it has no size/layout in this crate.
-unsafe extern "C" {
-    pub type JSBundleCompletionTask;
+/// and never dereferences it. Nomicon opaque-FFI pattern: ZST with
+/// `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
+/// and has no usable size/layout in this crate.
+#[repr(C)]
+pub struct JSBundleCompletionTask {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 type IndexInt = u32; // Index.Int
@@ -5488,7 +5491,7 @@ impl<'a> BundleV2<'a> {
             if !found_existing {
                 let new_task: &mut ParseTask = value;
                 let mut new_input_file = crate::Graph::InputFile {
-                    source: Logger::Source::init_empty_file(&new_task.path.text),
+                    source: Logger::Source::init_empty_file(&new_task.path.text[..]),
                     side_effects: new_task.side_effects,
                     secondary_path: if let Some(secondary_path) = &new_task.secondary_path_for_commonjs_interop {
                         secondary_path.text.into()

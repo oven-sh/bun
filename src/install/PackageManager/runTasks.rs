@@ -1780,9 +1780,18 @@ pub fn generate_network_task_for_tarball<'a>(
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
     let net_ptr: *mut NetworkTask = get_network_task(this);
+    // Zig: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
+    // .package_manager, .apply_patch_task }` — full struct overwrite that resets
+    // every other field (`retried`, `response`, `streaming_committed`,
+    // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
+    // `signal_store`) to its struct default. The slot may be uninitialized
+    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we return it. All writes below go through this
-    // pointer exclusively.
+    // other alias exists until we return it.
+    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
+    // SAFETY: `write_init` populated every read field; remaining
+    // Zig-`undefined` fields (`callback`, http buffers) are written by
+    // `for_tarball` / `schedule()` before being observed.
     let network_task = unsafe { &mut *net_ptr };
 
     let extract_tarball = ExtractTarball {
@@ -1804,12 +1813,6 @@ pub fn generate_network_task_for_tarball<'a>(
         )
         .expect("unreachable"),
     };
-
-    network_task.task_id = task_id;
-    // `callback` left to be set by `for_tarball` below (Zig: `undefined`).
-    // TODO(port): allocator field dropped (global allocator).
-    network_task.package_manager = this_backref;
-    network_task.apply_patch_task = apply_patch_task;
 
     network_task.for_tarball(extract_tarball, scope, authorization)?;
 

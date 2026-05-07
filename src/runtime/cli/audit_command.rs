@@ -512,9 +512,12 @@ fn send_audit_request(
     let url_str: &'static [u8] = Box::leak(url_str.into_boxed_slice());
     let url = URL::parse(url_str);
 
-    // TODO(port): blocked_on bun_install::PackageManager::env (stub gated).
-    // let http_proxy = pm.env.get_http_proxy_for(&url);
-    let http_proxy: Option<URL<'static>> = None;
+    // SAFETY: env_loader's backing storage is process-static (env block /
+    // leaked map); the URL borrows are valid for 'static. Zig had no lifetime
+    // here.
+    let http_proxy: Option<URL<'static>> = unsafe {
+        core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(pm.http_proxy(&url))
+    };
 
     // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     // SAFETY: `allocate()` succeeded above so `ptr` is non-null when `len > 0`;

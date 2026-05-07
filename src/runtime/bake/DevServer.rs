@@ -4501,6 +4501,7 @@ impl DevServer {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct CacheEntry {
     pub kind: FileKind,
 }
@@ -5834,7 +5835,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
 // TODO(port): packed struct(u32) — Route.Index is 31 bits + 1 bool bit
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct RouteIndexAndRecurseFlag(u32);
+pub struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
     pub fn new(route_index: framework_router::RouteIndex, should_recurse_when_visiting: bool) -> Self {
         RouteIndexAndRecurseFlag(
@@ -6097,7 +6098,6 @@ impl TestingBatch {
 
     pub fn append(
         &mut self,
-        _dev: &DevServer,
         entry_points: &EntryPointList,
     ) -> Result<(), bun_core::Error> {
         debug_assert!(!entry_points.set.is_empty());

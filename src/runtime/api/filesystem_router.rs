@@ -57,13 +57,6 @@ fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
     jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)
 }
 
-#[inline]
-unsafe fn ref_string_slice<'a>(r: *mut RefString) -> &'a [u8] {
-    // SAFETY: caller guarantees `r` is live; `leak()` returns the borrowed bytes
-    // without bumping refcount (matching Zig `RefString.leak`).
-    unsafe { (*r).leak() }
-}
-
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
 // `bun_resolver::Resolver` is the concrete impl. Neither crate depends on the
@@ -610,7 +603,7 @@ impl FileSystemRouter {
     pub fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(origin) = this.origin {
             // SAFETY: `origin` is a live `*mut RefString` (set in constructor, freed in finalize).
-            return Ok(zs_to_js(unsafe { ref_string_slice(origin) }, global_this));
+            return Ok(zs_to_js(unsafe { (*origin).leak() }, global_this));
         }
 
         Ok(JSValue::NULL)
@@ -896,11 +889,10 @@ impl MatchedRoute {
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
         if client_framework_enabled {
-            // SAFETY: `generate_entry_point_path` only copies `dir`/`base`/`ext` bytes into
-            // `entry_point_tempbuf`; the forged `'static` PathName never escapes this call.
-            let path_name = bun_logger::fs::PathName::init(unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(file_path)
-            });
+            // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
+            // `bun_logger::fs::PathName`; `generate_entry_point_path` only copies
+            // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
+            let path_name = bun_paths::fs::PathName::init(file_path);
             bun_object::get_public_path(
                 Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
                     &mut entry_point_tempbuf,
@@ -922,7 +914,7 @@ impl MatchedRoute {
         let mut writer = String::with_capacity(MAX_PATH_BYTES);
         let origin_url = if let Some(origin) = this.origin {
             // SAFETY: `origin` is a live `*mut RefString`.
-            URL::parse(unsafe { ref_string_slice(origin) })
+            URL::parse(unsafe { (*origin).leak() })
         } else {
             URL::default()
         };

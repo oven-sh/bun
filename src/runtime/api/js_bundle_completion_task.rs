@@ -520,8 +520,11 @@ impl CompletionStruct for JSBundleCompletionTask {
             Some(NonNull::from(&mut self.config.files))
         }
     }
-    fn as_js_bundle_completion_task(&mut self) -> NonNull<Bv2OpaqueCompletion> {
-        NonNull::from(self).cast()
+    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle {
+        dispatch::CompletionHandle {
+            owner: NonNull::from(self).cast::<Bv2OpaqueCompletion>(),
+            vtable: &COMPLETION_VTABLE,
+        }
     }
     fn create_and_configure_transpiler<'a>(
         &mut self,

@@ -225,11 +225,7 @@ impl Request {
             return Ok(self.headers.as_mut().unwrap());
         }
 
-        // TODO(b2-blocked): AnyRequestContext::get_request is cfg-gated in
-        // src/runtime/server/AnyRequestContext.rs. Until un-gated, behave as
-        // if there is no live uWS request.
-        let uws_req: Option<*mut uws::Request> = None;
-        if let Some(req) = uws_req {
+        if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
             self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
         } else {
@@ -244,11 +240,11 @@ impl Request {
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // TODO(b2-blocked): ByteBlobLoader is a stub unit struct
-                            // (webcore.rs); its `content_type` field comes back once
-                            // the real ByteBlobLoader module is wired in.
-                            let _ = blob;
-                            None
+                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
+                            // for as long as the readable stream exists; we only read
+                            // its `content_type` slice and immediately copy below.
+                            let ct: &[u8] = unsafe { &(*blob).content_type };
+                            Some(ct as *const [u8])
                         }
                         _ => None,
                     },
@@ -276,9 +272,7 @@ impl Request {
 
     pub fn get_fetch_headers_unless_empty(&mut self) -> Option<&mut HeadersRef> {
         if self.headers.is_none() {
-            // TODO(b2-blocked): AnyRequestContext::get_request is cfg-gated.
-            let uws_req: Option<*mut uws::Request> = None;
-            if let Some(req) = uws_req {
+            if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
                 self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
             }
@@ -999,7 +993,7 @@ impl Request {
                         self.url = BunString::clone_utf8(&temp_url);
                     }
 
-                    let href = bun_url::href_from_string(&self.url.dupe_ref());
+                    let href = bun_url::href_from_string(&self.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.deref();
@@ -1464,7 +1458,7 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(&req.url.dupe_ref());
+        let href = bun_url::href_from_string(&req.url);
         if href.is_empty() {
             if !global_this.has_exception() {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.

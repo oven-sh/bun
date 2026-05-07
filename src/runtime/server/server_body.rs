@@ -760,16 +760,22 @@ impl AnyRoute {
                 }
             }
 
-            return Ok(AnyRoute::File(FileRoute::init_from_blob(
-                blob,
-                FileRoute::Options { server: None, headers },
-            )));
+            // SAFETY: init_from_blob returns a freshly Box::into_raw'd FileRoute (rc=1).
+            return Ok(AnyRoute::File(unsafe {
+                NonNull::new_unchecked(FileRoute::init_from_blob(
+                    blob,
+                    FileRoute::Options { server: None, headers },
+                ))
+            }));
         }
 
-        Ok(AnyRoute::Static(StaticRoute::init_from_any_blob(
-            &Blob::Any::Blob(blob),
-            StaticRoute::Options { server: None, headers },
-        )))
+        // SAFETY: init_from_any_blob returns a freshly Box::into_raw'd StaticRoute (rc=1).
+        Ok(AnyRoute::Static(unsafe {
+            NonNull::new_unchecked(StaticRoute::init_from_any_blob(
+                &Blob::Any::Blob(blob),
+                StaticRoute::Options { server: None, headers },
+            ))
+        }))
         }
     }
 
@@ -3927,11 +3933,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 match &entry.route {
                     crate::server::AnyRoute::Static(static_route) => {
-                        let _ = (&any_server, app_ptr, &**static_route, &entry.path, entry.method);
+                        let _ = (&any_server, app_ptr, static_route.as_ptr(), &entry.path, entry.method);
                         todo!("blocked_on: server::ServerConfig::apply_static_route");
                     }
                     crate::server::AnyRoute::File(file_route) => {
-                        let _ = (&any_server, app_ptr, &**file_route, &entry.path, entry.method);
+                        let _ = (&any_server, app_ptr, file_route.as_ptr(), &entry.path, entry.method);
                         todo!("blocked_on: server::ServerConfig::apply_static_route");
                     }
                     crate::server::AnyRoute::Html(html_bundle_route) => {

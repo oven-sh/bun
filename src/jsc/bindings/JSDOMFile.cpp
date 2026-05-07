@@ -59,32 +59,36 @@ public:
         if (!value.isObject())
             return false;
 
+        // Fast path: real File instances (no proxy involved).
         if (JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value)))
             return true;
 
-        // A direct Blob instance must not match `instanceof File` even though
-        // the default prototype-chain check below would say true (File.prototype
-        // is currently the same object as Blob.prototype). Real Files are caught
-        // above via JSDOMFile__hasInstance. Unwrap proxies so a proxy wrapping a
-        // Blob is also rejected — without this, defaultHasInstance would forward
-        // through the proxy's [[GetPrototypeOf]] back to Blob.prototype and (due
-        // to the prototype aliasing) declare it `instanceof File`.
+        // Standard OrdinaryHasInstance check — walks via [[GetPrototypeOf]] and
+        // respects Proxy traps. If File.prototype isn't in the chain at all, the
+        // value is definitively not `instanceof File`.
+        // See https://github.com/oven-sh/bun/issues/25422.
+        auto& vm = JSC::getVM(globalObject);
+        JSValue prototype = object->getDirect(vm, vm.propertyNames->prototype);
+        if (!JSObject::defaultHasInstance(globalObject, value, prototype))
+            return false;
+
+        // The chain matched, but File.prototype is currently the same object as
+        // Blob.prototype (see the TODO at the top of this file), so a real Blob
+        // — including one wrapped in a Proxy — would also match here. Reject
+        // those by unwrapping proxies and seeing whether the underlying cell is
+        // a Blob without the `is_jsdom_file` flag.
         JSObject* unwrapped = asObject(value);
         while (auto* proxy = dynamicDowncast<ProxyObject>(unwrapped)) {
             unwrapped = proxy->target();
             if (!unwrapped)
                 break;
         }
-        if (unwrapped && unwrapped->inherits<WebCore::JSBlob>())
+        if (unwrapped
+            && unwrapped->inherits<WebCore::JSBlob>()
+            && !JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(unwrapped)))
             return false;
 
-        // Fall back to the standard OrdinaryHasInstance check so proxies whose
-        // getPrototypeOf trap returns File.prototype, or ordinary objects with
-        // File.prototype in their chain, still satisfy `instanceof File`.
-        // See https://github.com/oven-sh/bun/issues/25422.
-        auto& vm = JSC::getVM(globalObject);
-        JSValue prototype = object->getDirect(vm, vm.propertyNames->prototype);
-        return JSObject::defaultHasInstance(globalObject, value, prototype);
+        return true;
     }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

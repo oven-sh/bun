@@ -370,6 +370,32 @@ describe("File `instanceof` checks", () => {
     expect(nested instanceof File).toBe(false);
   });
 
+  test("a transparent Proxy wrapping a File is instanceof File", () => {
+    // The motivating SvelteKit case: a Proxy around a real File should still
+    // satisfy `instanceof File`, mirroring browsers and Node. The unwrap loop
+    // that catches `Proxy(Blob)` must not over-reject `Proxy(File)`.
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {});
+    expect(proxy instanceof File).toBe(true);
+    expect(proxy instanceof Blob).toBe(true);
+
+    const nested = new Proxy(new Proxy(file, {}), {});
+    expect(nested instanceof File).toBe(true);
+    expect(nested instanceof Blob).toBe(true);
+  });
+
+  test("Proxy with getPrototypeOf trap that disclaims File is not instanceof File", () => {
+    // If the trap explicitly returns a non-File prototype, the value should not
+    // be `instanceof File` even if the underlying target is a real File.
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {
+      getPrototypeOf() {
+        return Object.prototype;
+      },
+    });
+    expect(proxy instanceof File).toBe(false);
+  });
+
   test("primitives and non-objects are not instanceof File", () => {
     expect((null as any) instanceof File).toBe(false);
     expect((undefined as any) instanceof File).toBe(false);

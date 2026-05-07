@@ -197,7 +197,13 @@ pub mod lib {
 
         pub fn read_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
-            unsafe { archive_read_new() }
+            let p = unsafe { archive_read_new() };
+            // libarchive's `archive_read_new()` returns NULL on calloc failure.
+            // Every caller immediately dereferences the result (forming
+            // `&Archive`), so fail loudly here instead of invoking UB at the
+            // first accessor call.
+            assert!(!p.is_null(), "archive_read_new returned NULL (OOM)");
+            p
         }
         pub fn read_close(&self) -> Result {
             // SAFETY: self came from archive_read_new().
@@ -1034,7 +1040,16 @@ pub struct BufferReadStream {
 }
 
 impl BufferReadStream {
-    pub fn init(buf: &[u8]) -> Self {
+    /// Construct a stream over `buf`.
+    ///
+    /// # Safety
+    /// `buf` is type-erased to a raw `*const [u8]` (no lifetime parameter on
+    /// `BufferReadStream` — see field comment / Phase-B TODO). The caller
+    /// **must** guarantee that the slice `buf` points to remains valid and
+    /// unmoved for the entire lifetime of the returned `BufferReadStream`
+    /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
+    /// and [`open_read()`] dereference a dangling pointer (UB).
+    pub unsafe fn init(buf: &[u8]) -> Self {
         // PORT NOTE: was an out-param constructor (`this.* = ...`)
         Self {
             buf: buf as *const [u8],
@@ -1048,9 +1063,9 @@ impl BufferReadStream {
     /// Borrow the underlying libarchive handle.
     ///
     /// SAFETY (invariant): `self.archive` is set to a fresh non-null handle by
-    /// `Archive::read_new()` in `init()` and remains valid until `read_free()`
-    /// in `Drop`. All `Archive` methods take `&self` (FFI interior mutability),
-    /// so a shared borrow is sufficient.
+    /// `Archive::read_new()` in `init()` (asserted there) and remains valid
+    /// until `read_free()` in `Drop`. All `Archive` methods take `&self`
+    /// (FFI interior mutability), so a shared borrow is sufficient.
     #[inline]
     fn archive(&self) -> &Archive {
         // SAFETY: see doc comment — non-null for the lifetime of `self`.
@@ -1364,7 +1379,8 @@ impl Archiver {
         // TODO(port): narrow error set
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
-        let mut stream = BufferReadStream::init(file_buffer);
+        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
+        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
         let archive = stream.archive;
 
@@ -1494,7 +1510,8 @@ impl Archiver {
         // TODO(port): narrow error set
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
-        let mut stream = BufferReadStream::init(file_buffer);
+        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
+        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
         let archive = stream.archive;
         let mut count: u32 = 0;

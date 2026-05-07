@@ -187,7 +187,7 @@ impl Config {
         }
 
         if !object.is_object() {
-            return Err(global.throw_invalid_arguments("Expected an object"));
+            return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
         }
 
         if let Some(define) = object.get_truthy(global, "define")? {
@@ -198,7 +198,7 @@ impl Config {
 
                 let Some(define_obj) = define.get_object() else {
                     return Err(
-                        global.throw_invalid_arguments("define must be an object"),
+                        global.throw_invalid_arguments(format_args!("define must be an object")),
                     );
                 };
 
@@ -277,9 +277,9 @@ impl Config {
                     let mut i: usize = 0;
                     while let Some(entry) = iter.next()? {
                         if !entry.js_type().is_string_like() {
-                            return Err(global.throw_invalid_arguments(
+                            return Err(global.throw_invalid_arguments(format_args!(
                                 "external must be a string or string[]",
-                            ));
+                            )));
                         }
 
                         let mut zig_str = ZigString::init(b"");
@@ -296,9 +296,9 @@ impl Config {
                     externals.truncate(i);
                     self.transform.external = externals;
                 } else {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "external must be a string or string[]",
-                    ));
+                    )));
                 }
             }
         }
@@ -306,9 +306,9 @@ impl Config {
         if let Some(loader) = object.get(global, "loader")? {
             if let Some(resolved) = loader_from_js(global, loader)? {
                 if !resolved.is_java_script_like() {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "only JavaScript-like loaders supported for now",
-                    ));
+                    )));
                 }
 
                 self.default_loader = resolved;
@@ -331,9 +331,9 @@ impl Config {
                 // `defer out.deref()` → Drop on bun_str::String
 
                 if kind.is_array() {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "tsconfig must be a string or object",
-                    ));
+                    )));
                 }
 
                 if !kind.is_string_like() {
@@ -376,7 +376,7 @@ impl Config {
                 let is_object = kind.is_object();
                 if !(kind.is_string_like() || is_object) {
                     return Err(
-                        global.throw_invalid_arguments("macro must be an object"),
+                        global.throw_invalid_arguments(format_args!("macro must be an object")),
                     );
                 }
 
@@ -450,9 +450,9 @@ impl Config {
                     self.minify_identifiers = syntax;
                 }
             } else {
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Expected minify to be a boolean or an object",
-                ));
+                )));
             }
         }
 
@@ -467,9 +467,9 @@ impl Config {
                 if let Some(source) = source_map_option_from_js(global, flag)? {
                     self.transform.source_map = Some(SourceMapOption::to_api(Some(source)));
                 } else {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"",
-                    ));
+                    )));
                 }
             }
         }
@@ -496,7 +496,7 @@ impl Config {
         if let Some(exports) = object.get_truthy(global, "exports")? {
             if !exports.is_object() {
                 return Err(
-                    global.throw_invalid_arguments("exports must be an object"),
+                    global.throw_invalid_arguments(format_args!("exports must be an object")),
                 );
             }
 
@@ -505,9 +505,9 @@ impl Config {
 
             if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
                 if !eliminate.js_type().is_array() {
-                    return Err(global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "exports.eliminate must be an array",
-                    ));
+                    )));
                 }
 
                 let mut total_name_buf_len: u32 = 0;
@@ -544,9 +544,9 @@ impl Config {
                             let start = buf.len();
                             write!(&mut buf, "{}", str).ok();
                             if buf.len() > total_name_buf_len as usize {
-                                return Err(global.throw_invalid_arguments(
+                                return Err(global.throw_invalid_arguments(format_args!(
                                     "Error reading exports.eliminate. TODO: utf-16",
-                                ));
+                                )));
                             }
                             let name_len = buf.len() - start;
                             // `replacements.put_assume_capacity` boxes the key on insert
@@ -568,7 +568,7 @@ impl Config {
             if let Some(replace) = exports.get_truthy(global, "replace")? {
                 let Some(replace_obj) = replace.get_object() else {
                     return Err(
-                        global.throw_invalid_arguments("replace must be an object"),
+                        global.throw_invalid_arguments(format_args!("replace must be an object")),
                     );
                 };
 
@@ -649,9 +649,9 @@ impl Config {
                             }
                         }
 
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "exports.replace values can only be string, null, undefined, number or boolean",
-                        ));
+                        )));
                     }
                 }
             }
@@ -664,9 +664,9 @@ impl Config {
             if let Some(level) = level_from_js(global, log_level)? {
                 self.log.level = level;
             } else {
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"",
-                ));
+                )));
             }
         }
 

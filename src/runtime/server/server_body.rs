@@ -8,7 +8,7 @@ use std::io::Write as _;
 use bun_aio::{KeepAlive, Loop as AsyncLoop};
 use bun_alloc::AllocError;
 use bun_boringssl as boringssl;
-use bun_collections::{HashMap, TaggedPtrUnion};
+use bun_collections::HashMap;
 use bun_core::{self as core_, analytics, fmt as bun_fmt, Global, Output};
 use bun_http::{self as http, Method, MimeType};
 use bun_http_jsc::method_jsc::MethodJsc as _;
@@ -1243,6 +1243,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn as_any_server(&self) -> super::AnyServer {
         super::AnyServer::from(self as *const Self)
     }
+
+    /// Shared `&VirtualMachine` accessor (struct stores it as `*const`).
+    #[inline]
+    fn vm_ref(&self) -> &jsc::VirtualMachine {
+        // SAFETY: `vm` is the per-thread singleton, set in `init()`; non-null
+        // and valid for the server's lifetime (LIFETIMES.tsv: STATIC).
+        unsafe { &*self.vm }
+    }
+
+    /// Exclusive `&mut VirtualMachine` accessor. Goes through the raw
+    /// `VirtualMachine::get()` pointer (not `self.vm`) so the borrow does not
+    /// derive from `&self`'s read-only provenance.
+    #[inline]
+    fn vm_mut(&self) -> &mut jsc::VirtualMachine {
+        // SAFETY: per-thread singleton; caller is on the JS thread and holds
+        // no other `&mut VirtualMachine` for this scope.
+        unsafe { &mut *jsc::VirtualMachine::get() }
+    }
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
@@ -1860,12 +1878,10 @@ where
         }
 
         if self.inspector_server_id.0 != 0 {
-            if let Some(debugger) = &self.vm.debugger {
-                bun_core::handle_oom(http_server_agent_notify_routes_updated(
+            if let Some(debugger) = &self.vm_ref().debugger {
+                bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &debugger.http_server_agent,
-                    self.inspector_server_id,
-                    &self.user_routes,
-                    &self.config.static_routes,
+                    self.as_any_server(),
                 ));
             }
         }
@@ -2406,7 +2422,7 @@ where
         self.on_pending_request();
         // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
         let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm.event_loop()).debug))
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm_ref().event_loop()).debug))
         };
         req.set_yield(false);
         resp.timeout(self.config.idle_timeout);
@@ -2769,7 +2785,7 @@ where
 
         // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
         let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm.event_loop()).debug))
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm_ref().event_loop()).debug))
         };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
@@ -2810,7 +2826,7 @@ where
         let ctx = unsafe { &mut *ctx_slot };
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
         // SAFETY: `jsc_vm` is the live JSC VM owned by the per-thread VirtualMachine.
-        unsafe { &*self.vm.jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
+        unsafe { &*self.vm_ref().jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — type-erased through the
         // RuntimeHooks vtable. The returned ptr is the `.value` field of a
@@ -3126,7 +3142,7 @@ where
         // So we first use a hash of the main field:
         let first_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let main = self.vm.main();
+            let main = self.vm_ref().main();
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes();
         };

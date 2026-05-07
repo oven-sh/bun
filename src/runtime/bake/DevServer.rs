@@ -627,7 +627,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(magic, Magic::Valid);
         w!(allocation_scope, AllocationScope::init_default());
         w!(root, Box::from(options.root.as_bytes()));
-        w!(vm, options.vm);
+        w!(vm, options.vm as *const VirtualMachine);
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());

@@ -152,6 +152,16 @@ impl From<bun_core::Error> for MigratePnpmLockfileError {
     }
 }
 
+impl From<crate::lockfile_real::tree::SubtreeError> for MigratePnpmLockfileError {
+    fn from(e: crate::lockfile_real::tree::SubtreeError) -> Self {
+        use crate::lockfile_real::tree::SubtreeError as E;
+        match e {
+            E::OutOfMemory => Self::OutOfMemory,
+            E::DependencyLoop => Self::DependencyLoop,
+        }
+    }
+}
+
 impl From<resolution::FromPnpmLockfileError> for MigratePnpmLockfileError {
     fn from(e: resolution::FromPnpmLockfileError) -> Self {
         match e {
@@ -576,12 +586,9 @@ pub fn migrate_pnpm_lockfile<'a>(
                 pkg.resolutions = ExternalSlice::new(off, len);
 
                 if let Some(bin_expr) = workspace_root.get(b"bin") {
-                    pkg.bin = bin_parse_append(
-                        &bin_expr,
-                        lockfile,
-                    )?;
-                } else if let Some(directories_expr) = workspace_root.get(b"directories") {
-                    if let Some(bin_expr) = directories_expr.get(b"bin") {
+                    pkg.bin = bin_parse_append(&bin_expr, lockfile)?;
+                } else if let Some(dirs_q) = workspace_root.as_property(b"directories") {
+                    if let Some(bin_expr) = dirs_q.expr.get(b"bin") {
                         pkg.bin = bin_parse_append_from_directories(&bin_expr, lockfile)?;
                     }
                 }
@@ -721,7 +728,7 @@ pub fn migrate_pnpm_lockfile<'a>(
         }
         impl Default for SnapshotEntry {
             fn default() -> Self {
-                Self { obj: Expr::empty() }
+                Self { obj: Expr::EMPTY }
             }
         }
         let mut snapshots: StringArrayHashMap<SnapshotEntry> = StringArrayHashMap::new();
@@ -1109,7 +1116,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
     lockfile.resolve(log)?;
 
-    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, false)?;
+    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
     update_package_json_after_migration(manager, log, dir, &found_patches)?;
 

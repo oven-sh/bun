@@ -665,24 +665,27 @@ fn convert_file_system_router_type(
     unsafe fn erase<'a, T: ?Sized>(r: &'a T) -> &'static T {
         core::mem::transmute::<&'a T, &'static T>(r)
     }
-    let dupe = |bytes: &[u8]| -> &'static [u8] {
+    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
         // SAFETY: see `erase` doc above.
         unsafe { erase(arena.alloc_slice_copy(bytes)) }
-    };
-    let dupe_slice_of = |v: &[std::borrow::Cow<'static, [u8]>]| -> &'static [&'static [u8]] {
-        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(c.as_ref())).collect();
+    }
+    fn dupe_slice_of(
+        arena: &bun_alloc::Arena,
+        v: &[std::borrow::Cow<'static, [u8]>],
+    ) -> &'static [&'static [u8]] {
+        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
         // SAFETY: see `erase` doc above.
         unsafe { erase(arena.alloc_slice_copy(&inner)) }
-    };
+    }
 
     bb::FileSystemRouterType {
-        root: dupe(src.root.as_ref()),
-        prefix: dupe(src.prefix.as_ref()),
-        entry_server: dupe(src.entry_server.as_ref()),
-        entry_client: src.entry_client.as_deref().map(|b| dupe(b)),
+        root: dupe(arena, src.root.as_ref()),
+        prefix: dupe(arena, src.prefix.as_ref()),
+        entry_server: dupe(arena, src.entry_server.as_ref()),
+        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
         ignore_underscores: src.ignore_underscores,
-        ignore_dirs: dupe_slice_of(&src.ignore_dirs),
-        extensions: dupe_slice_of(&src.extensions),
+        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
+        extensions: dupe_slice_of(arena, &src.extensions),
         style: src.style,
         allow_layouts: src.allow_layouts,
     }

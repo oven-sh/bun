@@ -1262,17 +1262,20 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
             resolution::Tag::LocalTarball => {
-                installer.cache_dir_subpath = self
-                    .manager
-                    .cached_tarball_folder_name(resolution.value.local_tarball, patch_contents_hash);
-                installer.cache_dir = self.manager.get_cache_directory();
+                installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
+                    self.manager,
+                    resolution.value.local_tarball,
+                    patch_contents_hash,
+                );
+                installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::RemoteTarball => {
-                installer.cache_dir_subpath = self.manager.cached_tarball_folder_name(
+                installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
+                    self.manager,
                     resolution.value.remote_tarball,
                     patch_contents_hash,
                 );
-                installer.cache_dir = self.manager.get_cache_directory();
+                installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Workspace => {
                 let folder = resolution
@@ -1296,7 +1299,7 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = bun_sys::cwd();
             }
             resolution::Tag::Symlink => {
-                let directory = self.manager.global_link_dir();
+                let directory = package_manager::global_link_dir(self.manager);
 
                 let folder = resolution
                     .value
@@ -1307,7 +1310,7 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
                     installer.cache_dir = bun_sys::cwd();
                 } else {
-                    let global_link_dir = self.manager.global_link_dir_path();
+                    let global_link_dir = package_manager::global_link_dir_path(self.manager);
                     let buf = self.folder_path_buf.as_mut_slice();
                     let mut len = 0usize;
                     buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);

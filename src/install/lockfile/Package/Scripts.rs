@@ -258,7 +258,11 @@ impl Scripts {
         None
     }
 
-    pub fn parse_count(builder: &mut LockfileStringBuilder<'_>, json: &Expr) {
+    // Zig: `comptime Builder: type, builder: Builder` — duck-typed over any
+    // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
+    // so both `lockfile_real::StringBuilder` and the column-vec
+    // `crate::lockfile::StubStringBuilder` are accepted (both impl the trait).
+    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: &Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -276,7 +280,7 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc(&mut self, builder: &mut LockfileStringBuilder<'_>, json: &Expr) {
+    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: &Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();

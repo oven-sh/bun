@@ -391,7 +391,7 @@ impl FileSystemRouter {
                     .normalize_buf(&mut buf[..], input_path)
                     .to_vec()
             });
-            path = &normalized;
+            path = normalized.as_slice();
         }
 
         let root_dir_info =

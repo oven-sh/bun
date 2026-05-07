@@ -61,7 +61,7 @@ mod dom_call_slowpath {
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
-                bun_jsc::to_js_host_call(global, $target(global, this_value, arguments))
+                bun_jsc::to_js_host_call(global, move || $target(global, this_value, arguments))
             }
         )*};
     }

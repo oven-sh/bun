@@ -1,7 +1,7 @@
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use crate::webcore::EncodingLabel;
 use bun_core::AllocError;
-use bun_str::strings;
+use bun_str::{strings, OwnedString};
 
 use jsc::text_codec::TextCodec;
 use jsc::zig_string::ZigString;

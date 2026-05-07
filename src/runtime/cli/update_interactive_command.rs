@@ -2325,28 +2325,38 @@ pub fn edit_catalog_definitions(
     Ok(())
 }
 
+/// Where `find_catalog_object` located the existing object — the lookup and
+/// the post-mutate placement use *different* predicates in Zig (see
+/// `update_default_catalog`), so the source must be tracked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CatalogSource {
+    Workspaces,
+    Root,
+    Missing,
+}
+
 /// Find the `StoreRef<E::Object>` for `package_json[.workspaces].<key>`, or
 /// `None` if absent / not an object. Mirrors the labeled-block lookup in
 /// updateDefaultCatalog/updateNamedCatalog.
 fn find_catalog_object(
     package_json: &Expr,
     key: &[u8],
-) -> Option<js_ast::StoreRef<E::Object>> {
+) -> (Option<js_ast::StoreRef<E::Object>>, CatalogSource) {
     if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if workspaces_query.expr.is_object() {
             if let Some(q) = workspaces_query.expr.as_property(key) {
                 if let Some(o) = q.expr.data.e_object() {
-                    return Some(o);
+                    return (Some(o), CatalogSource::Workspaces);
                 }
             }
         }
     }
     if let Some(q) = package_json.as_property(key) {
         if let Some(o) = q.expr.data.e_object() {
-            return Some(o);
+            return (Some(o), CatalogSource::Root);
         }
     }
-    None
+    (None, CatalogSource::Missing)
 }
 
 fn update_default_catalog(
@@ -2362,38 +2372,39 @@ fn update_default_catalog(
     // `parent.put("catalog", Expr.allocate(obj))`. Rust `BabyList<T>` has a
     // `Drop` that frees its buffer, so a shallow copy would double-free.
     // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
-    // is `Copy + DerefMut`); the parent already points at it, so re-`put` of
-    // the same key is a no-op overwrite.
+    // is `Copy + DerefMut`). Crucially, Zig's *placement* check is looser
+    // than its lookup: it puts under `workspaces.<key>` whenever that key
+    // *exists* (any type), even when the lookup fell back to the root-level
+    // object. Track the lookup source so the in-place fast path is taken only
+    // when source == placement; otherwise re-`put` the mutated arena slot at
+    // the Zig-mandated location.
     let mut fresh_obj = E::Object::default();
-    let existing = find_catalog_object(package_json, b"catalog");
-    let catalog_obj: &mut E::Object = match existing {
-        Some(mut o) => {
-            // SAFETY: `StoreRef` derefs into the live arena slot for the
-            // duration of this fn; no other `&mut` to it is live.
-            unsafe { &mut *core::ptr::addr_of_mut!(*o) }
+    let (existing, source) = find_catalog_object(package_json, b"catalog");
+    {
+        let catalog_obj: &mut E::Object = match existing {
+            Some(mut o) => {
+                // SAFETY: `StoreRef` derefs into the live arena slot for the
+                // duration of this block; no other `&mut` to it is live.
+                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
+            }
+            None => &mut fresh_obj,
+        };
+
+        // Get original version to preserve prefix if it exists
+        let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
+        if let Some(existing_prop) = catalog_obj.get(package_name) {
+            if let Some(e_str) = existing_prop.data.e_string() {
+                let original_version = e_str.data;
+                version_with_prefix =
+                    Box::leak(preserve_version_prefix(original_version, new_version)?);
+            }
         }
-        None => &mut fresh_obj,
-    };
 
-    // Get original version to preserve prefix if it exists
-    let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
-    if let Some(existing_prop) = catalog_obj.get(package_name) {
-        if let Some(e_str) = existing_prop.data.e_string() {
-            let original_version = e_str.data;
-            version_with_prefix =
-                Box::leak(preserve_version_prefix(original_version, new_version)?);
-        }
-    }
-
-    // Update or add the package version
-    let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
-    catalog_obj
-        .put(bump, leak_dup(package_name), new_expr)
-        .map_err(|_| bun_core::err!("OutOfMemory"))?;
-
-    if existing.is_some() {
-        // Mutated in place; parent already references this object.
-        return Ok(());
+        // Update or add the package version
+        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        catalog_obj
+            .put(bump, leak_dup(package_name), new_expr)
+            .map_err(|_| bun_core::err!("OutOfMemory"))?;
     }
 
     // Check if we need to update under workspaces.catalog or root-level catalog
@@ -2401,8 +2412,19 @@ fn update_default_catalog(
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
             if workspaces_query.expr.as_property(b"catalog").is_some() {
                 // Update under workspaces.catalog
+                if source == CatalogSource::Workspaces {
+                    // Mutated in place; placement matches lookup.
+                    return Ok(());
+                }
+                let expr = match existing {
+                    // Re-seat the arena slot mutated above; `StoreRef` is a
+                    // non-owning `Copy` handle so the previous `Data::EObject`
+                    // pointing at it remains valid.
+                    Some(o) => Expr { loc: Loc::EMPTY, data: js_expr::Data::EObject(o) },
+                    None => Expr::init(fresh_obj, Loc::EMPTY),
+                };
                 ws_obj
-                    .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
+                    .put(bump, b"catalog", expr)
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 return Ok(());
             }
@@ -2410,6 +2432,12 @@ fn update_default_catalog(
     }
 
     // Otherwise update at root level
+    if source == CatalogSource::Root {
+        // Mutated in place; placement matches lookup.
+        return Ok(());
+    }
+    // source ∈ {Missing}; Workspaces is unreachable here since it implies the
+    // `workspaces.catalog` key exists.
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
             .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))

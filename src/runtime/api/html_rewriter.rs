@@ -759,9 +759,11 @@ impl BufferOutputSink {
             scope.apply(vm);
         }
 
-        // SAFETY: builder valid; sink outlives rewriter (deinit in Drop). The
-        // `&mut *sink` borrow is consumed by `build()` (address-taken into a
-        // `*mut c_void` userdata) and does not overlap any other live borrow.
+        // SAFETY: builder valid; sink outlives rewriter (deinit in Drop). Pass
+        // the raw `sink` (Box::into_raw root) directly so the userdata pointer
+        // stored in the C rewriter shares provenance with every other
+        // `(*sink).field` access in this module — see the PORT NOTE on
+        // `HTMLRewriterBuilder::build`.
         let built = unsafe {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
@@ -774,7 +776,7 @@ impl BufferOutputSink {
                     max_allowed_memory_usage: u32::MAX as usize,
                 },
                 false,
-                &mut *sink,
+                sink,
             )
         };
         // SAFETY: sink is a live heap allocation (refcount >= 1).

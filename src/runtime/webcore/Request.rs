@@ -99,11 +99,13 @@ pub struct Request {
     // `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes Clone/Drop to
     // the C++ ref/unref.
     pub signal: Option<AbortSignalRef>,
-    // TODO(port): mapped from *Body.Value.HiveRef per LIFETIMES.tsv. Zig pools
-    // BodyValue in a HiveAllocator and mutates `#body.value` in place; Phase B
-    // must decide on `Arc<RefCell<BodyValue>>` vs `IntrusiveRc<HiveRef>` once
-    // body::HiveRef is un-gated. Boxed for now to keep struct size stable.
-    body: Box<BodyValue>,
+    /// Intrusive ref into the per-VM `Body::Value::HiveAllocator` pool. The
+    /// `Request` and (when served by `Bun.serve`) the `RequestContext` share
+    /// the same slot — `RequestContext.request_body` aliases
+    /// `&mut hive.value` — so streamed bytes buffered by the server surface
+    /// on `req.body`/`req.json()` without a copy. `finalize()` releases this
+    /// ref via `HiveRef::unref()`.
+    body: NonNull<BodyHiveRef>,
     js_ref: JsRef,
     pub method: Method,
     pub flags: Flags,

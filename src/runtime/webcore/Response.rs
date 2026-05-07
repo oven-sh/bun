@@ -137,12 +137,20 @@ impl Drop for HeadersRef {
 pub mod js {
     pub use bun_jsc::generated::JSResponse::*;
 }
-// NOTE: toJS is overridden
-pub use js::from_js;
-pub use js::from_js_direct;
+// NOTE: toJS is overridden below.
+// Zig: `pub const fromJS = js.fromJS;` — typed re-exports. The `js::` module
+// erases the payload to `*mut ()` (Response is defined above the `bun_jsc`
+// crate, so `js_class_module!` can't name it); cast at this boundary.
+#[inline]
+pub fn from_js(value: JSValue) -> Option<*mut Response> {
+    js::from_js(value).map(<*mut ()>::cast::<Response>)
+}
+#[inline]
+pub fn from_js_direct(value: JSValue) -> Option<*mut Response> {
+    js::from_js_direct(value).map(<*mut ()>::cast::<Response>)
+}
 
-// PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
-// not yet wired for Response). Delegates to `bun_jsc::generated::JSResponse`
+// `JsClass` impl delegates to `bun_jsc::generated::JSResponse`
 // — the `js_class_module!` expansion already declares the
 // `Response__{fromJS,fromJSDirect,create,getConstructor}` externs with the
 // correct `JSC_CALLCONV` (sysv64 on win-x64, C otherwise). Re-declaring them

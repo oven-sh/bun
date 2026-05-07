@@ -1542,6 +1542,13 @@ pub mod js_bundler {
         Ok(())
     }
 
+    fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
+        // SAFETY: callback contract — `load` was passed as the `Context` arg to
+        // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
+        // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
+        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
+    }
+
     fn load_run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
         // SAFETY: ctx was stored from `*mut Load` in `dispatch_js`.
         unsafe { &mut *(ctx as *mut Load) }.run_on_js_thread();

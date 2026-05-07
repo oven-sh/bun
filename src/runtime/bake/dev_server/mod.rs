@@ -30,18 +30,18 @@ use crate::server::{html_bundle::HTMLBundleRoute, AnyServer, SavedRequest, Stati
 // ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
 // Each draft is a faithful port of the `.zig` sibling but depends on
 // `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
- #[path = "../DevServer/Assets.rs"]              mod assets_body;
- #[path = "../DevServer/DirectoryWatchStore.rs"] mod directory_watch_store_body;
- #[path = "../DevServer/ErrorReportRequest.rs"]  mod error_report_request_body;
- #[path = "../DevServer/HmrSocket.rs"]           mod hmr_socket_body;
- #[path = "../DevServer/HotReloadEvent.rs"]      mod hot_reload_event_body;
- #[path = "../DevServer/IncrementalGraph.rs"]    mod incremental_graph_body;
- #[path = "../DevServer/PackedMap.rs"]           mod packed_map_body;
- #[path = "../DevServer/RouteBundle.rs"]         mod route_bundle_body;
- #[path = "../DevServer/SerializedFailure.rs"]   mod serialized_failure_body;
- #[path = "../DevServer/SourceMapStore.rs"]      mod source_map_store_body;
- #[path = "../DevServer/WatcherAtomics.rs"]      mod watcher_atomics_body;
- #[path = "../DevServer/memory_cost.rs"]         mod memory_cost_body;
+ #[path = "../DevServer/Assets.rs"]              pub(crate) mod assets_body;
+ #[path = "../DevServer/DirectoryWatchStore.rs"] pub(crate) mod directory_watch_store_body;
+ #[path = "../DevServer/ErrorReportRequest.rs"]  pub(crate) mod error_report_request_body;
+ #[path = "../DevServer/HmrSocket.rs"]           pub(crate) mod hmr_socket_body;
+ #[path = "../DevServer/HotReloadEvent.rs"]      pub(crate) mod hot_reload_event_body;
+ #[path = "../DevServer/IncrementalGraph.rs"]    pub(crate) mod incremental_graph_body;
+ #[path = "../DevServer/PackedMap.rs"]           pub(crate) mod packed_map_body;
+ #[path = "../DevServer/RouteBundle.rs"]         pub(crate) mod route_bundle_body;
+ #[path = "../DevServer/SerializedFailure.rs"]   pub(crate) mod serialized_failure_body;
+ #[path = "../DevServer/SourceMapStore.rs"]      pub(crate) mod source_map_store_body;
+ #[path = "../DevServer/WatcherAtomics.rs"]      pub(crate) mod watcher_atomics_body;
+ #[path = "../DevServer/memory_cost.rs"]         pub(crate) mod memory_cost_body;
 
 bun_core::declare_scope!(DevServer, visible);
 

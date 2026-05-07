@@ -981,8 +981,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 next_import: *new_imports,
                 next_dependency: first_dep,
                 prev_dependency: None,
-                imported: FileIndex(imported_file_index.get()),
-                dependency: FileIndex(file_index.get()),
+                imported: imported_file_index,
+                dependency: file_index,
             })?;
             if let Some(dep) = first_dep {
                 self.edges[dep.get() as usize].prev_dependency = Some(edge);
@@ -1100,12 +1100,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(dep_index) = it {
             let edge = self.edges[dep_index.get() as usize];
             it = edge.next_dependency;
-            self.trace_dependencies(
-                FileIndex::<SIDE>::init(edge.dependency.get()),
-                gts,
-                goal,
-                file_index,
-            )?;
+            self.trace_dependencies(edge.dependency, gts, goal, file_index)?;
         }
         Ok(())
     }
@@ -1152,7 +1147,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 }
                 if goal == TraceImportGoal::FindErrors && failed {
-                    let owner = serialized_failure::OwnerPacked::new(Side::Server, FileIndex(file_index.get()));
+                    let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
                     // SAFETY: sibling-field access.
                     let fail = unsafe { (*dev).bundling_failures.get(&owner) }
                         .cloned()
@@ -1191,7 +1186,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if goal == TraceImportGoal::FindErrors
                     && self.bundled_files.values()[file_index.get() as usize].failed
                 {
-                    let owner = serialized_failure::OwnerPacked::new(Side::Client, FileIndex(file_index.get()));
+                    let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
                     // SAFETY: sibling-field access.
                     let fail = unsafe { (*dev).bundling_failures.get(&owner) }
                         .cloned()
@@ -1207,7 +1202,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(dep_index) = it {
             let edge = self.edges[dep_index.get() as usize];
             it = edge.next_import;
-            self.trace_imports(FileIndex::<SIDE>::init(edge.imported.get()), gts, goal)?;
+            self.trace_imports(edge.imported, gts, goal)?;
         }
         Ok(())
     }
@@ -1370,7 +1365,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 (i, fe)
             }
-            InsertFailureKey::Index(i) => (i.get() as usize, true),
+            InsertFailureKey::Index(i) => (i as usize, true),
         };
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(idx);

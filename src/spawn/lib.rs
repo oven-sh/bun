@@ -578,20 +578,48 @@ impl SpawnResult {
     }
 }
 
-/// Port of `spawnProcess` (process.zig:1493). The full body lives in
-/// `bun_runtime::api::bun::process::spawn_process` because it depends on
-/// `PosixSpawn` FFI bindings and the libuv process loop on Windows, both of
-/// which sit above this crate. A weak dispatch slot is provided here so the
-/// mid-tier callers (`bun_install::lifecycle_script_runner`) can link against
-/// the symbol; `bun_runtime` registers the real impl at startup.
+// ──────────────────────────────────────────────────────────────────────────
+// §Dispatch one-shot hook (PORTING.md): `spawnProcess` body lives in
+// `bun_runtime::api::bun::process` (depends on `posix_spawn_bun` FFI + the
+// libuv process loop on Windows + `WaiterThread`/`FilePoll` wiring, all of
+// which sit above this crate). `bun_install` and `bun_runtime::webview` both
+// need to call it without depending on `bun_runtime` (cycle), so the low tier
+// owns the data shapes + this hook, and `bun_runtime::dispatch::
+// install_dispatch_hooks()` registers the real fn-ptr at startup.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Signature of the high-tier `spawnProcess` body. `for<'a>` because
+/// `SpawnOptions` borrows `cwd`/`extra_fds` from the caller's stack.
+pub type SpawnProcessFn = for<'a> fn(
+    &'a SpawnOptions<'a>,
+    *mut *const c_char,
+    *const *const c_char,
+) -> Result<bun_sys::Maybe<SpawnResult>, bun_core::Error>;
+
+static SPAWN_PROCESS_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Called once from `bun_runtime` init.
+pub fn set_spawn_process_hook(f: SpawnProcessFn) {
+    SPAWN_PROCESS_HOOK.store(f as *mut (), Ordering::Release);
+}
+
+/// Port of `spawnProcess` (process.zig:1493). Dispatches to
+/// `bun_runtime::api::bun::process::spawn_process` via [`SPAWN_PROCESS_HOOK`].
 pub fn spawn_process(
-    _options: &SpawnOptions<'_>,
-    _argv: *mut *const c_char,
-    _envp: *const *const c_char,
+    options: &SpawnOptions<'_>,
+    argv: *mut *const c_char,
+    envp: *const *const c_char,
 ) -> Result<bun_sys::Maybe<SpawnResult>, bun_core::Error> {
-    // TODO(port): blocked_on bun_runtime::api::bun::process::spawn_process —
-    // dispatch via `bun_core::dispatch` once the runtime registers the impl.
-    todo!("blocked_on: bun_runtime::api::bun::process::spawn_process dispatch (tier inversion)")
+    let p = SPAWN_PROCESS_HOOK.load(Ordering::Acquire);
+    debug_assert!(
+        !p.is_null(),
+        "bun_spawn::SPAWN_PROCESS_HOOK not installed — \
+         bun_runtime must call set_spawn_process_hook() at startup",
+    );
+    // SAFETY: `p` was stored from a `SpawnProcessFn` (same layout — see
+    // `set_spawn_process_hook`).
+    let f: SpawnProcessFn = unsafe { core::mem::transmute::<*mut (), SpawnProcessFn>(p) };
+    f(options, argv, envp)
 }
 
 

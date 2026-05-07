@@ -9,13 +9,13 @@ use bun_alloc::AllocError;
 use bun_core::{self, err, Error};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
+use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
 use bun_str::strings;
 #[allow(unused_imports)]
 use bun_sys::{File, FdDirExt};
 
 use crate::dependency as Dependency;
-use crate::dependency::StringBuilderLike;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
 
@@ -354,26 +354,21 @@ impl Repository {
         name.to_vec()
     }
 
-    pub fn order(
-        lhs: &Repository,
-        rhs: &Repository,
-        lhs_buf: &[u8],
-        rhs_buf: &[u8],
-    ) -> Ordering {
-        let owner_order = lhs.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
         if owner_order != Ordering::Equal {
             return owner_order;
         }
-        let repo_order = lhs.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
         if repo_order != Ordering::Equal {
             return repo_order;
         }
 
-        lhs.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
     }
 
-    // TODO(port): `comptime StringBuilder: type` — define a `StringBuilder` trait
-    // with `count(&[u8])` and `append<T>(&[u8]) -> T` in bun_install and bound here.
+    // `comptime StringBuilder: type` → trait bound on `bun_semver::StringBuilder`
+    // (lower-tier crate); body only calls `.count()` and `.append::<String>()`.
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
         B: StringBuilderLike,

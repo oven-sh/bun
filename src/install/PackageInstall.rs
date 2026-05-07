@@ -2152,7 +2152,12 @@ impl<'a> PackageInstall<'a> {
                 if self.patch.is_none() {
                     let exists = match resolution_tag {
                         resolution::Tag::Npm => 'package_json_exists: {
-                            let buf = PackageManager::cached_package_folder_name_buf();
+                            // SAFETY: thread-local PathBuffer; this is the only borrower on
+                            // this thread for the duration of the block (Zig: `var buf = ...`).
+                            let buf: &mut [u8] = unsafe {
+                                (*crate::package_manager::cached_package_folder_name_buf())
+                                    .as_mut_slice()
+                            };
 
                             if cfg!(debug_assertions) {
                                 debug_assert!(bun_core::is_slice_in_buffer(
@@ -2166,7 +2171,7 @@ impl<'a> PackageInstall<'a> {
                             buf[subpath_len] = SEP;
                             // SAFETY: p points into the long-lived cached_package_folder_name_buf;
                             // subpath_len is in bounds (was the prior NUL position).
-                            let _restore = scopeguard::guard(buf.as_mut_ptr(), move |p| unsafe {
+                            let _restore = scopeguard::guard(buf.as_mut_ptr(), move |p: *mut u8| unsafe {
                                 *p.add(subpath_len) = 0;
                             });
                             buf[subpath_len + 1..subpath_len + 1 + b"package.json\0".len()]

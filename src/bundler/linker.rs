@@ -186,6 +186,77 @@ fn intern_box(buf: Box<[u8]>) -> &'static [u8] {
 }
 
 impl Linker {
+    // ── raw-pointer field accessors ──────────────────────────────────────
+    // The pointer fields are self-referential backrefs into the owning
+    // `Transpiler` (sibling fields), wired in `configure_linker*`. They are
+    // briefly null between `Transpiler::init` and `configure_linker`, but the
+    // contract is that no `link()`/`generate_import_path()`/`enqueue_*` call
+    // happens before `configure_linker` runs. Centralize the deref + invariant
+    // here so call sites are safe-Rust.
+
+    /// Shared borrow of the owning `Transpiler.options`.
+    ///
+    /// SAFETY: `self.options` points at the sibling `Transpiler.options` field
+    /// (set via `addr_of_mut!` in `configure_linker*`). The `Transpiler`
+    /// outlives all `Linker` method calls, and `options` is not mutated for
+    /// the duration of any borrow returned here (callers only read scalar
+    /// config like `target` / `preserve_extensions`). Never null once
+    /// `configure_linker` has run.
+    #[inline]
+    pub fn options(&self) -> &BundleOptions<'static> {
+        debug_assert!(!self.options.is_null(), "Linker.options used before configure_linker");
+        unsafe { &*self.options }
+    }
+
+    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
+    ///
+    /// SAFETY: `self.fs` is the `FileSystem::instance()` singleton, set at
+    /// `Transpiler::init` time and never freed. Never null. Only scalar
+    /// fields (`top_level_dir`) are read.
+    #[inline]
+    pub fn fs(&self) -> &Fs::FileSystem {
+        debug_assert!(!self.fs.is_null());
+        unsafe { &*self.fs }
+    }
+
+    /// Exclusive borrow of the owning `Transpiler.log`.
+    ///
+    /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
+    /// `configure_linker*` / `set_log`. Callers borrow `&mut self.linker`
+    /// field-disjointly from `Transpiler.log`, and no callee reached from a
+    /// `Linker` method re-derives a borrow of `*self.log`, so the `&mut`
+    /// returned here is exclusive for its lifetime. Never null.
+    #[inline]
+    pub fn log_mut(&mut self) -> &mut Log {
+        debug_assert!(!self.log.is_null());
+        unsafe { &mut *self.log }
+    }
+
+    /// Exclusive borrow of the owning `Transpiler.resolve_results`.
+    ///
+    /// SAFETY: sibling-field backref wired via `addr_of_mut!` in
+    /// `configure_linker*`. The only caller (`enqueue_resolve_result`) is
+    /// reached via `Transpiler::enqueue_entry_points`, which holds no other
+    /// borrow of `self.resolve_results` across the call. Never null after
+    /// `configure_linker`.
+    #[inline]
+    pub fn resolve_results_mut(&mut self) -> &mut ResolveResults {
+        debug_assert!(!self.resolve_results.is_null(), "Linker.resolve_results used before configure_linker");
+        unsafe { &mut *self.resolve_results }
+    }
+
+    /// Exclusive borrow of the owning `Transpiler.resolve_queue`.
+    ///
+    /// SAFETY: sibling-field backref wired via `addr_of_mut!` in
+    /// `configure_linker*`. Disjoint from `resolve_results`; the only caller
+    /// holds no other borrow of `self.resolve_queue` across the call. Never
+    /// null after `configure_linker`.
+    #[inline]
+    pub fn resolve_queue_mut(&mut self) -> &mut ResolveQueue {
+        debug_assert!(!self.resolve_queue.is_null(), "Linker.resolve_queue used before configure_linker");
+        unsafe { &mut *self.resolve_queue }
+    }
+
     pub fn init(
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
@@ -296,20 +367,13 @@ impl Linker {
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> Result<(), bun_core::Error> {
-        // SAFETY: `Transpiler` outlives all `link()` calls and is the sole owner
-        // of the pointees; raw-ptr aliasing matches the Zig `*BundleOptions` etc.
-        // `opts` is `&` (not `&mut`) because `generate_import_path` also derives
-        // `&*self.options`, which would invalidate an exclusive borrow under
-        // Stacked Borrows. We only read `target` / `rewrite_jest_for_tests`.
-        let opts = unsafe { &*self.options };
-        // SAFETY: single-owner. `self.log` is the `*mut Log` copied from
-        // `Transpiler.log` in `configure_linker*`; no callee reached from this
-        // body (`generate_import_path`, `get_hashed_filename`,
-        // `when_module_not_found`, `PluginRunner::on_resolve`) re-derives a
-        // borrow of `*self.log`, and the caller's field-split
-        // `&mut transpiler.linker` leaves the `Log` unborrowed, so this `&mut`
-        // is exclusive for the full body (linker.zig:96 `linker.log`).
-        let log = unsafe { &mut *self.log };
+        // Copy out the two scalar config values we read so the `&self` borrow
+        // from `options()` doesn't overlap later `&mut self` calls
+        // (`generate_import_path`, `log_mut`).
+        let (target, rewrite_jest_for_tests) = {
+            let opts = self.options();
+            (opts.target, opts.rewrite_jest_for_tests)
+        };
 
         let source_dir = file_path.source_dir();
         let mut externals: Vec<u32> = Vec::new();
@@ -378,9 +442,9 @@ impl Linker {
                     if IS_BUN {
                         if let Some(replacement) = hardcoded_module::get(
                             import_record.path.text,
-                            opts.target,
+                            target,
                             hardcoded_module::AliasOptions {
-                                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
+                                rewrite_jest_for_tests,
                             },
                         ) {
                             if replacement.tag == ImportRecordTag::Builtin
@@ -399,8 +463,8 @@ impl Linker {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
                             had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
-                                log,
-                                opts,
+                                self.log_mut(),
+                                target,
                                 import_record,
                                 source,
                             )?;
@@ -440,11 +504,11 @@ impl Linker {
                             if let Some(path) = runner.on_resolve(
                                 import_record.path.text,
                                 file_path.text,
-                                log,
+                                self.log_mut(),
                                 import_record.range.loc,
                                 if IS_BUN {
                                     BunPluginTarget::Bun
-                                } else if opts.target == options::Target::Browser {
+                                } else if target == options::Target::Browser {
                                     BunPluginTarget::Browser
                                 } else {
                                     BunPluginTarget::Node
@@ -484,7 +548,7 @@ impl Linker {
     // Rust those overlap; pass the disjoint pieces explicitly.
     fn when_module_not_found<const IS_BUN: bool>(
         log: &mut Log,
-        opts: &BundleOptions,
+        target: BundleTarget,
         import_record: &mut ImportRecord,
         source: &bun_logger::Source,
     ) -> Result<bool, bun_core::Error> {
@@ -509,7 +573,7 @@ impl Linker {
         if !import_record.path.text.is_empty()
             && resolver::is_package_path(import_record.path.text)
         {
-            if opts.target == BundleTarget::Browser
+            if target == BundleTarget::Browser
                 && is_node_builtin(import_record.path.text)
             {
                 log.add_resolve_error(
@@ -561,10 +625,6 @@ impl Linker {
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> Result<PFs::Path<'static>, bun_core::Error> {
-        // SAFETY: see `link()`.
-        let fs = unsafe { &*self.fs };
-        let opts = unsafe { &*self.options };
-
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
@@ -635,6 +695,7 @@ impl Linker {
                 } else {
                     let mut absolute_pathname = PFs::PathName::init(source_path);
 
+                    let opts = self.options();
                     if !opts.preserve_extensions {
                         if let Some(ext) = opts.out_extensions.get(absolute_pathname.ext) {
                             absolute_pathname.ext = *ext;
@@ -643,8 +704,9 @@ impl Linker {
 
                     // PORT NOTE: `fs.relativeTo(source_path)` ==
                     // `relative(fs.top_level_dir, source_path)` in Zig.
+                    let top_level_dir = self.fs().top_level_dir;
                     let mut base: &[u8] =
-                        bun_paths::resolve_path::relative(fs.top_level_dir, source_path);
+                        bun_paths::resolve_path::relative(top_level_dir, source_path);
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
                         base = &base[0..dot];
                     }
@@ -674,10 +736,7 @@ impl Linker {
 
     pub fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
-        // SAFETY: see struct PORT NOTE — `self.fs` is the process-lifetime
-        // `Fs::FileSystem` singleton wired in `Transpiler::configure_linker*`;
-        // shared read of `top_level_dir` only (linker.zig:377).
-        let fs = unsafe { &*self.fs };
+        let fs = self.fs();
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
@@ -694,25 +753,14 @@ impl Linker {
     ) -> Result<bool, bun_core::Error> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 
-        // SAFETY: single-owner. `resolve_results` / `resolve_queue` are raw
-        // pointers to sibling fields of the owning `Transpiler` (wired via
-        // `addr_of_mut!` in `Transpiler::configure_linker*`). The only caller
-        // is `Transpiler::enqueue_entry_points`, which borrows `&mut
-        // self.linker` for this call and holds no other borrow of
-        // `self.resolve_results` / `self.resolve_queue`, so the `&mut`s
-        // materialized here are exclusive for their lifetime. The two
-        // pointees are disjoint fields, so they do not alias each other
-        // either. Matches Zig `linker.resolve_results.getOrPut` /
-        // `linker.resolve_queue.writeItem` (linker.zig:387-390).
-        let resolve_results = unsafe { &mut *self.resolve_results };
-        let resolve_queue = unsafe { &mut *self.resolve_queue };
-
         // PORT NOTE: Zig `getOrPut` → `HashMap::entry`; `found_existing` is
-        // whether the key was already present.
-        let found_existing = resolve_results.contains_key(&hash_key);
+        // whether the key was already present. Matches Zig
+        // `linker.resolve_results.getOrPut` / `linker.resolve_queue.writeItem`
+        // (linker.zig:387-390).
+        let found_existing = self.resolve_results_mut().contains_key(&hash_key);
         if !found_existing {
-            resolve_results.insert(hash_key, ());
-            resolve_queue.push_back(resolve_result);
+            self.resolve_results_mut().insert(hash_key, ());
+            self.resolve_queue_mut().push_back(resolve_result);
         }
 
         Ok(!found_existing)

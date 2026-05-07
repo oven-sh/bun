@@ -32,8 +32,7 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
     p.temp_refs_to_declare
         .push(TempRef { r#ref, ..Default::default() });
 
-    // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-    VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, r#ref)
+    VecExt::append(&mut p.current_scope_mut().generated, r#ref)
         .expect("oom");
 
     r#ref
@@ -219,7 +218,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             .symbol_uses
                             .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-                        VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, temp_id)?;
+                        VecExt::append(&mut p.current_scope_mut().generated, temp_id)?;
 
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
@@ -615,7 +614,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .symbol_uses
                 .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-            VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg1)?;
+            VecExt::append(&mut p.current_scope_mut().generated, arg1)?;
 
             // 'get abc() { return abc }'
             let body_stmts = p

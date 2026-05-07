@@ -154,8 +154,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             &self.import_records[self.current_import_record_index as usize];
         self.current_import_record_index += 1;
 
-        // SAFETY: parse_graph backref valid for link step.
-        let parse_graph = unsafe { &*self.linker.parse_graph };
+        let parse_graph = self.linker.parse_graph();
         let unique_key_for_additional_files: &[u8] = if import_record.source_index.is_valid() {
             &parse_graph.input_files.items_unique_key_for_additional_file()
                 [import_record.source_index.get() as usize]
@@ -435,8 +434,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
     chunk: *const Chunk,
     chunks: *mut [Chunk],
 ) -> CompileResult {
-    // SAFETY: parse_graph backref valid for link step.
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let import_records = c.graph.ast.items_import_records();
     // SAFETY: caller guarantees `chunk` is live; we only read `entry_point`.

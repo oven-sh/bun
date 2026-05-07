@@ -684,6 +684,34 @@ impl VirtualMachine {
         unsafe { &*self.jsc_vm }
     }
 
+    /// Safe `&mut VM` accessor for the JSC VM. Set once in `init()` and live
+    /// for the VM lifetime; the JSC `VM` lives in a separate heap allocation
+    /// so this never aliases another field of `self`.
+    #[inline]
+    pub fn jsc_vm_mut(&mut self) -> &mut VM {
+        // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime; unique
+        // access guaranteed by `&mut self`.
+        unsafe { &mut *self.jsc_vm }
+    }
+
+    /// Safe accessor for the hot-reload import watcher. `bun_watcher` is the
+    /// type-erased `*mut ImportWatcher` installed by
+    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
+    /// `Box` heap allocation, not a sibling field), or null when hot reload is
+    /// disabled. Same single-JS-thread soundness contract as
+    /// [`Self::event_loop_mut`]; keep the borrow short.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn bun_watcher_mut(&self) -> Option<&mut crate::hot_reloader::ImportWatcher> {
+        // SAFETY: `bun_watcher` is either null or a live `Box<ImportWatcher>`
+        // leaked via `Box::into_raw` in `enable_hot_module_reloading`; the
+        // cast recovers the concrete type. Single-JS-thread invariant per
+        // `unsafe impl Sync`.
+        unsafe {
+            (self.bun_watcher as *mut crate::hot_reloader::ImportWatcher).as_mut()
+        }
+    }
+
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
     /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
     #[inline]
@@ -874,8 +902,7 @@ impl VirtualMachine {
     #[cold]
     pub fn garbage_collect(&self, sync: bool) -> usize {
         bun_core::Global::mimalloc_cleanup(false);
-        // SAFETY: global is valid for VM lifetime
-        let vm = unsafe { (*self.global).vm() };
+        let vm = self.global().vm();
         if sync {
             return vm.run_gc(true);
         }
@@ -1026,8 +1053,7 @@ impl VirtualMachine {
             // without the high tier is the value's own `toString`.
             let _ = exception_list;
             let writer = bun_core::Output::error_writer();
-            // SAFETY: `global` is set during init and live for VM lifetime.
-            let global = unsafe { &*self.global };
+            let global = self.global();
             let display = result
                 .to_error()
                 .unwrap_or(result)
@@ -1239,9 +1265,8 @@ impl VirtualMachine {
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
         if let Some(config) = self.cpu_profiler_config.take() {
-            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
             if let Err(e) = crate::bun_cpu_profiler::stop_and_write_profile(
-                unsafe { &mut *self.jsc_vm },
+                self.jsc_vm_mut(),
                 &config,
             ) {
                 bun_core::Output::err(
@@ -1254,9 +1279,8 @@ impl VirtualMachine {
         // Write heap profile if profiling was enabled - do this after CPU
         // profile but before shutdown.
         if let Some(config) = self.heap_profiler_config.take() {
-            // SAFETY: `jsc_vm` set in `init`, valid for VM lifetime.
             if let Err(e) = crate::bun_heap_profiler::generate_and_write_profile(
-                unsafe { &mut *self.jsc_vm },
+                self.jsc_vm_mut(),
                 config,
             ) {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
@@ -2089,8 +2113,7 @@ impl VirtualMachine {
                 self.pending_internal_promise = None;
                 self.pending_internal_promise_is_protected = false;
                 let global = self.global;
-                // SAFETY: `global` is set during init and live for the VM lifetime.
-                let global_ref = unsafe { &*global };
+                let global_ref = self.global();
                 let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                     .map_err(|_| bun_core::err!("JSError"))?;
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
@@ -2113,8 +2136,7 @@ impl VirtualMachine {
 
             // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
-            // SAFETY: `global` is set during init and live for the VM lifetime.
-            let global_ref = unsafe { &*global };
+            let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
@@ -2200,8 +2222,7 @@ impl VirtualMachine {
         }
         self.event_loop_mut().tick();
         let _ = self.event_loop_mut().drain_microtasks();
-        // SAFETY: global is valid for VM lifetime.
-        unsafe { (*self.global).handle_rejected_promises() };
+        self.global().handle_rejected_promises();
     }
 }
 
@@ -2588,8 +2609,7 @@ impl IPCInstance {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.
         let vm = VirtualMachine::get().as_mut();
-        // SAFETY: event loop is process-lifetime.
-        let event_loop = unsafe { &mut *vm.event_loop() };
+        let event_loop = vm.event_loop_mut();
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook fn is supplied by `bun_runtime` at startup.
             unsafe { (hooks.ipc_child_singleton_deinit)() };
@@ -2944,8 +2964,7 @@ impl VirtualMachine {
         // PORT NOTE: Zig `defer eventLoop().drainMicrotasks()` per-arm —
         // hoisted into a closure.
         let drain = |this: &mut Self| {
-            // SAFETY: `event_loop` is a self-pointer into this VM.
-            let _ = unsafe { (*this.event_loop()).drain_microtasks() };
+            let _ = this.event_loop_mut().drain_microtasks();
         };
         let emit_warning = |this: &mut Self| {
             let r = jsc::from_js_host_call_generic(global_object, || unsafe {
@@ -3083,10 +3102,7 @@ impl VirtualMachine {
         }
         let ext = bun_paths::extension(main);
         let loader = self.transpiler.options.loader(ext);
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-        // `is_watcher_enabled()`; the cast recovers the concrete type.
-        unsafe {
-            let watcher = &mut *(self.bun_watcher as *mut crate::hot_reloader::ImportWatcher);
+        if let Some(watcher) = self.bun_watcher_mut() {
             let _ = watcher.add_file_by_path_slow(main, loader);
         }
     }
@@ -3152,10 +3168,9 @@ impl VirtualMachine {
             // new global can re-register them post-reload.
             unsafe { (hooks.cron_clear_all_reload)(self) };
         }
-        // SAFETY: `global` valid for VM lifetime; `JSGlobalObject::reload`
-        // drains microtasks + collects async + clears the JSC module loader
-        // registry.
-        unsafe { &*self.global }.reload().expect("Failed to reload");
+        // `JSGlobalObject::reload` drains microtasks + collects async + clears
+        // the JSC module loader registry.
+        self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
@@ -3350,8 +3365,7 @@ impl VirtualMachine {
         vm_ref.jsc_vm = unsafe { (*new_global).vm_ptr() };
         // SAFETY: per-thread uws loop is live.
         unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*vm_ref.event_loop()).ensure_waker() };
+        vm_ref.event_loop_mut().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
             unsafe { IS_SMOL_MODE = true };
@@ -4124,8 +4138,7 @@ impl VirtualMachine {
             return Ok(());
         }
         let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
-        // SAFETY: `global` valid for VM lifetime.
-        unsafe { (*self.global).delete_module_registry_entry(&str) }
+        self.global().delete_module_registry_entry(&str)
     }
 
     /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
@@ -4592,8 +4605,7 @@ impl VirtualMachine {
             allow_side_effects,
         ) {
             if err == bun_core::err!("JSError") {
-                // SAFETY: `self.global` valid for VM lifetime.
-                unsafe { (*self.global).clear_exception() };
+                self.global().clear_exception();
             } else {
                 #[cfg(debug_assertions)]
                 {
@@ -4772,8 +4784,7 @@ impl VirtualMachine {
         source_code_slice: &mut Option<bun_string::ZigStringSlice>,
         allow_source_code_preview: bool,
     ) {
-        // SAFETY: `global` valid for VM lifetime.
-        let global = unsafe { &*self.global };
+        let global = self.global();
         error_instance.to_zig_exception(global, exception);
         let mut enable_source_code_preview = allow_source_code_preview
             && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
@@ -5349,8 +5360,7 @@ impl VirtualMachine {
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
             && error_instance.js_type() == JSType::ErrorInstance;
-        // SAFETY: `self.global` valid for VM lifetime.
-        let global_ref = unsafe { &*self.global };
+        let global_ref = self.global();
         // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
         // `bun.String` is `defer .deref()`-ed; hold the owning `bun_string::String`
         // alongside the slice so the latin1 view stays live for this fn.
@@ -6109,9 +6119,8 @@ impl VirtualMachine {
             instance
         };
 
-        // SAFETY: `instance` is the live boxed IPCInstance; `self.global` is
-        // the live VM global.
-        unsafe { (*instance).data.write_version_packet(&*self.global) };
+        // SAFETY: `instance` is the live boxed IPCInstance.
+        unsafe { (*instance).data.write_version_packet(self.global()) };
 
         Some(instance)
     }

@@ -365,8 +365,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // shadows any variable called "arguments" in any parent scopes. But only do
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
-        // SAFETY: current_scope is set during parsing; raw-pointer deref mirrors Zig `p.current_scope.members`.
-        if !unsafe { &*p.current_scope }.members.contains_key(arguments_str) {
+        if !p.current_scope().members.contains_key(arguments_str) {
             func.arguments_ref = Some(
                 p.declare_symbol_maybe_generated::<false>(
                     js_ast::symbol::Kind::Arguments,

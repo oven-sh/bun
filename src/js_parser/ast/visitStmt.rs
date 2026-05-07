@@ -528,7 +528,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 // If there are lowered "using" declarations, change this into a "var"
-                if unsafe { &*p.current_scope }.parent.is_none()
+                if p.current_scope().parent.is_none()
                     && p.will_wrap_module_in_try_catch_for_using
                 {
                     stmts.reserve(2);
@@ -1789,7 +1789,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p,
                         stmts_slice,
                         p.will_wrap_module_in_try_catch_for_using
-                            && unsafe { &*p.current_scope }.parent.is_none(),
+                            && p.current_scope().parent.is_none(),
                     );
                     if let StmtData::SBlock(mut b) = data.body.data {
                         b.stmts = list_to_stmts(visited_stmts);

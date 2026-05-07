@@ -2377,7 +2377,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && p.options.bundle
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
-            && !unsafe { &*p.current_scope }.contains_direct_eval
+            && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
             && e_.func.name.unwrap().ref_.is_some()
             && p.symbols[e_.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
@@ -2436,7 +2436,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && p.options.bundle
             && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
-            && !unsafe { &*p.current_scope }.contains_direct_eval
+            && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()
             && e_.class_name.unwrap().ref_.is_some()
             && p.symbols[e_.class_name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]

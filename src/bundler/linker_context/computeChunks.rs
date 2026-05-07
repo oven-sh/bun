@@ -685,8 +685,7 @@ pub fn compute_chunks(
                 }
             };
 
-            // SAFETY: `resolver` is set in `init` and outlives the link step.
-            let root_dir = &unsafe { &*this.resolver }.opts.root_dir;
+            let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
     }

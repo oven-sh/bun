@@ -1175,8 +1175,7 @@ impl<'a> Parser<'a> {
                     let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
                     remaining_stmts = rest;
 
-                    // SAFETY: `module_scope` is a non-null arena pointer set by `prepare_for_visit_pass`.
-                    VecExt::append(&mut unsafe { &mut *p.module_scope }.generated, deferred_import.namespace.ref_.expect("infallible: ref bound"))
+                    VecExt::append(&mut p.module_scope_mut().generated, deferred_import.namespace.ref_.expect("infallible: ref bound"))
                         .expect("oom");
 
                     import_part_stmts[0] = Stmt::alloc(
@@ -1712,7 +1711,7 @@ impl<'a> Parser<'a> {
                         || uses_filename
                         || (!p.options.bundle
                             // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
-                            && unsafe { &*p.module_scope }.strict_mode
+                            && p.module_scope().strict_mode
                                 == crate::StrictModeKind::ExplicitStrictMode)
                     {
                         exports_kind = js_ast::ExportsKind::Cjs;

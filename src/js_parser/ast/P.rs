@@ -719,6 +719,45 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         unsafe { &mut *self.log.as_ptr() }
     }
 
+    /// Shared borrow of the current scope.
+    #[inline]
+    pub fn current_scope(&self) -> &js_ast::Scope {
+        // SAFETY: `current_scope` is initialised to a valid arena-allocated
+        // Scope in `init()` and every reassignment (push/pop scope) stores
+        // another arena-owned pointer; the pointee outlives `'a` and is never
+        // freed during parsing.
+        unsafe { &*self.current_scope }
+    }
+
+    /// Unique borrow of the current scope. Takes `&mut self` so two live
+    /// `&mut Scope` cannot alias from a shared `&P` (PORTING.md §Forbidden).
+    #[inline]
+    pub fn current_scope_mut(&mut self) -> &mut js_ast::Scope {
+        // SAFETY: see `current_scope()`. `&mut self` ensures no other borrow
+        // of `*self.current_scope` is reachable through `self` for the
+        // returned lifetime. Caller must not also hold a borrow obtained via
+        // `module_scope[_mut]()` when the two pointers alias (top level).
+        unsafe { &mut *self.current_scope }
+    }
+
+    /// Shared borrow of the module (top-level) scope.
+    #[inline]
+    pub fn module_scope(&self) -> &js_ast::Scope {
+        // SAFETY: `module_scope` is initialised to a valid arena-allocated
+        // Scope in `init()` (and reassigned in `prepare_for_visit_pass`); the
+        // pointee outlives `'a` and is never freed during parsing.
+        unsafe { &*self.module_scope }
+    }
+
+    /// Unique borrow of the module scope. Takes `&mut self` (see
+    /// `current_scope_mut`).
+    #[inline]
+    pub fn module_scope_mut(&mut self) -> &mut js_ast::Scope {
+        // SAFETY: see `module_scope()`. `&mut self` ensures exclusivity for
+        // the returned lifetime.
+        unsafe { &mut *self.module_scope }
+    }
+
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
     //    can reference them; the full bodies with SCAN_ONLY require-scan and
     //    @typeInfo branches stay in the gated block below) ────────────────
@@ -1499,8 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 visit(symbols, char_freq, unsafe { child.as_ref() });
             }
         }
-        // SAFETY: module_scope is arena-owned and valid for the parser lifetime
-        visit(self.symbols.as_slice(), &mut freq, unsafe { &*self.module_scope });
+        visit(self.symbols.as_slice(), &mut freq, self.module_scope());
 
         // TODO: mangledProps
 
@@ -1815,7 +1853,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: self.bun_app_namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, self.bun_app_namespace_ref)?;
+        let bun_app_ns_ref = self.bun_app_namespace_ref;
+        VecExt::append(&mut self.module_scope_mut().generated, bun_app_ns_ref)?;
 
         let response_ref = self.response_ref;
         let clause_items = allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
@@ -1934,7 +1973,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, namespace_ref)?;
+        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref)?;
         for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             let ref_ = symbols.get(alias).expect("unreachable");
             let alias_name: &'static [u8] = symbols.alias_name(alias);
@@ -2053,7 +2092,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, namespace_ref)?;
+        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref)?;
 
         for entry in clauses {
             if entry.enabled {
@@ -2078,7 +2117,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: entry.r#ref, is_top_level: true });
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, entry.r#ref)?;
+                VecExt::append(&mut self.module_scope_mut().generated, entry.r#ref)?;
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
                     entry.r#ref,
@@ -2729,14 +2768,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let module_scope = unsafe { &mut *self.module_scope };
         if self.esm_import_keyword.len > 0 {
-            module_scope.recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
+            self.module_scope_mut().recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
         } else if self.esm_export_keyword.len > 0 {
-            module_scope.recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
+            self.module_scope_mut().recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
         } else if self.top_level_await_keyword.len > 0 {
-            module_scope.recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+            self.module_scope_mut().recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
         self.hoist_symbols(self.module_scope);
@@ -2754,8 +2791,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let module_scope = unsafe { &mut *self.module_scope };
+        let module_scope = self.module_scope_mut();
         module_scope.generated.ensure_unused_capacity(generated_symbols_count as usize * 3)?;
         module_scope.members.ensure_unused_capacity(
             generated_symbols_count as usize * 3 + module_scope.members.count(),
@@ -3530,9 +3566,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             .into_bump_str()
             .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            let scope = unsafe { &mut *self.current_scope };
-            VecExt::append(&mut scope.generated, stmt.namespace_ref)?;
+            VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref)?;
         }
 
         let mut item_refs = ImportItemForNamespaceMap::new();
@@ -3749,9 +3783,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let name = js_ast::LocRef { loc, ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let scope = unsafe { &mut *self.current_scope };
-        VecExt::append(&mut scope.generated, name.ref_.expect("infallible: ref bound"))?;
+        VecExt::append(&mut self.current_scope_mut().generated, name.ref_.expect("infallible: ref bound"))?;
 
         Ok(name)
     }
@@ -3962,8 +3994,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ) -> *mut js_ast::TSNamespaceScope {
         let map: Option<*mut js_ast::TSNamespaceMemberMap> = 'brk: {
             // Merge with a sibling namespace from the same scope
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if let Some(existing_member) = unsafe { &*self.current_scope }.members.get(name) {
+            if let Some(existing_member) = self.current_scope().members.get(name) {
                 if let Some(member_data) = self.ref_to_ts_namespace_member.get(&existing_member.ref_) {
                     if let js_ast::ts::Data::Namespace(ns) = member_data {
                         break 'brk Some(*ns as *mut _);
@@ -3973,8 +4004,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             // Merge with a sibling namespace from a different scope
             if is_export {
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                if let Some(ns) = unsafe { &*self.current_scope }.ts_namespace {
+                if let Some(ns) = self.current_scope().ts_namespace {
                     // SAFETY: arena-owned TSNamespaceScope/MemberMap valid for parser 'a lifetime
                     let exported = unsafe { ns.as_ref() }.exported_members;
                     if !exported.is_null() {
@@ -4052,8 +4082,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
         };
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let scope = unsafe { &*self.current_scope };
+        let scope = self.current_scope();
         if self.is_strict_mode() {
             let mut why: &'a [u8] = b"";
             let mut where_: logger::Range = logger::Range::NONE;
@@ -4100,8 +4129,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     #[inline]
     pub fn is_strict_mode(&self) -> bool {
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &*self.current_scope }.strict_mode != js_ast::StrictModeKind::SloppyMode
+        self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
     }
 
     #[inline]
@@ -4118,7 +4146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
         // borrow only (`get_member_with_hash` takes `&self`), so the later
         // re-derivations at L4149/L4160 cannot overlap a stale unique tag.
-        let member = unsafe { &*self.module_scope }.get_member_with_hash(name, name_hash);
+        let member = self.module_scope().get_member_with_hash(name, name_hash);
 
         // If the code declared this symbol using "var name", then this is actually
         // not a collision. For example, node will let you do this:
@@ -4151,8 +4179,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let ref_ = self.new_symbol(kind, name)?;
 
         if member.is_none() {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *self.module_scope }
+            self.module_scope_mut()
                 .members
                 .put(name, js_ast::scope::Member { ref_, loc: logger::Loc::EMPTY })?;
             return Ok(ref_);
@@ -4162,8 +4189,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // this module will be unable to reference this symbol. However, we must
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)?;
+        VecExt::append(&mut self.module_scope_mut().generated, ref_)?;
         Ok(ref_)
     }
 
@@ -4230,17 +4256,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // a short-lived shared borrow, compute the merge, then take a fresh
         // &mut to write the member back. Two probes instead of one;
         // PERF(port): single-probe getOrPut — profile in Phase B.
-        let existing_member: Option<js_ast::scope::Member> = {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared borrow only
-            unsafe { &*self.current_scope }.members.get(name).copied()
-        };
+        let existing_member: Option<js_ast::scope::Member> =
+            self.current_scope().members.get(name).copied();
         if let Some(existing) = existing_member {
             let symbol_idx = existing.ref_.inner_index() as usize;
 
             if !IS_GENERATED {
                 use js_ast::scope::SymbolMergeResult as MR;
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared borrow only
-                let merge = unsafe { &*self.current_scope }
+                let merge = self.current_scope()
                     .can_merge_symbols::<TYPESCRIPT>(self.symbols[symbol_idx].kind, kind);
                 match merge {
                     MR::Forbidden => {
@@ -4281,13 +4304,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         // PORT NOTE: StringHashMap has no key_ptr (std::HashMap can't hand out &mut K).
         // The key is already `name` (boxed copy) so the Zig `*entry.key_ptr = name` is a no-op here.
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.current_scope }
+        self.current_scope_mut()
             .members
             .put(name, js_ast::scope::Member { ref_, loc })?;
         if IS_GENERATED {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)?;
+            VecExt::append(&mut self.module_scope_mut().generated, ref_)?;
         }
         Ok(ref_)
     }
@@ -5365,8 +5386,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: Some(new_ref) };
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, new_ref)
+                VecExt::append(&mut self.module_scope_mut().generated, new_ref)
                     .expect("oom");
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
@@ -5394,7 +5414,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // this declaration into a nested scope.
         if (self.options.bundle || self.will_wrap_module_in_try_catch_for_using)
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            && unsafe { &*self.current_scope }.parent.is_none()
+            && self.current_scope().parent.is_none()
             && !kind.is_using()
         {
             return js_ast::s::Kind::KVar;
@@ -5784,8 +5804,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .new_symbol(js_ast::symbol::Kind::Other, name)
                     .expect("unreachable");
                 self.runtime_imports.put(name, ref_);
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)
+                VecExt::append(&mut self.module_scope_mut().generated, ref_)
                     .expect("oom");
                 ref_
             }
@@ -6164,8 +6183,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if unsafe { (*class).extends }.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
                             let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str).expect("unreachable");
-                            // SAFETY: arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
-                            VecExt::append(&mut unsafe { &mut *self.current_scope }.generated, arguments_ref).expect("oom");
+                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref).expect("oom");
 
                             let spread_inner = self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
                             let super_ = self.new_expr(E::Spread { value: spread_inner }, stmt.loc);
@@ -7272,8 +7290,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     part.stmts = result.stmts as *mut [Stmt];
                     // SAFETY: just assigned from a live &mut [Stmt].
                     if unsafe { &*part.stmts }.len() > 0 {
-                        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                        if unsafe { &*self.module_scope }.contains_direct_eval && part.declared_symbols.len() > 0 {
+                        if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
                             // reference those symbols.
@@ -7386,8 +7403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 total_stmts_count += unsafe { &*part.stmts }.len();
             }
 
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            let preserve_strict_mode = unsafe { &*self.module_scope }.strict_mode
+            let preserve_strict_mode = self.module_scope().strict_mode
                 == js_ast::StrictModeKind::ExplicitStrictMode
                 && !(parts.len() > 0
                     // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
@@ -7541,14 +7557,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Spec P.zig:6658: `.char_freq = p.computeCharacterFrequency()`.
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let module_scope_strict = unsafe { &*self.module_scope }.strict_mode;
+        let module_scope_strict = self.module_scope().strict_mode;
         // PORT NOTE: Zig shallow-copies `p.module_scope.*` into Ast; Scope is not
         // `Clone` in Rust (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
-        // SAFETY: same as above.
-        let module_scope = core::mem::take(unsafe { &mut *self.module_scope });
+        let module_scope = core::mem::take(self.module_scope_mut());
 
         let uses_module_ref = self.symbols[self.module_ref.inner_index() as usize].use_count_estimate > 0;
         let uses_exports_ref = self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate > 0;
@@ -8064,7 +8078,7 @@ impl LowerUsingDeclarationsContext {
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if p.will_wrap_module_in_try_catch_for_using && unsafe { &*p.current_scope }.kind == js_ast::scope::Kind::Entry {
+            if p.will_wrap_module_in_try_catch_for_using && p.current_scope().kind == js_ast::scope::Kind::Entry {
                 local.kind = js_ast::s::Kind::KVar;
             } else {
                 local.kind = js_ast::s::Kind::KConst;

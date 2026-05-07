@@ -148,7 +148,7 @@ pub fn create_and_schedule_completion_task(
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe { (*completion).poll_ref.ref_(jsc::VirtualMachine::event_loop_ctx(vm)) };
+    unsafe { (*completion).poll_ref.ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm)) };
 
     Ok(completion)
 }
@@ -535,7 +535,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: bun_vm() is non-null for a Bun global.
         let vm = unsafe { (*this.global_this).bun_vm() };
-        this.poll_ref.unref(jsc::VirtualMachine::event_loop_ctx(vm));
+        this.poll_ref.unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
         if this.cancelled {
             return Ok(());
         }

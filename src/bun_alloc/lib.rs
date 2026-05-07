@@ -188,24 +188,22 @@ pub use maybe_owned::MaybeOwned;
 pub mod mimalloc_arena { pub use crate::MimallocArena; }
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
-// Real, self-contained definitions this crate consumes. Everything else
-// (`ThreadLock`, `StoredTrace`, `dump_stack_trace`, scoped logging) lives in
-// `bun_core` per CYCLEBREAK §bun_alloc and is imported from there by higher
-// tiers; nothing in this crate needs them.
-pub mod stubs {
-    /// Zig: `bun.PathBuffer` — fixed-size scratch path buffer.
-    pub type PathBuffer = [u8; 4096];
-    /// Zig: `std.fs.path.sep_str` — "\\" on Windows, "/" elsewhere.
-    pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
-    pub mod strings {
-        /// Zig: `bun.strings.trimRight`.
-        #[inline]
-        pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-            let mut end = s.len();
-            while end > 0 && chars.contains(&s[end - 1]) { end -= 1; }
-            &s[..end]
-        }
+// Real, self-contained helpers used by the BSS containers below. The wider
+// `bun_paths::SEP_STR` / `bun_core::strings::trim_right` live in higher tiers
+// (which depend on this crate), so the minimal definitions are duplicated here
+// rather than importing upward.
+
+/// Zig: `std.fs.path.sep_str` — `"\\"` on Windows, `"/"` elsewhere.
+const SEP_STR: &[u8] = if cfg!(windows) { b"\\" } else { b"/" };
+
+/// Zig: `std.mem.trimRight(u8, s, chars)`.
+#[inline]
+fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+    let mut end = s.len();
+    while end > 0 && chars.contains(&s[end - 1]) {
+        end -= 1;
     }
+    &s[..end]
 }
 
 // ── RAII Mutex ────────────────────────────────────────────────────────────
@@ -1895,8 +1893,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<&[u8], AllocError> {
         let _guard = self.mutex.lock();
 
+        // Zig: `threadlocal var lowercase_buf: bun.PathBuffer = undefined;`
+        // (`bun.PathBuffer` = `[MAX_PATH_BYTES]u8` = `[4096]u8`.)
         thread_local! {
-            static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
+            static LOWERCASE_BUF: core::cell::RefCell<[u8; 4096]> =
                 const { core::cell::RefCell::new([0u8; 4096]) };
         }
         let (ptr, len) = LOWERCASE_BUF.with_borrow_mut(|buf| {
@@ -2048,7 +2048,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         denormalized_key: &[u8],
     ) -> core::result::Result<Result, AllocError> {
         let key = if REMOVE_TRAILING_SLASHES {
-            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
+            trim_right(denormalized_key, SEP_STR)
         } else {
             denormalized_key
         };
@@ -2082,17 +2082,19 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let key = if REMOVE_TRAILING_SLASHES {
-            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
+            trim_right(denormalized_key, SEP_STR)
         } else {
             denormalized_key
         };
         let _key = bun_wyhash::hash(key);
-        let index = {
-            let _guard = self.mutex.lock();
-            match self.index.get(&_key).copied() {
-                Some(i) => i,
-                None => return None,
-            }
+        // Hold the lock across `at_index` (Zig: `defer self.mutex.unlock()` at fn scope) —
+        // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
+        // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
+        // so it does not conflict with the `&mut self` borrow in `at_index`.
+        let _guard = self.mutex.lock();
+        let index = match self.index.get(&_key).copied() {
+            Some(i) => i,
+            None => return None,
         };
         self.at_index(index)
     }
@@ -2159,7 +2161,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let key = if REMOVE_TRAILING_SLASHES {
-            crate::stubs::strings::trim_right(denormalized_key, crate::stubs::SEP_STR.as_bytes())
+            trim_right(denormalized_key, SEP_STR)
         } else {
             denormalized_key
         };
@@ -2327,7 +2329,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
-            crate::stubs::strings::trim_right(slice, b"/")
+            trim_right(slice, b"/")
         } else {
             slice
         };

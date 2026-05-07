@@ -1029,17 +1029,19 @@ impl VirtualMachine {
             return true;
         }
 
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         if self.is_handling_uncaught_exception {
             self.run_error_handler(err, None);
-            // SAFETY: extern "C" FFI; `global_object` is the live VM global.
-            unsafe { Bun__Process__exit(global_object.as_ptr(), 7) };
+            // SAFETY: `global_object` is the live VM global; `process_exit` is
+            // `bun_runtime::node::process::exit` (main-thread `noreturn`).
+            unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
             panic!("Uncaught exception while handling uncaught exception");
         }
         if self.exit_on_uncaught_exception {
             self.run_error_handler(err, None);
-            // SAFETY: extern "C" FFI; `global_object` is the live VM global.
-            unsafe { Bun__Process__exit(global_object.as_ptr(), 1) };
-            panic!("made it past Bun__Process__exit");
+            // SAFETY: see above.
+            unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+            panic!("made it past process.exit()");
         }
         self.is_handling_uncaught_exception = true;
         // SAFETY: extern "C" FFI; `global_object` is the live VM global.
@@ -1062,9 +1064,9 @@ impl VirtualMachine {
         // while that callback runs so a re-entrant `uncaught_exception` from
         // a user handler trips the recursion guard and hard-exits with code 7
         // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `Bun__Process__exit`
-        // → `panic!`, which never returns), so a linear reset here matches
-        // the Zig `defer` scope.
+        // callback unwind past this frame (re-entry hits `process_exit` →
+        // `panic!`, which never returns), so a linear reset here matches the
+        // Zig `defer` scope.
         self.is_handling_uncaught_exception = false;
         handled
     }
@@ -1339,15 +1341,6 @@ pub struct RuntimeHooks {
         exec_argv: &[bun_string::WTFStringImpl],
         transform_options: &mut bun_options_types::schema::api::TransformOptions,
     ),
-    /// `StandaloneModuleGraph.find(path)` — spec web_worker.zig:865. Returns
-    /// the graph-owned module name (BORROWED, `'static` for the process) if
-    /// `path` is a baked module, else `None`. `graph` is the erased
-    /// `*StandaloneModuleGraph` from `vm.standalone_module_graph`.
-    pub find_standalone_module:
-        unsafe fn(graph: NonNull<c_void>, path: &[u8]) -> Option<&'static [u8]>,
-    /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — spec
-    /// web_worker.zig:886. `&'static` because it's a baked-in constant.
-    pub standalone_base_public_path: &'static [u8],
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
@@ -1368,7 +1361,7 @@ pub struct WorkerInitOptions {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub env_loader: NonNull<bun_dotenv::Loader<'static>>,
     pub store_fd: bool,
-    pub graph: Option<NonNull<c_void>>,
+    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
 }
 
 impl VirtualMachine {

@@ -559,51 +559,12 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     bun_aliases_get(str).is_some()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `PluginRunner` namespace helpers — pure byte-string parsing, ported here
-// (spec bundler_jsc/PluginRunner.zig:14-53) so `Bun__runVirtualModule` can
-// pre-filter without depending on `bun_bundler_jsc` (forward-dep cycle).
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Spec PluginRunner.zig:14-28 — `PluginRunner.extractNamespace`.
-fn plugin_extract_namespace(specifier: &[u8]) -> &[u8] {
-    let Some(colon) = bun_string::strings::index_of_char(specifier, b':') else {
-        return b"";
-    };
-    let colon = colon as usize;
-    // Windows drive-letter (`C:\…`) — not a namespace.
-    if cfg!(windows)
-        && colon == 1
-        && specifier.len() > 3
-        && bun_paths::resolve_path::is_sep_any(specifier[2])
-        && ((specifier[0] > b'a' && specifier[0] < b'z')
-            || (specifier[0] > b'A' && specifier[0] < b'Z'))
-    {
-        return b"";
-    }
-    &specifier[..colon]
-}
-
-/// Spec PluginRunner.zig:30-53 — `PluginRunner.couldBePlugin`.
-fn plugin_could_be_plugin(specifier: &[u8]) -> bool {
-    if let Some(last_dot) = bun_string::strings::last_index_of_char(specifier, b'.') {
-        let ext = &specifier[last_dot + 1..];
-        // '.' followed by either a letter or a non-ascii character — cheaply
-        // rule out "../", "..", "./".
-        if !ext.is_empty()
-            && ((ext[0] >= b'a' && ext[0] <= b'z')
-                || (ext[0] >= b'A' && ext[0] <= b'Z')
-                || ext[0] > 127)
-        {
-            return true;
-        }
-    }
-    let namespace = plugin_extract_namespace(specifier);
-    !namespace.is_empty()
-        && !bun_string::strings::eql_long(namespace, b"node", false)
-        && !bun_string::strings::eql_long(namespace, b"bun", false)
-        && !bun_string::strings::eql_long(namespace, b"file", false)
-}
+// PORT NOTE (spec bundler_jsc/PluginRunner.zig:11-32): the pure byte-string
+// `extractNamespace` / `couldBePlugin` helpers live in
+// `bun_bundler::transpiler::PluginRunner` — `bun_bundler` is already a
+// `bun_jsc` dep, so `Bun__runVirtualModule` calls them directly rather than
+// duplicating them here.
+use bun_bundler::transpiler::PluginRunner;
 
 // PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
 // has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_node_file_hook`
@@ -680,11 +641,11 @@ pub extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    if !plugin_could_be_plugin(specifier) {
+    if !PluginRunner::could_be_plugin(specifier) {
         return JSValue::ZERO;
     }
 
-    let namespace = plugin_extract_namespace(specifier);
+    let namespace = PluginRunner::extract_namespace(specifier);
     let after_namespace = if namespace.is_empty() {
         specifier
     } else {

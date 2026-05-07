@@ -724,6 +724,6 @@ impl Linker {
 //   todos:      0
 //   notes:      ImportPathFormat const-generic demoted to runtime arg
 //               (no `adt_const_params` in this crate); PluginRunner.on_resolve
-//               JSC dispatch lives in `bundler_jsc::plugin_runner` (cycle
-//               break via type-erased `global_object`).
+//               dispatched via fn-ptr field populated by `bun_jsc` (cycle
+//               break — `JSGlobalObject` is unreachable from this crate).
 // ──────────────────────────────────────────────────────────────────────────

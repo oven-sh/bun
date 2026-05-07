@@ -3,8 +3,7 @@
 
 use std::io::Write as _;
 
-use bun_logger::{Loc, Log};
-use bun_string::{strings, String as BunString};
+use bun_string::String as BunString;
 
 use crate::{ErrorableString, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{BunPluginTarget, StringJsc};

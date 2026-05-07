@@ -90,8 +90,11 @@ impl JSGlobalObject {
         millisecond: i32,
     ) -> JsResult<f64> {
         crate::mark_binding();
+        // C++ `Bun__gregorianDateTimeToMS` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
+        // wrapper checks for a pending exception and returns `error.JSError`. Route through
+        // `from_js_host_call_generic` so a thrown exception surfaces as `Err(JsError::Thrown)`.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        Ok(unsafe {
+        crate::from_js_host_call_generic(self, || unsafe {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, true)
         })
     }
@@ -108,7 +111,7 @@ impl JSGlobalObject {
     ) -> JsResult<f64> {
         crate::mark_binding();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        Ok(unsafe {
+        crate::from_js_host_call_generic(self, || unsafe {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
         })
     }

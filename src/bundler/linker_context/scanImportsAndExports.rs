@@ -1386,17 +1386,6 @@ mod __css_validation {
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_logger::{self as Logger, Log};
 
-    /// `bun_css` keys its `composes`/`local_properties` maps on `bun_logger::Ref`
-    /// (cycle-break duplicate of `js_ast::Ref`). Both are `#[repr(transparent)]`
-    /// `u64` newtypes with the identical LSB-first packing — see
-    /// `src/js_parser/ast/base.rs` and `src/logger/lib.rs`. Transmute is the
-    /// only zero-cost bridge until the duplicates are unified upstream.
-    #[inline]
-    fn to_js_ref(r: logger::Ref) -> Ref {
-        // SAFETY: identical `#[repr(transparent)]` u64 layout (see doc comment).
-        unsafe { core::mem::transmute::<logger::Ref, Ref>(r) }
-    }
-
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
     // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
     type CssCol = Option<*mut core::ffi::c_void>;
@@ -1554,7 +1543,7 @@ mod __css_validation {
 
                 // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                 let local_original_name: &[u8] =
-                    unsafe { &*(*self.all_symbols.get(to_js_ref(local)).unwrap()).original_name };
+                    unsafe { &*(*self.all_symbols.get(local).unwrap()).original_name };
 
                 let _ = self.log.add_msg(Logger::Msg {
                     kind: Logger::Kind::Err,

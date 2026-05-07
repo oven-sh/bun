@@ -152,55 +152,13 @@ where
     // Phase B: replace callers with concrete StringArrayHashMap construction; this stub preserves signature.
 }
 
-#[derive(Debug, Clone)]
-pub enum AllowUnresolved {
-    /// Default. Skip all checks — current behavior.
-    All,
-    /// Always error on dynamic specifiers.
-    None,
-    /// Glob patterns; at least one must match the extracted shape.
-    Patterns(Box<[Box<[u8]>]>),
-}
-
-impl Default for AllowUnresolved {
-    fn default() -> Self {
-        AllowUnresolved::All
-    }
-}
-
-impl AllowUnresolved {
-    pub const DEFAULT: AllowUnresolved = AllowUnresolved::All;
-
-    /// Normalize from raw CLI/JS input.
-    /// [] → .none, contains "*" → .all, else → .patterns
-    pub fn from_strings(strs: Box<[Box<[u8]>]>) -> AllowUnresolved {
-        if strs.is_empty() {
-            return AllowUnresolved::None;
-        }
-        for s in strs.iter() {
-            if &**s == b"*" {
-                return AllowUnresolved::All;
-            }
-        }
-        AllowUnresolved::Patterns(strs)
-    }
-
-    /// shape is the extracted template representation (may be "").
-    pub fn allows(&self, shape: &[u8]) -> bool {
-        match self {
-            AllowUnresolved::All => true,
-            AllowUnresolved::None => false,
-            AllowUnresolved::Patterns(pats) => {
-                for p in pats.iter() {
-                    if bun_glob::r#match(p, shape).matches() {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-    }
-}
+// CYCLEBREAK MOVE_DOWN: `AllowUnresolved` is defined canonically in
+// `bun_js_parser::options` (lower tier) because the parser is the consumer
+// (`P::should_allow_unresolved_dynamic_specifier`). Re-export here so
+// `BundleOptions.allow_unresolved` and `Parser.Options.allow_unresolved` are
+// the SAME nominal type and `ParseTask::run_with_source_code` can hand
+// `&transpiler.options.allow_unresolved` straight through.
+pub use bun_js_parser::options::AllowUnresolved;
 
 #[derive(Default)]
 pub struct ExternalModules {

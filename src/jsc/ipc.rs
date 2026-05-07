@@ -1688,7 +1688,7 @@ impl SendQueue {
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#_write len {}", data.len());
                 if let Some(fd_unwrapped) = fd {
-                    socket.write_fd(data, fd_unwrapped)
+                    socket.write_fd(data, fd_unwrapped.native())
                 } else {
                     socket.write(data)
                 }

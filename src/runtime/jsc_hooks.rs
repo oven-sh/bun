@@ -34,7 +34,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
-    JSModuleLoader, JSValue, ResolvedSource,
+    JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
 use bun_jsc::js_promise::Status as PromiseStatus;
 

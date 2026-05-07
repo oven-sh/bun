@@ -37,17 +37,6 @@ type BitSet = DynamicBitSetUnmanaged;
 #[cfg(feature = "css")]
 type SymbolList = BabyList<Symbol>;
 
-/// `CssRef::to_real_ref` returns `bun_logger::Ref`; the bundler AST wants
-/// `bun_js_parser::Ref`. Both are `#[repr(transparent)] u64` with the same
-/// bit-packing (see base.rs / logger/lib.rs), so reinterpret.
-#[cfg(feature = "css")]
-#[inline]
-fn to_js_ref(r: bun_logger::Ref) -> Ref {
-    // SAFETY: both Ref types are `#[repr(transparent)]` wrappers over `u64`
-    // with identical `{inner_index: u31, tag: u2, source_index: u31}` layout.
-    unsafe { core::mem::transmute::<bun_logger::Ref, Ref>(r) }
-}
-
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
 #[cfg(feature = "css")]

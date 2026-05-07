@@ -350,9 +350,9 @@ pub fn schedule_barrel_deferred_imports(
     // re-slices the existing backing. The raw pointers below are dereferenced
     // only during Phase 1/2 (queue seeding), strictly before the BFS takes any
     // `&mut` to the same column.
-    let file_import_records: *const BabyList<import_record::ImportRecord> =
+    let file_import_records: *const import_record::List =
         &this.graph.ast.items_import_records()[result_source_index as usize];
-    let file_named_imports: *const js_ast::NamedImports =
+    let file_named_imports: *const JSAst::NamedImports =
         &this.graph.ast.items_named_imports()[result_source_index as usize];
 
     // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows

@@ -3191,6 +3191,7 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
+        #[inline(never)]
         pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -3286,232 +3287,33 @@ pub mod formatter {
                 };
             }
 
+            // Each arm is hoisted to its own `#[inline(never)]` helper so the
+            // `print_as` frame stays small. Zig's `comptime Format` switch
+            // compiles to a single arm per instantiation; Rust's debug builds
+            // do not DCE dead `match` arms on a const generic, so an inline
+            // body would reserve stack for every arm's locals in every
+            // recursive frame and trip the stack-safety check far earlier
+            // than the Zig original.
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
-                    let str = value.to_slice(self.global_this)?;
-                    let slice = str.slice();
-                    writer.add_for_new_line(slice.len());
-                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
-                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.write_with_formatting::<ENABLE_ANSI_COLORS>(writer_, slice, self.global_this)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::String => {
-                    // This is called from the '%s' formatter, so it can actually be any value
-                    use crate::StringJsc as _;
-                    // Zig: `defer str.deref()` — `OwnedString` releases the +1 WTF
-                    // ref on every exit of this arm (5 returns + fall-through).
-                    let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
-                    writer.add_for_new_line(str.length());
-
-                    if self.quote_strings && js_type != jsc::JSType::RegExpObject {
-                        if str.is_empty() {
-                            writer.write_all(b"\"\"");
-                            if writer.failed { self.failed = true; }
-                            return Ok(());
-                        }
-
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                        }
-                        // PORT NOTE: Zig's `defer writeAll("<r>")` is inlined at each
-                        // exit below. A `scopeguard` capturing `*mut WrappedWriter<'_>`
-                        // carries the `'_` lifetime into the closure type, which keeps
-                        // the `writer_`/`self` borrows alive across the drop/recreate
-                        // dance and trips E0499.
-
-                        if str.is_utf16() {
-                            if writer.failed { self.failed = true; }
-                            drop(writer);
-                            self.print_as::<{ Tag::JSON }, ENABLE_ANSI_COLORS>(
-                                writer_,
-                                value,
-                                jsc::JSType::StringObject,
-                            )?;
-                            if ENABLE_ANSI_COLORS {
-                                let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
-                            }
-                            return Ok(());
-                        }
-
-                        JSPrinter::write_json_string(
-                            str.latin1(),
-                            writer.ctx,
-                            JSPrinter::Encoding::Latin1,
-                        )
-                        .expect("unreachable");
-
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(pfmt!("<r>", true).as_bytes());
-                        }
-                        if writer.failed { self.failed = true; }
-                        return Ok(());
-                    }
-
-                    if js_type == jsc::JSType::StringObject {
-                        if ENABLE_ANSI_COLORS {
-                            writer.print(format_args!("{}", pf!("<r><green>")));
-                        }
-                        // PORT NOTE: Zig's `defer writeAll("<r>")` inlined at the
-                        // single exit below; see note above re: E0499.
-
-                        writer.print(format_args!("[String: "));
-
-                        if str.is_utf16() {
-                            if writer.failed { self.failed = true; }
-                            drop(writer);
-                            self.print_as::<{ Tag::JSON }, ENABLE_ANSI_COLORS>(
-                                writer_,
-                                value,
-                                jsc::JSType::StringObject,
-                            )?;
-                            writer = WrappedWriter {
-                                ctx: writer_,
-                                failed: false,
-                                estimated_line_length: &mut self.estimated_line_length,
-                            };
-                        } else {
-                            JSPrinter::write_json_string(
-                                str.latin1(),
-                                writer.ctx,
-                                JSPrinter::Encoding::Latin1,
-                            )
-                            .expect("unreachable");
-                        }
-
-                        writer.print(format_args!("]"));
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(pfmt!("<r>", true).as_bytes());
-                        }
-                        if writer.failed { self.failed = true; }
-                        return Ok(());
-                    }
-
-                    if js_type == jsc::JSType::RegExpObject && ENABLE_ANSI_COLORS {
-                        writer.print(format_args!("{}", pf!("<r><red>")));
-                    }
-
-                    if str.is_utf16() {
-                        // streaming print
-                        writer.print(format_args!("{str}"));
-                    } else if let Some(slice) = str.as_utf8() {
-                        // fast path
-                        writer.write_all(slice);
-                    } else if !str.is_empty() {
-                        // slow path
-                        let buf = strings::immutable::allocate_latin1_into_utf8(str.latin1())
-                            .unwrap_or_default();
-                        if !buf.is_empty() {
-                            writer.write_all(&buf);
-                        }
-                    }
-
-                    if js_type == jsc::JSType::RegExpObject && ENABLE_ANSI_COLORS {
-                        writer.print(format_args!("{}", pf!("<r>")));
-                    }
+                    drop(writer);
+                    return self.print_string::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
                 Tag::Integer => {
-                    let int = value.coerce_to_int64(self.global_this)?;
-                    if int < i64::from(u32::MAX) {
-                        let mut i = int;
-                        let is_negative = i < 0;
-                        if is_negative {
-                            i = -i;
-                        }
-                        let digits = if i != 0 {
-                            bun_core::fmt::fast_digit_count(u64::try_from(i).expect("int cast"))
-                                + (is_negative as u64)
-                        } else {
-                            1
-                        };
-                        writer.add_for_new_line(digits as usize);
-                    } else {
-                        writer.add_for_new_line(bun_core::fmt::count_int(int));
-                    }
-                    writer.print(format_args!(
-                        "{}{}{}",
-                        pf!("<r><yellow>"),
-                        int,
-                        pf!("<r>")
-                    ));
+                    drop(writer);
+                    return self.print_integer::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::BigInt => {
-                    // PORT NOTE: bind the `ZigString` so its backing storage outlives
-                    // the borrowed `slice()` (E0716).
-                    let zstr = value.get_zig_string(self.global_this)?;
-                    let out_str = zstr.slice();
-                    writer.add_for_new_line(out_str.len());
-                    writer.print(format_args!(
-                        "{}{}n{}",
-                        pf!("<r><yellow>"),
-                        bstr::BStr::new(out_str),
-                        pf!("<r>")
-                    ));
+                    drop(writer);
+                    return self.print_bigint::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Double => {
-                    if value.is_cell() {
-                        let mut number_name = ZigString::EMPTY;
-                        value.get_class_name(self.global_this, &mut number_name)?;
-
-                        let mut number_value = ZigString::EMPTY;
-                        value.to_zig_string(&mut number_value, self.global_this)?;
-
-                        if number_name.slice() != b"Number" {
-                            writer.add_for_new_line(
-                                number_name.len + number_value.len + "[Number ():]".len(),
-                            );
-                            writer.print(format_args!(
-                                "{}[Number ({}): {}]{}",
-                                pf!("<r><yellow>"),
-                                number_name,
-                                number_value,
-                                pf!("<r>")
-                            ));
-                            if writer.failed { self.failed = true; }
-                            return Ok(());
-                        }
-
-                        writer.add_for_new_line(number_name.len + number_value.len + 4);
-                        writer.print(format_args!(
-                            "{}[{}: {}]{}",
-                            pf!("<r><yellow>"),
-                            number_name,
-                            number_value,
-                            pf!("<r>")
-                        ));
-                        if writer.failed { self.failed = true; }
-                        return Ok(());
-                    }
-
-                    let num = value.as_number();
-
-                    if num.is_infinite() && num > 0.0 {
-                        writer.add_for_new_line("Infinity".len());
-                        writer.print(format_args!("{}Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
-                    } else if num.is_infinite() && num < 0.0 {
-                        writer.add_for_new_line("-Infinity".len());
-                        writer.print(format_args!("{}-Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
-                    } else if num.is_nan() {
-                        writer.add_for_new_line("NaN".len());
-                        writer.print(format_args!("{}NaN{}", pf!("<r><yellow>"), pf!("<r>")));
-                    } else {
-                        let mut buf = [0u8; 124];
-                        let formatted =
-                            bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
-                        writer.add_for_new_line(formatted.len());
-                        writer.print(format_args!(
-                            "{}{}{}",
-                            pf!("<r><yellow>"),
-                            bstr::BStr::new(formatted),
-                            pf!("<r>")
-                        ));
-                    }
+                    drop(writer);
+                    return self.print_double::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Undefined => {
                     writer.add_for_new_line(9);
@@ -3522,252 +3324,45 @@ pub mod formatter {
                     writer.print(format_args!("{}null{}", pf!("<r><yellow>"), pf!("<r>")));
                 }
                 Tag::CustomFormattedObject => {
-                    // Call custom inspect function. Will return the error if there
-                    // is one; we'll need to pass the callback through to the "this"
-                    // value in here.
-                    // SAFETY: FFI call; `global_this` is a valid `JSGlobalObject` for
-                    // the call's duration. `JSGlobalObject` is an opaque handle with
-                    // `UnsafeCell` interior, so `.as_ptr()` yields a `*mut` with write
-                    // provenance — the C++ callee may mutate VM state through it.
-                    let result = crate::from_js_host_call(self.global_this, || unsafe {
-                        JSC__JSValue__callCustomInspectFunction(
-                            self.global_this.as_ptr(),
-                            self.custom_formatted_object.function,
-                            self.custom_formatted_object.this,
-                            u32::from(self.max_depth.saturating_sub(self.depth)),
-                            u32::from(self.max_depth),
-                            ENABLE_ANSI_COLORS,
-                        )
-                    })?;
-                    // Strings are printed directly, otherwise we recurse. It is
-                    // possible to end up in an infinite loop.
-                    if result.is_string() {
-                        writer.print(format_args!("{}", result.fmt_string(self.global_this)));
-                    } else {
-                        // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
-                        // recursive helper can borrow `&mut self` + `writer_` (E0499).
-                        if writer.failed { self.failed = true; }
-                        drop(writer);
-                        self.format::<ENABLE_ANSI_COLORS>(
-                            Tag::get(result, self.global_this)?,
-                            writer_,
-                            result,
-                            self.global_this,
-                        )?;
-                        writer = WrappedWriter {
-                            ctx: writer_,
-                            failed: false,
-                            estimated_line_length: &mut self.estimated_line_length,
-                        };
-                    }
+                    drop(writer);
+                    return self.print_custom_formatted_object::<ENABLE_ANSI_COLORS>(writer_);
                 }
                 Tag::Symbol => {
-                    let description = value.get_description(self.global_this);
-                    writer.add_for_new_line("Symbol".len());
-
-                    if description.len > 0 {
-                        writer.add_for_new_line(description.len + "()".len());
-                        writer.print(format_args!(
-                            "{}Symbol({}){}",
-                            pf!("<r><blue>"),
-                            description,
-                            pf!("<r>")
-                        ));
-                    } else {
-                        writer.print(format_args!("{}Symbol(){}", pf!("<r><blue>"), pf!("<r>")));
-                    }
+                    drop(writer);
+                    return self.print_symbol::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Error => {
-                    // Temporarily remove from the visited map to allow
-                    // printErrorlikeObject to process it. The circular reference
-                    // check is already done in print_as, so we know it's safe.
-                    let was_in_map = if self.map_node.is_some() {
-                        self.map.remove(&value).is_some()
-                    } else {
-                        false
-                    };
-                    let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-                    scopeguard::defer! {
-                        // SAFETY: `self.map` outlives this guard; no other
-                        // borrow is live at the drop point.
-                        unsafe {
-                            if was_in_map {
-                                let _ = (*map_restore_ptr).insert(value, ());
-                            }
-                        }
-                    }
-
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    {
-                        let mut adapter = DynWriteAdapter::new(&mut *writer_);
-                        // SAFETY: per-thread VM.
-                        let vm = VirtualMachine::get().as_mut();
-                        vm.print_errorlike_object(
-                            value,
-                            None,
-                            None,
-                            self,
-                            adapter.interface(),
-                            ENABLE_ANSI_COLORS,
-                            false,
-                        );
-                    }
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_error::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Class => {
-                    // Prefer the constructor's own `.name` property over
-                    // `getClassName` / `calculatedClassName`. For DOM / WebCore
-                    // InternalFunction constructors like `ReadableStreamBYOBReader`,
-                    // `calculatedClassName` walks the prototype chain and hits
-                    // `Function.prototype.constructor === Function`, returning
-                    // "Function". The `.name` property is set to the real class
-                    // name on the constructor itself. See #29225.
-                    // Zig: `defer printable.deref()` / `defer printable_proto.deref()`.
-                    let printable = OwnedString::new(value.get_name(self.global_this)?);
-                    writer.add_for_new_line(printable.length());
-
-                    // Only report `extends` when the parent is itself a class
-                    // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
-                    // have `Function.prototype` as their prototype, which would
-                    // render as `[class X extends Function]` and is noise.
-                    let proto = value.get_prototype(self.global_this);
-                    let proto_is_class = !proto.is_empty_or_undefined_or_null()
-                        && proto.is_cell()
-                        && proto.is_class(self.global_this);
-                    let printable_proto = OwnedString::new(if proto_is_class {
-                        proto.get_name(self.global_this)?
-                    } else {
-                        BunString::empty()
-                    });
-                    writer.add_for_new_line(printable_proto.length());
-
-                    if printable.is_empty() {
-                        if printable_proto.is_empty() {
-                            writer.print(format_args!(
-                                "{}[class (anonymous)]{}",
-                                pf!("<cyan>"),
-                                pf!("<r>")
-                            ));
-                        } else {
-                            writer.print(format_args!(
-                                "{}[class (anonymous) extends {}]{}",
-                                pf!("<cyan>"),
-                                printable_proto,
-                                pf!("<r>")
-                            ));
-                        }
-                    } else if printable_proto.is_empty() {
-                        writer.print(format_args!(
-                            "{}[class {}]{}",
-                            pf!("<cyan>"),
-                            printable,
-                            pf!("<r>")
-                        ));
-                    } else {
-                        writer.print(format_args!(
-                            "{}[class {} extends {}]{}",
-                            pf!("<cyan>"),
-                            printable,
-                            printable_proto,
-                            pf!("<r>")
-                        ));
-                    }
+                    drop(writer);
+                    return self.print_class::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Function => {
-                    // Zig: `defer printable.deref()` / `defer func_name.deref()`.
-                    let printable = OwnedString::new(value.get_name(self.global_this)?);
-
-                    let proto = value.get_prototype(self.global_this);
-                    // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-                    let func_name = OwnedString::new(proto.get_name(self.global_this)?);
-
-                    if printable.is_empty() || func_name.eql(&printable) {
-                        if func_name.is_empty() {
-                            writer.print(format_args!("{}[Function]{}", pf!("<cyan>"), pf!("<r>")));
-                        } else {
-                            writer.print(format_args!(
-                                "{}[{}]{}",
-                                pf!("<cyan>"),
-                                func_name,
-                                pf!("<r>")
-                            ));
-                        }
-                    } else if func_name.is_empty() {
-                        writer.print(format_args!(
-                            "{}[Function: {}]{}",
-                            pf!("<cyan>"),
-                            printable,
-                            pf!("<r>")
-                        ));
-                    } else {
-                        writer.print(format_args!(
-                            "{}[{}: {}]{}",
-                            pf!("<cyan>"),
-                            func_name,
-                            printable,
-                            pf!("<r>")
-                        ));
-                    }
+                    drop(writer);
+                    return self.print_function::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::GetterSetter => {
-                    // SAFETY: `Tag::GetterSetter` is only produced for cell values.
-                    let cell = unsafe { &*value.to_cell().expect("GetterSetter is a cell") };
-                    let getter_setter = cell.get_getter_setter();
-                    let has_getter = !getter_setter.is_getter_null();
-                    let has_setter = !getter_setter.is_setter_null();
-                    if has_getter && has_setter {
-                        writer.print(format_args!("{}[Getter/Setter]{}", pf!("<cyan>"), pf!("<r>")));
-                    } else if has_getter {
-                        writer.print(format_args!("{}[Getter]{}", pf!("<cyan>"), pf!("<r>")));
-                    } else if has_setter {
-                        writer.print(format_args!("{}[Setter]{}", pf!("<cyan>"), pf!("<r>")));
-                    }
+                    drop(writer);
+                    return self.print_getter_setter::<ENABLE_ANSI_COLORS, false>(writer_, value);
                 }
                 Tag::CustomGetterSetter => {
-                    // SAFETY: `Tag::CustomGetterSetter` is only produced for cell values.
-                    let cell = unsafe { &*value.to_cell().expect("CustomGetterSetter is a cell") };
-                    let getter_setter = cell.get_custom_getter_setter();
-                    let has_getter = !getter_setter.is_getter_null();
-                    let has_setter = !getter_setter.is_setter_null();
-                    if has_getter && has_setter {
-                        writer.print(format_args!("{}[Getter/Setter]{}", pf!("<cyan>"), pf!("<r>")));
-                    } else if has_getter {
-                        writer.print(format_args!("{}[Getter]{}", pf!("<cyan>"), pf!("<r>")));
-                    } else if has_setter {
-                        writer.print(format_args!("{}[Setter]{}", pf!("<cyan>"), pf!("<r>")));
-                    }
+                    drop(writer);
+                    return self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value);
                 }
                 Tag::Array => {
-                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
-                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
                 Tag::Private => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_private::<ENABLE_ANSI_COLORS>(
+                    return self.print_private::<ENABLE_ANSI_COLORS>(
                         writer_,
                         value,
                         js_type,
                         &mut remove_before_recurse,
-                    )?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    );
                 }
                 Tag::NativeCode => {
                     if let Some(class_name) = value.get_class_info_name() {
@@ -3781,64 +3376,12 @@ pub mod formatter {
                     }
                 }
                 Tag::Promise => {
-                    if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
-                        writer.write_all(b"\n");
-                        writer.write_indent(self.indent);
-                    }
-
-                    writer.write_all(b"Promise { ");
-                    writer.write_all(pf!("<r><cyan>").as_bytes());
-
-                    // SAFETY: value is a Promise (Tag::Promise).
-                    let promise: &JSPromise =
-                        unsafe { &*(value.as_object_ref() as *const JSPromise) };
-                    match promise.status() {
-                        jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
-                        jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
-                        jsc::js_promise::Status::Rejected => writer.write_all(b"<rejected>"),
-                    }
-
-                    writer.write_all(pf!("<r>").as_bytes());
-                    writer.write_all(b" }");
+                    drop(writer);
+                    return self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Boolean => {
-                    if value.is_cell() {
-                        let mut bool_name = ZigString::EMPTY;
-                        value.get_class_name(self.global_this, &mut bool_name)?;
-                        let mut bool_value = ZigString::EMPTY;
-                        value.to_zig_string(&mut bool_value, self.global_this)?;
-
-                        if bool_name.slice() != b"Boolean" {
-                            writer.add_for_new_line(
-                                bool_value.len + bool_name.len + "[Boolean (): ]".len(),
-                            );
-                            writer.print(format_args!(
-                                "{}[Boolean ({}): {}]{}",
-                                pf!("<r><yellow>"),
-                                bool_name,
-                                bool_value,
-                                pf!("<r>")
-                            ));
-                            if writer.failed { self.failed = true; }
-                            return Ok(());
-                        }
-                        writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
-                        writer.print(format_args!(
-                            "{}[Boolean: {}]{}",
-                            pf!("<r><yellow>"),
-                            bool_value,
-                            pf!("<r>")
-                        ));
-                        if writer.failed { self.failed = true; }
-                        return Ok(());
-                    }
-                    if value.to_boolean() {
-                        writer.add_for_new_line(4);
-                        writer.write_all(pf!("<r><yellow>true<r>").as_bytes());
-                    } else {
-                        writer.add_for_new_line(5);
-                        writer.write_all(pf!("<r><yellow>false<r>").as_bytes());
-                    }
+                    drop(writer);
+                    return self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::GlobalObject => {
                     const FMT: &str = "[Global Object]";
@@ -3849,156 +3392,48 @@ pub mod formatter {
                     );
                 }
                 Tag::Map => {
-                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
-                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_map_like::<ENABLE_ANSI_COLORS, false>(writer_, value)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_map_like::<ENABLE_ANSI_COLORS, false>(writer_, value);
                 }
                 Tag::MapIterator => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "MapIterator")?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "MapIterator");
                 }
                 Tag::SetIterator => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "SetIterator")?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(writer_, value, "SetIterator");
                 }
                 Tag::Set => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_set::<ENABLE_ANSI_COLORS>(writer_, value)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_set::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::ToJSON => {
-                    if let Some(func) = value.get(self.global_this, "toJSON")? {
-                        match func.call(self.global_this, value, &[]) {
-                            Err(_) => {
-                                self.global_this.clear_exception();
-                            }
-                            Ok(result) => {
-                                let prev_quote_keys = self.quote_keys;
-                                self.quote_keys = true;
-                                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                                let tag = Tag::get(result, self.global_this)?;
-                                // PORT NOTE: inline `reseat_writer!()` release-only — the
-                                // macro's trailing recreate would re-borrow `writer_`/`self`
-                                // before the recursive `format` call (E0499). We `return`
-                                // immediately, so no recreate is needed.
-                                if writer.failed { self.failed = true; }
-                                drop(writer);
-                                self.format::<ENABLE_ANSI_COLORS>(tag, writer_, result, self.global_this)?;
-                                return Ok(());
-                            }
-                        }
-                    }
-
-                    writer.write_all(b"{}");
+                    drop(writer);
+                    return self.print_to_json::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::JSON => {
-                    // Zig: `defer str.deref()` — `OwnedString` releases the +1 WTF
-                    // ref on every exit (incl. the `?` and the JSDate early return).
-                    let mut str = OwnedString::new(BunString::empty());
-
-                    value.json_stringify(self.global_this, self.indent, &mut str)?;
-                    writer.add_for_new_line(str.length());
-                    if js_type == jsc::JSType::JSDate {
-                        // in the code for printing dates, it never exceeds this amount
-                        let mut iso_string_buf = [0u8; 36];
-                        // TODO(port): bufPrint equivalent
-                        let mut out_buf: &[u8] = {
-                            use std::io::Write as _;
-                            let mut cursor = &mut iso_string_buf[..];
-                            let start_len = cursor.len();
-                            let _ = write!(cursor, "{str}");
-                            let written = start_len - cursor.len();
-                            &iso_string_buf[..written]
-                        };
-
-                        if out_buf == b"null" {
-                            out_buf = b"Invalid Date";
-                        } else if out_buf.len() > 2 {
-                            // trim the quotes
-                            out_buf = &out_buf[1..out_buf.len() - 1];
-                        }
-
-                        writer.print(format_args!(
-                            "{}{}{}",
-                            pf!("<r><magenta>"),
-                            bstr::BStr::new(out_buf),
-                            pf!("<r>")
-                        ));
-                        if writer.failed { self.failed = true; }
-                        return Ok(());
-                    }
-
-                    writer.print(format_args!("{str}"));
+                    drop(writer);
+                    return self.print_json::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
                 Tag::Event => {
-                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
-                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_event::<ENABLE_ANSI_COLORS>(
+                    return self.print_event::<ENABLE_ANSI_COLORS>(
                         writer_,
                         value,
                         &mut remove_before_recurse,
-                    )?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    );
                 }
                 Tag::JSX => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
                 Tag::Object => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
                 Tag::TypedArray => {
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    return self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
                 Tag::RevokedProxy => {
                     writer.add_for_new_line("<Revoked Proxy>".len());
@@ -4010,26 +3445,18 @@ pub mod formatter {
                 }
                 Tag::Proxy => {
                     let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
-                    if cfg!(debug_assertions) {
-                        // Proxy does not allow non-objects here.
-                        debug_assert!(target.is_cell());
-                    }
+                    // Proxy does not allow non-objects here.
+                    debug_assert!(target.is_cell());
                     // TODO: if (options.showProxy), print like
                     // `Proxy { target: ..., handlers: ... }` — this is default
                     // off so it is not used.
-                    if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.format::<ENABLE_ANSI_COLORS>(
+                    return self.format::<ENABLE_ANSI_COLORS>(
                         Tag::get(target, self.global_this)?,
                         writer_,
                         target,
                         self.global_this,
-                    )?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    );
                 }
             }
 
@@ -4042,12 +3469,14 @@ pub mod formatter {
     }
 
     // ───────────────────────────────────────────────────────────────────────
-    // Per-tag helpers split out of print_as for borrowck sanity
+    // Per-tag helpers split out of print_as
     //
-    // PORT NOTE: in Zig these were inline `switch` arms in `printAs`. They are
-    // hoisted here because each one needs `&mut self` plus the underlying
-    // writer while the parent scope holds a `WrappedWriter` that borrows
-    // `self.estimated_line_length`. Logic and ordering are preserved 1:1.
+    // In Zig these are inline `switch` arms in `printAs`, where the comptime
+    // `Format` parameter means each instantiation contains only one arm's
+    // code and stack locals. Rust does not DCE dead `match` arms on a const
+    // generic in debug builds, so keeping them inline would make every
+    // recursive `print_as` frame carry the union of all arms' locals. Each
+    // body is therefore its own `#[inline(never)]` function.
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
@@ -4059,6 +3488,675 @@ pub mod formatter {
             opts
         }
 
+        #[inline(never)]
+        fn print_string_possibly_formatted<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let str = value.to_slice(self.global_this)?;
+            let slice = str.slice();
+            self.add_for_new_line(slice.len());
+            self.write_with_formatting::<C>(writer_, slice, self.global_this)
+        }
+
+        #[inline(never)]
+        fn print_string<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            // This is called from the '%s' formatter, so it can actually be any value
+            use crate::StringJsc as _;
+            let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            writer.add_for_new_line(str.length());
+
+            if self.quote_strings && js_type != jsc::JSType::RegExpObject {
+                if str.is_empty() {
+                    writer.write_all(b"\"\"");
+                    if writer.failed { self.failed = true; }
+                    return Ok(());
+                }
+
+                if C {
+                    writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                }
+
+                if str.is_utf16() {
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
+                    self.print_as::<{ Tag::JSON }, C>(writer_, value, jsc::JSType::StringObject)?;
+                    if C {
+                        let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
+                    }
+                    return Ok(());
+                }
+
+                JSPrinter::write_json_string(str.latin1(), writer.ctx, JSPrinter::Encoding::Latin1)
+                    .expect("unreachable");
+
+                if C {
+                    writer.write_all(pfmt!("<r>", true).as_bytes());
+                }
+                if writer.failed { self.failed = true; }
+                return Ok(());
+            }
+
+            if js_type == jsc::JSType::StringObject {
+                if C {
+                    writer.print(format_args!("{}", pfmt!("<r><green>", C)));
+                }
+                writer.print(format_args!("[String: "));
+
+                if str.is_utf16() {
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
+                    self.print_as::<{ Tag::JSON }, C>(writer_, value, jsc::JSType::StringObject)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
+                } else {
+                    JSPrinter::write_json_string(
+                        str.latin1(),
+                        writer.ctx,
+                        JSPrinter::Encoding::Latin1,
+                    )
+                    .expect("unreachable");
+                }
+
+                writer.print(format_args!("]"));
+                if C {
+                    writer.write_all(pfmt!("<r>", true).as_bytes());
+                }
+                if writer.failed { self.failed = true; }
+                return Ok(());
+            }
+
+            if js_type == jsc::JSType::RegExpObject && C {
+                writer.print(format_args!("{}", pfmt!("<r><red>", C)));
+            }
+
+            if str.is_utf16() {
+                // streaming print
+                writer.print(format_args!("{str}"));
+            } else if let Some(slice) = str.as_utf8() {
+                // fast path
+                writer.write_all(slice);
+            } else if !str.is_empty() {
+                // slow path
+                let buf = strings::immutable::allocate_latin1_into_utf8(str.latin1())
+                    .unwrap_or_default();
+                if !buf.is_empty() {
+                    writer.write_all(&buf);
+                }
+            }
+
+            if js_type == jsc::JSType::RegExpObject && C {
+                writer.print(format_args!("{}", pfmt!("<r>", C)));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_integer<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let int = value.coerce_to_int64(self.global_this)?;
+            if int < i64::from(u32::MAX) {
+                let mut i = int;
+                let is_negative = i < 0;
+                if is_negative {
+                    i = -i;
+                }
+                let digits = if i != 0 {
+                    bun_core::fmt::fast_digit_count(u64::try_from(i).expect("int cast"))
+                        + (is_negative as u64)
+                } else {
+                    1
+                };
+                writer.add_for_new_line(digits as usize);
+            } else {
+                writer.add_for_new_line(bun_core::fmt::count_int(int));
+            }
+            writer.print(format_args!("{}{}{}", pfmt!("<r><yellow>", C), int, pfmt!("<r>", C)));
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_bigint<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let zstr = value.get_zig_string(self.global_this)?;
+            let out_str = zstr.slice();
+            writer.add_for_new_line(out_str.len());
+            writer.print(format_args!(
+                "{}{}n{}",
+                pfmt!("<r><yellow>", C),
+                bstr::BStr::new(out_str),
+                pfmt!("<r>", C)
+            ));
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_double<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
+            if value.is_cell() {
+                let mut number_name = ZigString::EMPTY;
+                value.get_class_name(self.global_this, &mut number_name)?;
+
+                let mut number_value = ZigString::EMPTY;
+                value.to_zig_string(&mut number_value, self.global_this)?;
+
+                if number_name.slice() != b"Number" {
+                    writer.add_for_new_line(
+                        number_name.len + number_value.len + "[Number ():]".len(),
+                    );
+                    writer.print(format_args!(
+                        "{}[Number ({}): {}]{}",
+                        pf!("<r><yellow>"),
+                        number_name,
+                        number_value,
+                        pf!("<r>")
+                    ));
+                    if writer.failed { self.failed = true; }
+                    return Ok(());
+                }
+
+                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.print(format_args!(
+                    "{}[{}: {}]{}",
+                    pf!("<r><yellow>"),
+                    number_name,
+                    number_value,
+                    pf!("<r>")
+                ));
+                if writer.failed { self.failed = true; }
+                return Ok(());
+            }
+
+            let num = value.as_number();
+
+            if num.is_infinite() && num > 0.0 {
+                writer.add_for_new_line("Infinity".len());
+                writer.print(format_args!("{}Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
+            } else if num.is_infinite() && num < 0.0 {
+                writer.add_for_new_line("-Infinity".len());
+                writer.print(format_args!("{}-Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
+            } else if num.is_nan() {
+                writer.add_for_new_line("NaN".len());
+                writer.print(format_args!("{}NaN{}", pf!("<r><yellow>"), pf!("<r>")));
+            } else {
+                let mut buf = [0u8; 124];
+                let formatted =
+                    bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
+                writer.add_for_new_line(formatted.len());
+                writer.print(format_args!(
+                    "{}{}{}",
+                    pf!("<r><yellow>"),
+                    bstr::BStr::new(formatted),
+                    pf!("<r>")
+                ));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_custom_formatted_object<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+        ) -> JsResult<()> {
+            // Call custom inspect function. Will return the error if there is
+            // one; we'll need to pass the callback through to the "this" value
+            // in here.
+            // SAFETY: FFI call; `global_this` is a valid `JSGlobalObject` for
+            // the call's duration.
+            let result = crate::from_js_host_call(self.global_this, || unsafe {
+                JSC__JSValue__callCustomInspectFunction(
+                    self.global_this.as_ptr(),
+                    self.custom_formatted_object.function,
+                    self.custom_formatted_object.this,
+                    u32::from(self.max_depth.saturating_sub(self.depth)),
+                    u32::from(self.max_depth),
+                    C,
+                )
+            })?;
+            // Strings are printed directly, otherwise we recurse. It is
+            // possible to end up in an infinite loop.
+            if result.is_string() {
+                if writer_
+                    .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
+                    .is_err()
+                {
+                    self.failed = true;
+                }
+            } else {
+                self.format::<C>(
+                    Tag::get(result, self.global_this)?,
+                    writer_,
+                    result,
+                    self.global_this,
+                )?;
+            }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_symbol<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let description = value.get_description(self.global_this);
+            writer.add_for_new_line("Symbol".len());
+
+            if description.len > 0 {
+                writer.add_for_new_line(description.len + "()".len());
+                writer.print(format_args!(
+                    "{}Symbol({}){}",
+                    pfmt!("<r><blue>", C),
+                    description,
+                    pfmt!("<r>", C)
+                ));
+            } else {
+                writer.print(format_args!("{}Symbol(){}", pfmt!("<r><blue>", C), pfmt!("<r>", C)));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_error<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            // Temporarily remove from the visited map to allow
+            // printErrorlikeObject to process it. The circular reference
+            // check is already done in print_as, so we know it's safe.
+            let was_in_map = if self.map_node.is_some() {
+                self.map.remove(&value).is_some()
+            } else {
+                false
+            };
+            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
+            scopeguard::defer! {
+                // SAFETY: `self.map` outlives this guard; no other borrow is
+                // live at the drop point.
+                unsafe {
+                    if was_in_map {
+                        let _ = (*map_restore_ptr).insert(value, ());
+                    }
+                }
+            }
+
+            let mut adapter = DynWriteAdapter::new(&mut *writer_);
+            // SAFETY: per-thread VM.
+            let vm = VirtualMachine::get().as_mut();
+            vm.print_errorlike_object(
+                value,
+                None,
+                None,
+                self,
+                adapter.interface(),
+                C,
+                false,
+            );
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_class<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
+            // Prefer the constructor's own `.name` property over
+            // `getClassName` / `calculatedClassName`. For DOM / WebCore
+            // InternalFunction constructors like `ReadableStreamBYOBReader`,
+            // `calculatedClassName` walks the prototype chain and hits
+            // `Function.prototype.constructor === Function`, returning
+            // "Function". The `.name` property is set to the real class name
+            // on the constructor itself. See #29225.
+            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            writer.add_for_new_line(printable.length());
+
+            // Only report `extends` when the parent is itself a class
+            // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
+            // have `Function.prototype` as their prototype, which would
+            // render as `[class X extends Function]` and is noise.
+            let proto = value.get_prototype(self.global_this);
+            let proto_is_class = !proto.is_empty_or_undefined_or_null()
+                && proto.is_cell()
+                && proto.is_class(self.global_this);
+            let printable_proto = OwnedString::new(if proto_is_class {
+                proto.get_name(self.global_this)?
+            } else {
+                BunString::empty()
+            });
+            writer.add_for_new_line(printable_proto.length());
+
+            if printable.is_empty() {
+                if printable_proto.is_empty() {
+                    writer.print(format_args!(
+                        "{}[class (anonymous)]{}",
+                        pf!("<cyan>"),
+                        pf!("<r>")
+                    ));
+                } else {
+                    writer.print(format_args!(
+                        "{}[class (anonymous) extends {}]{}",
+                        pf!("<cyan>"),
+                        printable_proto,
+                        pf!("<r>")
+                    ));
+                }
+            } else if printable_proto.is_empty() {
+                writer.print(format_args!(
+                    "{}[class {}]{}",
+                    pf!("<cyan>"),
+                    printable,
+                    pf!("<r>")
+                ));
+            } else {
+                writer.print(format_args!(
+                    "{}[class {} extends {}]{}",
+                    pf!("<cyan>"),
+                    printable,
+                    printable_proto,
+                    pf!("<r>")
+                ));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_function<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
+            let printable = OwnedString::new(value.get_name(self.global_this)?);
+
+            let proto = value.get_prototype(self.global_this);
+            // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+            let func_name = OwnedString::new(proto.get_name(self.global_this)?);
+
+            if printable.is_empty() || func_name.eql(&printable) {
+                if func_name.is_empty() {
+                    writer.print(format_args!("{}[Function]{}", pf!("<cyan>"), pf!("<r>")));
+                } else {
+                    writer.print(format_args!("{}[{}]{}", pf!("<cyan>"), func_name, pf!("<r>")));
+                }
+            } else if func_name.is_empty() {
+                writer.print(format_args!(
+                    "{}[Function: {}]{}",
+                    pf!("<cyan>"),
+                    printable,
+                    pf!("<r>")
+                ));
+            } else {
+                writer.print(format_args!(
+                    "{}[{}: {}]{}",
+                    pf!("<cyan>"),
+                    func_name,
+                    printable,
+                    pf!("<r>")
+                ));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_getter_setter<const C: bool, const CUSTOM: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            // SAFETY: this tag is only produced for cell values.
+            let cell = unsafe { &*value.to_cell().expect("GetterSetter is a cell") };
+            let (has_getter, has_setter) = if CUSTOM {
+                let gs = cell.get_custom_getter_setter();
+                (!gs.is_getter_null(), !gs.is_setter_null())
+            } else {
+                let gs = cell.get_getter_setter();
+                (!gs.is_getter_null(), !gs.is_setter_null())
+            };
+            if has_getter && has_setter {
+                writer.print(format_args!("{}[Getter/Setter]{}", pfmt!("<cyan>", C), pfmt!("<r>", C)));
+            } else if has_getter {
+                writer.print(format_args!("{}[Getter]{}", pfmt!("<cyan>", C), pfmt!("<r>", C)));
+            } else if has_setter {
+                writer.print(format_args!("{}[Setter]{}", pfmt!("<cyan>", C), pfmt!("<r>", C)));
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_promise<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
+                writer.write_all(b"\n");
+                writer.write_indent(self.indent);
+            }
+
+            writer.write_all(b"Promise { ");
+            writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
+
+            // SAFETY: value is a Promise (Tag::Promise).
+            let promise: &JSPromise =
+                unsafe { &*(value.as_object_ref() as *const JSPromise) };
+            match promise.status() {
+                jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
+                jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
+                jsc::js_promise::Status::Rejected => writer.write_all(b"<rejected>"),
+            }
+
+            writer.write_all(pfmt!("<r>", C).as_bytes());
+            writer.write_all(b" }");
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_boolean<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
+            if value.is_cell() {
+                let mut bool_name = ZigString::EMPTY;
+                value.get_class_name(self.global_this, &mut bool_name)?;
+                let mut bool_value = ZigString::EMPTY;
+                value.to_zig_string(&mut bool_value, self.global_this)?;
+
+                if bool_name.slice() != b"Boolean" {
+                    writer.add_for_new_line(
+                        bool_value.len + bool_name.len + "[Boolean (): ]".len(),
+                    );
+                    writer.print(format_args!(
+                        "{}[Boolean ({}): {}]{}",
+                        pf!("<r><yellow>"),
+                        bool_name,
+                        bool_value,
+                        pf!("<r>")
+                    ));
+                    if writer.failed { self.failed = true; }
+                    return Ok(());
+                }
+                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.print(format_args!(
+                    "{}[Boolean: {}]{}",
+                    pf!("<r><yellow>"),
+                    bool_value,
+                    pf!("<r>")
+                ));
+                if writer.failed { self.failed = true; }
+                return Ok(());
+            }
+            if value.to_boolean() {
+                writer.add_for_new_line(4);
+                writer.write_all(pf!("<r><yellow>true<r>").as_bytes());
+            } else {
+                writer.add_for_new_line(5);
+                writer.write_all(pf!("<r><yellow>false<r>").as_bytes());
+            }
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_to_json<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            if let Some(func) = value.get(self.global_this, "toJSON")? {
+                match func.call(self.global_this, value, &[]) {
+                    Err(_) => {
+                        self.global_this.clear_exception();
+                    }
+                    Ok(result) => {
+                        let prev_quote_keys = self.quote_keys;
+                        self.quote_keys = true;
+                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+                        let tag = Tag::get(result, self.global_this)?;
+                        return self.format::<C>(tag, writer_, result, self.global_this);
+                    }
+                }
+            }
+
+            if writer_.write_all(b"{}").is_err() {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_json<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let mut str = OwnedString::new(BunString::empty());
+
+            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            writer.add_for_new_line(str.length());
+            if js_type == jsc::JSType::JSDate {
+                // in the code for printing dates, it never exceeds this amount
+                let mut iso_string_buf = [0u8; 36];
+                let mut out_buf: &[u8] = {
+                    use std::io::Write as _;
+                    let mut cursor = &mut iso_string_buf[..];
+                    let start_len = cursor.len();
+                    let _ = write!(cursor, "{str}");
+                    let written = start_len - cursor.len();
+                    &iso_string_buf[..written]
+                };
+
+                if out_buf == b"null" {
+                    out_buf = b"Invalid Date";
+                } else if out_buf.len() > 2 {
+                    // trim the quotes
+                    out_buf = &out_buf[1..out_buf.len() - 1];
+                }
+
+                writer.print(format_args!(
+                    "{}{}{}",
+                    pfmt!("<r><magenta>", C),
+                    bstr::BStr::new(out_buf),
+                    pfmt!("<r>", C)
+                ));
+                if writer.failed { self.failed = true; }
+                return Ok(());
+            }
+
+            writer.print(format_args!("{str}"));
+            if writer.failed { self.failed = true; }
+            Ok(())
+        }
+
+        #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4317,6 +4415,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_private<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4390,6 +4489,7 @@ pub mod formatter {
             self.print_as::<{ Tag::Object }, C>(writer_, value, jsc::JSType::Event)
         }
 
+        #[inline(never)]
         fn print_map_like<const C: bool, const _UNUSED: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4448,6 +4548,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_map_iterator_like<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4499,6 +4600,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_set<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4556,6 +4658,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_event<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4696,6 +4799,7 @@ pub mod formatter {
         // shape; Phase B must verify against existing JSX snapshot tests
         // (`test/js/bun/util/inspect.test.js`) before trusting the borrow-reseat
         // points.
+        #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -4988,6 +5092,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_object<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -5114,6 +5219,7 @@ pub mod formatter {
             Ok(())
         }
 
+        #[inline(never)]
         fn print_typed_array<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -5242,6 +5348,7 @@ pub mod formatter {
             }
         }
 
+        #[inline(never)]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             result: TagResult,

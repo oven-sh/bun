@@ -45,13 +45,13 @@ pub fn install_with_manager(
     // Unless you're behind a proxy.
     if !manager.env().has_http_proxy() {
         // And don't try to resolve DNS if it's an IP address.
-        if !manager.options.scope.url.hostname.is_empty() && !manager.options.scope.url.is_ip_address() {
+        let scope_url = manager.options.scope.url.url();
+        if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
             // PERF(port): was stack-fallback alloc — profile in Phase B
-            let hostname = manager.options.scope.url.hostname;
             bun_dns::internal::prefetch(
                 manager.event_loop.loop_(),
-                hostname,
-                manager.options.scope.url.get_port_auto(),
+                scope_url.hostname,
+                scope_url.get_port_auto(),
             );
         }
     }

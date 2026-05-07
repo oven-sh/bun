@@ -26,9 +26,12 @@ macro_rules! debug {
 // PORT NOTE: Zig `entry.*` / `@memcpy` are bitwise copies of arena-backed
 // `CssImportOrder` values (the inner `BabyList`s point into bump arenas and are
 // never individually freed). Rust's `BabyList` has `Drop`, so a literal `*entry`
-// is not `Copy`. We replicate the Zig bitwise-copy semantics here; the source
-// must NOT be dropped afterwards (handled by truncating `len` on the source
-// list, never `clear_retaining_capacity`).
+// is not `Copy`. We replicate the Zig bitwise-copy semantics here; soundness
+// holds because (a) every `conditions` list that gets aliased is built via
+// `deep_clone_conditions` → `BabyList::init_capacity_in` (arena-backed,
+// `Origin::Borrowed`, no-op `Drop`), and (b) `wip_order`/`order` shuffles use
+// `len`-truncation rather than `clear_retaining_capacity` so moved-from slots
+// are never dropped.
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
     unsafe { core::ptr::read(src) }
@@ -936,28 +939,65 @@ fn debug_css_order_impl(
     order: &BabyList<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "css"))]
     {
+        use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};
+
         let tag = step.tag_name();
         debug!("CSS order {}:\n", tag);
+
+        let arena = bun_alloc::Arena::new();
+        // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
+        let parse_graph = unsafe { &*this.parse_graph };
+        let ast_urls_for_css = parse_graph.ast.items_url_for_css();
+        // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
+        // layout; the column slice is reinterpreted read-only for the duration of `to_css`.
+        let unique_keys: &[&[u8]] = unsafe {
+            core::mem::transmute::<&[Box<[u8]>], &[&[u8]]>(
+                parse_graph.input_files.items_unique_key_for_additional_file(),
+            )
+        };
+        // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+        // `this.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s
+        // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
+        // pointers — same layout, used read-only by the printer.
+        let local_names: &LocalsResultsMap =
+            unsafe { &*(&this.mangled_props as *const _ as *const LocalsResultsMap) };
+        let symbols = bun_logger::symbol::Map::init_list(Default::default());
+
         for (i, entry) in order.slice().iter().enumerate() {
-            // PORT NOTE: the Zig version spins up a `bun.css.Printer` per entry
-            // and calls `condition.to_css()` to render each `ImportConditions`.
-            // The Rust `Printer::new` signature requires `bun_io::Write` +
-            // `BumpVec` scratch + a `SymbolMap`/`LocalsResultsMap`, none of
-            // which are wired through this debug-only path yet. Render a
-            // condition count instead; restore the full `to_css` rendering
-            // once `crate::bun_css::Printer` stabilises.
-            // TODO(port): restore `condition.to_css(&mut printer)` rendering.
-            let conditions_str = if entry.conditions.len > 0 {
-                format!("[{} conditions]", entry.conditions.len)
+            let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len > 0 {
+                let mut writer: Vec<u8> = Vec::new();
+                writer.extend_from_slice(b"[");
+                for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
+                    let mut printer = Printer::new(
+                        &arena,
+                        bumpalo::collections::Vec::new_in(&arena),
+                        &mut writer,
+                        PrinterOptions::default(),
+                        Some(ImportInfo {
+                            import_records: &entry.condition_import_records,
+                            ast_urls_for_css,
+                            ast_unique_key_for_additional_file: unique_keys,
+                        }),
+                        Some(local_names),
+                        &symbols,
+                    );
+                    let _ = condition.to_css(&mut printer);
+                    drop(printer);
+                    if j != entry.conditions.len as usize - 1 {
+                        writer.extend_from_slice(b", ");
+                    }
+                }
+                writer.extend_from_slice(b" ]");
+                String::from_utf8_lossy(&writer).into_owned().into()
             } else {
-                String::from("[]")
+                "[]".into()
             };
             debug!("  {}: {} {}\n", i, entry.fmt(this), conditions_str);
         }
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(all(debug_assertions, feature = "css")))]
     {
         let _ = (this, order, step);
     }
@@ -971,13 +1011,12 @@ pub use crate::ThreadPool;
 // PORT STATUS
 //   source:     src/bundler/linker_context/findImportedFilesInCSSOrder.zig (679 lines)
 //   confidence: medium
-//   todos:      4
+//   todos:      2
 //   notes:      Heavy bitwise-copy of arena-backed CssImportOrder/BabyList
 //               values to mirror Zig `entry.*` / `@memcpy` semantics — sound
-//               only because all payloads live in bump arenas with no
-//               per-value Drop. `crate::bun_css::LayerName` (ungate shadow)
-//               vs `::bun_css::LayerName` are distinct nominal types; raw-ptr
+//               because all aliased `conditions` lists allocate in the bump
+//               arena via `init_capacity_in` (`Origin::Borrowed`, no-op
+//               `Drop`). `crate::bun_css::LayerName` (ungate shadow) vs
+//               `::bun_css::LayerName` are distinct nominal types; raw-ptr
 //               cast at the two boundary sites until the shadow is removed.
-//               `debug_css_order_impl` renders a condition count instead of
-//               full `to_css()` output (debug-only).
 // ──────────────────────────────────────────────────────────────────────────

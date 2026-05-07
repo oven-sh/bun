@@ -1725,7 +1725,7 @@ impl<'a> PackageInstaller<'a> {
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
                         let mut folder_path =
-                            AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                            AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                         // PORT NOTE: `defer folder_path.deinit()` — AbsPath impls Drop.
                         folder_path
                             .append(alias.slice(string_buf!()))
@@ -1805,7 +1805,7 @@ impl<'a> PackageInstaller<'a> {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                                 // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                                 let mut folder_path =
-                                    AbsPath::from(self.node_modules.path.as_slice())
+                                    AutoAbsPath::from(self.node_modules.path.as_slice())
                                         .unwrap_or_oom();
                                 folder_path
                                     .append(
@@ -2044,7 +2044,7 @@ impl<'a> PackageInstaller<'a> {
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
                 let mut folder_path =
-                    AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                    AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                 folder_path
                     .append(alias.slice(string_buf!()))
                     .unwrap_or_oom();

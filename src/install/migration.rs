@@ -417,7 +417,7 @@ pub fn migrate_npm_lockfile<'a>(
             let pkg_name = package_name_from_path(pkg_path);
             if version_prop.is_some() && !pkg_name.is_empty() {
                 // construct registry url
-                let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href;
+                let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href();
                 let mut count: usize = 0;
                 count += href.len() + pkg_name.len() + b"/-/".len();
                 if pkg_name[0] == b'@' {
@@ -596,7 +596,13 @@ pub fn migrate_npm_lockfile<'a>(
             debug_assert!(package_id == id_map.get(pkg_path).unwrap().new_package_id);
         }
 
-        let mut sb = this.string_buf();
+        // Construct the string buf with explicit disjoint field borrows so the
+        // borrow checker permits concurrent access to `this.buffers.extern_strings`
+        // (used in the multi-entry `bin` map branch below).
+        let mut sb = bun_semver::semver_string::Buf {
+            bytes: &mut this.buffers.string_bytes,
+            pool: &mut this.string_pool,
+        };
         let appended_name = sb.append_with_hash(pkg_name, name_hash)?;
         let resolution_value = if is_workspace {
             Resolution::init(ResTagged::Workspace(sb.append(pkg_path)?))
@@ -976,8 +982,8 @@ pub fn migrate_npm_lockfile<'a>(
                         Some(name_hash),
                         sliced.slice,
                         &sliced,
-                        Some(log),
-                        Some(manager),
+                        Some(&mut *log),
+                        Some(&mut *manager),
                     ) else {
                         return Err(err!("InvalidNPMLockfile"));
                     };

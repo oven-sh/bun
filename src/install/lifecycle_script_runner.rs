@@ -1,5 +1,5 @@
 use core::ffi::{c_char, c_void};
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::{Global, Output};
 use crate::lockfile_real::Scripts as LockfileScripts;
@@ -15,15 +15,16 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle, FilePollFlag
 
 use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
-use bun_sys::{Fd, FdExt};
+use bun_sys::Fd;
 use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): bun_runtime::cli::run_command::replacePackageManagerRun → install
-// Shared by `bun run` and lifecycle scripts; install must own a copy so it
-// does not depend on bun_cli (cycle).
+// Shared by `bun run` and lifecycle scripts. `bun_install` is the lower crate
+// (bun_runtime depends on bun_install), so the canonical impl lives here and
+// `RunCommand::replace_package_manager_run` is a thin re-export.
 // ──────────────────────────────────────────────────────────────────────────
 
 const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) { b"bun-debug" } else { b"bun" };
@@ -66,7 +67,7 @@ impl YarnCommands {
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
     script: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<(), bun_core::Error> {
     use bun_str::strings;
 
     #[inline]
@@ -495,7 +496,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         (*this).has_called_process_exit = false;
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
-        // TODO(b0): replace_package_manager_run arrives from move-in (bun_runtime::cli::run_command → install::lifecycle_script_runner).
         replace_package_manager_run(&mut copy_script, original_script)?;
         copy_script.push(0);
 

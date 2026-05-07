@@ -17,7 +17,16 @@ pub struct UpdateRequest {
     pub name: &'static [u8],
     pub name_hash: PackageNameHash,
     pub version: dependency::Version,
-    pub version_buf: &'static [u8],
+    /// Backing buffer for `version.literal` (and friends) — either a leaked
+    /// CLI positional (truly process-lifetime) or the active lockfile's
+    /// `buffers.string_bytes`. Stored as a raw fat pointer because the
+    /// lockfile buffer's lifetime cannot be expressed as `'static` without UB
+    /// lifetime extension (PORTING.md §Forbidden patterns), and threading a
+    /// real `<'a>` through every `&mut [UpdateRequest]` in the install
+    /// pipeline is the Phase-B reshape. ARENA-class field per the PORTING.md
+    /// type map: `[]const u8` struct-field, never freed, points into a buffer
+    /// owned elsewhere → raw `*const [u8]`.
+    pub version_buf: *const [u8],
     pub package_id: PackageID,
     pub is_aliased: bool,
     pub failed: bool,
@@ -32,7 +41,7 @@ impl Default for UpdateRequest {
             name: b"",
             name_hash: 0,
             version: dependency::Version::default(),
-            version_buf: b"",
+            version_buf: core::ptr::from_ref::<[u8]>(b""),
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -44,6 +53,22 @@ impl Default for UpdateRequest {
 pub type Array = Vec<UpdateRequest>;
 
 impl UpdateRequest {
+    /// Borrow the backing string buffer.
+    ///
+    /// SAFETY for callers: the buffer this points into (leaked CLI input, or
+    /// `lockfile.buffers.string_bytes` after `clean_with_logger`) must outlive
+    /// the returned slice and must not be reallocated while the borrow is
+    /// live. Both invariants hold on every call path today — `string_bytes`
+    /// is finalized before assignment in `clean_with_logger`, and the lockfile
+    /// is threaded alongside `updates` everywhere they are read.
+    #[inline]
+    pub fn version_buf(&self) -> &[u8] {
+        // SAFETY: see fn doc. `version_buf` is always a valid (non-null, well-
+        // aligned) fat pointer — `Default` seeds it from a static empty slice,
+        // and every assignment is `&[u8] as *const [u8]`.
+        unsafe { &*self.version_buf }
+    }
+
     #[inline]
     pub fn matches(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.name_hash
@@ -58,7 +83,7 @@ impl UpdateRequest {
         if self.is_aliased {
             self.name
         } else {
-            self.version.literal.slice(self.version_buf)
+            self.version.literal.slice(self.version_buf())
         }
     }
 
@@ -68,7 +93,7 @@ impl UpdateRequest {
             None
         } else {
             // TODO(port): MultiArrayList column accessor — Zig: lockfile.packages.items(.name)[id]
-            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf))
+            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf()))
         }
     }
 
@@ -83,7 +108,7 @@ impl UpdateRequest {
         } else if let Some(name) = self.get_name_in_lockfile(lockfile) {
             name
         } else {
-            self.version.literal.slice(self.version_buf)
+            self.version.literal.slice(self.version_buf())
         }
     }
 
@@ -146,8 +171,9 @@ impl UpdateRequest {
 
             // PORT NOTE: reshaped for borrowck — leak `input` now so sub-slices are &'static.
             // Zig: `bun.default_allocator.dupe(u8, ..)` with no matching free; these live for
-            // the CLI invocation. `version_buf` is later reassigned to borrow lockfile buffers
-            // (lockfile.rs), so the field cannot be `Box<[u8]>` — `&'static [u8]` is load-bearing.
+            // the CLI invocation. `version_buf` is later reassigned to point at lockfile
+            // buffers (lockfile.rs), so the field is a raw `*const [u8]` (ARENA-class per
+            // PORTING.md type map) rather than `Box<[u8]>`.
             let input: &'static [u8] = input.leak();
 
             let mut value: &'static [u8] = input;
@@ -243,7 +269,7 @@ impl UpdateRequest {
 
             let mut request = UpdateRequest {
                 version,
-                version_buf: input,
+                version_buf: core::ptr::from_ref::<[u8]>(input),
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {

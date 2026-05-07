@@ -578,11 +578,18 @@ fn read_and_extract(
 ) -> Result<ExtractData, bun_core::Error> {
     // TODO(port): narrow error set
     let bytes = if normalize {
-        // TODO(port): `std.fs.cwd()` vs `bun.FD.cwd()` — both map to `Fd::cwd()` here;
-        // `read_from_user_input` resolves user-provided relative paths against
-        // `top_level_dir` (= cwd at this tier).
+        // Zig `File.readFromUserInput(std.fs.cwd(), tarball_path, allocator)` resolves
+        // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
+        // (the absolute project root cached at startup — NOT the live process cwd).
+        // The Rust `bun_sys::File::read_from_user_input` was reshaped to take that base
+        // explicitly (T1 `bun_sys` cannot depend on T5 `bun_resolver::fs`), so thread it
+        // through here from the install crate's `FileSystem` shim.
         // Zig `try X.unwrap()` on Maybe(T) → plain `?` on bun_sys::Result<T>.
-        File::read_from_user_input(Fd::cwd(), b".", tarball_path)?
+        File::read_from_user_input(
+            Fd::cwd(),
+            crate::bun_fs::FileSystem::instance().top_level_dir(),
+            tarball_path,
+        )?
     } else {
         File::read_from(Fd::cwd(), tarball_path)?
     };

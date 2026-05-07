@@ -1047,7 +1047,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // through `ManuallyDrop`'s immutable `Deref`.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
                     // SAFETY: `task.tag == Extract` — active union arm.
-                    unsafe { &mut *(*task_ptr).request.extract }.network as *mut _
+                    let req = unsafe { &mut *task.request.extract };
+                    &mut *req.network
                 } else {
                     core::ptr::null_mut()
                 };
@@ -1379,14 +1380,29 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                    let dep_name = dep.name.slice(&manager.lockfile.buffers.string_bytes);
-
+                    // PORT NOTE: reshaped for borrowck — Zig copies `dep` by
+                    // value. Copy the small `String` handles + behavior bit so
+                    // the `&manager.lockfile` borrow doesn't extend across the
+                    // `&mut manager` calls (`has_created_network_task`,
+                    // `enqueue_git_checkout`) below; detach the slice backing
+                    // through `string_buf_ptr` (matching the
+                    // `PackageManifest`-arm `name` detach pattern above).
+                    let (dep_name_handle, is_required) = {
+                        let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                        (dep.name, dep.behavior.is_required())
+                    };
                     // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
-                    let git = unsafe { &clone.res.value.git };
-                    let committish = git.committish.slice(&manager.lockfile.buffers.string_bytes);
-                    let repo = git.repo.slice(&manager.lockfile.buffers.string_bytes);
+                    let git = unsafe { clone.res.value.git };
+                    let string_buf_ptr: *const [u8] =
+                        manager.lockfile.buffers.string_bytes.as_slice();
+                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
+                    // and is not reallocated while resolve tasks are draining
+                    // (Zig: same buffer is read after `enqueueGitCheckout`).
+                    let string_buf = unsafe { &*string_buf_ptr };
+                    let dep_name = dep_name_handle.slice(string_buf);
+                    let committish = git.committish.slice(string_buf);
+                    let repo = git.repo.slice(string_buf);
 
                     let resolved = crate::repository_real::Repository::find_commit(
                         // SAFETY: `env` is set during `PackageManager::init` and
@@ -1402,7 +1418,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
 
-                    if manager.has_created_network_task(checkout_id, dep.behavior.is_required()) {
+                    if manager.has_created_network_task(checkout_id, is_required) {
                         continue;
                     }
 

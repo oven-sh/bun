@@ -155,12 +155,12 @@ pub mod zlib {
 #[cfg(unix)]
 pub type uid_t = libc::uid_t;
 #[cfg(not(unix))]
-pub type uid_t = u32; // TODO(b2-blocked): bun_sys::windows::libuv::uv_uid_t
+pub type uid_t = bun_sys::windows::libuv::uv_uid_t;
 
 #[cfg(unix)]
 pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
-pub type gid_t = u32; // TODO(b2-blocked): bun_sys::windows::libuv::uv_gid_t
+pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 
 /// Node.js expects the error to include contextual information
 /// - "syscall"

@@ -4888,11 +4888,14 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir, fd: FD, basename: &ZStr, entries: &mut Vec<T>,
     ) -> Maybe<()> {
-        // PORT NOTE: Zig branched on `comptime is_u16 = isWindows && (T == String || T == Dirent)`
-        // to use the UTF-16 dir iterator on Windows. The u16 branch is gated for round 3;
-        // POSIX is always u8, and Windows-u8 (Buffer encoding) also uses the u8 path.
-        // TODO(port-windows): wire `is_u16` once `DirIterator::IteratorW` + the
-        // `re_encoding_buffer` transcoding path are real.
+        // node_fs.zig:4568 — `comptime is_u16 = isWindows && (T == bun.String || T == Dirent)`.
+        // On Windows, String/Dirent results read native UTF-16 entry names via the
+        // wide iterator so surrogate pairs survive; Buffer results (and all POSIX)
+        // use the u8 iterator.
+        #[cfg(windows)]
+        if T::IS_U16 {
+            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
+        }
 
         let mut dirent_path = BunString::DEAD;
         // Zig `defer dirent_path.deref()` — cannot express as a scope guard in Rust
@@ -4934,6 +4937,57 @@ impl NodeFS {
                 current.kind
             };
             T::append_entry(entries, utf8_name, &dirent_path, kind, args.encoding);
+        }
+
+        dirent_path.deref();
+        Maybe::Ok(())
+    }
+
+    /// Windows UTF-16 arm of `readdir_with_entries` (node_fs.zig:4644-4660).
+    /// Only reachable when `T::IS_U16` (String/Dirent); Buffer is `IS_U16 = false`.
+    #[cfg(windows)]
+    fn readdir_with_entries_u16<T: ReaddirEntry>(
+        args: &args::Readdir, fd: FD, basename: &ZStr, entries: &mut Vec<T>,
+    ) -> Maybe<()> {
+        let mut dirent_path = BunString::DEAD;
+
+        let mut iterator = DirIterator::WrappedIteratorW::init(fd);
+
+        // node_fs.zig:4578 — only allocated when the requested encoding isn't
+        // utf8: the wide name is transcoded to UTF-8 first (matching libuv) and
+        // then re-encoded.
+        let mut re_encoding_buffer = if args.encoding != Encoding::Utf8 {
+            Some(paths::path_buffer_pool::get())
+        } else {
+            None
+        };
+
+        loop {
+            let current = match iterator.next() {
+                Err(err) => {
+                    for item in entries.iter_mut() { item.destroy_entry(); }
+                    entries.clear();
+                    dirent_path.deref();
+                    return Maybe::Err(err.with_path(args.path.slice()));
+                }
+                Ok(None) => break,
+                Ok(Some(ent)) => ent,
+            };
+
+            if T::IS_DIRENT && dirent_path.is_empty() {
+                dirent_path = webcore::encoding::to_bun_string(
+                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    encoding_to_node(args.encoding),
+                );
+            }
+
+            let utf16_name = current.name.slice();
+            // Spec (node_fs.zig:4649): the u16 Dirent arm uses `current.kind`
+            // directly — no lstatat fallback (NTFS never returns DT_UNKNOWN).
+            T::append_entry_w(
+                entries, utf16_name, &dirent_path, current.kind, args.encoding,
+                re_encoding_buffer.as_deref_mut().map(|b| &mut b[..]),
+            );
         }
 
         dirent_path.deref();

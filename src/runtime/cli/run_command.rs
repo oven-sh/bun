@@ -2747,8 +2747,27 @@ impl RunCommand {
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // `Run.boot(ctx, dupe(entry_path), null) catch |err| { … exit(1) }`
-        Ok(Self::_boot_and_handle_error(ctx, entry_path, None))
+        // Zig: `Run.boot(ctx, dupe(entry_path), null) catch |err| { … }`.
+        // PORT NOTE: NOT routed through `_boot_and_handle_error` — the spec
+        // stdin path (run_command.zig:1740-1749) skips the
+        // `configureAllocator(.long_running=true)` / `.md` checks and prints
+        // `basename(target_name)` (= "-"), not `basename(entry_path)`
+        // (= "[stdin]"), in the error message.
+        let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
+        if let Err(err) = Self::boot(ctx, owned, None) {
+            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+            // CLI startup), process-lifetime.
+            let _ = unsafe { ctx.log() }
+                .print(Output::error_writer() as *mut bun_core::io::Writer);
+            pretty_errorln!(
+                "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
+                bstr::BStr::new(b"-"),
+                bstr::BStr::new(err.name()),
+            );
+            bun_core::handle_error_return_trace(&err);
+            Global::exit(1);
+        }
+        Ok(true)
     }
 
     /// Port of `cli.zig`'s `@"bun --eval --print"` — synthetic `cwd/[eval]`

@@ -179,6 +179,40 @@ impl StandaloneModuleGraph {
     }
 }
 
+/// Resolver-facing trait object impl. The resolver and VM hold the graph as
+/// `&'static dyn bun_resolver::StandaloneModuleGraph` so they stay below
+/// `bun_standalone_graph` in the dep graph; this is the sole implementor.
+///
+/// The trait surface is read-only (`&self`) — the resolver only needs to
+/// answer "is `name` an embedded module?" and hand back the canonical name
+/// slice; the `&mut`-returning inherent methods above stay for the runtime's
+/// blob/sourcemap caching path.
+impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
+        #[cfg(windows)]
+        let file = {
+            let mut normalized_buf = PathBuffer::uninit();
+            let input = strings::without_nt_prefix::<u8>(name);
+            let normalized = path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
+            self.files.get(normalized)
+        };
+        #[cfg(not(windows))]
+        let file = self.files.get(name);
+        file.map(|f| f.name)
+    }
+
+    fn find(&self, name: &[u8]) -> Option<&[u8]> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+    }
+
+    fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
+        BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct CompiledModuleGraphFile {

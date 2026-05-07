@@ -1394,16 +1394,104 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
 
 /// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
 fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    type W<const SSL: bool> = bun_uws_sys::web_socket::Wrap<DevServer, HmrSocket, SSL>;
-    bun_uws_sys::WebSocketBehavior {
-        open: Some(W::<SSL>::on_open),
-        message: Some(W::<SSL>::on_message),
-        close: Some(W::<SSL>::on_close),
-        drain: Some(W::<SSL>::on_drain),
-        ping: Some(W::<SSL>::on_ping),
-        pong: Some(W::<SSL>::on_pong),
-        upgrade: Some(W::<SSL>::on_upgrade),
-        ..Default::default()
+    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(Default::default())
+}
+
+// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
+// to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
+// `WebSocketUpgradeServer<SSL>`. The Zig used `@hasDecl` duck-typing; in Rust
+// we wire the trait explicitly and forward to the inherent method bodies in
+// `dev_server::hmr_socket_body`.
+impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
+    // Zig HmrSocket has no `onDrain`/`onPing`/`onPong` decls — `Wrap.apply`
+    // leaves those C callbacks `null` when `HAS_ON_* == false`.
+    const HAS_ON_DRAIN: bool = false;
+    const HAS_ON_PING: bool = false;
+    const HAS_ON_PONG: bool = false;
+
+    #[inline]
+    fn on_open(&mut self, ws: bun_uws_sys::AnyWebSocket) {
+        HmrSocket::on_open(self, ws)
+    }
+    #[inline]
+    fn on_message(&mut self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: Opcode) {
+        HmrSocket::on_message(self, ws, message, opcode)
+    }
+    #[inline]
+    fn on_close(&mut self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
+        HmrSocket::on_close(self as *mut HmrSocket, ws, code, message)
+    }
+    fn on_drain(&mut self, _ws: bun_uws_sys::AnyWebSocket) {}
+    fn on_ping(&mut self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    fn on_pong(&mut self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+}
+
+impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
+    fn on_websocket_upgrade(
+        &mut self,
+        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        req: &mut Request,
+        upgrade_ctx: &mut WebSocketUpgradeContext,
+        id: usize,
+    ) {
+        debug_assert_eq!(id, 0);
+        // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
+        // callback; `Response<SSL>` is an opaque handle.
+        let res = unsafe { &mut *res };
+        let dw = Box::into_raw(HmrSocket::new(self, res));
+        let _ = self.active_websocket_connections.insert(dw, ());
+        let _ = res.upgrade(
+            dw,
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            Some(upgrade_ctx),
+        );
+    }
+}
+
+// `ResponseLike` for the concrete `Response<SSL>` so `HmrSocket::new` can be
+// called from `on_websocket_upgrade` (Zig: `res: anytype`).
+impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
+    fn write_status(&mut self, status: &[u8]) {
+        bun_uws_sys::response::Response::<SSL>::write_status(self, status)
+    }
+    fn end(&mut self, data: &[u8], close_connection: bool) {
+        bun_uws_sys::response::Response::<SSL>::end(self, data, close_connection)
+    }
+    fn as_any_response(&mut self) -> bun_uws::AnyResponse {
+        if SSL {
+            bun_uws::AnyResponse::SSL((self as *mut Self).cast())
+        } else {
+            bun_uws::AnyResponse::TCP((self as *mut Self).cast())
+        }
+    }
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
+        bun_uws_sys::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
+            bun_uws::SocketAddress {
+                ip: a.ip.to_vec().into_boxed_slice(),
+                port: a.port,
+                is_ipv6: a.is_ipv6,
+            }
+        })
+    }
+    fn upgrade<D>(
+        &mut self,
+        data: D,
+        sec_web_socket_key: &[u8],
+        sec_web_socket_protocol: &[u8],
+        sec_web_socket_extensions: &[u8],
+        ctx: &mut bun_uws::WebSocketUpgradeContext,
+    ) {
+        let boxed = Box::into_raw(Box::new(data));
+        let _ = bun_uws_sys::response::Response::<SSL>::upgrade(
+            self,
+            boxed,
+            sec_web_socket_key,
+            sec_web_socket_protocol,
+            sec_web_socket_extensions,
+            Some(ctx),
+        );
     }
 }
 

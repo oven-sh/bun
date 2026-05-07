@@ -212,7 +212,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let data = match data_url.decode_data() {
         Ok(d) => d,
         Err(_) => {
-            let err = global_this.create_error_instance("failed to fetch the data URL");
+            let err = global_this.create_error_instance(format_args!("failed to fetch the data URL"));
             return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
                 err,
@@ -409,7 +409,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut force_http1 = false;
 
     if arguments.len == 0 {
-        let err = ctx.to_type_error(jsc::ErrorCode::MISSING_ARGS, FETCH_ERROR_NO_ARGS);
+        let err = ctx.to_type_error(jsc::ErrorCode::MISSING_ARGS, format_args!("{FETCH_ERROR_NO_ARGS}"));
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
@@ -577,7 +577,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if url_str.is_empty() {
         is_error = true;
-        let err = ctx.to_type_error(jsc::ErrorCode::INVALID_URL, FETCH_ERROR_BLANK_URL);
+        let err = ctx.to_type_error(jsc::ErrorCode::INVALID_URL, format_args!("{FETCH_ERROR_BLANK_URL}"));
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
@@ -593,7 +593,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let data_url = match DataURL::parse_without_check(url_slice.slice()) {
             Ok(d) => d,
             Err(_) => {
-                let err = ctx.create_error_instance("failed to fetch the data URL");
+                let err = ctx.create_error_instance(format_args!("failed to fetch the data URL"));
                 is_error = true;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -614,7 +614,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let owned_url = match ZigURL::from_string(&url_str) {
         Ok(u) => u,
         Err(_) => {
-            let err = ctx.to_type_error(jsc::ErrorCode::INVALID_URL, "fetch() URL is invalid");
+            let err = ctx.to_type_error(jsc::ErrorCode::INVALID_URL, format_args!("fetch() URL is invalid"));
             is_error = true;
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -972,7 +972,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
                                 jsc::ErrorCode::INVALID_ARG_VALUE,
-                                "fetch() proxy URL is invalid",
+                                format_args!("fetch() proxy URL is invalid"),
                             );
                             is_error = true;
                             return Ok(
@@ -1013,7 +1013,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     if href.tag() == BunStringTag::Dead {
                                         let err = ctx.to_type_error(
                                             jsc::ErrorCode::INVALID_ARG_VALUE,
-                                            "fetch() proxy URL is invalid",
+                                            format_args!("fetch() proxy URL is invalid"),
                                         );
                                         is_error = true;
                                         return Ok(
@@ -1050,7 +1050,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             {
                                                 // SAFETY: cast returns a live FetchHeaders*.
                                                 let fetch_hdrs = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(Headers::from(
+                                                proxy_headers = Some(HeadersExt::from(
                                                     Some(fetch_headers_ref(fetch_hdrs)),
                                                     HeadersOptions::default(),
                                                 ));
@@ -1059,7 +1059,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             {
                                                 // SAFETY: create_from_js returns a +1-ref NonNull<FetchHeaders>.
                                                 let fetch_hdrs_ref = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(Headers::from(
+                                                proxy_headers = Some(HeadersExt::from(
                                                     Some(fetch_headers_ref(fetch_hdrs_ref)),
                                                     HeadersOptions::default(),
                                                 ));
@@ -1074,7 +1074,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 } else {
                                     let err = ctx.to_type_error(
                                         jsc::ErrorCode::INVALID_ARG_VALUE,
-                                        "fetch() proxy.url must be a non-empty string",
+                                        format_args!("fetch() proxy.url must be a non-empty string"),
                                     );
                                     is_error = true;
                                     return Ok(
@@ -1339,7 +1339,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            Some(Headers::from(
+            Some(HeadersExt::from(
                 Some(fetch_headers_ref(headers_ref)),
                 HeadersOptions {
                     body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
@@ -1360,7 +1360,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         is_error = true;
-        let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_VALUE, FETCH_ERROR_PROXY_UNIX);
+        let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("{FETCH_ERROR_PROXY_UNIX}"));
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
@@ -1416,7 +1416,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     break 'blob blob;
                 } else {
                     // Consistent with what Node.js does - it rejects, not a 404.
-                    let err = global_this.to_type_error_fmt(
+                    let err = global_this.to_type_error(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!(
                             "Failed to resolve blob:{}",

@@ -36,8 +36,6 @@ pub(crate) fn server_js_create(
     }
 }
 
-use std::rc::Rc;
-
 use bun_aio::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -120,7 +118,7 @@ pub mod inspector_bun_frontend_dev_server_agent;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
+pub use server_body::{AnyUserRouteList, GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -218,31 +216,10 @@ impl AnyRoute {
 }
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
-pub struct ServePlugins {
-    pub state: ServePluginsState,
-    // TODO(port): `RefCount` field dropped — owned via `Rc<ServePlugins>` per
-    // §Pointers Rc/Arc default. Revisit if FFI needs intrusive ref/deref.
-}
-
-pub enum ServePluginsState {
-    /// Spec server.zig:316 — `.unqueued: []const []const u8`. The plugin path
-    /// list is the variant payload; transitioning to `Pending`/`Loaded`
-    /// consumes it (no parallel `plugins` field).
-    Unqueued(Box<[Box<[u8]>]>),
-    // TODO(b2-blocked): `Pending(Vec<ServePluginsCallback>)` once JSBundler is real.
-    Pending,
-    /// `*JSBundler.Plugin` — the C++ `BunPlugin` handle. Same payload type as
-    /// `server_body::ServePluginsState::Loaded` so `GetOrStartLoadResult::Ready`
-    /// (re-exported from server_body) can borrow it directly.
-    Loaded(Box<crate::api::js_bundler::Plugin>),
-    Err(jsc::Strong),
-}
-
-pub enum PluginsResult<'a> {
-    Pending,
-    Found(Option<&'a crate::api::js_bundler::Plugin>),
-    Err(jsc::JSValue),
-}
+// Full state machine + intrusive refcount lives in `server_body.rs` (the
+// `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
+// so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
+pub use server_body::{PluginsResult, ServePlugins, ServePluginsState};
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
@@ -287,7 +264,12 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub flags: ServerFlags,
 
-    pub plugins: Option<Rc<ServePlugins>>,
+    /// Intrusively-refcounted plugin state. Stored as a raw pointer (not
+    /// `Rc`) because (a) the same `*mut ServePlugins` is smuggled through
+    /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
+    /// through any owner (Zig spec uses `*ServePlugins` everywhere). The
+    /// counted ref held here is released in `Drop for NewServer`.
+    pub plugins: Option<core::ptr::NonNull<ServePlugins>>,
 
     pub dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
@@ -2189,7 +2171,12 @@ impl AnyServer {
     }
 
     pub fn plugins(&self) -> Option<&ServePlugins> {
-        any_server_dispatch!(self, |s| s.plugins.as_deref())
+        // SAFETY: `plugins` holds a counted ref; live while the server is.
+        any_server_dispatch!(self, |s| s.plugins.map(|p| unsafe { &*p.as_ptr() }))
+    }
+
+    pub fn get_plugins(&self) -> PluginsResult<'_> {
+        any_server_dispatch!(self, |s| s.get_plugins())
     }
 
     pub fn on_pending_request(&mut self) {
@@ -2355,24 +2342,9 @@ impl AnyServer {
     /// - `Pending` if `callback` was stored. It will call `on_plugins_resolved` or `on_plugins_rejected` later.
     pub fn get_or_load_plugins(
         &self,
-        _callback: ServePluginsCallback<'_>,
+        callback: ServePluginsCallback<'_>,
     ) -> GetOrStartLoadResult<'_> {
-        // PORT NOTE: `mod.rs::ServePlugins` and `server_body::ServePlugins` are
-        // mid-reconciliation duplicates. The mod.rs state machine is simpler
-        // (no Pending callback list), so map directly.
-        any_server_dispatch!(self, |s| match s.plugins.as_deref() {
-            None => GetOrStartLoadResult::Ready(None),
-            Some(p) => match &p.state {
-                ServePluginsState::Unqueued(_) | ServePluginsState::Pending => {
-                    // TODO(port): once `ServePlugins::get_or_start_load` lands on
-                    // the unified type, store `_callback` and kick the loader.
-                    GetOrStartLoadResult::Pending
-                }
-                // server.zig:349 `.loaded => |plugins| return .{ .ready = plugins }`
-                ServePluginsState::Loaded(b) => GetOrStartLoadResult::Ready(Some(b.as_ref())),
-                ServePluginsState::Err(_) => GetOrStartLoadResult::Err,
-            },
-        })
+        any_server_dispatch_mut!(self, |s| s.get_or_load_plugins(callback))
     }
 
     pub fn append_static_route(
@@ -2386,9 +2358,7 @@ impl AnyServer {
     }
 
     pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set — full body in server_body.rs:1764
-        // (rebuilds the uws router from `config.static_routes`).
-        any_server_dispatch!(self, |s| Ok(!s.flags.contains(ServerFlags::TERMINATED)))
+        any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 
     pub fn get_url_as_string(&self) -> Result<bun_str::String, bun_alloc::AllocError> {

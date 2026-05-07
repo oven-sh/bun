@@ -478,31 +478,12 @@ pub fn generate_code_for_lazy_export(
             part.stmts = &mut [];
 
             if let ExprData::EObject(e_object) = &expr.data {
-                for property_ in e_object.properties.slice() {
-                    let property: &G::Property = property_;
-                    if property.key.is_none()
-                        || !matches!(
-                            property.key.as_ref().unwrap().data,
-                            ExprData::EString(_)
-                        )
-                        || property.value.is_none()
-                        || property
-                            .key
-                            .as_ref()
-                            .unwrap()
-                            .data
-                            .as_e_string()
-                            .unwrap()
-                            .eql_comptime(b"default")
-                        || property
-                            .key
-                            .as_ref()
-                            .unwrap()
-                            .data
-                            .as_e_string()
-                            .unwrap()
-                            .eql_comptime(b"__esModule")
-                    {
+                for property in e_object.properties.slice() {
+                    let _: &G::Property = property;
+                    let Some(key) = &property.key else { continue };
+                    let ExprData::EString(key_str) = &key.data else { continue };
+                    let Some(value) = property.value else { continue };
+                    if key_str.eql_comptime(b"default") || key_str.eql_comptime(b"__esModule") {
                         continue;
                     }
 
@@ -511,14 +492,7 @@ pub fn generate_code_for_lazy_export(
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
                         unsafe { &*(this.allocator() as *const bun_alloc::Arena) };
-                    let name = property
-                        .key
-                        .as_ref()
-                        .unwrap()
-                        .data
-                        .as_e_string()
-                        .unwrap()
-                        .slice(alloc);
+                    let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
                     if !js_lexer::is_identifier(name) {
@@ -549,11 +523,11 @@ pub fn generate_code_for_lazy_export(
                                         B::Identifier { r#ref: generated.0 },
                                         expr.loc,
                                     ),
-                                    value: property.value,
+                                    value: Some(value),
                                 }])?,
                                 ..Default::default()
                             },
-                            property.key.as_ref().unwrap().loc,
+                            key.loc,
                         ),
                     ));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.

@@ -156,7 +156,7 @@ pub mod Macro {
             // *_jsc-tier `MacroContext::init`; this JSC-free stub only carries
             // the `javascript_object` slot the transpiler threads through
             // (transpiler.zig:938-940).
-            Self { javascript_object: core::ptr::null_mut() }
+            Self { javascript_object: MacroJSCtx::ZERO }
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this

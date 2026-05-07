@@ -106,12 +106,14 @@ impl PluginRunner {
     }
 }
 
-/// CYCLEBREAK FORWARD_DECL: `bundler_jsc::plugin_runner::MacroJSCtx`.
-/// SAFETY: erased — parser receives it and casts back on the runtime side.
-pub type MacroJSCtx = *mut ();
+/// Spec `transpiler.zig:5` — `pub const MacroJSCtx = @import("../bundler_jsc/PluginRunner.zig").MacroJSCtx`.
+/// The canonical newtype lives in `bun_js_parser::Macro` (the lowest tier that
+/// stores it, in `MacroContext.javascript_object`); re-exported here per spec.
+pub use js_ast::Macro::MacroJSCtx;
+/// Spec `transpiler.zig:1433 default_macro_js_value` (= `JSValue.zero`).
 #[inline]
-pub fn default_macro_js_value() -> MacroJSCtx {
-    core::ptr::null_mut()
+pub const fn default_macro_js_value() -> MacroJSCtx {
+    MacroJSCtx::ZERO
 }
 
 /// This structure was the JavaScript transpiler before bundle_v2 was written. It

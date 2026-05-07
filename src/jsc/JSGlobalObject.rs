@@ -15,7 +15,7 @@ use crate::{
 };
 
 use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
-use bun_string::{strings, String as BunString};
+use bun_string::{strings, OwnedString, String as BunString};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -254,11 +254,11 @@ impl JSGlobalObject {
 
     /// "The {argname} argument is invalid. Received {value}"
     pub fn throw_invalid_argument_value(&self, argname: &[u8], value: JSValue) -> JsError {
+        // `defer actual_string_value.deref()` → OwnedString's Drop releases the +1 ref.
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
             Err(e) => return e,
         };
-        // `defer actual_string_value.deref()` → handled by Drop on bun_string::String.
         self.err(
             JscError::INVALID_ARG_VALUE,
             format_args!(
@@ -330,10 +330,15 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<BunString> {
+    /// Returns a +1-ref'd `BunString` describing `value`'s type for error messages.
+    /// The result is wrapped in [`OwnedString`] so the ref is released on drop —
+    /// `bun_string::String` is `Copy` and has no `Drop`, so a bare `BunString`
+    /// here would leak (Zig spec does `defer actual_string_value.deref()`).
+    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
         // SAFETY: FFI — `global` is a valid JSGlobalObject*; JSValue is passed by value.
-        let str = unsafe { Bun__ErrorCode__determineSpecificType(global, value) };
-        // errdefer str.deref() → Drop on BunString handles this on the error path.
+        // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
+        // +1 ref on the early-return path below.
+        let str = OwnedString::new(unsafe { Bun__ErrorCode__determineSpecificType(global, value) });
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -1158,10 +1163,13 @@ impl JSGlobalObject {
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
         let always_allow_zero = range.always_allow_zero;
         // Zig passes the *unclamped* `range.min`/`range.max` to `throwRangeError`
-        // (not `min_t`/`max_t`). i128→i64 narrowing is safe here: callers always
-        // supply bounds within i64 (the formatter's range type).
-        let min = range.min as i64;
-        let max = range.max as i64;
+        // (not `min_t`/`max_t`). Zig's `comptime` guaranteed these fit in the
+        // formatter's `i64` range; preserve that as a checked narrowing so an
+        // out-of-range bound surfaces as a panic rather than silent wrap.
+        let min = i64::try_from(range.min)
+            .expect("validate_integer_range: range.min exceeds i64 (Zig comptime invariant)");
+        let max = i64::try_from(range.max)
+            .expect("validate_integer_range: range.max exceeds i64 (Zig comptime invariant)");
 
         if value.is_int32() {
             let int = value.to_int32();

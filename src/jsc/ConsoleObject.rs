@@ -4695,6 +4695,7 @@ pub mod formatter {
                     self.quote_strings = true;
                     let _qs = defer_restore!(self.quote_strings, old_quote_strings);
 
+                    if writer.failed { self.failed = true; }
                     drop(writer);
                     self.format::<C>(
                         Tag::get_advanced(key_value, self.global_this, self.tag_opts())?,
@@ -4762,6 +4763,7 @@ pub mod formatter {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());
                             }
 
+                            if writer.failed { self.failed = true; }
                             drop(writer);
                             self.format::<C>(tag, writer_, property_value, self.global_this)?;
                             writer = WrappedWriter {
@@ -4831,6 +4833,7 @@ pub mod formatter {
                                             self.indent += 1;
                                             write_indent_n(self.indent, writer.ctx).expect("unreachable");
                                             let _ind = defer_decrement!(self.indent);
+                                            if writer.failed { self.failed = true; }
                                             drop(writer);
                                             self.format::<C>(
                                                 Tag::get(children, self.global_this)?,
@@ -4859,6 +4862,7 @@ pub mod formatter {
                                             let mut j: usize = 0;
                                             while (j as u64) < length {
                                                 let child = children.get_index(self.global_this, u32::try_from(j).unwrap())?;
+                                                if writer.failed { self.failed = true; }
                                                 drop(writer);
                                                 self.format::<C>(
                                                     Tag::get_advanced(child, self.global_this, self.tag_opts())?,
@@ -4894,6 +4898,7 @@ pub mod formatter {
                                 writer.write_all(b">");
                             }
 
+                            if writer.failed { self.failed = true; }
                             return Ok(());
                         }
                     }

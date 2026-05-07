@@ -968,6 +968,16 @@ unsafe fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+/// `bun.api.node.process.exit(global, code)` — Spec
+/// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker it
+/// returns and the caller `panic!`s.
+///
+/// # Safety
+/// `global` is the live VM global.
+unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
+    crate::node::process::exit(global, code);
+}
+
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
 /// VirtualMachine.zig:3960 (`IPCInstance.handleIPCMessage` `.internal` arm).
 ///

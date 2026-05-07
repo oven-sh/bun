@@ -19,7 +19,13 @@ pub mod wtf;
 // `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI.
 #[path = "immutable.rs"] pub mod immutable;
 
-use core::sync::atomic::{AtomicPtr, Ordering};
+// Unicode ID-Start/ID-Continue two-stage tables (`js_lexer/identifier_data.zig`).
+// Pure data with no upward deps; hosted here so [`lexer`], [`mutable_string`],
+// and [`immutable::unicode`] get full Unicode coverage without depending on
+// `bun_js_parser`. `bun_js_parser::lexer::identifier` re-exports this module.
+#[path = "identifier.rs"] pub mod identifier;
+
+use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -235,18 +241,11 @@ impl String {
     }
 
     /// Max `WTF::StringImpl` length (in characters, not bytes).
-    /// Hooked by `bun_runtime` (`STRING_ALLOCATION_LIMIT_HOOK`); falls back to
-    /// `i32::MAX` until the runtime installs the limit.
+    /// Reads the process-wide [`STRING_ALLOCATION_LIMIT`] data slot
+    /// (`jsc::VirtualMachine::string_allocation_limit` in Zig).
     #[inline]
     pub fn max_length() -> usize {
-        let p = STRING_ALLOCATION_LIMIT_HOOK.load(Ordering::Relaxed);
-        if p.is_null() {
-            i32::MAX as usize
-        } else {
-            // SAFETY: runtime stores a `fn() -> usize` here during init.
-            let f: fn() -> usize = unsafe { core::mem::transmute::<*mut (), fn() -> usize>(p) };
-            f()
-        }
+        STRING_ALLOCATION_LIMIT.load(Ordering::Relaxed)
     }
 
     /// `bun.String.createStaticExternal` — wraps `bytes` in a
@@ -660,28 +659,11 @@ impl String {
         self.to_zig_string().to_owned_slice_z()
     }
 
-    /// `bun.String.encodeInto` — encode `self` into `out` using a Node.js
-    /// Buffer encoding (string.zig:630). Dispatches to
-    /// `jsc.WebCore.encoding.encodeIntoFrom{8,16}` via [`webcore_encoding`]
-    /// hooks (tier-6 owns the bodies; per PORTING.md §Dispatch hook pattern).
-    ///
-    /// Returns bytes written. The Zig version is `comptime enc`-monomorphized;
-    /// PERF(port): demoted to runtime `enc` — profile in Phase B.
-    pub fn encode_into(
-        &self,
-        out: &mut [u8],
-        enc: encoding::Encoding,
-    ) -> Result<usize, bun_core::Error> {
-        if self.is_utf16() {
-            return Ok(webcore_encoding::encode_into_from16(self.utf16(), out, enc, true));
-        }
-        if self.is_utf8() {
-            // TODO(port): Zig: `@panic("TODO")` — UTF-8 source path was never
-            // implemented (string.zig:636). Match the Zig behaviour.
-            unreachable!("String.encodeInto from UTF-8 source — unimplemented in Zig");
-        }
-        Ok(webcore_encoding::encode_into_from8(self.latin1(), out, enc))
-    }
+    // `bun.String.encodeInto` / `bun.String.encode` — moved UP to
+    // `bun_runtime::webcore::encoding::BunStringEncode` (extension trait).
+    // The encoder bodies (`jsc.WebCore.encoding.{encodeIntoFrom8,16,
+    // constructFromU8,U16}`) live in `bun_runtime`; defining the methods here
+    // would invert the crate graph. See PORTING.md §Dep-cycle.
 
     /// `bun.String.visibleWidth` — terminal column width of `self`, including
     /// ANSI escape sequences as visible (string.zig). Dispatches on encoding
@@ -782,14 +764,6 @@ impl String {
         debug_assert!(matches!(self.tag, Tag::ZigString | Tag::StaticZigString));
         debug_assert!(self.can_be_utf8());
         unsafe { self.value.zig.slice() }
-    }
-
-    /// `bun.String.encode` (string.zig:642) — encode `self` into a freshly
-    /// allocated buffer using a Node.js Buffer encoding. Dispatches to
-    /// `jsc.WebCore.encoding.constructFrom{U8,U16}` via [`webcore_encoding`]
-    /// hooks (tier-6 owns the bodies).
-    pub fn encode(&self, enc: encoding::Encoding) -> Vec<u8> {
-        self.to_zig_string().encode_with_allocator(enc)
     }
 
     /// `bun.String.toUTF8Owned` — like [`to_utf8_without_ref`] but guarantees

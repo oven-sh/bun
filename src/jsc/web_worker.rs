@@ -1437,8 +1437,12 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — just a prefix check.
-    if str.starts_with(b"blob:") {
+    // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
+    // AND `len >= specifier_len` (`"blob:".len + UUID.stringLength = 41`).
+    // A short `"blob:foo"` must fall through to the resolver below, not enter
+    // this arm and report "Blob URL is missing".
+    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
+    if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: hook contract; `ObjectURLRegistry` lives in `bun_runtime`.
         if unsafe { (hooks.has_blob_url)(&str[b"blob:".len()..]) } {
@@ -1478,17 +1482,17 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     };
 
-    // PORT NOTE: reshaped for borrowck — Zig kept `resolved_entry_point` on the
-    // stack and returned a slice into it (the resolver arena outlives spin()).
-    // Rust's `bun_resolver::Result` owns its `path_pair` by value here, so leak
-    // it onto the heap to match the Zig "borrowed from resolver arena" lifetime.
-    // PERF(port): one Box per worker spawn — profile in Phase B.
-    let resolved = Box::leak(Box::new(resolved_entry_point));
-    let Some(entry_path) = resolved.path() else {
-        *error_message = BunString::static_(b"Worker entry point is missing");
-        return None;
-    };
-    Some(entry_path.text)
+    // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
+    // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
+    // copy the slice out and let `resolved_entry_point` drop on the stack,
+    // exactly as the Zig spec does.
+    match resolved_entry_point.path_const() {
+        Some(entry_path) => Some(entry_path.text),
+        None => {
+            *error_message = BunString::static_(b"Worker entry point is missing");
+            None
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

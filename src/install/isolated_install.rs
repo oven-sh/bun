@@ -1716,12 +1716,12 @@ pub fn install_isolated_packages(
                         rename_path.append(mkdir_path.slice());
 
                         // 1
-                        if sys::mkdirat(Fd::cwd(), mkdir_path.slice_z(), 0o755).unwrap().is_err() {
+                        if sys::mkdirat(Fd::cwd(), mkdir_path.slice_z(), 0o755).is_err() {
                             break 'is_new_bun_modules true;
                         }
                     }
 
-                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules").unwrap() else {
+                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
                         break 'is_new_bun_modules true;
                     };
 
@@ -1730,7 +1730,7 @@ pub fn install_isolated_packages(
                     // 2
                     let mut node_modules_iter = sys::DirIterator::iterate(node_modules, sys::Unit::U8);
                     loop {
-                        let next = match node_modules_iter.next().unwrap() {
+                        let next = match node_modules_iter.next() {
                             Ok(v) => v,
                             Err(_) => break 'is_new_bun_modules true,
                         };
@@ -1748,7 +1748,7 @@ pub fn install_isolated_packages(
                         let rename_path_save = rename_path.len();
                         rename_path.append(entry.name.slice());
 
-                        let _ = sys::renameat(Fd::cwd(), entry_path.slice_z(), Fd::cwd(), rename_path.slice_z()).unwrap();
+                        let _ = sys::renameat(Fd::cwd(), entry_path.slice_z(), Fd::cwd(), rename_path.slice_z());
 
                         rename_path.set_length(rename_path_save);
                         entry_path.set_length(entry_path_save);
@@ -1776,8 +1776,7 @@ pub fn install_isolated_packages(
                             workspace_node_modules.slice_z(),
                             Fd::cwd(),
                             rename_path.slice_z(),
-                        )
-                        .unwrap();
+                        );
 
                         rename_path.set_length(rename_path_save);
                     }

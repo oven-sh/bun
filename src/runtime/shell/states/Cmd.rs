@@ -484,10 +484,21 @@ impl Cmd {
             .io
             .to_subproc_stdio(&mut spawn_args.stdio, &mut shellio);
 
-        // TODO(port): `initRedirections` — file/JS-object redirects on the
-        // subprocess path. Builtin redirects are handled in `Builtin::init`;
-        // the subprocess case is deferred until `IOWriter` redirect handling
-        // lands (see PORT STATUS).
+        // Spec lines 513-515 / 548-640: apply file/jsbuf/`2>&1` redirects on
+        // top of the IO-derived stdio.
+        match Self::init_subproc_redirections(interp, this, &mut spawn_args.stdio) {
+            Ok(None) => {}
+            Ok(Some(y)) => {
+                drop(spawn_args);
+                drop(arena);
+                return y;
+            }
+            Err(_) => {
+                drop(spawn_args);
+                drop(arena);
+                return Yield::failed();
+            }
+        }
 
         // Stage the exec slot *before* spawning so PipeReader / process-exit
         // callbacks (which deref `cmd_parent.exec`) see a populated `Subproc`
@@ -596,6 +607,187 @@ impl Cmd {
             return Yield::Next(this);
         }
         Yield::suspended()
+    }
+
+    /// Spec: Cmd.zig `initRedirections` (lines 548-640). Applies the AST
+    /// redirect (`> file`, `< ${blob}`, `2>&1`, …) onto the subprocess stdio
+    /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
+    /// failing-error write was queued; `Err` when a JS exception was raised.
+    fn init_subproc_redirections(
+        interp: &mut Interpreter,
+        this: NodeId,
+        stdio: &mut [Stdio; 3],
+    ) -> crate::jsc::JsResult<Option<Yield>> {
+        const STDIN_NO: usize = 0;
+        const STDOUT_NO: usize = 1;
+        const STDERR_NO: usize = 2;
+
+        // SAFETY: `node` points into the AST arena which outlives every state
+        // node (see Cmd::next).
+        let node: &ast::Cmd = unsafe { &*interp.as_cmd(this).node };
+        let flags = node.redirect;
+
+        let Some(redirect) = &node.redirect_file else {
+            if flags.duplicate_out() {
+                use crate::api::bun_process::StdioKind as Dup2Kind;
+                if flags.stdout() {
+                    stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
+                        out: Dup2Kind::Stderr,
+                        to: Dup2Kind::Stdout,
+                    });
+                }
+                if flags.stderr() {
+                    stdio[STDOUT_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
+                        out: Dup2Kind::Stdout,
+                        to: Dup2Kind::Stderr,
+                    });
+                }
+            }
+            return Ok(None);
+        };
+
+        match redirect {
+            ast::Redirect::JsBuf(val) => {
+                let global = interp.global_this;
+                if global.is_null() {
+                    panic!("JS values not allowed in this context");
+                }
+                // SAFETY: `global_this` was set by `create_shell_interpreter`
+                // and outlives the interpreter.
+                let global = unsafe { &*global };
+                let idx = val.idx as usize;
+                if idx >= interp.jsobjs.len() {
+                    return Err(global.throw(format_args!(
+                        "Invalid JS object reference in shell"
+                    )));
+                }
+                let jsval = interp.jsobjs[idx];
+
+                if let Some(buf) = jsval.as_array_buffer(global) {
+                    let mk = || {
+                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
+                            array_buffer: buf,
+                            held: crate::jsc::StrongOptional::create(buf.value, global),
+                        })
+                    };
+                    if flags.stdin() {
+                        stdio[STDIN_NO] = mk();
+                    }
+                    if flags.duplicate_out() {
+                        stdio[STDOUT_NO] = mk();
+                        stdio[STDERR_NO] = mk();
+                    } else {
+                        if flags.stdout() {
+                            stdio[STDOUT_NO] = mk();
+                        }
+                        if flags.stderr() {
+                            stdio[STDERR_NO] = mk();
+                        }
+                    }
+                } else if let Some(blob_ptr) = jsval.as_::<crate::webcore::Blob>() {
+                    // SAFETY: `as_` returns a live JSC-owned `*mut Blob`.
+                    let blob = unsafe { &*blob_ptr }.dupe();
+                    if flags.stdin() {
+                        stdio[STDIN_NO].extract_blob(
+                            global,
+                            crate::webcore::blob::Any::Blob(blob),
+                            STDIN_NO as i32,
+                        )?;
+                    } else if flags.stdout() {
+                        stdio[STDOUT_NO].extract_blob(
+                            global,
+                            crate::webcore::blob::Any::Blob(blob),
+                            STDOUT_NO as i32,
+                        )?;
+                    } else if flags.stderr() {
+                        stdio[STDERR_NO].extract_blob(
+                            global,
+                            crate::webcore::blob::Any::Blob(blob),
+                            STDERR_NO as i32,
+                        )?;
+                    }
+                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
+                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
+                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
+                    let req = unsafe { &mut *req };
+                    req.get_body_value().to_blob_if_possible();
+                    if flags.stdin() {
+                        let b = req.get_body_value().use_as_any_blob();
+                        stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
+                    }
+                    if flags.stdout() {
+                        let b = req.get_body_value().use_as_any_blob();
+                        stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
+                    }
+                    if flags.stderr() {
+                        let b = req.get_body_value().use_as_any_blob();
+                        stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
+                    }
+                } else {
+                    return Err(global.throw(format_args!(
+                        "Unknown JS value used in shell: {}",
+                        jsval.fmt_string(global)
+                    )));
+                }
+            }
+            ast::Redirect::Atom(_) => {
+                if interp.as_cmd(this).redirection_file.is_empty() {
+                    let argv0 = interp
+                        .as_cmd(this)
+                        .args
+                        .first()
+                        .map(|a| &a[..a.len().saturating_sub(1)])
+                        .unwrap_or(b"<unknown>")
+                        .to_vec();
+                    return Ok(Some(Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!(
+                            "bun: ambiguous redirect: at `{}`\n",
+                            bstr::BStr::new(&argv0)
+                        ),
+                    )));
+                }
+                let path_buf: Vec<u8> = {
+                    let raw = &interp.as_cmd(this).redirection_file;
+                    let len = raw.len().saturating_sub(1);
+                    let mut v = raw[..len].to_vec();
+                    v.push(0);
+                    v
+                };
+                // SAFETY: `path_buf` ends in NUL by construction.
+                let path = unsafe {
+                    bun_core::ZStr::from_raw(path_buf.as_ptr(), path_buf.len() - 1)
+                };
+                log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
+                // SAFETY: `Base.shell` arena-backref; outlives the Cmd.
+                let cwd_fd = unsafe { &*interp.as_cmd(this).base.shell }.cwd_fd;
+                let redirfd = match crate::shell::interpreter::shell_openat(
+                    cwd_fd,
+                    path,
+                    flags.to_flags(),
+                    0o666,
+                ) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let sys_err = e.to_shell_system_error();
+                        return Ok(Some(Builtin::cmd_write_failing_error(
+                            interp,
+                            this,
+                            format_args!(
+                                "bun: {}: {}",
+                                sys_err.message,
+                                bstr::BStr::new(path.as_bytes())
+                            ),
+                        )));
+                    }
+                };
+                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
+                set_stdio_from_redirect(stdio, flags, redirfd);
+            }
+        }
+        Ok(None)
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
@@ -816,6 +1008,24 @@ impl Cmd {
             // The caller (`ShellSubprocess::on_process_exit`) does not touch
             // its `*mut Cmd` again after this returns.
             Yield::Next(this_id).run(unsafe { &mut *interp });
+        }
+    }
+}
+
+/// Spec: Cmd.zig `setStdioFromRedirect`.
+fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {
+    if flags.stdin() {
+        stdio[0] = Stdio::Fd(fd);
+    }
+    if flags.duplicate_out() {
+        stdio[1] = Stdio::Fd(fd);
+        stdio[2] = Stdio::Fd(fd);
+    } else {
+        if flags.stdout() {
+            stdio[1] = Stdio::Fd(fd);
+        }
+        if flags.stderr() {
+            stdio[2] = Stdio::Fd(fd);
         }
     }
 }

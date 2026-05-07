@@ -470,16 +470,9 @@ pub use framework_router as FrameworkRouter;
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::build_command;
-
-    /// Data used on each rendering thread. Referred to as `pt` in field
-    /// naming, and `Bake::ProductionPerThread` in C++.
-    ///
-    /// Full struct (lifetime-parameterized, with `bundled_outputs`/`source_maps`
-    /// fields) lives in the gated `production.rs` draft and depends on
-    /// `bun_jsc::Strong` + `bun_bundler::OutputFile::Index`.
-    // TODO(b2-blocked): bun_jsc::Strong — un-gate full PerThread<'a>.
-    pub struct PerThread(());
+    pub use super::production_body::{
+        build_command, EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags,
+    };
 }
 
 // ══════════════════════════════════════════════════════════════════════════

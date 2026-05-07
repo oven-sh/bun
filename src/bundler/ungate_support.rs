@@ -24,6 +24,21 @@ use crate::{options, Index, IndexInt};
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_string as bun_str;
 pub use bun_resolver::fs as bun_fs;
+
+// Compile-time guard: the three `fs::Path` / `fs::PathName` mirrors
+// (`bun_logger`, `bun_resolver`, `bun_paths`) are field-identical ports of
+// `fs.zig:Path` pending unification. `bundle_v2::fs_path_to_logger` /
+// `logger_path_to_paths` bit-cast between them; all three carry `#[repr(C)]`
+// so layout is pinned, and this assert trips if any mirror's field set drifts.
+const _: () = {
+    use core::mem::{align_of, size_of};
+    assert!(size_of::<bun_logger::fs::Path>() == size_of::<bun_fs::Path<'static>>());
+    assert!(align_of::<bun_logger::fs::Path>() == align_of::<bun_fs::Path<'static>>());
+    assert!(size_of::<bun_logger::fs::PathName>() == size_of::<bun_fs::PathName<'static>>());
+    assert!(align_of::<bun_logger::fs::PathName>() == align_of::<bun_fs::PathName<'static>>());
+    assert!(size_of::<bun_logger::fs::Path>() == size_of::<bun_paths::fs::Path<'static>>());
+    assert!(size_of::<bun_logger::fs::PathName>() == size_of::<bun_paths::fs::PathName<'static>>());
+};
 pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
 /// workspace member yet; alias `bun_core` (which exports `declare_scope!` /

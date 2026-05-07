@@ -1703,15 +1703,15 @@ To create a project with the official Next.js scaffolding tool, run
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         // Parse arguments manually since the standard flow doesn't work for standalone commands
-        let cli = bun_install::CommandLineArguments::parse(bun_install::Subcommand::Info)?;
+        let cli = bun_install::CommandLineArguments::parse(PmSubcommand::Info)?;
+        let cli_json_output = cli.json_output;
         let ctx = init::<{ Tag::InfoCommand }>(log)?;
         let (pm_ptr, _) =
-            bun_install::PackageManager::init(&mut *ctx, cli, bun_install::Subcommand::Info)?;
+            bun_install::package_manager::init(&mut *ctx, cli, PmSubcommand::Info)?;
         // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
         // non-null and exclusively owned by this thread for the command's
         // duration (mirrors Zig's `*PackageManager`).
         let pm: &mut bun_install::PackageManager = unsafe { &mut *pm_ptr };
-        let cli_json_output = pm.options.json_output;
 
         // Handle arguments correctly for standalone info command
         let mut package_name: &[u8] = b"";

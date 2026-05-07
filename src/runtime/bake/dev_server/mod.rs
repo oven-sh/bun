@@ -935,22 +935,63 @@ impl HotReloadEvent {
 }
 
 impl DevServer {
-    /// Spec DevServer.zig `onPluginsRejected` — plugin-load failure hook
-    /// called from `ServePlugins::handle_on_reject`. Full body (mark all
-    /// pending bundles failed, broadcast HMR error) lives in the gated draft.
+    /// `DevServer.onPluginsRejected` — DevServer.zig:4420. Plugin-load failure
+    /// hook called from `ServePlugins::handle_on_reject`.
     pub fn on_plugins_rejected(&mut self) {
-        todo!("blocked_on: bake::DevServer::on_plugins_rejected body")
+        self.plugin_state = PluginState::Err;
+        while let Some(item) = self.next_bundle.requests.pop_first() {
+            // SAFETY: `pop_first` returns a node owned by `deferred_request_pool`;
+            // single-threaded access on DevServer thread.
+            unsafe {
+                let d = &mut (*item.as_ptr()).data;
+                d.abort();
+                d.deref_();
+            }
+        }
+        self.next_bundle.route_queue.clear_retaining_capacity();
+        // TODO: allow recovery from this state
     }
 
-    /// Spec DevServer.zig `emitMemoryVisualizerMessageTimer` — periodic
-    /// memory-visualizer push to connected HMR sockets. Called from the
-    /// high-tier `EventLoopTimer` dispatch with the raw `*EventLoopTimer`
-    /// (Zig recovers `*DevServer` via `@fieldParentPtr`).
+    /// `DevServer.emitMemoryVisualizerMessageTimer` — DevServer.zig:3680.
+    /// Periodic memory-visualizer push to connected HMR sockets. Called from
+    /// the `EventLoopTimer` dispatch with the raw `*EventLoopTimer` (Zig
+    /// recovers `*DevServer` via `@fieldParentPtr`).
     pub fn emit_memory_visualizer_message_timer(
-        _t: &mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: &mut bun_event_loop::EventLoopTimer::EventLoopTimer,
         _now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        todo!("blocked_on: bake::DevServer::emit_memory_visualizer_message_timer body")
+        #[cfg(not(feature = "bake_debugging_features"))]
+        {
+            let _ = timer;
+            return;
+        }
+        #[cfg(feature = "bake_debugging_features")]
+        {
+            // SAFETY: `timer` is the `memory_visualizer_timer` field of a heap-
+            // allocated `DevServer` (never moved post-init).
+            let dev: &mut DevServer = unsafe {
+                &mut *(timer as *mut _ as *mut u8)
+                    .sub(core::mem::offset_of!(DevServer, memory_visualizer_timer))
+                    .cast::<DevServer>()
+            };
+            debug_assert!(dev.magic == Magic::Valid);
+            dev.emit_memory_visualizer_message();
+            timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
+            // LAYERING: `vm.timer` lives on the high-tier `RuntimeState` (T4
+            // `bun_jsc` cannot name T6 `bun_runtime::timer::All`). Recover the
+            // real heap via `RuntimeState`, same as the other intrusive-timer
+            // callers in this crate.
+            let timer_all = {
+                let state = crate::jsc_hooks::runtime_state();
+                // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+                // `timer` is an embedded `timer::All` at a stable address.
+                unsafe { &mut *core::ptr::addr_of_mut!((*state).timer) }
+            };
+            timer_all.update(
+                timer,
+                &bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, 1000),
+            );
+        }
     }
 }
 
@@ -1454,15 +1495,19 @@ impl DevServer {
     // so no callsite needs the borrowed `AllocationScope` handle. The real
     // accessor lives on the lifetime-carrying `dev_server_body::DevServer`.
 
-    /// `DevServer.emitMemoryVisualizerMessageIfNeeded` -- DevServer.zig:4341.
-    /// Full body lives in the gated `../DevServer.rs` draft (depends on
-    /// `HmrSocket::publish` + `memory_cost_detailed`). Sub-stores call this
-    /// after structural mutations so the inspector tab refreshes.
+    /// `DevServer.emitMemoryVisualizerMessageIfNeeded` — DevServer.zig:3689.
+    /// Sub-stores call this after structural mutations so the inspector tab
+    /// refreshes.
     pub fn emit_memory_visualizer_message_if_needed(&mut self) {
-        if self.emit_memory_visualizer_events == 0 {
-            return;
+        #[cfg(not(feature = "bake_debugging_features"))]
+        return;
+        #[cfg(feature = "bake_debugging_features")]
+        {
+            if self.emit_memory_visualizer_events == 0 {
+                return;
+            }
+            self.emit_memory_visualizer_message();
         }
-        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message_if_needed body un-gate")
     }
 
     /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128. Exposed via

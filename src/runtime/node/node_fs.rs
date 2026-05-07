@@ -176,35 +176,12 @@ use super::MaybeTodo as _;
 //   - `bun_sys::FdExt`       → `Fd::close()`
 //   - `super::types::FdJsc`  → `Fd::from_js_validated()`
 //   - `bun_jsc::SysErrorJsc` → `bun_sys::Error::to_js()`
+//   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
 #[allow(unused_imports)]
 use super::types::FdJsc as _;
 #[allow(unused_imports)]
 use bun_jsc::SysErrorJsc as _;
-
-/// Local extension shim: `bun_sys::Error::to_js_with_async_stack` lives in the
-/// `bun_sys_jsc` crate (`ErrorJsc` trait), which is not yet a dependency of
-/// `bun_runtime`. Forward to the synchronous `SysErrorJsc::to_js` for now —
-/// the async-stack enrichment is a debug nicety, not load-bearing.
-// TODO(b2-blocked): swap to `use bun_sys_jsc::ErrorJsc as _;` once it is a dep.
-pub(super) trait SysErrorAsyncJsc {
-    fn to_js_with_async_stack(
-        &self,
-        global: &JSGlobalObject,
-        _promise: &bun_jsc::JSPromise,
-    ) -> JsResult<JSValue>;
-    /// Zig `Error.deinit()` — Rust `bun_sys::Error` frees on `Drop`; no-op shim
-    /// kept so the Zig-shaped call sites (`err.deinit()`) compile unchanged.
-    fn deinit(&mut self) {}
-}
-impl SysErrorAsyncJsc for bun_sys::Error {
-    fn to_js_with_async_stack(
-        &self,
-        global: &JSGlobalObject,
-        _promise: &bun_jsc::JSPromise,
-    ) -> JsResult<JSValue> {
-        Ok(bun_jsc::SysErrorJsc::to_js(self, global))
-    }
-}
+use bun_sys_jsc::ErrorJsc as _;
 
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_`/`unref`. Zig passed
 /// `*jsc.VirtualMachine` directly; the Rust `bun_aio::KeepAlive` API now takes

@@ -174,13 +174,9 @@ pub struct Headers {
     // global mimalloc, field dropped (PORTING.md §allocators).
 }
 
-impl Headers {
-    pub fn memory_cost(&self) -> usize {
-        self.buf.len() + self.entries.memory_cost()
-    }
-
+impl Clone for Headers {
     // PORT NOTE: Zig `!Headers`; only fallible calls were allocations — abort on OOM.
-    pub fn clone(&self) -> Headers {
+    fn clone(&self) -> Headers {
         Headers {
             entries: self
                 .entries
@@ -188,6 +184,12 @@ impl Headers {
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             buf: self.buf.clone(),
         }
+    }
+}
+
+impl Headers {
+    pub fn memory_cost(&self) -> usize {
+        self.buf.len() + self.entries.memory_cost()
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {

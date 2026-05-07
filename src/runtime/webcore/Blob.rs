@@ -6142,7 +6142,13 @@ impl Internal {
             self.bytes = Vec::new();
             return jsc::StringJsc::to_js(&out, global_this);
         } else {
-            let mut str = ZigString::init(&self.to_owned_slice());
+            // All-ASCII fast path: hand the heap buffer to JSC's external-string
+            // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`
+            // moves `self.bytes` out, so the allocation is no longer owned by us.
+            let owned: *mut [u8] = Box::into_raw(self.to_owned_slice().into_boxed_slice());
+            // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
+            // ZigString borrows ptr+len, then `to_external_value` adopts it.
+            let mut str = ZigString::init(unsafe { &*owned });
             str.mark_global();
             return Ok(str.to_external_value(global_this));
         }

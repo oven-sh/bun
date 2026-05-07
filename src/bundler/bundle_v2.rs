@@ -498,13 +498,18 @@ pub mod bake_types {
     /// Alias kept for callers that referenced the DevServer constant name directly.
     pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;
 
-    /// TYPE_ONLY mirror of src/bake/production.zig:844 `EntryPointMap`. The bundler
-    /// only reads `.root` and iterates `.files` (key → InputFile, value →
-    /// OutputFile.Index); router-integration methods stay in bun_runtime::bake.
+    /// Canonical port of src/bake/production.zig:844 `EntryPointMap`.
+    /// Lives in the bundler (lower tier) so both `bun_runtime::bake::production`
+    /// and `BundleV2::generate_from_bake_production_cli` share ONE nominal type
+    /// (PORTING.md §Layering). Router-integration methods (`InsertionHandler`)
+    /// are added by `bun_runtime::bake` via a local trait impl.
     pub mod production {
         use super::Side;
 
-        /// `OpaqueFileId` is the index into `files`.
+        /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
+        /// This is the same newtype as `framework_router::OpaqueFileId`; the
+        /// bake crate re-exports that one and converts via `.get()` only at
+        /// the FFI boundary.
         #[repr(transparent)]
         #[derive(Copy, Clone, Eq, PartialEq, Hash)]
         pub struct OpaqueFileId(pub u32);
@@ -513,7 +518,7 @@ pub mod bake_types {
             #[inline] pub const fn get(self) -> u32 { self.0 }
         }
 
-        /// Mirrors `EntryPointMap.InputFile` (raw ptr+len so `Side` packs in the
+        /// `EntryPointMap.InputFile` (raw ptr+len so `Side` packs in the
         /// trailing word — keeps the 16-byte key layout the Zig hasher relies on).
         #[derive(Copy, Clone)]
         pub struct InputFile {
@@ -521,8 +526,8 @@ pub mod bake_types {
             abs_path_len: u32,
             pub side: Side,
         }
-        // SAFETY: abs_path_ptr borrows arena-owned bytes that outlive the map; the
-        // map itself is single-producer (bake build thread) per Zig contract.
+        // SAFETY: abs_path_ptr borrows `EntryPointMap.owned_paths`-owned bytes;
+        // the map itself is single-producer (bake build thread) per Zig contract.
         unsafe impl Send for InputFile {}
         unsafe impl Sync for InputFile {}
         impl InputFile {
@@ -533,7 +538,7 @@ pub mod bake_types {
             #[inline]
             pub fn abs_path(&self) -> &[u8] {
                 // SAFETY: ptr/len were derived from a slice in `init`; the backing
-                // allocation is owned by `EntryPointMap` (duped on insert).
+                // allocation is owned by `EntryPointMap.owned_paths` (duped on insert).
                 unsafe { core::slice::from_raw_parts(self.abs_path_ptr, self.abs_path_len as usize) }
             }
         }
@@ -550,33 +555,47 @@ pub mod bake_types {
         }
         impl Eq for InputFile {}
 
-        /// Value side is `OutputFile.Index` (u32) — left uninitialized until the
-        /// bundle is indexed, so the bundler treats it as opaque.
-        pub type OutputFileIndex = u32;
+        /// Value side is `OutputFile.Index` — left as a placeholder until the
+        /// bundle is indexed (Zig leaves it `undefined`); the bundler never reads it.
+        pub use crate::output_file::Index as OutputFileIndex;
+
+        pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
 
         #[derive(Default)]
         pub struct EntryPointMap {
             pub root: Box<[u8]>,
             /// `OpaqueFileId` is the insertion index into this map.
-            pub files: bun_collections::ArrayHashMap<InputFile, OutputFileIndex>,
+            pub files: EntryPointHashMap,
+            /// Owned backing storage for the duped path bytes that `InputFile`
+            /// keys point into (raw ptr+len). Mirrors Zig's `map.allocator.dupe`
+            /// against `bun.default_allocator` — kept here so the allocations
+            /// drop with the map (PORTING.md §Forbidden: no `Box::leak`).
+            pub owned_paths: Vec<Box<[u8]>>,
         }
         impl EntryPointMap {
-            /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert.
+            /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert
+            /// (owned by `owned_paths`; `Box` heap address is stable across the
+            /// move so the raw key pointer stays valid).
             pub fn get_or_put_entry_point(
                 &mut self,
                 abs_path: &[u8],
                 side: Side,
             ) -> Result<OpaqueFileId, bun_core::Error> {
-                let k = InputFile::init(abs_path, side);
-                let gop = self.files.get_or_put(k)?;
-                if !gop.found_existing {
-                    let owned: Box<[u8]> = abs_path.to_vec().into_boxed_slice();
-                    // SAFETY: leak the box so the raw ptr in `InputFile` stays valid
-                    // for the map's lifetime (mirrors Zig `allocator.dupe` ownership).
-                    let leaked: &'static [u8] = Box::leak(owned);
-                    *gop.key_ptr = InputFile::init(leaked, side);
+                let probe = InputFile::init(abs_path, side);
+                if let Some(index) = self.files.get_index(&probe) {
+                    return Ok(OpaqueFileId::init(index as u32));
                 }
-                Ok(OpaqueFileId::init(gop.index as u32))
+                // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
+                // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
+                // `allocator.dupe`, which is infallible in Rust, so no rollback needed.
+                let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
+                let key = InputFile::init(&owned, side);
+                self.owned_paths.push(owned);
+                let index = self.files.count();
+                // Value is the post-bundle output index; left as a placeholder until
+                // the bundle is indexed (production.zig:873 leaves it `undefined`).
+                self.files.put_no_clobber(key, OutputFileIndex(0))?;
+                Ok(OpaqueFileId::init(index as u32))
             }
         }
     }
@@ -2756,7 +2775,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_entry_points_bake_production(
         &mut self,
-        data: bake_types::production::EntryPointMap,
+        data: &bake_types::production::EntryPointMap,
     ) -> Result<(), Error> {
         self.enqueue_entry_points_common()?;
         self.reserve_source_indexes_for_bake()?;
@@ -3378,7 +3397,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn generate_from_bake_production_cli(
-        entry_points: bake_types::production::EntryPointMap,
+        entry_points: &bake_types::production::EntryPointMap,
         server_transpiler: &'a mut Transpiler<'a>,
         bake_options: BakeOptions<'a>,
         alloc: &bun_alloc::Arena,

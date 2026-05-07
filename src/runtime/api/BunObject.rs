@@ -687,8 +687,14 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     }
     // Spec BunObject.zig:450 — `defer { for (arguments) |a| a.unprotect(); }`.
     // `arguments_old::<4>` is a stack `[JSValue; 4]`; move it into the guard
-    // and re-slice instead of heap-allocating a `Vec` per call — `Bun.inspect`
-    // is the inner-loop of error-gc-test.test.js (100k calls).
+    // and re-slice instead of heap-allocating a `Vec` per call.
+    //
+    // NOTE: this is *not* the fix for error-gc-test.test.js timing out under
+    // debug+ASAN — that test does 100k `Bun.inspect(new Error)` and the cost
+    // is spread across ASAN-instrumented memcpy/memset, mimalloc zero-checks
+    // and the source-file re-read in `remap_zig_exception`, none of which a
+    // 32-byte alloc elision can recover. The test is classified `[TIMEOUT]`
+    // for ASAN in test/expectations.txt instead.
     let args_buf = scopeguard::guard(args_buf, |buf| {
         for arg in buf.slice() {
             arg.unprotect();

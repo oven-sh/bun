@@ -453,7 +453,7 @@ cfg_jsc! {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/test_runner/ (12 files + 75 matchers + diff/harness/timers)
-//   confidence: medium
-//   todos:      1
-//   notes:      single-gate on bun_jsc dep (cfg_jsc!); matcher imports normalized to super::*; diff/ is JSC-free and live
+//   confidence: high
+//   todos:      0
+//   notes:      extension-trait shims forward to bun_jsc inherents 1:1; no local FFI re-decls; diff/ is JSC-free and live
 // ──────────────────────────────────────────────────────────────────────────

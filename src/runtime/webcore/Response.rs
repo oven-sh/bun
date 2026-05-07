@@ -343,18 +343,21 @@ impl Response {
         Response {
             init: response_init,
             body,
-            url,
+            url: OwnedString::new(url),
             redirected,
             ..Default::default()
         }
     }
 
+    /// Takes ownership (+1) of `status_text`.
     #[inline]
     pub fn set_init(&mut self, method: Method, status_code: u16, status_text: BunString) {
         self.init.method = method;
         self.init.status_code = status_code;
-        // old status_text dropped (bun_str::String derefs in Drop)
-        self.init.status_text = status_text;
+        // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
+        // previous WTF impl — matching Zig's explicit `status_text.deref()`
+        // before reassignment (Response.zig:54).
+        self.init.status_text = OwnedString::new(status_text);
     }
 
     #[inline]
@@ -368,15 +371,21 @@ impl Response {
         self.init.status_code
     }
 
+    /// Borrowed (+0) — bitwise copy of the inner `BunString`, matching Zig's
+    /// `getInitStatusText` (Response.zig:67). Caller must NOT `deref()` the
+    /// result; call `.clone()` on it if a +1 is needed.
     #[inline]
     pub fn get_init_status_text(&self) -> BunString {
-        self.init.status_text.clone()
+        self.init.status_text.get()
     }
 
+    /// Takes ownership (+1) of `url`.
     #[inline]
     pub fn set_url(&mut self, url: BunString) {
-        // old url dropped (bun_str::String derefs in Drop)
-        self.url = url;
+        // Assigning over an `OwnedString` runs its `Drop`, which `deref()`s the
+        // previous WTF impl — matching Zig's explicit `this.#url.deref()`
+        // before reassignment (Response.zig:70).
+        self.url = OwnedString::new(url);
     }
 
     #[inline]
@@ -384,13 +393,16 @@ impl Response {
         self.url.to_utf8()
     }
 
-    /// Internal accessor: clone the response URL string.
+    /// Internal accessor: borrowed (+0) bitwise copy of the URL string,
+    /// matching Zig's `getUrl` (Response.zig:77). Caller must NOT `deref()`
+    /// the result; call `.clone()` on it if a +1 is needed.
+    ///
     /// PORT NOTE: Zig had both `getUrl()` (returns the string) and `getURL()`
     /// (the JS getter). They collide under snake_case, so the JS getter keeps
     /// `get_url` (codegen calls that name) and this becomes `url()`.
     #[inline]
     pub fn url(&self) -> BunString {
-        self.url.clone()
+        self.url.get()
     }
 
     #[inline]
@@ -856,11 +868,12 @@ impl Response {
         };
         // errdefer body.deinit() — Body: Drop handles cleanup on `?` below
         let init = self.init.clone(global_this)?;
-        // errdefer init.deinit() — Init: Drop handles cleanup on `?` below
+        // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // handles cleanup on `?` below
         Ok(Response {
             body,
             init,
-            url: self.url.clone(),
+            url: OwnedString::new(self.url.clone()),
             redirected: self.redirected,
             ..Default::default()
         })

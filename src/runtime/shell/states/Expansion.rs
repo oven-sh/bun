@@ -87,22 +87,35 @@ impl Expansion {
             // SAFETY: `node` points into the AST arena (`ShellArgs::__arena`)
             // which the interpreter holds for its entire lifetime.
             let atom = unsafe { &*me.node };
-            // SAFETY: `base.shell` is set at init and outlives this node.
-            let shell = unsafe { &*me.base.shell };
+            let shell = me.base.shell();
             match atom {
                 ast::Atom::Simple(s) => {
                     Self::expand_simple_no_io(shell, s, &mut me.out.buf, true);
                 }
                 ast::Atom::Compound(c) => {
-                    let expand_tilde = c
+                    // Spec (Expansion.zig next() lines 186-203 +
+                    // expandVarAndCmdSubst lines 372-376): a leading Tilde in
+                    // a compound is SKIPPED during the atom walk, then
+                    // post-processed — prepend $HOME only if the expanded
+                    // remainder begins with '/' or '\\', otherwise prepend a
+                    // literal '~' (so `~user` stays `~user`, not `<HOME>user`).
+                    let leading_tilde = c
                         .atoms
                         .first()
                         .is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde));
-                    for (i, s) in c.atoms.iter().enumerate() {
-                        // Spec (Expansion.zig expandVarAndCmdSubst): only the
-                        // leading tilde expands; subsequent `~` are literal.
-                        let do_tilde = expand_tilde && i == 0;
-                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, do_tilde);
+                    let start = if leading_tilde { 1 } else { 0 };
+                    for s in &c.atoms[start..] {
+                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, false);
+                    }
+                    if leading_tilde {
+                        match me.out.buf.first() {
+                            None | Some(b'/') | Some(b'\\') => {
+                                let home = shell.get_homedir();
+                                me.out.buf.splice(0..0, home.slice().iter().copied());
+                                home.deref();
+                            }
+                            _ => me.out.buf.insert(0, b'~'),
+                        }
                     }
                 }
             }

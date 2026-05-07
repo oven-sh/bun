@@ -118,15 +118,13 @@ impl CondExpr {
                 // ShellTask scheduling is un-gated.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    // SAFETY: `base.shell` is set at init and outlives this.
-                    let cwd_fd = unsafe { (*me.base.shell).cwd_fd };
+                    let cwd_fd = me.base.shell().cwd_fd;
                     (cwd_fd, me.args[0].clone())
                 };
                 if path.last() != Some(&0) {
                     path.push(0);
                 }
-                // SAFETY: NUL-terminated above; `path` lives across the call.
-                let z = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), path.len() - 1) };
+                let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
                 let stat = crate::shell::interpreter::shell_statat(cwd_fd, z);
                 let exit = match stat {
                     Err(_) => 1, // Spec: "bash always gives exit code 1".

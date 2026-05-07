@@ -317,11 +317,11 @@ impl LinkerContext<'_> {
         re_exports_count: usize,
     ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). `Disabler::scoped()`
+        // re-entrancy guards around the global Store). `Disabler::scope()`
         // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
         // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
-        let _stmt_guard = bun_js_parser::ast::stmt::Disabler::scoped();
-        let _expr_guard = bun_js_parser::ast::expr::Disabler::scoped();
+        let _stmt_guard = bun_js_parser::ast::stmt::Disabler::scope();
+        let _expr_guard = bun_js_parser::ast::expr::Disabler::scope();
 
         // 1 property per export
         let mut properties =

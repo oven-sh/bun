@@ -554,14 +554,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // TODO: variants of the runtime functions
                 let body_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
-                // SAFETY: arena-backed args slice outlives the AST node; the AST crate erases
-                // arena lifetimes to `'static` (see `E::Arrow.args` field comment).
-                let args_static: &'static [G::Arg] = unsafe {
-                    core::mem::transmute::<&[G::Arg], &'static [G::Arg]>(args.into_bump_slice())
-                };
                 let cjs_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
-                        args: args_static,
+                        args: js_ast::StoreSlice::new(args.into_bump_slice()),
                         body: G::FnBody {
                             stmts: body_stmts,
                             loc: logger::Loc::EMPTY,
@@ -785,7 +780,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // "__esm(() => { ... })"
                     let esm_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                         E::Arrow {
-                            args: &[],
                             is_async,
                             body: G::FnBody {
                                 stmts: inner_stmts,
@@ -846,7 +840,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     if !ast.wrapper_ref.is_empty() {
                         let value = Expr::init(
                             E::Arrow {
-                                args: &[],
                                 is_async,
                                 body: G::FnBody {
                                     stmts: inner_stmts,

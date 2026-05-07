@@ -59,6 +59,7 @@ pub mod part {
 /// `bun_interchange`/`bun_ini` can name `StoreRef<E::EString>` without a T4
 /// dep. Re-exported here unchanged.
 pub use bun_logger::js_ast::StoreRef;
+pub use crate::{StoreSlice, StoreStr};
 
 /// `bun.DebugOnlyDisabler(T)` — debug-build re-entrancy guard around Store
 /// access. No-op in release; in debug, asserts `!disabled`. Phase A keeps

@@ -897,7 +897,7 @@ pub fn get_loader_and_virtual_source<'a>(
                 // returned to the caller — matches Zig `getLoaderAndVirtualSource`
                 // where `Fs.Path` and `logger.Source.path` share one type.
                 let static_text: &'static [u8] =
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path.text) };
+                    bun_js_parser::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(logger::Source {
                     path: logger::fs::Path::init(static_text),
                     contents: Cow::Borrowed(unsafe { (vt.blob_shared_view)(blob) }),

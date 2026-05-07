@@ -160,12 +160,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         for shadow in inner.slice() {
                             let mut real = LayerName::default();
                             for seg in shadow.v.slice() {
-                                // SAFETY: `seg` borrows arena-owned bytes that outlive
-                                // this stylesheet; launder to `'static` like every other
-                                // CSS slice in this crate (see layer.rs TODO(port)).
-                                real.v.append(unsafe {
-                                    core::mem::transmute::<&[u8], &'static [u8]>(seg.as_ref())
-                                });
+                                // `seg` borrows arena-owned bytes that outlive this
+                                // stylesheet; route through `StoreStr` for the lifetime
+                                // erasure (see layer.rs TODO(port)).
+                                real.v.append(bun_js_parser::StoreStr::new(seg.as_ref()).slice());
                             }
                             names.append(real);
                         }
@@ -308,11 +306,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // at bundle teardown via arena reset). SAFETY: arena outlives
                             // the chunk, so the `'bump → 'static` launder is sound — same
                             // contract as every other CSS slice in this file.
-                            let encoded: &'static [u8] = unsafe {
-                                core::mem::transmute::<&[u8], &'static [u8]>(
-                                    bump.alloc_slice_copy(&encoded),
-                                )
-                            };
+                            let encoded: &'static [u8] =
+                                bun_js_parser::StoreStr::new(bump.alloc_slice_copy(&encoded)).slice();
                             *p = Path::init(encoded);
                         }
                     }

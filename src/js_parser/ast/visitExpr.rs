@@ -2289,12 +2289,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
         let dupe: &'a mut [Stmt] = p.allocator.alloc_slice_copy(body_slice);
 
-        // PORT NOTE: `E::Arrow.args` is `&'static [G::Arg]` (arena-owned slice masquerading as
-        // 'static). visit_args wants `&mut [G::Arg]`; detach via raw cast (Zig: `[]G.Arg`).
         // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
-        let args_mut: &mut [G::Arg] = unsafe {
-            core::slice::from_raw_parts_mut(e_.args.as_ptr() as *mut G::Arg, e_.args.len())
-        };
+        let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };
         p.visit_args(
             args_mut,
             VisitArgsOpts {

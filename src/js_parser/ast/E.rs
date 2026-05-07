@@ -348,8 +348,7 @@ impl Index {
 }
 
 pub struct Arrow {
-    // TODO(port): arena-owned slice
-    pub args: &'static [G::Arg],
+    pub args: crate::StoreSlice<G::Arg>,
     pub body: G::FnBody,
 
     pub is_async: bool,
@@ -360,7 +359,7 @@ pub struct Arrow {
 impl Arrow {
     // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
-        args: &[],
+        args: crate::StoreSlice::EMPTY,
         body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
         is_async: false,
         has_rest_arg: false,
@@ -370,7 +369,7 @@ impl Arrow {
 impl Default for Arrow {
     fn default() -> Self {
         Self {
-            args: &[],
+            args: crate::StoreSlice::EMPTY,
             body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
             is_async: false,
             has_rest_arg: false,

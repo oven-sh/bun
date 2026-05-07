@@ -437,14 +437,14 @@ impl DefineDataExt for DefineData {
         // contract; one extra `value_str.len()` copy vs Zig.
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = logger::Source {
-            // SAFETY: `Source.contents` is typed `&'static [u8]` as a Phase-A
-            // stand-in (see logger/lib.rs `Str` note). `arena_value` lives in
-            // `bump`, which the caller (`Define::init`) owns for the lifetime
-            // of the `Define` table — i.e. as long as any `ExprData` produced
-            // here is reachable.
-            contents: std::borrow::Cow::Borrowed(unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(arena_value)
-            }),
+            // `Source.contents` is typed `&'static [u8]` as a Phase-A stand-in
+            // (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
+            // which the caller (`Define::init`) owns for the lifetime of the
+            // `Define` table — i.e. as long as any `ExprData` produced here is
+            // reachable. Route through `StoreStr` for the lifetime erasure.
+            contents: std::borrow::Cow::Borrowed(
+                bun_js_parser::StoreStr::new(arena_value).slice(),
+            ),
             path: defines_path(),
             ..Default::default()
         };

@@ -3311,7 +3311,7 @@ impl<'a> BundleV2<'a> {
             source_index: js_ast::Index::init(source_index.get()),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false, // TODO
-            package_version: b"",
+            package_version: js_ast::StoreStr::EMPTY,
             loader: Some(loader),
             tree_shaking,
             known_target,
@@ -5957,7 +5957,7 @@ impl<'a> BundleV2<'a> {
                     0
                 };
 
-                this.graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.into();
+                this.graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.slice().into();
                 this.graph.input_files.items_content_hash_for_additional_file_mut()[result_source_index] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {

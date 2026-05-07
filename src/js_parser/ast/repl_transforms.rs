@@ -418,7 +418,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
         let arrow = self.new_expr(
             E::Arrow {
-                args: &[],
                 body: G::FnBody {
                     loc: logger::Loc::EMPTY,
                     stmts: inner_slice as *mut [Stmt],

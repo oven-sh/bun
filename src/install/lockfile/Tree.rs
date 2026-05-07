@@ -423,23 +423,36 @@ pub struct CleanResult {
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
+    /// Shared read-only view of the lockfile.
+    ///
+    /// # Safety
+    /// `self.lockfile` is set from `&mut Lockfile` in `Lockfile::hoist`, which
+    /// outlives this `Builder` for `'a`. The returned `&Lockfile` MUST NOT be
+    /// used to read `buffers.resolutions` while `self.resolutions` (a `&mut`
+    /// alias of that same buffer) is live — callers reach resolutions via
+    /// `self.resolutions` only.
+    #[inline]
+    pub fn lockfile(&self) -> &Lockfile {
+        unsafe { &*self.lockfile }
+    }
+
     pub fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         // TODO(port): logger::Log::add_error_fmt signature — allocator param dropped.
         let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, args);
     }
 
     pub fn buf(&self) -> &[u8] {
-        self.lockfile.buffers.string_bytes.as_slice()
+        self.lockfile().buffers.string_bytes.as_slice()
     }
 
     pub fn package_name(&self, id: PackageID) -> bun_semver::string::Formatter<'_> {
-        self.lockfile.packages.items_name()[id as usize]
-            .fmt(self.lockfile.buffers.string_bytes.as_slice())
+        self.lockfile().packages.items_name()[id as usize]
+            .fmt(self.lockfile().buffers.string_bytes.as_slice())
     }
 
     pub fn package_version(&self, id: PackageID) -> crate::resolution::Formatter<'_, u64> {
-        self.lockfile.packages.items_resolution()[id as usize].fmt(
-            self.lockfile.buffers.string_bytes.as_slice(),
+        self.lockfile().packages.items_resolution()[id as usize].fmt(
+            self.lockfile().buffers.string_bytes.as_slice(),
             bun_core::fmt::PathSep::Auto,
         )
     }
@@ -468,7 +481,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
             let off: u32 = u32::try_from(dep_ids.len()).unwrap();
             for &dep_id in child.iter() {
-                let pkg_id = self.lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+                let pkg_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
                 if pkg_id == invalid_package_id {
                     // optional peers that never resolved
                     continue;
@@ -659,7 +672,7 @@ impl Tree {
         // PORT NOTE: reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 
-        let pkgs = builder.lockfile.packages.slice();
+        let pkgs = builder.lockfile().packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         // PORT NOTE: reshaped for borrowck — copy the `&'a [Dependency]` out of
         // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
@@ -676,7 +689,7 @@ impl Tree {
         }
 
         {
-            let sorter = DepSorter { lockfile: builder.lockfile };
+            let sorter = DepSorter { lockfile: builder.lockfile() };
             // PERF(port): Zig used std.sort.pdq; Rust slice::sort_unstable_by is also pdqsort.
             builder
                 .sort_buf
@@ -706,7 +719,7 @@ impl Tree {
                     builder.workspace_filters,
                     builder.install_root_dependencies,
                     builder.manager.expect("manager set when METHOD == Filter"),
-                    builder.lockfile,
+                    builder.lockfile(),
                 ) {
                     continue;
                 }
@@ -972,7 +985,7 @@ impl Tree {
             if dependency.behavior.is_peer() {
                 if dependency.version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
-                        builder.lockfile.packages.items_resolution()[res_id as usize];
+                        builder.lockfile().packages.items_resolution()[res_id as usize];
                     // SAFETY: `dependency.version.tag == Npm` checked immediately above.
                     let version = unsafe { &dependency.version.value.npm.version };
                     if resolution.tag == crate::resolution::Tag::Npm
@@ -989,7 +1002,7 @@ impl Tree {
 
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
-                if builder.lockfile.is_workspace_root_dependency(dep_id) {
+                if builder.lockfile().is_workspace_root_dependency(dep_id) {
                     // TODO: warning about peer dependency version mismatch
                     return Ok(HoistDependencyResult::Hoisted); // 1
                 }
@@ -1001,7 +1014,7 @@ impl Tree {
                 // `package_name`/`package_version`/`buf`). Inline against split
                 // field borrows: copy the `&'a Lockfile` out, then write to
                 // `builder.log` directly.
-                let lockfile = builder.lockfile;
+                let lockfile = builder.lockfile();
                 let buf = lockfile.buffers.string_bytes.as_slice();
                 let names = lockfile.packages.items_name();
                 let resolutions = lockfile.packages.items_resolution();

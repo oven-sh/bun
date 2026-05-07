@@ -185,10 +185,10 @@ impl PackageManifestMap {
                 None
             }
             Entry::Vacant(vac) => {
-                if pm.options.enable.manifest_cache {
+                if pm.options.enable.manifest_cache() {
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope,
-                        pm.get_cache_directory(),
+                        pm.get_cache_directory().fd(),
                         name_hash,
                     )
                     .ok()
@@ -206,7 +206,7 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        if pm.options.enable.manifest_cache_control
+                        if pm.options.enable.manifest_cache_control()
                             && manifest.pkg.public_max_age
                                 > pm.timestamp_for_manifest_cache_control
                         {

@@ -936,7 +936,8 @@ impl RunCommand {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         bun_jsc::initialize(false);
-        bun_analytics::Features::standalone_executable.inc();
+        bun_analytics::Features::standalone_executable
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         bun_js_parser::Expr::data_store_create();
         bun_js_parser::Stmt::data_store_create();
 
@@ -976,7 +977,10 @@ impl RunCommand {
         let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(entry_path);
         vm.main = entry_path;
 
-        {
+        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
+        // capture the defines result, drop `b`, then branch.
+        let defines_ok = {
             let b = &mut vm.transpiler;
             b.options.install = ctx
                 .install
@@ -993,9 +997,10 @@ impl RunCommand {
 
             crate::run_main::apply_standalone_runtime_flags(b, graph);
 
-            if b.configure_defines().is_err() {
-                crate::run_main::fail_with_build_error(vm);
-            }
+            b.configure_defines().is_ok()
+        };
+        if !defines_ok {
+            crate::run_main::fail_with_build_error(vm);
         }
 
         // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.

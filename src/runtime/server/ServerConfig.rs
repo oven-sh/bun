@@ -645,9 +645,48 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-// `FromJSOptions` lives at module scope (super::FromJSOptions) — re-export for
-// callers that reach it via `_gated_from_js::FromJSOptions`.
-pub use super::FromJSOptions;
+/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
+/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
+/// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror Zig's
+/// single `bake.Framework.FileSystemRouterType`; the duplication is a Phase-A
+/// layering wart and this conversion stands in for an arena-dupe until the two
+/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
+/// slices live as long as `UserOptions.arena`.
+fn convert_file_system_router_type(
+    arena: &bun_alloc::Arena,
+    src: crate::bake::FileSystemRouterType,
+) -> crate::bake::bake_body::FileSystemRouterType {
+    use crate::bake::bake_body as bb;
+    // SAFETY: returned slices borrow into `arena`, which is moved into
+    // `UserOptions` and outlives every reader (self-referential pattern; see
+    // `bake_body::arena_dupe_z`). `'static` is a lie that Phase B threads to
+    // `'bump`.
+    #[inline]
+    unsafe fn erase<'a, T: ?Sized>(r: &'a T) -> &'static T {
+        core::mem::transmute::<&'a T, &'static T>(r)
+    }
+    let dupe = |bytes: &[u8]| -> &'static [u8] {
+        // SAFETY: see `erase` doc above.
+        unsafe { erase(arena.alloc_slice_copy(bytes)) }
+    };
+    let dupe_slice_of = |v: &[std::borrow::Cow<'static, [u8]>]| -> &'static [&'static [u8]] {
+        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(c.as_ref())).collect();
+        // SAFETY: see `erase` doc above.
+        unsafe { erase(arena.alloc_slice_copy(&inner)) }
+    };
+
+    bb::FileSystemRouterType {
+        root: dupe(src.root.as_ref()),
+        prefix: dupe(src.prefix.as_ref()),
+        entry_server: dupe(src.entry_server.as_ref()),
+        entry_client: src.entry_client.as_deref().map(|b| dupe(b)),
+        ignore_underscores: src.ignore_underscores,
+        ignore_dirs: dupe_slice_of(&src.ignore_dirs),
+        extensions: dupe_slice_of(&src.extensions),
+        style: src.style,
+        allow_layouts: src.allow_layouts,
+    }
+}
 
 impl ServerConfig {
     pub fn from_js(
@@ -806,7 +845,7 @@ impl ServerConfig {
             )?;
             // iter drops at scope end
 
-            let mut init_ctx_ = super::super::server_body::ServerInitContext {
+            let mut init_ctx_ = super::server_body::ServerInitContext {
                 // TODO(port): Zig used std.heap.ArenaAllocator here; ServerInitContext
                 // dropped its `arena` field in the Rust port (bake owns it instead).
                 dedupe_html_bundle_map: Default::default(),
@@ -1111,7 +1150,7 @@ impl ServerConfig {
             }
 
             // errdefer ssl_config.deinit() — drops with args on error
-            args.websocket = Some(super::super::web_socket_server_context::on_create(global, websocket_object)?);
+            args.websocket = Some(super::web_socket_server_context::on_create(global, websocket_object)?);
         }
         if global.has_exception() {
             return Err(JsError::Thrown);

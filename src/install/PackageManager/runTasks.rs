@@ -552,36 +552,48 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if response.status_code == 304 {
                     // The HTTP request was cached
-                    if let Some(manifest) = loaded_manifest.take() {
+                    if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(
-                            !*is_extended_manifest || manifest.pkg.has_extended_manifest
+                            !is_extended_manifest || manifest.pkg.has_extended_manifest
                         );
 
-                        let entry = manager
-                            .manifests
-                            .hash_map
-                            .get_or_put(manifest.pkg.name.hash)?;
-                        *entry.value_ptr = ManifestEntry::Manifest(manifest);
-
                         if timestamp_this_tick.is_none() {
-                            // TODO(port): std.time.timestamp() — replace with bun_core time API.
                             let now = u64::try_from(bun_core::time::timestamp().max(0)).unwrap();
                             timestamp_this_tick = Some((now as u32).saturating_add(300));
                         }
 
-                        entry
-                            .value_ptr
-                            .manifest_mut()
-                            .pkg
-                            .public_max_age = timestamp_this_tick.unwrap();
+                        manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
+
+                        // PORT NOTE: reshaped for borrowck — Zig writes through
+                        // the `getOrPut` slot then re-reads it for `saveAsync`.
+                        // `bun_collections::HashMap` lacks `get_or_put` for
+                        // non-`Default` values, so insert by-value (overwriting
+                        // any prior entry, matching Zig semantics) and reborrow.
+                        let name_hash = manifest.pkg.name.hash;
+                        manager
+                            .manifests
+                            .hash_map
+                            .insert(name_hash, ManifestEntry::Manifest(manifest));
+                        let entry_manifest = manager
+                            .manifests
+                            .hash_map
+                            .get_mut(&name_hash)
+                            .unwrap()
+                            .manifest_mut();
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
+                            // PORT NOTE: split-borrow — `scope_for_package_name`
+                            // and `get_*_directory` borrow `&mut PackageManager`
+                            // disjointly from `manifests`; route through the raw
+                            // provenance root.
+                            // SAFETY: see `_drain_guard` provenance note.
+                            let mgr = unsafe { &mut *manager_ptr };
                             npm::package_manifest::Serializer::save_async(
-                                entry.value_ptr.manifest_mut(),
-                                manager.scope_for_package_name(name),
-                                directories::get_temporary_directory(manager).handle,
-                                directories::get_cache_directory(manager),
+                                entry_manifest,
+                                mgr.scope_for_package_name(name),
+                                directories::get_temporary_directory(mgr).handle.fd,
+                                directories::get_cache_directory(mgr).fd,
                             );
                         }
 
@@ -879,7 +891,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 manager.task_batch.push(ThreadPoolBatch::from(
-                    enqueue::enqueue_extract_npm_package(manager, extract, task_ptr),
+                    enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr),
                 ));
             }
             _ => unreachable!(),
@@ -919,7 +931,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         manager.decrement_pending_tasks();
 
         if !task.log.msgs.is_empty() {
-            task.log.print(&mut Output::error_writer())?;
+            // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
+            // not `&mut Writer` (the underlying `Writer` is the FFI shape).
+            let _ = task.log.print(Output::error_writer() as *mut _);
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
@@ -1010,7 +1024,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let dependency_id = tarball.dependency_id;
                 let mut package_id =
                     manager.lockfile.buffers.resolutions[dependency_id as usize];
-                let alias = tarball.name;
+                // PORT NOTE: capture as raw slice ptr — `tarball` borrows
+                // `task.request` which is reborrowed `&mut` below. The backing
+                // `StringOrTinyString` lives in the pooled `Task` for the whole
+                // iteration.
+                let alias: *const [u8] = tarball.name.slice();
+                // SAFETY: see PORT NOTE above.
+                let alias: &[u8] = unsafe { &*alias };
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1209,7 +1229,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             Task::Tag::GitClone => {
                 let clone = &task.request.git_clone();
                 let repo_fd = task.data.git_clone;
-                let name = clone.name;
+                let name = clone.name.slice();
                 let url = clone.url.slice();
 
                 manager.git_repositories.insert(task.id, repo_fd);

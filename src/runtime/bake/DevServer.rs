@@ -145,7 +145,7 @@ fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framew
     bt::Framework::new(built_in_modules, server_components, f.is_built_in_react)
 }
 
-impl DevServer<'_> {
+impl DevServer {
     /// `DevServer.memoryCost` — see `DevServer/memory_cost.rs` for the
     /// keystone-typed version. Ported inline here against the body
     /// `DevServer<'_>` so the field set matches; both will collapse when the
@@ -318,7 +318,7 @@ pub enum TestingBatchEvents {
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
-pub struct CurrentBundle<'a> {
+pub struct CurrentBundle {
     pub bv2: Box<BundleV2<'a>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
@@ -331,7 +331,7 @@ pub struct CurrentBundle<'a> {
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
-    pub requests: deferred_request::List<'a>,
+    pub requests: deferred_request::List,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
@@ -342,14 +342,14 @@ pub struct CurrentBundle<'a> {
     pub promise: DeferredPromise,
 }
 
-pub struct NextBundle<'a> {
+pub struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub route_queue: ArrayHashMap<route_bundle::Index, ()>,
     /// If a reload event exists and should be drained. The information
     /// for this watch event is in one of the `watch_events`
     pub reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
     /// The list of requests that are blocked on this bundle.
-    pub requests: deferred_request::List<'a>,
+    pub requests: deferred_request::List,
 
     pub promise: DeferredPromise,
 }
@@ -405,7 +405,7 @@ pub struct DevServer<'a> {
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
-    pub html_router: HTMLRouter<'a>,
+    pub html_router: HTMLRouter,
     /// Assets are accessible via `/_bun/asset/<key>`
     /// This store is not thread safe.
     pub assets: Assets,
@@ -453,12 +453,12 @@ pub struct DevServer<'a> {
     pub log: Log,
     pub plugin_state: PluginState,
     /// See `CurrentBundle` doc comment.
-    pub current_bundle: Option<CurrentBundle<'a>>,
+    pub current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.
-    pub next_bundle: NextBundle<'a>,
-    pub deferred_request_pool: HiveArray<deferred_request::Node<'a>, { DeferredRequest::MAX_PREALLOCATED }>,
+    pub next_bundle: NextBundle,
+    pub deferred_request_pool: HiveArray<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
@@ -1039,7 +1039,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     Ok(dev)
 }
 
-impl Drop for DevServer<'_> {
+impl Drop for DevServer {
     fn drop(&mut self) {
         debug_log!("deinit");
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING
@@ -1151,7 +1151,7 @@ pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
 pub type DevAllocator<'a> =
     crate::allocators::allocation_scope::Borrowed<'a, bun_alloc::StdAllocator>;
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn allocator(&self) -> bun_alloc::StdAllocator {
         self.allocation_scope.allocator()
     }
@@ -1163,7 +1163,7 @@ impl DevServer<'_> {
 
 // re-exports from memory_cost module already declared at top
 
-impl DevServer<'_> {
+impl DevServer {
     fn init_server_runtime(&mut self) {
         let runtime = BunString::static_(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
@@ -1584,7 +1584,7 @@ struct RequestEnsureRouteBundledCtx<'a> {
     // invariant, and stacking `&'a mut DevServer<'a>` collapses every borrow at
     // the call site into `'a`, wedging borrowck. The Zig code freely re-borrowed
     // `dev` across the ctx.
-    dev: *mut DevServer<'a>,
+    dev: *mut DevServer,
     req: ReqOrSaved,
     resp: AnyResponse,
     kind: deferred_request::HandlerKind,
@@ -1895,10 +1895,10 @@ impl ReqOrSaved {
     }
 }
 
-impl<'a> DevServer<'a> {
+impl DevServer {
     fn defer_request(
         &mut self,
-        requests_array: &mut deferred_request::List<'a>,
+        requests_array: &mut deferred_request::List,
         route_bundle_index: route_bundle::Index,
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved,
@@ -1926,7 +1926,7 @@ impl<'a> DevServer<'a> {
             weakly_referenced_by_requestcontext: false,
             handler: match kind {
                 deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
-                    // PORT NOTE: `on_aborted<U: 'static>` rejects `DeferredRequest<'_>`;
+                    // PORT NOTE: `on_aborted<U: 'static>` rejects `DeferredRequest`;
                     // erase to `c_void` and cast back inside the trampoline.
                     resp.on_aborted(
                         |p: *mut c_void, r: AnyResponse| {
@@ -2024,7 +2024,7 @@ fn check_route_failures(
     // PORT NOTE: scopeguard captured `&mut dev`, wedging every later borrow.
     // Erase to a raw pointer; the closures only fire on scope exit when no
     // other borrow of `dev` is live.
-    let dev_ptr = dev as *mut DevServer<'_>;
+    let dev_ptr = dev as *mut DevServer;
     let _failures_guard = scopeguard::guard((), move |_| {
         // SAFETY: see PORT NOTE above.
         unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
@@ -2071,7 +2071,7 @@ fn check_route_failures(
     }
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn append_route_entry_points_if_not_stale(
         &mut self,
         entry_points: &mut EntryPointList,
@@ -2157,7 +2157,7 @@ struct FrameworkRequestArgs {
     set_async_local_storage: JSValue,
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn compute_arguments_for_framework_request(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -2431,7 +2431,7 @@ const SCRIPT_UNREF_PAYLOAD: &str = concat!(
     "</script>",
 );
 
-impl DevServer<'_> {
+impl DevServer {
     fn generate_html_payload(
         &mut self,
         route_bundle_index: route_bundle::Index,
@@ -2634,10 +2634,10 @@ pub enum DevResponse<'a> {
 
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
-pub struct DeferredRequest<'a> {
+pub struct DeferredRequest {
     pub route_bundle_index: route_bundle::Index,
     pub handler: Handler,
-    pub dev: *const DevServer<'a>, // BACKREF: owned by dev.deferred_request_pool
+    pub dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
 
     /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
     pub referenced_by_devserver: bool,
@@ -2652,8 +2652,8 @@ pub mod deferred_request {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     pub const MAX_PREALLOCATED: usize = 16;
 
-    pub type List<'a> = bun_collections::pool::SinglyLinkedList<DeferredRequest<'a>>;
-    pub type Node<'a> = bun_collections::pool::Node<DeferredRequest<'a>>;
+    pub type List<'a> = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
+    pub type Node<'a> = bun_collections::pool::Node<DeferredRequest>;
 
     bun_output::declare_scope!(DlogeferredRequest, hidden);
     macro_rules! debug_log_dr { ($($t:tt)*) => { bun_output::scoped_log!(DlogeferredRequest, $($t)*) }; }
@@ -2692,7 +2692,7 @@ use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
 // `AnyServer::on_saved_request` can name it across the seam.
 pub use crate::server::SavedRequestUnion;
 
-impl DeferredRequest<'_> {
+impl DeferredRequest {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
 
     pub fn is_alive(&self) -> bool {
@@ -2800,7 +2800,7 @@ pub struct ResponseAndMethod {
     pub method: Method,
 }
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
@@ -4127,7 +4127,7 @@ pub fn finalize_bundle(
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
             // `data` was initialized by `defer_request`.
             let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = req as *mut DeferredRequest<'_>;
+            let req_ptr = req as *mut DeferredRequest;
             // SAFETY: the node stays alive until `deref_()` releases it below.
             let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
 
@@ -4302,7 +4302,7 @@ pub fn finalize_bundle(
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        let req_ptr = req as *mut DeferredRequest<'_>;
+        let req_ptr = req as *mut DeferredRequest;
         // SAFETY: the node stays alive until `deref_()` releases it below.
         let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
 
@@ -4330,7 +4330,7 @@ pub fn finalize_bundle(
     Ok(())
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn start_next_bundle_if_present(&mut self) {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
@@ -4477,7 +4477,7 @@ pub struct CacheEntry {
     pub kind: FileKind,
 }
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         // TODO(port): `ArrayHashMap<Box<[u8]>, ()>::contains_key` wants
@@ -4574,7 +4574,7 @@ where
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: dev as *mut DevServer<'_>,
+            dev: dev as *mut DevServer,
             req: ReqOrSaved::Req(req),
             resp: resp.as_any_response(),
             kind: deferred_request::HandlerKind::ServerHandler,
@@ -4599,7 +4599,7 @@ where
     send_built_in_not_found(resp);
 }
 
-impl DevServer<'_> {
+impl DevServer {
     // TODO: path params
     pub fn handle_render_redirect(
         &mut self,
@@ -4614,7 +4614,7 @@ impl DevServer<'_> {
                 .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
                 .expect("oom");
             let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: self as *mut DevServer<'_>,
+                dev: self as *mut DevServer,
                 req: ReqOrSaved::Saved(saved_request),
                 resp,
                 kind: deferred_request::HandlerKind::ServerHandler,
@@ -4648,7 +4648,7 @@ impl DevServer<'_> {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: self as *mut DevServer<'_>,
+            dev: self as *mut DevServer,
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
@@ -4763,7 +4763,7 @@ enum ErrorPageKind {
     Runtime,
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn encode_serialized_failures(
         &self,
         failures: &[SerializedFailure],
@@ -4937,7 +4937,7 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
     resp.end(message, true);
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn print_memory_line(&self) {
         if !ALLOCATION_SCOPE_ENABLED {
             return;
@@ -4975,7 +4975,7 @@ pub use crate::bake::dev_server::GraphTraceState;
 
 pub use crate::bake::dev_server::TraceImportGoal;
 
-impl DevServer<'_> {
+impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
     fn init_graph_trace_state(
@@ -5090,7 +5090,7 @@ pub fn dump_bundle_for_chunk(
     }
 }
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn emit_visualizer_message_if_needed(&mut self) {
         #[cfg(not(feature = "bake_debugging_features"))]
         return;
@@ -5313,7 +5313,7 @@ bitflags::bitflags! {
     }
 }
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
         let mut params: framework_router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
@@ -5407,7 +5407,7 @@ fn mark_all_route_children(
     }
 }
 
-impl DevServer<'_> {
+impl DevServer {
     fn mark_all_route_children_failed(&mut self, route_index: framework_router::RouteIndex) {
         let mut next = self.router.route_ptr(route_index).first_child;
         while let Some(child_index) = next {
@@ -5593,7 +5593,7 @@ impl SafeFileId {
     }
 }
 
-impl DevServer<'_> {
+impl DevServer {
     /// Interface function for FrameworkRouter
     pub fn get_file_id_for_router(
         &mut self,
@@ -5670,7 +5670,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_
     incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).unwrap())
 }
 
-impl DevServer<'_> {
+impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
     pub fn relative_path<'a>(&self, relative_path_buf: &'a mut PathBuffer, path: &'a [u8]) -> &'a [u8] {
@@ -5840,15 +5840,15 @@ impl EntryPointList {
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 /// Zig stores `*HTMLBundle.HTMLBundleRoute` (BACKREF — DevServer.zig:4364);
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
-pub struct HTMLRouter<'a> {
+pub struct HTMLRouter {
     pub map: StringHashMap<*mut HTMLBundleRoute>,
     /// If a catch-all route exists, it is not stored in map, but here.
     pub fallback: Option<*mut HTMLBundleRoute>,
     _marker: core::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> HTMLRouter<'a> {
-    pub fn empty() -> HTMLRouter<'a> {
+impl HTMLRouter {
+    pub fn empty() -> HTMLRouter {
         HTMLRouter { map: StringHashMap::new(), fallback: None, _marker: core::marker::PhantomData }
     }
 
@@ -5877,7 +5877,7 @@ impl<'a> HTMLRouter<'a> {
 
 // HTMLRouter::deinit → Drop on map
 
-impl DevServer<'_> {
+impl DevServer {
     pub fn put_or_overwrite_asset(
         &mut self,
         path: &bun_bundler::bun_fs::Path<'_>,
@@ -5951,7 +5951,7 @@ impl UnrefSourceMapRequest {
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: dev as *mut DevServer<'_> as *mut DevServer<'static>,
+            dev: dev as *mut DevServer as *mut DevServer<'static>,
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request
@@ -6385,7 +6385,7 @@ fn new_route_params_for_bundle_promise(
     // PORT NOTE: erase `dev` so the `route_bundle` / `framework_bundle`
     // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`
     // (Zig held these as plain heap pointers).
-    let dev_ptr = dev as *mut DevServer<'_>;
+    let dev_ptr = dev as *mut DevServer;
     // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
     let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
     let framework_bundle = match &mut route_bundle.data {

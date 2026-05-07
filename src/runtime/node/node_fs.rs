@@ -2259,9 +2259,8 @@ pub use _async_tasks::{
 // This would reduce stack size, at the cost of instruction cache misses
 pub mod args {
     use super::*;
-    // Extension traits for `Fd::from_js_validated` / `JSValue::get_boolean_strict`.
+    // Extension trait for `Fd::from_js_validated`.
     use crate::node::types::FdJsc as _;
-    use super::JSValueBooleanStrict as _;
 
     pub struct Rename {
         pub old_path: PathLike,

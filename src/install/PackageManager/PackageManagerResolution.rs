@@ -88,7 +88,9 @@ impl PackageManager {
     ) -> Option<semver::version::Formatter<'_, u64>> {
         match resolution.tag {
             ResolutionTag::Npm => {
-                if resolution.value.npm.version.tag.has_pre() {
+                // SAFETY: tag-guarded union access (`resolution.tag == Npm` matched above).
+                let npm_version = unsafe { resolution.value.npm.version };
+                if npm_version.tag.has_pre() {
                     // TODO:
                     return None;
                 }
@@ -121,7 +123,7 @@ impl PackageManager {
                     .unwrap()
                 {
                     if latest_version.version.order(
-                        resolution.value.npm.version,
+                        npm_version,
                         &manifest.string_buf,
                         self.lockfile.buffers.string_bytes.as_slice(),
                     ) != core::cmp::Ordering::Greater

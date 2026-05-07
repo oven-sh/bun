@@ -235,18 +235,18 @@ impl NodeModulesFolder {
         // TODO(port): narrow error set
         #[cfg(unix)]
         {
-            // TODO(port): std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
+            // PORT NOTE: std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
             let mut path_buf = PathBuffer::uninit();
-            let path_z = Path::z(self.path.as_slice(), &mut path_buf);
-            return Ok(bun_sys::openat(
-                Fd::from_std_dir(&root),
-                path_z,
-                bun_sys::O::DIRECTORY,
-                0,
-            )
-            .unwrap()
-            .map_err(|e| e.to_zig_err())?
-            .std_dir());
+            let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
+            return Ok(Dir::from_fd(
+                bun_sys::openat(
+                    Fd::from_std_dir(&root),
+                    path_z,
+                    bun_sys::O::DIRECTORY,
+                    0,
+                )
+                .map_err(|e| e.to_zig_err())?,
+            ));
         }
 
         #[cfg(not(unix))]
@@ -440,11 +440,11 @@ impl<'a> PackageInstaller<'a> {
         // PORT NOTE: `defer node_modules_path.deinit()` — AbsPath impls Drop.
 
         let pkgs = lockfile.packages.slice();
-        let pkg_name_hashes = pkgs.name_hash();
-        let pkg_metas = pkgs.meta();
-        let pkg_resolutions_lists = pkgs.resolutions();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_metas = pkgs.items_meta();
+        let pkg_resolutions_lists = pkgs.items_resolutions();
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
-        let pkg_names = pkgs.name();
+        let pkg_names = pkgs.items_name();
 
         let tree = &mut self.trees[tree_id as usize];
 
@@ -588,7 +588,7 @@ impl<'a> PackageInstaller<'a> {
 
     pub fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
         let mut depth_buf: lockfile::tree::DepthBuf =
-            [0u32; lockfile::tree::MAX_DEPTH as usize + 1];
+            [0u32; lockfile::tree::MAX_DEPTH];
         let mut node_modules_rel_path_buf = PathBuffer::uninit();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 

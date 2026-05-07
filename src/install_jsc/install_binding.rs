@@ -26,13 +26,21 @@ pub mod bun_install_js_bindings {
     // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
     // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
     #[bun_jsc::host_fn]
-    pub fn js_parse_lockfile(global: &JSGlobalObject, frame: &bun_jsc::CallFrame) -> bun_jsc::JsResult<JSValue> {
-        use std::io::Write as _;
+    pub fn js_parse_lockfile(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        use core::ptr::NonNull;
+
         use bstr::BStr;
-        use bun_install::lockfile::{self, Lockfile};
+        use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
+            json_stringify, WriteStream, WriteStreamOptions,
+        };
+        use bun_install::lockfile::{LoadResult, Lockfile};
         use bun_logger as logger;
         use bun_paths::resolve_path;
         use bun_string::String as BunString;
+        use bun_sys::FdExt as _;
 
         let mut log = logger::Log::init();
 
@@ -51,64 +59,72 @@ pub mod bun_install_js_bindings {
             }
         };
         // `defer dir.close()` — closed at fn return.
-        let dir = scopeguard::guard(dir, |d| { let _ = bun_sys::close(d); });
+        let dir = scopeguard::guard(dir, |d| d.close());
 
-        let lockfile_path =
-            resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(cwd.slice(), &[b"bun.lockb"]);
+        let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
+            cwd.slice(),
+            &[b"bun.lockb".as_slice()],
+        );
 
-        let mut lockfile_ = Lockfile::init_empty();
+        let mut lockfile_ = Lockfile::default();
 
-        // TODO(b2-blocked): bun_bundler::Transpiler — stub is opaque `Transpiler(())`;
-        // needs `.resolver.env_loader` / `.resolver.get_package_manager()` / `.env`.
-        // Re-gated: env_loader fixup + manager acquisition. Passing `None` until
-        // the bundler crate un-gates Transpiler/Resolver field surface.
-        
-        {
-            // PORT NOTE: reshaped for borrowck — Zig accessed globalObject.bunVM().transpiler.resolver
-            // through chained pointer dereferences.
-            let vm = global.bun_vm();
-            if vm.transpiler.resolver.env_loader.is_none() {
-                vm.transpiler.resolver.env_loader = Some(vm.transpiler.env);
-            }
+        // PORT NOTE: reshaped for borrowck — Zig walked
+        // `globalObject.bunVM().transpiler.resolver` through chained pointer
+        // dereferences. `bun_vm()` returns `*mut VirtualMachine` (raw, mirroring
+        // Zig's `*VirtualMachine`); deref locally so the env-loader fixup and the
+        // package-manager borrow are scoped independently.
+        // SAFETY: `bun_vm()` returns the live VM that owns `global`; this host fn
+        // runs on the JS thread so no concurrent `&mut VirtualMachine` exists.
+        let vm = unsafe { &mut *global.bun_vm() };
+        if vm.transpiler.resolver.env_loader.is_none() {
+            vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
         }
-        // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-        
-        let manager = Some(global.bun_vm().transpiler.resolver.get_package_manager());
 
-        let load_result: lockfile::LoadResult =
-            lockfile_.load_from_dir(*dir, manager, &mut log, true);
+        // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
+        let manager = vm.package_manager();
+
+        let load_result: LoadResult<'_> =
+            lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
 
         match load_result {
-            lockfile::LoadResult::Err(err) => {
+            LoadResult::Err(err) => {
                 return Err(global.throw(format_args!(
                     "failed to load lockfile: {}, '{}'",
-                    BStr::new(err.value.name()),
+                    err.value.name(),
                     BStr::new(lockfile_path.as_bytes()),
                 )));
             }
-            lockfile::LoadResult::NotFound => {
+            LoadResult::NotFound => {
                 return Err(global.throw(format_args!(
                     "lockfile not found: '{}'",
                     BStr::new(lockfile_path.as_bytes()),
                 )));
             }
-            lockfile::LoadResult::Ok(_) => {}
+            LoadResult::Ok(_) => {}
         }
 
-        // TODO(port): std.json.fmt — Zig used std.json.fmt(lockfile, .{ .whitespace = .indent_2,
-        // .emit_null_optional_fields = true, .emit_nonportable_numbers_as_strings = true }).
-        // Need a Rust-side JSON serializer for Lockfile with the same options.
-        let mut stringified = Vec::<u8>::new();
-        write!(
-            &mut stringified,
-            "{}",
-            lockfile_.to_json_fmt(lockfile::JsonFmtOptions {
-                whitespace: lockfile::JsonWhitespace::Indent2,
-                emit_null_optional_fields: true,
-                emit_nonportable_numbers_as_strings: true,
-            }),
-        )
-        .expect("unreachable");
+        // Zig: `std.fmt.allocPrint("{f}", .{ std.json.fmt(lockfile, .{...}) })` —
+        // drives `Lockfile.jsonStringify` through a `std.json.WriteStream` with
+        // the given options. Port: feed the lockfile through the in-crate
+        // `WriteStream` (lockfile_json_stringify_for_debugging.rs) into a
+        // `Vec<u8>`. OOM is `bun.handleOom` in Zig → infallible `Vec` growth here.
+        let mut w = WriteStream::new(WriteStreamOptions {
+            indent: 2,
+            emit_null_optional_fields: true,
+            emit_nonportable_numbers_as_strings: true,
+        });
+        if let Err(e) = json_stringify(&lockfile_, &mut w) {
+            // `jsonStringify` only surfaces the underlying writer's error; the
+            // `Vec<u8>` writer is infallible, so this is unreachable in
+            // practice. Mirror Zig's `bun.handleOom` (crash on the impossible
+            // alloc failure) rather than swallowing.
+            bun_jsc::__macro_support::out_of_memory();
+            #[allow(unreachable_code)]
+            {
+                let _ = e;
+            }
+        }
+        let stringified = w.into_bytes();
 
         let mut str = BunString::clone_utf8(&stringified);
 
@@ -121,5 +137,5 @@ pub mod bun_install_js_bindings {
 //   source:     src/install_jsc/install_binding.zig (72 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      std.json.fmt(Lockfile) ported via Lockfile::to_json_fmt; bun_vm() field-chain access reshaped for borrowck
+//   notes:      std.json.fmt(Lockfile) → lockfile::WriteStream + json_stringify; bun_vm() raw-ptr deref scoped per access; Resolver→PackageManager downcast routed through VirtualMachine::package_manager()
 // ──────────────────────────────────────────────────────────────────────────

@@ -395,17 +395,16 @@ impl PostgresSQLQuery {
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
+        // PORT NOTE: Zig's `ptr.* = .{ ... }` is functional-record-update over a
+        // default; in Rust `PostgresSQLQuery` implements `Drop`, so FRU
+        // (`..Default::default()`) is forbidden (E0509). `ptr` was already
+        // `default()`-initialised by `Box::new` above, so just overwrite the
+        // three non-default fields in place.
         unsafe {
-            *ptr = PostgresSQLQuery {
-                query: query.to_bun_string(global_this)?,
-                this_value: JsRef::init_weak(this_value),
-                flags: Flags {
-                    bigint,
-                    simple,
-                    ..Flags::default()
-                },
-                ..PostgresSQLQuery::default()
-            };
+            (*ptr).query = query.to_bun_string(global_this)?;
+            (*ptr).this_value = JsRef::init_weak(this_value);
+            (*ptr).flags.bigint = bigint;
+            (*ptr).flags.simple = simple;
         }
 
         js::binding_set_cached(this_value, global_this, values);

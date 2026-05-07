@@ -109,7 +109,7 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let left_version = left_result.version.min();
 
-    // TODO(port): narrow error set — only OOM is possible from `Query::parse`.
+    // `Query::parse` can only fail with OOM (Zig: `try` propagates allocator error).
     let right_group = match query::parse(
         right.slice(),
         SlicedString::init(right.slice(), right.slice()),

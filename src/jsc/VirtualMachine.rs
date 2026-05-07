@@ -1690,7 +1690,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(b"");
+            addr_of_mut!((*vm).main).write(b"" as &[u8] as *const [u8]);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_string::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -1802,14 +1802,34 @@ impl VirtualMachine {
     /// `run_command.zig`.
     pub fn init_with_main(
         opts: InitOptions,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let vm = Self::init(opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        vm_ref.main = entry_path;
+        vm_ref.set_main(entry_path);
         vm_ref.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         Ok(vm)
+    }
+
+    /// Read the entry-point path (see `main` field doc).
+    ///
+    /// # Safety (callers)
+    /// The slice borrows storage that outlives this VM (process-argv,
+    /// resolver string store, standalone graph, or the owning `WebWorker`);
+    /// see the field doc. Never freed by the VM.
+    #[inline]
+    pub fn main(&self) -> &[u8] {
+        // SAFETY: `main` is set in `init`/`set_main` to a non-null fat pointer
+        // whose storage outlives this VM (BACKREF — see field doc).
+        unsafe { &*self.main }
+    }
+
+    /// Set the entry-point path. Caller guarantees `path`'s storage outlives
+    /// this VM (BACKREF — see `main` field doc).
+    #[inline]
+    pub fn set_main(&mut self, path: &[u8]) {
+        self.main = path as *const [u8];
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -1861,10 +1881,10 @@ impl VirtualMachine {
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub fn reload_entry_point(
         &mut self,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         self.has_loaded = false;
-        self.main = entry_path;
+        self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_string::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
@@ -1975,7 +1995,7 @@ impl VirtualMachine {
     /// returned promise settles.
     pub fn load_entry_point(
         &mut self,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
 
@@ -3963,10 +3983,10 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:2378 `reloadEntryPointForTestRunner`.
     pub fn reload_entry_point_for_test_runner(
         &mut self,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         self.has_loaded = false;
-        self.main = entry_path;
+        self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_string::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
@@ -4009,7 +4029,7 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:2410 `loadEntryPointForWebWorker`.
     pub fn load_entry_point_for_web_worker(
         &mut self,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
         // SAFETY: `event_loop` is a self-pointer into this VM.
@@ -4032,7 +4052,7 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:2424 `loadEntryPointForTestRunner`.
     pub fn load_entry_point_for_test_runner(
         &mut self,
-        entry_path: &'static [u8],
+        entry_path: &[u8],
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 

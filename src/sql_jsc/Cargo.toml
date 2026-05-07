@@ -23,6 +23,7 @@ bun_boringssl.workspace = true
 bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
+bun_event_loop.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true

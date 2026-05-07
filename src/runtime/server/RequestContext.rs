@@ -269,8 +269,35 @@ mod NativePromiseContext {
 }
 use crate::server::{file_response_stream, AnyRequestContext, FileResponseStream, HTTPStatusText};
 use bun_jsc::SysErrorJsc as _;
+use bun_jsc::event_loop::EventLoop;
 use crate::server::jsc::CallFrame;
 use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
+
+/// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
+///
+/// Replaces the Zig `defer ctx.deref()` pattern in promise-callback host
+/// functions — `NativePromiseContext::take` hands back a +1 ref, and the
+/// callback must drop it on every exit path. Holds the raw pointer (not
+/// `&mut`) so the body can keep using its own `&mut Self` view without
+/// borrowck conflict; the `&mut` is formed only at drop time.
+struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
+    *mut RequestContext<ThisServer, SSL, DBG, H3>,
+)
+where
+    ThisServer: ServerLike + 'static;
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> Drop
+    for RequestContextRef<ThisServer, SSL, DBG, H3>
+where
+    ThisServer: ServerLike + 'static,
+{
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: pointer was live when wrapped (caller owns one ref) and
+        // `deref()` itself handles the final destroy when count hits zero.
+        unsafe { (*self.0).deref() };
+    }
+}
 
 // `Response` doesn't yet implement `JsClass` (codegen-gated). Route the
 // downcast through the codegen stub so the call sites type-check; the stub

@@ -3309,6 +3309,24 @@ impl Resolver {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
+    /// RAII bracket: bump the intrusive refcount now, drop it on guard Drop.
+    /// Mirrors Zig's `this.ref(); defer this.deref();` so re-entrant c-ares
+    /// callbacks that release their own refs cannot free `*this` mid-call.
+    ///
+    /// Captures a raw `*mut` (not `&self`) so the guard does not borrow the
+    /// resolver — lets the guarded scope take fresh `&mut self` without
+    /// borrowck conflict, and gives `deref` proper write provenance for the
+    /// final `Box::from_raw` in `deinit`.
+    ///
+    /// # Safety
+    /// `this` must point to a live heap-allocated `Resolver` (see `init`).
+    #[inline]
+    unsafe fn ref_scope(this: *mut Self) -> ResolverRefGuard {
+        // SAFETY: caller contract — `this` is live; `ref_()` uses interior mutability.
+        unsafe { (*this).ref_() };
+        ResolverRefGuard(this)
+    }
+
     pub fn setup(vm: &VirtualMachine) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),

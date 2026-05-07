@@ -298,6 +298,66 @@ thread_local! {
     static STDOUT_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
 }
 
+/// RAII guard for the per-stream console mutex with thread-local recursion
+/// count (Zig: paired `lock()` / `defer unlock()`). Reentrant calls on the
+/// same thread bump the count without re-locking; the underlying mutex is
+/// only taken on the 0→1 transition and released on 1→0.
+struct ConsoleLogLock {
+    use_stderr: bool,
+}
+
+impl ConsoleLogLock {
+    fn acquire(use_stderr: bool) -> Self {
+        let (mutex, count) = if use_stderr {
+            (&STDERR_MUTEX, &STDERR_LOCK_COUNT)
+        } else {
+            (&STDOUT_MUTEX, &STDOUT_LOCK_COUNT)
+        };
+        count.with(|c| {
+            if c.get() == 0 {
+                mutex.lock();
+            }
+            c.set(c.get() + 1);
+        });
+        Self { use_stderr }
+    }
+}
+
+impl Drop for ConsoleLogLock {
+    fn drop(&mut self) {
+        let (mutex, count) = if self.use_stderr {
+            (&STDERR_MUTEX, &STDERR_LOCK_COUNT)
+        } else {
+            (&STDOUT_MUTEX, &STDOUT_LOCK_COUNT)
+        };
+        count.with(|c| {
+            c.set(c.get() - 1);
+            if c.get() == 0 {
+                mutex.unlock();
+            }
+        });
+    }
+}
+
+/// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`
+/// (Zig: `defer if (options.flush) writer.flush()`). Holds a raw fat pointer
+/// so the body of the scope can keep its own `&mut *writer` borrow.
+struct FlushOnDrop {
+    writer: *mut dyn bun_io::Write,
+    enabled: bool,
+}
+
+impl Drop for FlushOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        if self.enabled {
+            // SAFETY: constructed from a `&mut dyn bun_io::Write` that outlives
+            // this guard; no other borrow is live at the guard's drop point.
+            let _ = unsafe { (*self.writer).flush() };
+        }
+    }
+}
+
 /// RAII guard for the per-stream reentrant console lock. Acquires on
 /// construction (incrementing the thread-local count and locking the global
 /// mutex on first entry), releases on `Drop` (decrementing and unlocking on

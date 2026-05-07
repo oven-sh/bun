@@ -5123,6 +5123,30 @@ pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Er
     open_dir_at(dir.fd, path).map(Dir::from_fd).map_err(Into::into)
 }
 
+/// RAII guard that closes an [`Fd`] on drop.
+///
+/// `Fd`/`Dir`/`File` are intentionally non-owning `Copy` handles (matching
+/// Zig). When a scope owns one and must close it on every exit path
+/// (Zig: `defer fd.close()`), wrap the fd in this guard instead of writing
+/// `scopeguard::guard((), |_| fd.close())`.
+#[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
+pub struct CloseOnDrop(Fd);
+impl CloseOnDrop {
+    #[inline] pub fn new(fd: Fd) -> Self { Self(fd) }
+    #[inline] pub fn dir(dir: Dir) -> Self { Self(dir.fd) }
+    #[inline] pub fn file(file: &File) -> Self { Self(file.handle) }
+    /// Disarm the guard and return the fd without closing it.
+    #[inline] pub fn into_inner(self) -> Fd {
+        let fd = self.0;
+        core::mem::forget(self);
+        fd
+    }
+}
+impl Drop for CloseOnDrop {
+    #[inline]
+    fn drop(&mut self) { let _ = close(self.0); }
+}
+
 /// `std.fs.Dir.makeOpenPath` reachable as a module (Zig callers do
 /// `bun.makePath` / `bun.makeOpenPath`).
 pub mod make_path {

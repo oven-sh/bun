@@ -125,6 +125,21 @@ impl ThreadLock {
     }
 }
 
+/// RAII guard returned by [`ThreadLock::guard`]. Calls `unlock()` on drop.
+#[must_use = "dropping immediately unlocks the ThreadLock"]
+pub struct ThreadLockGuard(*mut ThreadLock);
+
+impl Drop for ThreadLockGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was `&mut ThreadLock` at `ThreadLock::guard()` and
+        // the lock is a field of a struct the caller holds `&mut` to for the
+        // entire guard scope (every call site is `self.field.guard()` inside a
+        // `&mut self` method); no other live `&mut ThreadLock` exists at drop.
+        unsafe { (*self.0).unlock() }
+    }
+}
+
 // TODO(port): `bun.Environment.ci_assert` cfg mapping (see field cfg above).
 pub const ENABLED: bool = cfg!(feature = "ci_assert");
 

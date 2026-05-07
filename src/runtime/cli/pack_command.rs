@@ -632,9 +632,8 @@ fn add_entire_tree(
     }
 
     while let Some(dir_info) = dirs.pop() {
-        let DirInfo(mut dir, dir_subpath, dir_depth) = dir_info;
-        let _close = scopeguard::guard((), |_| dir.close());
-        // TODO(port): RAII Dir close
+        let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
+        let _close = CloseOnDrop::dir(dir);
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -786,7 +785,7 @@ fn iterate_bundled_deps(
             Global::crash();
         }
     };
-    let _close = scopeguard::guard((), |_| dir.close());
+    let _close = CloseOnDrop::dir(dir);
 
     // A set of bundled dependency locations
     // - node_modules/is-even
@@ -816,7 +815,7 @@ fn iterate_bundled_deps(
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let _close_scoped = scopeguard::guard((), |_| scoped_dir.close());
+            let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
@@ -931,8 +930,8 @@ fn add_bundled_dep(
     dirs.push(bundled_dir_info);
 
     while let Some(dir_info) = dirs.pop() {
-        let DirInfo(mut dir, dir_subpath, dir_depth) = dir_info;
-        let _close = scopeguard::guard((), |_| dir.close());
+        let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
+        let _close = CloseOnDrop::dir(dir);
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         while let Some(entry) = iter.next().ok().flatten() {

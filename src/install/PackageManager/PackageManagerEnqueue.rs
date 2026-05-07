@@ -12,13 +12,15 @@ use bun_sys::Fd;
 
 use bun_install::{
     self as install, invalid_package_id, Behavior, Dependency, DependencyID, ExtractTarball,
-    Features, Integrity, Npm, PackageID, PackageNameHash, PatchTask, PatchTaskCalcHashContext,
+    Features, Integrity, Npm, PackageID, PackageNameHash, PatchTask,
     Repository, Resolution, TaskCallbackContext,
 };
 use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::patch_install::{Callback as PatchCallback, EnqueueAfterState};
+use crate::lockfile::package::PackageListExt as _;
 use crate::lockfile::PackageIndexEntry;
 use crate::network_task::Authorization;
 use crate::resolution::{
@@ -56,13 +58,8 @@ fn verbose_install() -> bool {
     unsafe { crate::package_manager_real::VERBOSE_INSTALL }
 }
 
-// PORT NOTE: `PatchTask.callback` discriminant — the stub `PatchTask` carries a
-// flat `PatchTaskCallbackStub` (no Rust enum yet), so the `matches!` checks
-// below compile against these unit markers. Real shape lives in
-// `patch_install::Callback`; routed there once the stub/real types unify.
-// TODO(port): blocked_on patch_install::PatchTask stub-unification (reconciler-6)
-#[allow(dead_code)]
-enum PatchTaskCallback { CalcHash, Apply }
+// PORT NOTE: `PatchTask.callback` discriminant — routed to the real
+// `patch_install::Callback` enum (CalcHash / Apply).
 
 // `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the
 // real bodies are inherent methods, so reference them via the type path.

@@ -329,9 +329,10 @@ pub type FolderResolutionMap = HashMap<u64, FolderResolution /* , IdentityContex
 type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
-type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
+type PatchTaskFifo =
+    LinearFifo<*mut PatchTask<'static>, StaticBuffer<*mut PatchTask<'static>, 32>>;
 
-pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
+pub type PatchTaskQueue = UnboundedQueue<PatchTask<'static> /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
@@ -1856,11 +1857,11 @@ pub fn init(
                 options,
                 active_lifecycle_scripts: crate::lifecycle_script_runner::List {
                     root: core::ptr::null_mut(),
-                    // PORT NOTE: `lifecycle_script_runner::List`'s `Context` is
-                    // `*mut crate::PackageManager` (the lib.rs stub) until that
-                    // type alias is unified with `package_manager_real::PackageManager`.
-                    // Cast here; the heap comparator only uses it as opaque ctx.
-                    context: manager_ptr as *mut crate::PackageManager,
+                    // `lifecycle_script_runner::List`'s heap comparator never
+                    // dereferences its Zig `*PackageManager` context arg, so the
+                    // Rust port models it as a ZST (`StartedAtCtx`) instead of
+                    // threading a back-pointer.
+                    context: crate::lifecycle_script_runner::StartedAtCtx,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 patch_task_fifo: PatchTaskFifo::init(),
@@ -2102,7 +2103,7 @@ pub fn init(
             // TODO(port): bun.Environment.allow_assert
             if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly (Zig: std.fmt.parseInt)
-                if let Some(int) = bun_str::strings::parse_int::<u32>(cache_control, 10) {
+                if let Ok(int) = bun_str::strings::parse_int::<u32>(cache_control, 10) {
                     break 'brk int;
                 }
             }
@@ -2226,7 +2227,7 @@ pub fn init_with_runtime_once(
                 },
                 active_lifecycle_scripts: crate::lifecycle_script_runner::List {
                     root: core::ptr::null_mut(),
-                    context: manager_ptr as *mut crate::PackageManager,
+                    context: crate::lifecycle_script_runner::StartedAtCtx,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 log: log as *mut _,
@@ -2323,7 +2324,7 @@ pub fn init_with_runtime_once(
         // PORT NOTE: `bun_progress::Progress` (the install-tier shim) is non-rendering;
         // `supports_ansi_escape_codes` is implicit (always treated as the
         // `false` path in std.Progress). The Zig assignment is a no-op here.
-        let _ = manager.progress.start("", 0);
+        let _ = manager.progress.start(b"", 0);
         manager.root_progress_node = core::ptr::null_mut();
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;

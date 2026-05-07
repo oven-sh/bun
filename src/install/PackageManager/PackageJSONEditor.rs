@@ -1152,7 +1152,7 @@ pub fn edit(
                                     .value
                                     .npm
                                     .version
-                                    .fmt(request.version_buf)
+                                    .fmt(request.version_buf())
                             };
                             let mut v = Vec::new();
                             if options.exact_versions {

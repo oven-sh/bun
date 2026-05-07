@@ -242,8 +242,7 @@ pub struct Arguments<const MAX: usize> {
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
     pub fn init(i: usize, ptr: *const JSValue) -> Self {
-        // SAFETY: all-zero is a valid [JSValue; MAX] (JSValue is #[repr(transparent)] i64).
-        let mut args: [JSValue; MAX] = unsafe { core::mem::zeroed() };
+        let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
         // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
         args[0..i].copy_from_slice(unsafe { core::slice::from_raw_parts(ptr, i) });
         Self { ptr: args, len: i }

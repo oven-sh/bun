@@ -5065,6 +5065,7 @@ pub mod net {
         }
     }
     impl Default for Address {
+        // SAFETY: POD, zero-valid — sockaddr union of integer fields.
         fn default() -> Self { Self { any: unsafe { core::mem::zeroed() } } }
     }
     impl fmt::Debug for Address {
@@ -6081,6 +6082,7 @@ unsafe fn adapter_flush(_w: *mut bun_core::io::Writer)
 
 #[cfg(unix)]
 unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = unsafe { core::mem::zeroed() };
     // SAFETY: TIOCGWINSZ expects a *mut winsize.
     let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &mut ws as *mut _) };

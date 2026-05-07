@@ -95,6 +95,7 @@ type Socket = uws::AnySocket;
 // SubscriptionCtx
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct SubscriptionCtx {
     pub is_subscriber: bool,
     pub original_enable_offline_queue: bool,
@@ -660,13 +661,10 @@ impl JSValkeyClient {
         bun_core::analytics::Features::VALKEY
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        // SAFETY: _subscription_ctx is initialized later by `create()`.
-        let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };
-        // PORT NOTE: Zig used `undefined` for _subscription_ctx; using zeroed POD here.
-
+        // PORT NOTE: Zig used `undefined` for _subscription_ctx; initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: subscription_ctx_uninit,
+            _subscription_ctx: SubscriptionCtx::default(),
             client: valkey::ValkeyClient {
                 vm,
                 address: match uri {
@@ -769,12 +767,9 @@ impl JSValkeyClient {
             valkey::TLS::Custom(cfg) => valkey::TLS::Custom(cfg.clone()),
         };
 
-        // SAFETY: zeroed POD for placeholder _subscription_ctx
-        let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };
-
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            _subscription_ctx: subscription_ctx_uninit,
+            _subscription_ctx: SubscriptionCtx::default(),
             client: valkey::ValkeyClient {
                 vm,
                 address: match self.client.protocol {

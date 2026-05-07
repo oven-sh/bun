@@ -964,10 +964,8 @@ pub fn download_stream(
         }
     };
 
-    let mut header_buffer: [bun_picohttp::Header;
-        bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1] =
-        // SAFETY: all-zero is a valid picohttp::Header (POD)
-        unsafe { core::mem::zeroed() };
+    let mut header_buffer =
+        [bun_picohttp::Header::ZERO; bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1];
     let headers = 'brk: {
         if let Some(range_) = &range {
             let _headers = result.mix_with_header(

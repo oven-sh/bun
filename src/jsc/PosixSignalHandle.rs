@@ -21,8 +21,7 @@ pub struct PosixSignalHandle {
 impl Default for PosixSignalHandle {
     fn default() -> Self {
         Self {
-            // SAFETY: all-zero is a valid [AtomicU8; N] (AtomicU8 is repr(transparent) over u8).
-            signals: unsafe { core::mem::zeroed() },
+            signals: [const { AtomicU8::new(0) }; BUFFER_SIZE as usize],
             tail: AtomicU16::new(0),
             head: AtomicU16::new(0),
         }

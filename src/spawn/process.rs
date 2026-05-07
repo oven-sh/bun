@@ -3218,6 +3218,7 @@ pub mod sync {
             // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Phase B:
             // use the raw syscall with a u64 mask.
             let fd = {
+                // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                 let mut kmask: libc::sigset_t = core::mem::zeroed();
                 libc::sigemptyset(&mut kmask);
                 libc::sigaddset(&mut kmask, libc::SIGCHLD);

@@ -1123,8 +1123,7 @@ where
                 ref_count: 1,
                 response_weakref: response::WeakRef::EMPTY,
                 blob: AnyBlob::Blob(Blob::default()),
-                // SAFETY: SendfileContext is POD; matches Zig `= undefined`
-                sendfile: unsafe { core::mem::zeroed() },
+                sendfile: SendfileContext::default(),
                 request_body_readable_stream_ref: readable_stream::Strong::default(),
                 request_body: None,
                 request_body_buf: Vec::new(),

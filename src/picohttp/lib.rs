@@ -97,7 +97,7 @@ mod c {
     /// client writes `consume_trailer` directly and inspects `_state` via
     /// `phr_decode_chunked_is_in_data`, so the layout must match C exactly.
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct phr_chunked_decoder {
         pub bytes_left_in_chunk: usize,
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
@@ -160,6 +160,11 @@ pub struct Header {
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
+}
+
+impl Default for Header {
+    #[inline]
+    fn default() -> Self { Self::ZERO }
 }
 
 impl Header {

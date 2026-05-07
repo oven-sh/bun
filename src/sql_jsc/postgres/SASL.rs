@@ -46,8 +46,7 @@ pub enum SASLStatus {
 }
 
 fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
-    // SAFETY: all-zero is a valid [u8; N]
-    let mut buf: [u8; EVP_MAX_MD_SIZE] = unsafe { core::mem::zeroed() };
+    let mut buf = [0u8; EVP_MAX_MD_SIZE];
     // TODO: I don't think this is failable.
     let result = bun_sha_hmac::generate(password, data, bun_sha_hmac::Algorithm::Sha256, &mut buf)?;
     debug_assert!(result.len() == 32);
@@ -133,8 +132,7 @@ impl SASL {
 
     pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
-        // SAFETY: all-zero is a valid [u8; N]
-        let mut sha_digest: [u8; SHA256::DIGEST] = unsafe { core::mem::zeroed() };
+        let mut sha_digest = [0u8; SHA256::DIGEST];
         // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
         // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
         // `None` falls through to BoringSSL's default engine, which is

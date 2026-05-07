@@ -2148,9 +2148,7 @@ impl PostgresSQLConnection {
                     // TODO(port): other Putter default fields
                 };
 
-                let mut stack_buf: [DataCell::SQLDataCell; 70] =
-                    // SAFETY: SQLDataCell is POD; immediately overwritten by memset below.
-                    unsafe { core::mem::zeroed() };
+                let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
                 // PERF(port): was stack-fallback alloc — profile in Phase B
                 let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;

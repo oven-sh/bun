@@ -730,6 +730,7 @@ pub mod abort_handler {
             // PORT NOTE: `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
             // avoids creating &mut to a `static mut` (Rust 2024 hard error).
             unsafe {
+                // SAFETY: POD, zero-valid — sigaction with handler=0/flags=0 is SIG_DFL.
                 let mut act: libc::sigaction = core::mem::zeroed();
                 act.sa_sigaction = posix_handler as *const () as usize;
                 libc::sigemptyset(&mut act.sa_mask);

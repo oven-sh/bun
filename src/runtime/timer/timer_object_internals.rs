@@ -467,8 +467,8 @@ impl TimerObjectInternals {
             return;
         }
 
-        // SAFETY: only read on the .setInterval path where it is written below.
-        let mut time_before_call: Timespec = unsafe { core::mem::zeroed() };
+        // Only read on the .setInterval path where it is written below.
+        let mut time_before_call = Timespec::EPOCH;
 
         if kind != KindBig::SetInterval {
             self.this_value.downgrade();

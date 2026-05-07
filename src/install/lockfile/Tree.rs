@@ -210,8 +210,10 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         )
     }
 
-    /// Construct from raw buffer slices. Used by `bun.lock.rs` (which holds a
-    /// `lockfile_real::Lockfile`) until the stub/real `Lockfile` types unify.
+    /// Construct from raw buffer slices. Used by `bun.lock.rs` so the iterator
+    /// borrows only `buffers.{trees,hoisted_dependencies,dependencies,string_bytes}`,
+    /// leaving the rest of `Lockfile` available for disjoint mutation while
+    /// iterating.
     pub fn from_slices(
         trees: &'a [Tree],
         hoisted_dependencies: &'a [DependencyID],

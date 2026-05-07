@@ -5578,24 +5578,26 @@ impl Blob {
                 )
             }
             PathOrFileDescriptor::Fd(fd) => {
-                // TODO(b2-blocked): rare_data().{stdin,stdout,stderr}() return
-                // `&Arc<high_tier::BlobStore>` (an opaque stub in
-                // `bun_jsc::rare_data`), not `Arc<webcore::blob::Store>`. The
-                // type unification is a cross-crate change (rare_data.rs +
-                // webcore.rs); re-gated until that lands. Falls through to a
-                // plain fd-backed `Store::File` below, which is behaviourally
-                // correct (just misses the cached-store fast path).
-                
                 if let Some(tag) = fd.stdio_tag() {
-                    // blocked_on: bun_jsc::rare_data::BlobStore ↔ webcore::blob::Store unification
-                    // (rare_data().stdin/out/err() return `&Arc<high_tier::BlobStore>`, not StoreRef)
+                    // SAFETY: bun_vm() is live for the duration of a host call.
                     let vm = unsafe { &mut *global_this.bun_vm() };
-                    let store = match tag {
+                    // `RareData::{stdin,stdout,stderr}()` return the cached
+                    // `webcore::blob::Store` erased to `*mut c_void` (the
+                    // low-tier crate cannot name the high-tier type — see
+                    // `STDIO_BLOB_STORE_CTOR`). Cast back and take a counted
+                    // ref (Zig: `store.ref(); return Blob.initWithStore(store, …)`).
+                    let erased = match tag {
                         bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
                         bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
                         bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
                     };
-                    return Blob::init_with_store(store.clone(), global_this);
+                    // SAFETY: the ctor hook (`webcore::blob::store::stdio_store_ctor`)
+                    // returns `Box::<Store>::into_raw` — non-null, live for the
+                    // process lifetime, and laid out as `Store`.
+                    let store = unsafe {
+                        StoreRef::retained(NonNull::new_unchecked(erased.cast::<Store>()))
+                    };
+                    return Blob::init_with_store(store, global_this);
                 }
                 PathOrFileDescriptor::Fd(*fd)
             }

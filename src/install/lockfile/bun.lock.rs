@@ -2256,7 +2256,7 @@ pub fn parse_into_binary_lockfile(
         lockfile.buffers.resolutions.reserve_exact(
             lockfile.buffers.dependencies.len().saturating_sub(lockfile.buffers.resolutions.len()),
         );
-        // TODO(port): expandToCapacity — resize to capacity then memset
+        // Zig: ensureTotalCapacityPrecise → expandToCapacity → @memset(invalid_package_id).
         lockfile.buffers.resolutions.resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
@@ -2264,52 +2264,51 @@ pub fn parse_into_binary_lockfile(
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
+        // PORT NOTE: Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
+        // mutable column slices, writes index 0, then keeps the resolution slice
+        // for read-only lookups. In Rust the two `[0]` writes are done first via
+        // sequential `&mut` accessors so the loops can take all column views
+        // immutably without overlapping exclusive borrows or `unsafe`.
+        lockfile.packages.items_resolution_mut()[0] =
+            Resolution::init(crate::resolution::TaggedValue::Root);
+        lockfile.packages.items_meta_mut()[0].origin = Origin::Local;
+
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
-        // PORT NOTE: Zig's `pkgs.items(.meta)` / `.items(.resolution)` hand out
-        // two independent mutable column slices. `PackageSliceExt::items_*_mut`
-        // borrows `&mut pkgs` exclusively, so route through `items_raw` (the
-        // sanctioned escape hatch — see `Slice::items_raw`) to materialize the
-        // disjoint mutable views.
-        let pkgs_len = pkgs.len();
-        // SAFETY: `Meta` / `Resolution` are the exact column element types and
-        // the two columns occupy disjoint storage within the MultiArrayList.
-        let pkg_metas: &mut [Meta] = unsafe {
-            core::slice::from_raw_parts_mut(pkgs.items_raw::<Meta>(PackageField::Meta), pkgs_len)
-        };
-        let pkg_resolutions: &mut [Resolution] = unsafe {
-            core::slice::from_raw_parts_mut(
-                pkgs.items_raw::<Resolution>(PackageField::Resolution),
-                pkgs_len,
-            )
-        };
+        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+
+        // Disjoint-field split of `lockfile.buffers` so each loop body can hold
+        // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
+        // `string_bytes` view (Zig's `*Dependency` / `lockfile.buffers.*.items`
+        // accesses freely alias the same struct).
+        let buffers = &mut lockfile.buffers;
+        let string_buf: &[u8] = buffers.string_bytes.as_slice();
+        let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
+        let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
 
         {
             // first the root dependencies are resolved
-            pkg_resolutions[0] = Resolution::init(crate::resolution::TaggedValue::Root);
-            pkg_metas[0].origin = Origin::Local;
-
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-                let dep = &mut lockfile.buffers.dependencies[dep_id as usize];
+                let dep = &mut dependencies[dep_id as usize];
 
-                let Some(&res_id) = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.as_slice())) else {
+                let Some(&res_id) = pkg_map.get(dep.name.slice(string_buf)) else {
                     if dep.behavior.contains(Behavior::OPTIONAL) {
                         continue;
                     }
-                    dependency_resolution_failure(dep, None, lockfile.buffers.string_bytes.as_slice(), source, log, root_pkg_exr.loc)?;
+                    dependency_resolution_failure(dep, None, string_buf, source, log, root_pkg_exr.loc)?;
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
                 if !dep.behavior.is_workspace()
-                    && seen_deps.get_or_put(dep.name.slice(lockfile.buffers.string_bytes.as_slice()))?.found_existing
+                    && seen_deps.get_or_put(dep.name.slice(string_buf))?.found_existing
                 {
-                    lockfile.buffers.resolutions[dep_id as usize] = res_id;
+                    resolutions[dep_id as usize] = res_id;
                     continue;
                 }
 
-                map_dep_to_pkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
             }
         }
 
@@ -2319,18 +2318,17 @@ pub fn parse_into_binary_lockfile(
             // then workspace dependencies are resolved
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
-                let workspace_name = pkg_names[pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice());
+                let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
                 seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-                    let dep = &mut lockfile.buffers.dependencies[dep_id as usize];
-                    let dep_name = dep.name.slice(lockfile.buffers.string_bytes.as_slice());
+                    let dep = &mut dependencies[dep_id as usize];
+                    let dep_name = dep.name.slice(string_buf);
 
                     let workspace_node_modules = {
-                        use std::io::Write;
                         let buf_slice = &mut path_buf[..];
                         let needed = workspace_name.len() + 1 + dep_name.len();
                         if needed > buf_slice.len() {
@@ -2355,16 +2353,16 @@ pub fn parse_into_binary_lockfile(
                         if dep.behavior.contains(Behavior::OPTIONAL) {
                             continue;
                         }
-                        dependency_resolution_failure(dep, Some(workspace_name), lockfile.buffers.string_bytes.as_slice(), source, log, root_pkg_exr.loc)?;
+                        dependency_resolution_failure(dep, Some(workspace_name), string_buf, source, log, root_pkg_exr.loc)?;
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
                     if seen_deps.get_or_put(dep_name)?.found_existing {
-                        lockfile.buffers.resolutions[dep_id as usize] = res_id;
+                        resolutions[dep_id as usize] = res_id;
                         continue;
                     }
 
-                    map_dep_to_pkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                    map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
                 }
             }
         }
@@ -2390,9 +2388,9 @@ pub fn parse_into_binary_lockfile(
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-                let dep = &mut lockfile.buffers.dependencies[dep_id as usize];
+                let dep = &mut dependencies[dep_id as usize];
 
-                let res_id = match pkg_map.find_resolution(pkg_path, dep, lockfile.buffers.string_bytes.as_slice(), &mut path_buf[..]) {
+                let res_id = match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
                     Ok(&id) => id,
                     Err(ResolveError::InvalidPackageKey) => {
                         log.add_error(Some(source), key.loc, b"Invalid package path")?;
@@ -2402,12 +2400,12 @@ pub fn parse_into_binary_lockfile(
                         if dep.behavior.contains(Behavior::OPTIONAL) {
                             continue 'deps;
                         }
-                        dependency_resolution_failure(dep, Some(pkg_path), lockfile.buffers.string_bytes.as_slice(), source, log, key.loc)?;
+                        dependency_resolution_failure(dep, Some(pkg_path), string_buf, source, log, key.loc)?;
                         return Err(ParseError::InvalidPackageInfo);
                     }
                 };
 
-                map_dep_to_pkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
+                map_dep_to_pkg(dep, dep_id, res_id, resolutions, lockfile_version, pkg_resolutions);
             }
         }
 
@@ -2422,16 +2420,22 @@ pub fn parse_into_binary_lockfile(
     Ok(())
 }
 
+// PORT NOTE: Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
+// points into `lockfile.buffers.dependencies` — fine in Zig, illegal aliasing in
+// Rust. The function only touches `buffers.resolutions[dep_id]` and reads
+// `text_lockfile_version`, so accept those disjoint pieces directly and let the
+// caller split-borrow `lockfile.buffers`.
 fn map_dep_to_pkg(
     dep: &mut Dependency,
     dep_id: DependencyID,
     pkg_id: PackageID,
-    lockfile: &mut BinaryLockfile,
+    resolutions: &mut [PackageID],
+    text_lockfile_version: Version,
     pkg_resolutions: &[Resolution],
 ) {
-    lockfile.buffers.resolutions[dep_id as usize] = pkg_id;
+    resolutions[dep_id as usize] = pkg_id;
 
-    if lockfile.text_lockfile_version != Version::V0 {
+    if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
             dep.version.tag = DependencyVersionTag::Workspace;
@@ -2663,5 +2667,5 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 //   source:     src/install/lockfile/bun.lock.zig (2298 lines)
 //   confidence: medium
 //   todos:      18
-//   notes:      MultiArrayList field accessors (.items(.field)), Expr accessors (e_object/e_array/as_string), ResolutionValue union access, and bun_io::Write trait shape are all assumed; heavy borrowck reshaping will be needed in parse_into_binary_lockfile (lockfile vs string_buf overlapping &mut). Writer is dyn-dispatched (Zig anytype) — see PERF(port) at type alias.
+//   notes:      MultiArrayList field accessors (.items(.field)), Expr accessors (e_object/e_array/as_string), ResolutionValue union access, and bun_io::Write trait shape are all assumed. Writer is dyn-dispatched (Zig anytype) — see PERF(port) at type alias.
 // ──────────────────────────────────────────────────────────────────────────

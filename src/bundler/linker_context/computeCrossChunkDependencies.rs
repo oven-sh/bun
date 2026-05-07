@@ -587,13 +587,13 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // then writes back; we `take` to express the same move-out/move-in.
             let mut cross_chunk_prefix_stmts = BabyList::<js_ast::Stmt>::default();
 
-            CrossChunkImportD::sorted_cross_chunk_imports(
+            CrossChunkImport::sorted_cross_chunk_imports(
                 &mut list,
                 chunks,
                 &mut imports_from_other_chunks,
             )
             .expect("unreachable");
-            let cross_chunk_imports_input: &[CrossChunkImportD] = list.as_slice();
+            let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
             for cross_chunk_import in cross_chunk_imports_input {
                 match c.options.output_format {
                     OutputFormat::Esm => {

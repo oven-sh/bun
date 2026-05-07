@@ -570,7 +570,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             tail %= self.buf_len();
         }
-        self.buf.as_mut_slice()[tail] = item;
+        // SAFETY: `tail` is in-bounds (capacity reserved by caller). The slot is
+        // logically uninitialized — `ptr::write` matches Zig assignment semantics
+        // (no drop of the prior bit-pattern), required for non-`Copy` `T` whose
+        // backing storage is `MaybeUninit<T>`.
+        unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
         self.update(1);
     }
 

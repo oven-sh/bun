@@ -2893,7 +2893,8 @@ impl Package<u64> {
         while let Some(entry) = meta_only.next() {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
             if let Some(dep_) = Self::parse_dependency(
-                lockfile,
+                &mut lockfile.workspace_paths,
+                &mut lockfile.workspace_versions,
                 pm,
                 log,
                 source,
@@ -2917,7 +2918,7 @@ impl Package<u64> {
         }
 
         {
-            let buf = lockfile.buffers.string_bytes.as_slice();
+            let buf = string_builder.string_bytes.as_slice();
             // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by`
             // requires a total order (and panics since 1.81 when violated), so
             // derive `Ordering::Equal` from the predicate symmetrically.

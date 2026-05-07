@@ -369,6 +369,19 @@ impl PatchTask {
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
 
+                    // SAFETY: this arm is the `.npm` extract path; the
+                    // resolution union's active variant is `npm` (see the
+                    // `pkg_resolution_tag` switch below — Zig only reads
+                    // `pkg.resolution.value.npm.version` here, line 183).
+                    let pkg_npm_version = unsafe {
+                        manager
+                            .lockfile
+                            .packages
+                            .items_resolution()[pkg_id as usize]
+                            .value
+                            .npm
+                            .version
+                    };
                     let task_id = TaskId::for_npm_package(
                         manager.lockfile.str(&pkg_name),
                         pkg_npm_version,
@@ -408,17 +421,12 @@ impl PatchTask {
                         "pkg: {} apply patch",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
-                    // PORT NOTE: erase the `'a` lifetime tied to `manager`'s
-                    // `&mut` borrow so we can re-borrow `manager` below. The
-                    // task stores `&PackageManager` as a long-lived backref
-                    // (Zig uses a raw `*PackageManager`); the lifetime is not
-                    // enforced through the raw-pointer queue anyway.
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
                         pkg_meta_id,
                         hash,
                         name_and_version_hash,
-                    ) as *mut PatchTask<'static>;
+                    );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
                         package_manager::enqueue_patch_task(manager, patch_task);
@@ -499,15 +507,18 @@ impl PatchTask {
 
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
+            // SAFETY: BACKREF; the lockfile is read-only while apply tasks run
+            // off-thread (same contract as the Zig pointer dereference here).
+            let manager = unsafe { self.manager() };
             let resolution: &Resolution =
-                &self.manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
+                &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
             let mut label = Vec::<u8>::new();
             use std::io::Write as _;
             write!(
                 &mut label,
                 "{}",
                 resolution.fmt(
-                    self.manager.lockfile.buffers.string_bytes.as_slice(),
+                    manager.lockfile.buffers.string_bytes.as_slice(),
                     bun_core::fmt::PathSep::Posix,
                 )
             )

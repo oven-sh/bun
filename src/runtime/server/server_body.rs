@@ -2548,6 +2548,79 @@ where
         Ok(this_value)
     }
 
+    /// `server.zig:onChromeDevToolsJSONRequest` — serve the well-known
+    /// `com.chrome.devtools.json` workspace descriptor so Chrome DevTools can
+    /// auto-map source files to the local checkout. Only registered in
+    /// debug-mode + DevServer + loopback clients.
+    pub fn on_chrome_devtools_json_request(
+        &mut self,
+        req: &mut uws::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        httplog!("{} - {}", bstr::BStr::new(req.method()), bstr::BStr::new(req.url()));
+
+        let authorized = 'brk: {
+            if self.dev_server.is_none() {
+                break 'brk false;
+            }
+            if let Some(addr) = resp.get_remote_socket_info() {
+                // IPv4 loopback addresses
+                if addr.ip.starts_with(b"127.") {
+                    break 'brk true;
+                }
+                // IPv6 loopback addresses
+                if addr.ip.starts_with(b"::ffff:127.")
+                    || addr.ip.starts_with(b"::1")
+                    || addr.ip == b"0:0:0:0:0:0:0:1"
+                {
+                    break 'brk true;
+                }
+            }
+            false
+        };
+
+        if !authorized {
+            req.set_yield(true);
+            return;
+        }
+
+        // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
+
+        // So we first use a hash of the main field:
+        let first_hash_segment: [u8; 8] = {
+            let buffer = bun_paths::path_buffer_pool();
+            // SAFETY: `vm` is the per-thread singleton; STATIC for the server's lifetime.
+            let main = unsafe { &*self.vm }.main();
+            let len = main.len().min(buffer.len());
+            bun_wyhash::hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes()
+        };
+
+        // And then we use a hash of their project root directory:
+        let second_hash_segment: [u8; 8] = {
+            let buffer = bun_paths::path_buffer_pool();
+            let root = &self.dev_server.as_ref().unwrap().root;
+            let len = root.len().min(buffer.len());
+            bun_wyhash::hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes()
+        };
+
+        // We combine it together to get a 16 byte uuid.
+        let mut hash_bytes = [0u8; 16];
+        hash_bytes[..8].copy_from_slice(&first_hash_segment);
+        hash_bytes[8..].copy_from_slice(&second_hash_segment);
+        let uuid = bun_jsc::UUID::init_with(&hash_bytes);
+
+        // interface DevToolsJSON { workspace?: { root: string, uuid: string } }
+        let json_string = format!(
+            "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
+            bun_core::fmt::format_json_string_utf8(&self.dev_server.as_ref().unwrap().root, Default::default()),
+            uuid,
+        );
+
+        resp.write_status(b"200 OK");
+        resp.write_header(b"Content-Type", b"application/json");
+        resp.end(json_string.as_bytes(), resp.should_close_connection());
+    }
+
     pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         jsc::mark_binding!();
         self.pending_requests += 1;

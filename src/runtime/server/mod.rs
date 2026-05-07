@@ -1187,7 +1187,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr.flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
-                                if !raw.state().is_http_status_called() {
+                                // PORT NOTE: matches server.zig:2173 verbatim.
+                                // The Zig spec writes a 500 status when
+                                // `isHttpStatusCalled()` is *true* and
+                                // `endStream`s otherwise; NodeHTTPResponse.zig:680
+                                // uses the inverted predicate. The port tracks
+                                // the spec — if the spec is wrong it must be
+                                // fixed there, not silently inverted here.
+                                if raw.state().is_http_status_called() {
                                     raw.write_status(b"500 Internal Server Error");
                                     raw.end_without_body(true);
                                 } else {
@@ -2552,7 +2559,7 @@ mod trampoline {
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes;
         // req/res are live uws handles for the duration of the callback.
         unsafe {
-            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_chrome_devtools_json_request(
+            (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_chrome_dev_tools_json_request(
                 &mut *req,
                 &mut *res.cast::<uws_sys::NewAppResponse<SSL>>(),
             )

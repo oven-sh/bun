@@ -1444,8 +1444,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ) {
                             Ok(p) => p,
                             Err(err) => {
-                                return global_this
-                                    .throw_error(err, "Failed to resolve file url");
+                                return Err(global_this
+                                    .throw_error(err.into(), "Failed to resolve file url"));
                             }
                         };
                     }
@@ -1461,7 +1461,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd = match bun_sys::getcwd(&mut cwd_buf) {
                     Ok(c) => c,
                     Err(err) => {
-                        return global_this.throw_error(err, "Failed to resolve file url");
+                        return Err(
+                            global_this.throw_error(err.into(), "Failed to resolve file url")
+                        );
                     }
                 };
                 #[cfg(not(windows))]
@@ -1484,7 +1486,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            return global_this.throw_error(err, "Failed to resolve file url");
+                            return Err(
+                                global_this.throw_error(err.into(), "Failed to resolve file url")
+                            );
                         }
                     };
                 }

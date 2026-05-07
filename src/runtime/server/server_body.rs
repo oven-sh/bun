@@ -2900,15 +2900,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `root` lives inside `bake_options.arena`; DevServer borrows it
             // for `'static` (arena outlives DevServer per Zig comment).
             let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
+            // Destructure via ManuallyDrop so UserOptions::drop doesn't run on
+            // the moved-out fields (Zig moved by value; Rust UserOptions has Drop).
+            let bake_options = mem::ManuallyDrop::new(bake_options);
             // SAFETY: `bake_options.arena` is moved into DevServer (transitively)
             // and outlives every borrow of `root`; lifetime erased to `'static`
             // per the same Phase-A convention used in `bake_body::UserOptions`.
             let arena: &'static bake::Arena = unsafe { &*(&bake_options.arena as *const _) };
             let root: &'static ZStr = bake_options.root;
+            // SAFETY: bake_options is ManuallyDrop'd; these are the only reads.
             let framework = unsafe { core::ptr::read(&bake_options.framework) };
             let bundler_options = unsafe { core::ptr::read(&bake_options.bundler_options) };
-            // Prevent UserOptions::drop from double-freeing the moved fields.
-            mem::forget(bake_options);
             Some(dev_server_mod::init(dev_server_mod::Options {
                 arena,
                 root,

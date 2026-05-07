@@ -3,7 +3,7 @@ use core::fmt;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_str::{String, ZigString};
 
-use super::parse_args_utils_impl::{
+use super::parse_args_utils::{
     classify_token, find_option_by_short_name, is_option_like_value, OptionDefinition,
     OptionValueType, TokenSubtype,
 };

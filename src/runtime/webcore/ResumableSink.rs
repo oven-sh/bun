@@ -57,19 +57,34 @@ pub enum Status {
     Done,
 }
 
-pub struct ResumableSink<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> {
+pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     pub ref_count: Cell<u32>,
     js_this: JsRef,
     /// We can have a detached self, and still have a strong reference to the stream
     stream: crate::webcore::readable_stream::Strong,
-    global_this: &'a JSGlobalObject,
+    /// Raw pointer rather than `&'a JSGlobalObject` because this struct is the
+    /// `m_ctx` payload of a JSC heap cell — it crosses the FFI boundary
+    /// (`${T}__create`/`${T}__fromJS`) and outlives any Rust borrow scope. The
+    /// global outlives every JS object it allocates, so dereferencing in
+    /// [`Self::global`] is sound for the lifetime of `self`.
+    global_this: *const JSGlobalObject,
     context: *mut Context,
     high_water_mark: i64,
     status: Status,
     _js: core::marker::PhantomData<Js>,
 }
 
-impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, Js, Context> {
+impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Context> {
+    /// Borrow the owning [`JSGlobalObject`].
+    ///
+    /// SAFETY: `global_this` is set in [`Self::init_exact_refs`] from a live
+    /// `&JSGlobalObject` and the global outlives every JS object (and thus
+    /// every `m_ctx` payload) it allocates.
+    #[inline]
+    fn global(&self) -> &JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     /// Current backpressure high-water mark in bytes (initialized to 16384,
     /// updated from the wrapped ByteStream on `init`/`set_stream_if_possible`).
     #[inline]

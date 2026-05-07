@@ -719,6 +719,22 @@ impl Yield {
 }
 
 impl Task {
+    /// Shared borrow of the owning [`Installer`].
+    ///
+    /// `installer` is a BACKREF: the `Installer` owns `tasks[]` and outlives
+    /// every `Task` it schedules. The pointer is never null.
+    ///
+    /// Only `&` is exposed: `run()` executes concurrently on the thread pool
+    /// across many `Task`s sharing the same `*mut Installer`, so a `&mut`
+    /// accessor would alias. Callers needing to reach `manager` / `lockfile`
+    /// for mutation must go through the raw pointer directly (see the
+    /// provenance comment in [`Self::run`]).
+    #[inline]
+    pub fn installer(&self) -> &Installer<'static> {
+        // SAFETY: BACKREF — Installer owns tasks[] and outlives every Task.
+        unsafe { &*self.installer }
+    }
+
     /// Called from task thread
     // PERF(port): was comptime enum monomorphization — profile in Phase B
     fn next_step(&self, current_step: Step) -> Step {
@@ -734,9 +750,7 @@ impl Task {
             Step::Done | Step::Blocked => unreachable!("unexpected step"),
         };
 
-        // SAFETY: installer outlives all tasks (BACKREF)
-        let installer = unsafe { &*self.installer };
-        installer.store.entries.items_step()[self.entry_id.get() as usize]
+        self.installer().store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
         next_step

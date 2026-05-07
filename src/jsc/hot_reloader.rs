@@ -500,6 +500,24 @@ where
         }
     }
 
+    /// Shared borrow of the owning reloader.
+    ///
+    /// `reloader` is a BACKREF: the `NewHotReloader` heap-allocates every
+    /// `Task` (via [`Self::enqueue`]) and is itself leaked for the process
+    /// lifetime in `enable_hot_module_reloading`, so it strictly outlives
+    /// every `Task` it spawns. The pointer is never null (set in
+    /// [`Self::init_empty`] / copied in [`Self::enqueue`]).
+    ///
+    /// Returns `&` not `&mut`: the only field callers mutate is
+    /// `pending_count: AtomicU32` (interior-mutable), and `run()` holds this
+    /// borrow across `Ctx::reload(self)` which may observe the same reloader
+    /// through `ctx.bun_watcher` — a `&mut` accessor would risk aliasing.
+    #[inline]
+    pub fn reloader(&self) -> &NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY> {
+        // SAFETY: BACKREF — see doc comment above.
+        unsafe { &*self.reloader }
+    }
+
     pub fn append(&mut self, id: u32) {
         if self.count == 8 {
             self.enqueue();
@@ -532,11 +550,10 @@ where
         // Note that we set the count _before_ we reload, so that if we
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
-        // SAFETY: reloader outlives every Task it creates (BACKREF).
-        let reloader = unsafe { &mut *self.reloader };
-        while reloader.pending_count.swap(0, Ordering::Relaxed) > 0 {
+        while self.reloader().pending_count.swap(0, Ordering::Relaxed) > 0 {
+            let ctx = self.reloader().ctx;
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*reloader.ctx).reload(self) };
+            unsafe { (*ctx).reload(self) };
         }
     }
 
@@ -565,9 +582,7 @@ where
             unreachable!();
         }
 
-        // SAFETY: reloader outlives every Task it creates (BACKREF).
-        let reloader = unsafe { &mut *self.reloader };
-        reloader.pending_count.fetch_add(1, Ordering::Relaxed);
+        self.reloader().pending_count.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: extern "C" fn with no preconditions.
         unsafe { BunDebugger__willHotReload() };
@@ -590,7 +605,7 @@ where
             });
             // TODO(port): `&that.concurrent_task` is an interior pointer into a
             // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
-            (*self.reloader)
+            self.reloader()
                 .enqueue_task_concurrent((*that).concurrent_task.assume_init_mut() as *mut _);
         }
         self.count = 0;

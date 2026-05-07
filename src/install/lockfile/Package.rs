@@ -2771,7 +2771,7 @@ impl Package<u64> {
                             // allocator.free(version_string); — Drop handles it (Box<[u8]>)
                             let sliced = external_version
                                 .value
-                                .sliced(lockfile.buffers.string_bytes.as_slice());
+                                .sliced(string_builder.string_bytes.as_slice());
                             let result = SemverVersion::parse(sliced);
                             if result.valid && result.wildcard == Wildcard::None {
                                 break 'brk Some(result.version.min());
@@ -2782,7 +2782,8 @@ impl Package<u64> {
                     };
 
                     if let Some(dep_) = Self::parse_dependency(
-                        lockfile,
+                        &mut lockfile.workspace_paths,
+                        &mut lockfile.workspace_versions,
                         pm,
                         log,
                         source,
@@ -2832,7 +2833,8 @@ impl Package<u64> {
                                 let version = value.as_utf8().unwrap_or(b"");
 
                                 if let Some(dep_) = Self::parse_dependency(
-                                    lockfile,
+                                    &mut lockfile.workspace_paths,
+                                    &mut lockfile.workspace_versions,
                                     pm,
                                     log,
                                     source,
@@ -2863,7 +2865,7 @@ impl Package<u64> {
 
                                     if bundle_all_deps
                                         || bundled_deps.contains(dep.name.slice(
-                                            lockfile.buffers.string_bytes.as_slice(),
+                                            string_builder.string_bytes.as_slice(),
                                         ))
                                     {
                                         dep.behavior.insert(Behavior::BUNDLED);

@@ -232,15 +232,14 @@ impl PatchTask {
                 self.apply().expect("OOM");
             }
         }
-        // PORT NOTE: `patch_task_queue` is `UnboundedQueue<PatchTask<'static>>`;
-        // erase the `'a` (BACKREF lifetime) at the raw-pointer boundary.
-        self.manager
-            .patch_task_queue
-            .push(self as *mut Self as *mut PatchTask<'static>);
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
-        // `wake_raw` only touches atomics / the event loop and never aliases an
-        // exclusive borrow held elsewhere.
-        unsafe { PackageManager::wake_raw(self.manager as *const _ as *mut PackageManager) };
+        // the worker thread only touches the lock-free `patch_task_queue` and the
+        // event-loop wake atomics, neither of which alias data the main thread
+        // holds an exclusive borrow on.
+        unsafe {
+            self.manager().patch_task_queue.push(self as *mut Self);
+            PackageManager::wake_raw(self.manager as *mut PackageManager);
+        }
     }
 
     pub fn run_from_main_thread(
@@ -345,8 +344,6 @@ impl PatchTask {
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
             let pkg_resolution_tag = pkg.resolution.tag;
-            // SAFETY: `tag == Npm` is checked below before this is used.
-            let pkg_npm_version = unsafe { pkg.resolution.value.npm.version };
             let name_and_version_hash = calc_hash.name_and_version_hash;
 
             let mut out_name_and_version_hash: Option<u64> = None;

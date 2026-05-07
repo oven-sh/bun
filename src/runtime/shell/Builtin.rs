@@ -520,26 +520,29 @@ impl Builtin {
         kind: Kind,
         err: &bun_sys::Error,
     ) -> &'a [u8] {
-        // TODO(b2-blocked): bun_sys::coreutils_error_map — map errno to the
-        // GNU coreutils-style message. For now use the generic errno name.
-        if !err.path.is_empty() {
-            Self::fmt_error_arena(
+        match err.msg() {
+            Some(message) if !err.path.is_empty() => Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
                 format_args!(
                     "{}: {}\n",
                     bstr::BStr::new(&err.path[..]),
-                    bstr::BStr::new(err.name()),
+                    bstr::BStr::new(message),
                 ),
-            )
-        } else {
-            Self::fmt_error_arena(
+            ),
+            Some(message) => Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
-                format_args!("{}\n", bstr::BStr::new(err.name())),
-            )
+                format_args!("{}\n", bstr::BStr::new(message)),
+            ),
+            None => Self::fmt_error_arena(
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("unknown error {}\n", err.errno),
+            ),
         }
     }
 

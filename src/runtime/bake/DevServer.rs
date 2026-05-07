@@ -5606,7 +5606,7 @@ impl DevServer {
         &mut self,
         events: &[bun_watcher::Event],
         changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: bun_watcher::ItemList,
+        watchlist: &bun_watcher::ItemList,
     ) {
         debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");

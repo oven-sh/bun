@@ -737,7 +737,8 @@ impl<'a> RouteLoader<'a> {
                     return;
                 }
                 Entry::Vacant(v) => {
-                    v.insert(route.abs_path.slice());
+                    // SAFETY: `Route::parse` interned `abs_path` via DirnameStore.
+                    v.insert(unsafe { arena_slice(route.abs_path) });
                 }
             }
         }
@@ -808,11 +809,20 @@ impl<'a> RouteLoader<'a> {
             }
 
             // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // SAFETY: `Route::parse` interned every PathString field via
+            // `DirnameStore::append{,_lower_case}` (process-lifetime arena).
+            let (filepath, match_name, public_path) = unsafe {
+                (
+                    arena_slice(route.abs_path),
+                    arena_slice(route.match_name),
+                    arena_slice(route.public_path),
+                )
+            };
             route_list.push(RouteIndex {
                 name: route.name,
-                filepath: route.abs_path.slice(),
-                match_name: route.match_name.slice(),
-                public_path: route.public_path.slice(),
+                filepath,
+                match_name,
+                public_path,
                 hash: route.full_hash,
                 route,
             });
@@ -1003,25 +1013,13 @@ impl TinyPtr {
     }
 }
 
-// On windows we need to normalize this path to have forward slashes.
-// To avoid modifying memory we do not own, allocate another buffer
-#[cfg(windows)]
-#[derive(Clone)]
-pub struct AbsPath {
-    pub path: Box<[u8]>,
-}
-
-#[cfg(windows)]
-impl AbsPath {
-    pub fn slice(&self) -> &[u8] {
-        &self.path
-    }
-    pub fn is_empty(&self) -> bool {
-        self.path.is_empty()
-    }
-}
-
-#[cfg(not(windows))]
+// On Windows we need to normalize this path to have forward slashes.
+// Zig heap-allocates a separate buffer (`allocator.dupe`) so it doesn't mutate
+// memory it doesn't own (router.zig:537-547). The Rust port interns the
+// normalized path into `DirnameStore` (process-lifetime arena) instead, so
+// `abs_path` is uniformly a `PathString` over `'static` bytes on every
+// platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
+// avoiding the borrow-then-move at `RouteLoader::load_all`.
 pub type AbsPath = PathString;
 
 pub struct Route {
@@ -1283,11 +1281,19 @@ impl Route {
             }
 
             #[cfg(windows)]
-            let abs_path = AbsPath {
-                path: Box::<[u8]>::from(bun_paths::platform_to_posix_buf(
+            let abs_path: AbsPath = {
+                // Zig: `allocator.dupe(u8, platformToPosixBuf(...))` — process-
+                // lifetime heap dup. Intern into DirnameStore so the slice is
+                // genuinely `'static` and `arena_slice()` is sound on Windows.
+                let normalized = bun_paths::platform_to_posix_buf(
                     abs_path_str,
-                    &mut bufs.normalized_abs_path_buf,
-                )),
+                    &mut bufs.normalized_abs_path_buf[..],
+                );
+                let interned: &'static [u8] = FileSystem::instance()
+                    .dirname_store()
+                    .append(normalized)
+                    .expect("unreachable");
+                PathString::init(interned)
             };
             #[cfg(not(windows))]
             let abs_path = PathString::init(abs_path_str);

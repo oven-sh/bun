@@ -14,11 +14,13 @@ use bun_sourcemap::{
 };
 use bun_str::String as BunString;
 
-// TODO(port): move to sourcemap_jsc_sys (or bake_sys) — extern decls
 unsafe extern "C" {
     fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-    // TODO(b2-blocked): bun_runtime::bake::production::PerThread — gated upstream;
-    // signature uses opaque `*mut c_void` until that type is available.
+    /// Returns the opaque `bake::production::PerThread*` previously attached
+    /// via `BakeGlobalObject__attachPerThreadData`. C++ stores it as a raw
+    /// pointer (see `Bake::ProductionPerThread`); only `bun_runtime` knows the
+    /// concrete layout, so here it's `*mut c_void` and the field access is
+    /// dispatched through `RuntimeHooks::bake_per_thread_source_map`.
     fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut core::ffi::c_void;
     fn BakeSourceProvider__getSourceSlice(this: *mut BakeSourceProvider) -> BunString;
 }

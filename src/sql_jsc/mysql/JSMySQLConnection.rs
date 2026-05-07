@@ -617,16 +617,10 @@ impl JSMySQLConnection {
             idle_timeout_interval_ms: u32::try_from(idle_timeout).unwrap(),
             connection_timeout_ms: u32::try_from(connection_timeout).unwrap(),
             max_lifetime_interval_ms: u32::try_from(max_lifetime).unwrap(),
-            timer: EventLoopTimer {
-                tag: EventLoopTimerTag::MySQLConnectionTimeout,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
-            max_lifetime_timer: EventLoopTimer {
-                tag: EventLoopTimerTag::MySQLConnectionMaxLifetime,
-                next: timespec::EPOCH,
-                ..Default::default()
-            },
+            timer: EventLoopTimer::init_paused(EventLoopTimerTag::MySQLConnectionTimeout),
+            max_lifetime_timer: EventLoopTimer::init_paused(
+                EventLoopTimerTag::MySQLConnectionMaxLifetime,
+            ),
         }));
         // SAFETY: ptr was just allocated and is non-null; we hold the only reference.
         let this = unsafe { &mut *ptr };

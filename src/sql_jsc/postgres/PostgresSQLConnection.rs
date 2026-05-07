@@ -76,43 +76,9 @@ impl jsc::JsClass for PostgresSQLConnection {
     }
 }
 
-/// Local port of `uws_jsc::verify_error_to_js` (the canonical impl lives in
-/// `bun_runtime::socket::uws_jsc`, but `bun_runtime` *depends on* this crate,
-/// so we can't import it without a cycle). The body is small and ABI-stable —
-/// build a `jsc.SystemError { code, message }` from the C-string fields and
-/// hand it to `toErrorInstance`. Matches `src/runtime/socket/uws_jsc.zig`.
-fn verify_error_to_js(
-    err: &uws::us_bun_verify_error_t,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let code: &[u8] = if err.code.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `code` is a NUL-terminated C string owned by uSockets
-        // for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.code) }.to_bytes()
-    };
-    let reason: &[u8] = if err.reason.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `reason` is a NUL-terminated C string owned by
-        // uSockets for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.reason) }.to_bytes()
-    };
-
-    let fallback = bun_jsc::SystemError {
-        errno: 0,
-        code: BunString::clone_utf8(code),
-        message: BunString::clone_utf8(reason),
-        path: BunString::empty(),
-        syscall: BunString::empty(),
-        hostname: BunString::empty(),
-        fd: core::ffi::c_int::MIN,
-        dest: BunString::empty(),
-    };
-
-    Ok(fallback.to_error_instance(global))
-}
+// `verify_error_to_js` sunk to `bun_jsc::system_error`; reach it via
+// `crate::jsc::verify_error_to_js`.
+use crate::jsc::verify_error_to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLConnection {
@@ -1190,17 +1156,11 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         } else {
             ConnectionFlags::empty()
         },
-        timer: EventLoopTimer {
-            tag: EventLoopTimerTag::PostgresSQLConnectionTimeout,
-            next: bun_core::timespec::EPOCH,
-            ..Default::default()
-        },
+        timer: EventLoopTimer::init_paused(EventLoopTimerTag::PostgresSQLConnectionTimeout),
         max_lifetime_interval_ms: u32::try_from(max_lifetime).unwrap(),
-        max_lifetime_timer: EventLoopTimer {
-            tag: EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            next: bun_core::timespec::EPOCH,
-            ..Default::default()
-        },
+        max_lifetime_timer: EventLoopTimer::init_paused(
+            EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
+        ),
         auto_flusher: AutoFlusher::default(),
     }));
 

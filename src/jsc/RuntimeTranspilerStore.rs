@@ -996,7 +996,7 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
-        let module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
+        let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
                 && loader.is_java_script_like()
@@ -1007,8 +1007,12 @@ impl TranspilerJob {
             } else {
                 None
             };
+        // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
+        // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
+        // closure returns; the raw pointer stays valid until `module_info` is
+        // moved/touched again (after `print_with_source_map`).
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_ref().map(|b| &**b as *const _ as *mut _);
+            module_info.as_deref_mut().map(|m| m as *mut _);
 
         let print_result = {
             // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw

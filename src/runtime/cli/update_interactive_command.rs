@@ -961,21 +961,14 @@ impl UpdateInteractiveCommand {
                     && manager.options.scope_for_package_name(name_slice).url_hash
                         == default_url_hash;
                 let mut expired = false;
-                // SAFETY: receiver `&mut (*pm_ptr).manifests` and the `pm`
-                // argument are projected from the same SharedReadWrite root;
-                // the callee dereferences `pm` only for fields disjoint from
-                // `manifests` (see `by_name_hash_allow_expired` safety doc),
-                // so the `&mut manifests` borrow stack is never invalidated.
-                let Some(manifest) = (unsafe {
-                    (*pm_ptr).manifests.by_name_allow_expired(
-                        pm_ptr,
-                        &scope,
-                        package_name,
-                        Some(&mut expired),
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
-                        needs_extended,
-                    )
-                }) else {
+                let Some(manifest) = manager.manifests.by_name_allow_expired(
+                    cache_ctx,
+                    &scope,
+                    package_name,
+                    Some(&mut expired),
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended,
+                ) else {
                     continue;
                 };
 

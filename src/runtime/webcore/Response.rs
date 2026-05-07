@@ -1195,7 +1195,7 @@ impl Response {
                 }
             }
         }
-        let init: Init = 'brk: {
+        let mut init: Init = 'brk: {
             if arguments[1].is_undefined_or_null() {
                 break 'brk Init { status_code: 200, headers: None, ..Default::default() };
             }
@@ -1209,7 +1209,7 @@ impl Response {
             }
             return Err(bun_jsc::JsError::Thrown);
         };
-        // errdefer init.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // errdefer init.deinit() — Init's field drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
 
         if global_this.has_exception() {
@@ -1225,7 +1225,7 @@ impl Response {
             super::body::extract(global_this, arguments[0])?
         };
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
-        // error return below releases the extracted body payload
+        // error returns below release the extracted body payload
         // (Response.zig:758).
         let body = scopeguard::guard(body, |mut b| b.reset());
 
@@ -1233,21 +1233,14 @@ impl Response {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        // Ownership transfers to the JSC wrapper (freed via `finalize`). The
-        // codegen constructor thunk receives this `*mut Response` and binds it
-        // to `js_this`.
-        let response = Box::into_raw(Box::new(Response {
-            body: scopeguard::ScopeGuard::into_inner(body),
-            init,
-            js_ref: JsRef::init_weak(js_this),
-            ..Default::default()
-        }));
-        // SAFETY: `response` is freshly boxed and uniquely owned by this fn
-        // until returned; reborrow for the trailing setup.
-        let response = unsafe { &mut *response };
-
-        if let BodyValue::Blob(blob) = &response.body.value {
-            if let Some(headers) = &mut response.init.headers {
+        // Perform the only remaining fallible op BEFORE heap-allocating: Zig
+        // keeps `errdefer _init.deinit()` / `errdefer body.deinit()` active
+        // across `bun.new` (Response.zig:744,758), so on `headers.put` failure
+        // body+init are freed (only the bare struct leaks). Doing it on stack
+        // locals lets `?` trigger the scopeguard and `init`'s drop glue and
+        // avoids leaking the heap allocation entirely.
+        if let BodyValue::Blob(blob) = &body.value {
+            if let Some(headers) = init.headers.as_deref_mut() {
                 // SAFETY: see note in get_or_create_headers — `content_type`
                 // is a valid (possibly empty) slice pointer.
                 let content_type = unsafe { &*blob.content_type };
@@ -1256,6 +1249,21 @@ impl Response {
                 }
             }
         }
+
+        // Disarm: all fallible ops have succeeded.
+        let body = scopeguard::ScopeGuard::into_inner(body);
+        // Ownership transfers to the JSC wrapper (freed via `finalize`). The
+        // codegen constructor thunk receives this `*mut Response` and binds it
+        // to `js_this`.
+        let response = Box::into_raw(Box::new(Response {
+            body,
+            init,
+            js_ref: JsRef::init_weak(js_this),
+            ..Default::default()
+        }));
+        // SAFETY: `response` is freshly boxed and uniquely owned by this fn
+        // until returned; reborrow for the trailing (infallible) setup.
+        let response = unsafe { &mut *response };
 
         response.calculate_estimated_byte_size();
         response.check_body_stream_ref(global_this);

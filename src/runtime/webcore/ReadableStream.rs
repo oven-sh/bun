@@ -435,7 +435,7 @@ impl ReadableStream {
                 store.ref_();
                 reader.to_readable_stream(global_this)
             }
-            _ => Err(global_this.throw("Expected FileBlob")),
+            _ => Err(global_this.throw(format_args!("Expected FileBlob"))),
         }
     }
 
@@ -1182,7 +1182,7 @@ pub mod js_readable_stream_source {
                 {
                     return r;
                 }
-                Err(global_this.throw_todo("This is not implemented yet"))
+                Err(global_this.throw_todo(b"This is not implemented yet"))
             }
         };
     }

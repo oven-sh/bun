@@ -55,27 +55,6 @@ impl UrlExt for URL {
     }
 }
 
-/// Local shim for `JSGlobalObject::throwInvalidArgumentPropertyValue` (gated upstream).
-fn throw_invalid_argument_property_value(
-    global: &JSGlobalObject,
-    argname: &str,
-    expected: &str,
-    value: JSValue,
-) -> JsError {
-    // `defer actual.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
-    let actual = match global.determine_specific_type(value) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    global
-        .err(
-            bun_jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!(
-                "The property \"{argname}\" is invalid. Expected {expected}, received {actual}",
-            ),
-        )
-        .throw()
-}
 // ──────────────────────────────────────────────────────────────────────────
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
@@ -131,12 +110,12 @@ impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
         if !obj.is_object() {
-            return Err(global.throw_invalid_argument_type_value("options", "object", obj));
+            return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
 
         let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
             if !a.is_string() {
-                return Err(global.throw_invalid_argument_type_value("options.address", "string", a));
+                return Err(global.throw_invalid_argument_type_value(b"options.address", b"string", a));
             }
             Some(BunString::from_js(a, global)?)
         } else {

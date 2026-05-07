@@ -610,19 +610,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `jsc_vm` set in VM init; valid for the JS thread's lifetime.
         unsafe { (*(*vm_ptr).jsc_vm).deprecated_report_extra_memory(core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>()) };
 
-        // Allocate the pooled body slot. `init_request_body_value` returns a
-        // type-erased `*mut Body::Value::HiveRef` (the hook lives in `bun_jsc`
-        // which cannot name `bun_runtime` types); cast back here.
-        let mut body_init = crate::webcore::body::Value::Null;
-        // SAFETY: vm backref live; hook contract documented on `init_request_body_value`.
-        let body_hive: *mut crate::webcore::body::HiveRef = unsafe {
-            (*vm_ptr).init_request_body_value(&mut body_init as *mut _ as *mut c_void)
-        }
-        .cast();
-        // SAFETY: `init_request_body_value` returns a freshly-initialized
-        // hive slot (`ref_count = 1`); never null on success.
+        // Allocate the pooled body slot. `hive_alloc` is the typed front-end
+        // for the type-erased `init_request_body_value` hook (the hook lives
+        // in `bun_jsc` which cannot name `bun_runtime` types).
+        // SAFETY: vm backref live for the JS thread's lifetime.
+        let body_hive = crate::webcore::body::hive_alloc(
+            unsafe { &mut *vm_ptr },
+            crate::webcore::body::Value::Null,
+        );
+        // SAFETY: hive_alloc returns a freshly-initialized hive slot
+        // (`ref_count = 1`); live until refcount drops to zero.
         let body_value: *mut crate::webcore::body::Value =
-            unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
+            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx_mut.request_body = core::ptr::NonNull::new(body_value);
 
         // SAFETY: `global_this` set in `init()`; outlives the server.
@@ -634,23 +633,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // PORT NOTE: in Zig the +1 from `body.ref()` is *moved into*
-        // `Request.init(..., body.ref())` so the JS Request and the
-        // RequestContext share one hive slot. `webcore::Request.body` is
-        // currently `Box<BodyValue>` (see Request.rs:95) and cannot adopt the
-        // hive ref yet, so we deliberately do NOT bump `(*body_hive).ref_()`
-        // here — doing so without an owner would leak the slot on every
-        // request. The hive slot's initial ref_count=1 is held by
-        // `ctx.request_body` and released in `RequestContext::deinit`.
-        let _ = body_hive;
-        // TODO(port): `Request.body` is currently `Box<BodyValue>` (see
-        // Request.rs:95) — Zig stores `*Body.Value.HiveRef` so the request
-        // and the RequestContext share one body slot. Until that field is
-        // re-typed, the JS `Request.body` and `ctx.request_body` diverge
-        // (body data buffered into `ctx` won't surface on `request.body`).
-        // The bake path (the only caller through `AnyServer`) does not read
-        // `request.body`, so this is not observable there.
-        //
+        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
+        // same hive slot as `ctx.request_body` (streamed bytes buffered into
+        // the ctx surface on `request.body`/`request.json()`). Paired with
+        // `HiveRef::unref` in `Request::finalize`.
+        // SAFETY: `body_hive` is live (ref_count >= 1).
+        let body_for_req: core::ptr::NonNull<crate::webcore::body::HiveRef> =
+            unsafe { core::ptr::NonNull::from((*body_hive.as_ptr()).ref_()) };
         // PORT NOTE (ownership): `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
@@ -661,7 +650,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),
-                Box::new(crate::webcore::body::Value::Null),
+                body_for_req,
             )));
         // SAFETY: freshly allocated; uniquely owned here.
         ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });

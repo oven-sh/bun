@@ -1446,7 +1446,7 @@ where
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
             return Err(unsafe { &*self.global_this }.throw(format_args!("timeout() requires a number")));
         }
-        let value = seconds.to_int32() as c_uint;
+        let value = seconds.to_u32();
 
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request
@@ -2085,9 +2085,15 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // SAFETY: cast_ returns a live FetchHeaders*; adopt holds one ref.
-                        // TODO(port): cast_ does not bump the refcount; this matches Zig's
-                        // borrow-then-pass-to-init2 which transfers ownership.
+                        // PORT NOTE: `cast_` returns a *borrow* of the JS
+                        // wrapper's `Ref<FetchHeaders>` without bumping the
+                        // refcount. Zig stores it directly in
+                        // `Request.#headers` (server.zig:1296) and
+                        // `Request.finalizeWithoutDeinit` later calls
+                        // `headers.deref()` — same alloc/free pairing as
+                        // `HeadersRef::adopt` + `Drop`. Kept 1:1 with the
+                        // spec; FetchHeaders has no `ref()` FFI.
+                        // SAFETY: `headers__` is live (rooted by `headers_`).
                         headers = Some(unsafe { HeadersRef::adopt(headers__) });
                     } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
                         // SAFETY: create_from_js returns a +1 ref.
@@ -2111,9 +2117,9 @@ where
             Box::new(Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
-                // PERF(port): Zig routes through `vm.initRequestBodyValue` (HiveRef pool);
-                // Box matches the `Request::init2` signature until that hook is type-erased.
-                Box::new(body),
+                // Zig: `bun.handleOom(this.vm.initRequestBodyValue(body))` —
+                // moves `body` into the per-VM hive pool (ref_count = 1).
+                crate::webcore::body::hive_alloc(self.vm_mut(), body),
                 method,
             ))
         } else if let Some(request_) = first_arg
@@ -2140,16 +2146,24 @@ where
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
         };
 
-        let mut request = existing_request;
+        // Zig: `var request = Request.new(existing_request)` → raw
+        // `*Request` (TrivialNew). `Request::to_js` stores `self as *mut
+        // Request` into the JS wrapper, which adopts ownership and frees the
+        // allocation in its GC finalizer. Relinquish the `Box` here so the
+        // local going out of scope does not also drop it (double-free / UAF).
+        let request: *mut Request = Box::into_raw(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global_this = unsafe { &*self.global_this };
         let on_request = self.config.on_request.as_ref().unwrap().get();
+        // SAFETY: `request` was just allocated via `Box::into_raw`; ownership
+        // transfers to the JS wrapper inside `to_js`.
+        let request_value = unsafe { (*request).to_js(global_this) };
         let response_value = match on_request.call(
             global_this,
             self.js_value_assert_alive(),
-            &[request.to_js(global_this)],
+            &[request_value],
         ) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
@@ -2172,8 +2186,10 @@ where
 
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
             // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive).
-            unsafe { (*resp).set_url(request.url.clone()) };
+            // JS wrapper, which `response_value` keeps alive). `request` is
+            // kept alive by `request_value` (its JS wrapper) for the duration
+            // of this synchronous frame.
+            unsafe { (*resp).set_url((*request).url.clone()) };
         }
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
@@ -3389,7 +3405,7 @@ pub fn server_set_idle_timeout_(server: JSValue, seconds: JSValue, global: &JSGl
     if !seconds.is_number() {
         return Err(global.throw(format_args!("Failed to set timeout: The provided value is not of type 'number'.")));
     }
-    let value = seconds.to_int32() as c_uint;
+    let value = seconds.to_u32();
     // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
         unsafe { &mut *this }.set_idle_timeout(value);

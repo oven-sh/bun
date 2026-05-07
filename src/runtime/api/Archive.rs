@@ -787,9 +787,9 @@ impl TaskContext for ExtractContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
             ExtractResult::Success(count) => PromiseResult::Resolve(JSValue::js_number(*count as f64)),
-            ExtractResult::Err(e) => {
-                PromiseResult::Reject(global.create_error_instance(<&'static str>::from(e)))
-            }
+            ExtractResult::Err(e) => PromiseResult::Reject(
+                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
+            ),
         })
     }
 }
@@ -904,7 +904,7 @@ impl TaskContext for BlobContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match core::mem::replace(&mut self.result, BlobResult::Uncompressed) {
             BlobResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance(<&'static str>::from(&e)),
+                global.create_error_instance(format_args!("{}", <&'static str>::from(&e))),
             )),
             BlobResult::Compressed(data) => {
                 // self.result already replaced with Uncompressed above — ownership transferred
@@ -1008,9 +1008,9 @@ impl TaskContext for WriteContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
             WriteResult::Success => PromiseResult::Resolve(JSValue::UNDEFINED),
-            WriteResult::Err(e) => {
-                PromiseResult::Reject(global.create_error_instance(<&'static str>::from(e)))
-            }
+            WriteResult::Err(e) => PromiseResult::Reject(
+                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
+            ),
             WriteResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
@@ -1209,7 +1209,7 @@ impl TaskContext for FilesContext {
                 let map = JSMap::create(global);
                 let Some(mut map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
-                        global.create_error_instance("Failed to create Map"),
+                        global.create_error_instance(format_args!("Failed to create Map")),
                     ));
                 };
 
@@ -1231,10 +1231,10 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global.create_error_instance(bstr::BStr::new(err_msg.to_bytes())),
+                global.create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance(<&'static str>::from(&*e)),
+                global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
             )),
         }
     }

@@ -1719,15 +1719,13 @@ impl Request {
 
         // Zig `req.* = Request{...}` is a raw bit-overwrite — no destructors run on
         // the old `*req`. Match that with `ptr::write` so future Drop impls on
-        // `JsRef` / `strong::Optional` don't fire on the caller's sentinel. The one
-        // owned allocation in the incoming sentinel is `body: Box<BodyValue>`
-        // (callers seed it with `Box::new(Null)`); read it out and drop it so it
-        // isn't leaked. `url` was bitwise-copied above (preserve_url) or is the
-        // empty sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // `JsRef` / `strong::Optional` don't fire on the caller's sentinel. The
+        // sentinel `body` is `NonNull::dangling()` (sole caller is `clone()`),
+        // `url` was bitwise-copied above (preserve_url) or is the empty sentinel;
+        // remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller; nothing
-        // between the read and the write can panic.
+        // between here and the write can panic.
         unsafe {
-            drop(core::ptr::read(&req.body));
             core::ptr::write(
                 req,
                 Request {
@@ -1763,7 +1761,7 @@ impl Request {
             url: BunString::empty(),
             headers: None,
             signal: None,
-            body: Box::new(BodyValue::Null),
+            body: BodyValueRef::null(),
             js_ref: JsRef::empty(),
             method: Method::GET,
             flags: Flags::default(),

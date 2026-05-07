@@ -8,6 +8,7 @@ use crate::webcore::jsc::{
 };
 use bun_str::{OwnedString, String as BunString, ZigString, ZigStringSlice};
 use bun_core::Output;
+use bun_jsc::StringJsc as _;
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue};
@@ -1387,7 +1388,7 @@ impl Init {
         }
 
         if let Some(status_text) = response_init.get_truthy(global_this, b"statusText")? {
-            result.status_text = OwnedString::new(BunString::from_js(status_text, global_this)?);
+            result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
         if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {

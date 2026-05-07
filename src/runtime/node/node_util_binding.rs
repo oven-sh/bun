@@ -141,11 +141,11 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
 
     match str.encoding() {
         // `inline .utf16, .latin1 => |encoding| split(encoding, ...)` — runtime → comptime dispatch
-        EncodingNonAscii::Utf16 => split::<{ EncodingNonAscii::Utf16 }>(global, &str),
-        EncodingNonAscii::Latin1 => split::<{ EncodingNonAscii::Latin1 }>(global, &str),
+        EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
+        EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str),
         EncodingNonAscii::Utf8 => {
             if strings::is_all_ascii(str.byte_slice()) {
-                split::<{ EncodingNonAscii::Utf8 }>(global, &str)
+                split(EncodingNonAscii::Utf8, global, &str)
             } else {
                 Ok(JSValue::UNDEFINED)
             }
@@ -153,23 +153,20 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
-fn split<const ENCODING: EncodingNonAscii>(
-    global: &JSGlobalObject,
-    str: &BunString,
-) -> JsResult<JSValue> {
+fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B
     // Allocator param dropped (non-AST crate uses global mimalloc).
-
+    //
     // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // TODO(port): const-generic enum cannot select an associated type directly in stable Rust.
-    // Reshaped into two arms over the buffer's element type; logic is identical.
-    // PORT NOTE: reshaped for type-level dispatch on ENCODING.
+    // PORT NOTE: const-generic enum dispatch reshaped to a runtime match over the
+    // buffer's element type; logic is identical and the per-arm bodies are
+    // monomorphic anyway.
 
     // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
     // — Vec<BunString> dropping at scope exit derefs each element via bun_str::String's Drop.
     let mut lines: Vec<BunString> = Vec::new();
 
-    match ENCODING {
+    match encoding {
         EncodingNonAscii::Utf16 => {
             let buffer: &[u16] = str.utf16();
             let mut it = SplitNewlineIterator { buffer, index: Some(0) };
@@ -183,10 +180,10 @@ fn split<const ENCODING: EncodingNonAscii>(
             let buffer: &[u8] = str.byte_slice();
             let mut it = SplitNewlineIterator { buffer, index: Some(0) };
             while let Some(line) = it.next() {
-                let encoded_line = match ENCODING {
-                    EncodingNonAscii::Utf8 => BunString::borrow_utf8(line),
-                    EncodingNonAscii::Latin1 => BunString::clone_latin1(line),
-                    EncodingNonAscii::Utf16 => unreachable!(),
+                let encoded_line = if matches!(encoding, EncodingNonAscii::Utf8) {
+                    BunString::borrow_utf8(line)
+                } else {
+                    BunString::clone_latin1(line)
                 };
                 // errdefer encoded_line.deref() — Drop on BunString handles error path
                 lines.push(encoded_line);
@@ -194,7 +191,7 @@ fn split<const ENCODING: EncodingNonAscii>(
         }
     }
 
-    BunString::to_js_array(global, lines.as_slice())
+    bun_string_jsc::to_js_array(global, lines.as_slice())
 }
 
 pub struct SplitNewlineIterator<'a, T> {
@@ -258,7 +255,7 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         obj.put(
             global,
             ZigString::init_utf8(k),
-            BunString::create_utf8_for_js(global, v.value)?,
+            bun_string_jsc::create_utf8_for_js(global, v.value)?,
         );
     }
     Ok(obj)

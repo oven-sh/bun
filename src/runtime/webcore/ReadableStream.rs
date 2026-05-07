@@ -970,7 +970,7 @@ impl<C: SourceContext> NewSource<C> {
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let result = self.context.on_pull(buffer.slice_mut(), view);
+        let result = self.on_pull_from_js(buffer.slice_mut(), view);
         Self::process_result(this_jsvalue, global_this, arguments.ptr[1], result)
     }
 
@@ -981,7 +981,7 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.global_this = global_this;
         self.this_jsvalue = call_frame.this();
-        match self.context.on_start() {
+        match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
             streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),

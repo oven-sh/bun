@@ -140,7 +140,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     pub fn init(
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         stream: ReadableStream,
         context: *mut Context,
     ) -> *mut Self {
@@ -148,7 +148,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     pub fn init_exact_refs(
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         stream: ReadableStream,
         context: *mut Context,
         ref_count: u32,
@@ -204,7 +204,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let err: Option<JSValue> = 'brk_err: {
                         let pending = &byte_stream.pending.result;
                         if let StreamResult::Err(e) = pending {
-                            let (js_err, was_strong) = e.to_js_weak(this_ref.global_this);
+                            let (js_err, was_strong) = e.to_js_weak(global_this);
                             js_err.ensure_still_alive();
                             if was_strong == crate::webcore::streams::WasStrong::Strong {
                                 js_err.unprotect();
@@ -244,7 +244,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
                 // we only need the stream, we dont need to touch JS side yet
                 this_ref.stream =
-                    crate::webcore::readable_stream::Strong::init(stream, this_ref.global_this);
+                    crate::webcore::readable_stream::Strong::init(stream, global_this);
                 return this;
             }
         }
@@ -375,7 +375,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             return;
         }
         if let Some(js_this) = self.js_this.try_get() {
-            let global_object = self.global_this;
+            let global_object = self.global();
 
             if let Some(ondrain) = Self::get_drain(js_this) {
                 self.status = Status::Started;
@@ -411,7 +411,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             js_this.ensure_still_alive();
 
             let on_cancel_callback = Self::get_cancel(js_this);
-            let global_object = self.global_this;
+            let global_object = self.global();
 
             // detach first so if cancel calls end will be a no-op
             self.detach_js();
@@ -441,9 +441,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
     fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
-            Self::set_drain(js_this, self.global_this, JSValue::ZERO);
-            Self::set_cancel(js_this, self.global_this, JSValue::ZERO);
-            Self::set_stream(js_this, self.global_this, JSValue::ZERO);
+            let global = self.global();
+            Self::set_drain(js_this, global, JSValue::ZERO);
+            Self::set_cancel(js_this, global, JSValue::ZERO);
+            Self::set_stream(js_this, global, JSValue::ZERO);
             self.js_this.downgrade();
         }
     }
@@ -477,7 +478,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
                 if let StreamResult::Err(e) = &stream {
-                    let (js_err, was_strong) = e.to_js_weak(self.global_this);
+                    let (js_err, was_strong) = e.to_js_weak(self.global());
                     js_err.ensure_still_alive();
                     if was_strong == crate::webcore::streams::WasStrong::Strong {
                         js_err.unprotect();
@@ -502,7 +503,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             return;
         }
         self.status = Status::Done;
-        let global_object = self.global_this;
+        let global_object = self.global();
         if let Some(stream_) = self.stream.get(global_object) {
             if let crate::webcore::readable_stream::Source::Bytes(bytes_ptr) = stream_.ptr {
                 // SAFETY: ByteStream is live while the ReadableStream.Strong holds it.
@@ -575,8 +576,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 // Satisfies `Wrap<T: PipeHandler>` so `Wrap::<Self>::init` can erase `*mut Self`
 // into a `Pipe`. Mirrors Zig `Pipe.Wrap(@This(), onStreamPipe)` where the
 // comptime fn-ptr param is fixed to `on_stream_pipe`.
-impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
-    for ResumableSink<'a, Js, Context>
+impl<Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
+    for ResumableSink<Js, Context>
 {
     #[inline]
     fn on_pipe(&mut self, stream: StreamResult) {
@@ -584,8 +585,8 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
     }
 }
 
-impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> Drop
-    for ResumableSink<'a, Js, Context>
+impl<Js: ResumableSinkJs, Context: ResumableSinkContext> Drop
+    for ResumableSink<Js, Context>
 {
     fn drop(&mut self) {
         // Zig `deinit`: detachJS + stream.deinit() + bun.destroy(this).
@@ -664,8 +665,8 @@ impl ResumableSinkContext for FetchTasklet {
     }
 }
 
-pub type ResumableFetchSink<'a> = ResumableSink<'a, JSResumableFetchSink, FetchTasklet>;
-pub type ResumableS3UploadSink<'a> = ResumableSink<'a, JSResumableS3UploadSink, S3UploadStreamWrapper>;
+pub type ResumableFetchSink = ResumableSink<JSResumableFetchSink, FetchTasklet>;
+pub type ResumableS3UploadSink = ResumableSink<JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
 unsafe extern "C" {
     fn Bun__assignStreamIntoResumableSink(

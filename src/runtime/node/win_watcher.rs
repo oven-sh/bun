@@ -371,9 +371,15 @@ impl PathWatcher {
         drop(unsafe { Box::from_raw(this) });
     }
 
-    pub fn detach(&mut self, handler: *mut c_void) {
-        if self.handlers.swap_remove(&handler).is_some() {
-            self.maybe_deinit();
+    /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
+    /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
+    /// caller in `node_fs_watcher.rs` is platform-agnostic.
+    pub fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+        // SAFETY: `this` is the live `Box::into_raw`'d pointer returned from `watch()`;
+        // it stays valid until `maybe_deinit` self-destroys on the last handler.
+        let me = unsafe { &mut *this };
+        if me.handlers.swap_remove(&handler).is_some() {
+            me.maybe_deinit();
         }
     }
 

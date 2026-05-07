@@ -1949,15 +1949,23 @@ fn transpile_source_code_inner(
             {
                 bun_resolver::package_json::MacroMap::default()
             } else {
-                // TODO(b2-cycle): `vm.transpiler` is uninitialized (see log-swap
-                // note above) — reading `options.macro_remap` would be UB. Gate
-                // until `init_runtime_state` writes a real `Transpiler`.
-                
-                // TODO(port): `MacroMap` (`StringArrayHashMap<StringArrayHashMap<&[u8]>>`)
-                // is not `Clone`; spec passes by value (Zig copies the struct).
-                // Change `ParseOptions::macro_remappings` to `&MacroMap` or add
-                // `Clone` to the inner map. Until then, default (empty remap).
-                bun_resolver::package_json::MacroMap::default()
+                // PORT NOTE: `MacroMap`'s value type
+                // (`StringArrayHashMap<Box<[u8]>>`) has only the fallible
+                // `clone() -> Result<_, AllocError>` (no trait `Clone`), so
+                // the outer map can't be `clone()`d generically. Re-key
+                // shallowly here matching `bun_bundler::transpiler` and treat
+                // the inner OOM as a process-fatal alloc failure (Zig copied
+                // the struct by value, infallibly).
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread
+                // VM and `init_runtime_state` has already `ptr::write`n a
+                // real `Transpiler` into `vm.transpiler` (the `options.jsx` /
+                // `options.loaders` reads below depend on the same invariant).
+                let src = unsafe { &(*jsc_vm).transpiler.options.macro_remap };
+                let mut m = bun_resolver::package_json::MacroMap::default();
+                for (k, v) in src.iter() {
+                    m.insert(k, bun_core::handle_oom(v.clone()));
+                }
+                m
             };
 
             // Spec :211-215.
@@ -4037,70 +4045,64 @@ unsafe fn resolve_embedded_node_file_hook(
     let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-        // Spec ModuleLoader.zig:43-45 — `tmpname("node", buf, bun.hash(file.name))`.
-        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-        let Ok(tmpfilename) =
-            Fs::FileSystem::tmpname(b"node", &mut tmpname_buf[..], bun_wyhash::hash(file_name))
-        else {
-            return false;
-        };
+    // Spec ModuleLoader.zig:43-45 — `tmpname("node", buf, bun.hash(file.name))`.
+    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
+    let Ok(tmpfilename) =
+        Fs::FileSystem::tmpname(b"node", &mut tmpname_buf[..], bun_wyhash::hash(file_name))
+    else {
+        return false;
+    };
 
-        // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
-        // SAFETY: `FileSystem::instance()` returns the process-global singleton
-        // pointer (initialized at startup).
-        let Ok(tmpdir) = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir() else {
-            return false;
-        };
-        let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
+    // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
+    // SAFETY: `FileSystem::instance()` returns the process-global singleton
+    // pointer (initialized at startup).
+    let Ok(tmpdir) = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir() else {
+        return false;
+    };
+    let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
 
-        // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
-        let Ok(tmpfile) = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename) else {
-            return false;
-        };
-        let tmpfile_fd = tmpfile.fd;
-        scopeguard::defer! {
-            let _ = bun_sys::close(tmpfile_fd);
-        }
-
-        // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
-        // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
-        // tmpfile.fd }, .encoding = .buffer })`.
-        // CYCLEBREAK MOVE_DOWN: NodeFS::writeFileWithPathBuffer → bun_sys.
-        let mut scratch = bun_paths::path_buffer_pool::get();
-        if bun_sys::write_file_with_path_buffer(
-            &mut scratch,
-            bun_sys::WriteFileArgs {
-                data: bun_sys::WriteFileData::Buffer { buffer: file_contents },
-                encoding: bun_sys::WriteFileEncoding::Buffer,
-                dirfd: tmpdir_fd,
-                file: bun_sys::PathOrFileDescriptor::Fd(tmpfile_fd),
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return false;
-        }
-
-        // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
-        // path_buf, &.{tmpfilename}, .auto)`.
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            Fs::RealFS::tmpdir_path(),
-            &mut path_buf[..],
-            &[tmpfilename.as_bytes()],
-        );
-
-        // Spec ModuleLoader.zig:1339-1340 — `in_out_str.* = bun.String.cloneUTF8(result)`.
-        // SAFETY: per fn contract.
-        unsafe { *in_out_str = bun_string::String::clone_utf8(result) };
-        return true;
+    // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
+    let Ok(tmpfile) = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename) else {
+        return false;
+    };
+    let tmpfile_fd = tmpfile.fd;
+    scopeguard::defer! {
+        let _ = bun_sys::close(tmpfile_fd);
     }
-    #[cfg_attr(not(any()), allow(unreachable_code))]
+
+    // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
+    // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
+    // tmpfile.fd }, .encoding = .buffer })`.
+    // CYCLEBREAK MOVE_DOWN: NodeFS::writeFileWithPathBuffer → bun_sys.
+    let mut scratch = bun_paths::path_buffer_pool::get();
+    if bun_sys::write_file_with_path_buffer(
+        &mut scratch,
+        bun_sys::WriteFileArgs {
+            data: bun_sys::WriteFileData::Buffer { buffer: file_contents },
+            encoding: bun_sys::WriteFileEncoding::Buffer,
+            dirfd: tmpdir_fd,
+            file: bun_sys::PathOrFileDescriptor::Fd(tmpfile_fd),
+            ..Default::default()
+        },
+    )
+    .is_err()
     {
-        let _ = (vm, input_path);
-        false
+        return false;
     }
+
+    // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
+    // path_buf, &.{tmpfilename}, .auto)`.
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        Fs::RealFS::tmpdir_path(),
+        &mut path_buf[..],
+        &[tmpfilename.as_bytes()],
+    );
+
+    // Spec ModuleLoader.zig:1339-1340 — `in_out_str.* = bun.String.cloneUTF8(result)`.
+    // SAFETY: per fn contract.
+    unsafe { *in_out_str = bun_string::String::clone_utf8(result) };
+    true
 }
 
 // ════════════════════════════════════════════════════════════════════════════

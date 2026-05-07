@@ -820,19 +820,29 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
 /// retained `JSValue`s). The Zig spec dispatches via `@hasDecl`; in Rust the
 /// trait methods are **required** so missing impls are a compile error rather
 /// than a silent UAF/leak.
-pub trait FsArgument {
+pub trait FsArgument: Sized {
     const HAVE_ABORT_SIGNAL: bool = false;
+    /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
+    /// call frame. Every `args::*` struct already exposes an inherent
+    /// `from_js`; the trait forwards to it so the generic `Bindings` in
+    /// `node_fs_binding.rs` can call it without per-type macro arms.
+    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
+    /// `args.deinit()` — synchronous-path cleanup (paths, buffers). Called by
+    /// `runSync` after the syscall returns.
+    fn deinit(&self);
     fn to_thread_safe(&mut self);
     fn deinit_and_unprotect(&mut self);
     fn signal(&self) -> Option<&AbortSignal> { None }
 }
 
-/// Forward [`FsArgument`] to the inherent `to_thread_safe` /
-/// `deinit_and_unprotect` methods each `args::*` struct already defines (1:1
-/// with `Arguments.*.toThreadSafe` / `deinitAndUnprotect` in `node_fs.zig`).
+/// Forward [`FsArgument`] to the inherent `from_js` / `deinit` /
+/// `to_thread_safe` / `deinit_and_unprotect` methods each `args::*` struct
+/// already defines (1:1 with `Arguments.*` in `node_fs.zig`).
 macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            #[inline] fn deinit(&self) { <$ty>::deinit(self) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
             #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit_and_unprotect(self) }
         } )+
@@ -842,6 +852,8 @@ macro_rules! impl_fs_argument {
     // `deinit()` (also a no-op for these).
     ( @fd $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            #[inline] fn deinit(&self) { <$ty>::deinit(self) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
             #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit(self) }
         } )+
@@ -865,6 +877,8 @@ impl_fs_argument!(@fd
 // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
 impl FsArgument for args::ReadFile {
     const HAVE_ABORT_SIGNAL: bool = true;
+    #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::ReadFile::from_js(ctx, arguments) }
+    #[inline] fn deinit(&self) { args::ReadFile::deinit(self) }
     #[inline] fn to_thread_safe(&mut self) { args::ReadFile::to_thread_safe(self) }
     #[inline] fn deinit_and_unprotect(&mut self) { args::ReadFile::deinit_and_unprotect(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
@@ -874,6 +888,8 @@ impl FsArgument for args::ReadFile {
 }
 impl FsArgument for args::WriteFile {
     const HAVE_ABORT_SIGNAL: bool = true;
+    #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::WriteFile::from_js(ctx, arguments) }
+    #[inline] fn deinit(&self) { args::WriteFile::deinit(self) }
     #[inline] fn to_thread_safe(&mut self) { args::WriteFile::to_thread_safe(self) }
     #[inline] fn deinit_and_unprotect(&mut self) { args::WriteFile::deinit_and_unprotect(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {

@@ -374,7 +374,14 @@ impl FSWatchTaskWindows {
 
     /// this runs on JS Context Thread
     pub fn run(&mut self) {
-        let ctx = self.ctx();
+        // PORT NOTE: reshaped for borrowck — `self.ctx()` ties the returned
+        // `&mut FSWatcher` to `&self` via lifetime elision, which then
+        // conflicts with `&mut self.event` below. Copy the raw backref and
+        // deref it directly so no borrow of `self` is held across the match.
+        let ctx_ptr = self.ctx;
+        // SAFETY: BACKREF — set from `this` (FSWatcher) at construction;
+        // FSWatcher outlives every task it enqueues.
+        let ctx = unsafe { &mut *ctx_ptr };
 
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
@@ -903,11 +910,24 @@ impl FSWatcher {
                 .remove_fs_watcher_for_isolation(self as *mut Self as *mut c_void);
         }
 
-        if let Some(path_watcher) = self.path_watcher.take() {
-            // SAFETY: `path_watcher` is the live `*mut PathWatcher` returned by
+        if let Some(watcher) = self.path_watcher.take() {
+            // SAFETY: `watcher` is the live `*mut PathWatcher` returned by
             // `path_watcher::watch`; `detach` removes our handler and
             // self-destroys on the last one.
-            unsafe { (*path_watcher).detach(self as *mut Self as *mut c_void) };
+            //
+            // PORT NOTE: cfg-split because the posix backend's `detach` takes a
+            // raw `*mut PathWatcher` (it self-destroys via `Box::from_raw`),
+            // while the Windows backend takes `&mut self`. Same Zig signature
+            // (`*PathWatcher`), different Rust receiver to keep the posix
+            // free-after-last-handler path sound.
+            #[cfg(not(windows))]
+            unsafe {
+                path_watcher::PathWatcher::detach(watcher, self as *mut Self as *mut c_void)
+            };
+            #[cfg(windows)]
+            unsafe {
+                (*watcher).detach(self as *mut Self as *mut c_void)
+            };
         }
 
         if self.persistent {

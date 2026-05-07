@@ -234,14 +234,18 @@ impl PathWatcher {
         let h = hash(rel_path);
         for entry in self.handlers.iterator() {
             if entry.value_ptr.should_emit(h, timestamp, event_type) {
-                on_path_update_fn(Some(*entry.key_ptr), event_type.to_event(rel_path.into()), is_file);
+                (FSWatcher::ON_PATH_UPDATE)(
+                    Some(*entry.key_ptr),
+                    event_type.to_event(rel_path.into()),
+                    is_file,
+                );
             }
         }
     }
 
     fn emit_error(&mut self, err: sys::Error) {
         for &ctx in self.handlers.keys() {
-            on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::Error(err.clone()), false);
         }
     }
 
@@ -249,7 +253,7 @@ impl PathWatcher {
     /// Caller holds `manager.mutex`.
     fn flush(&mut self) {
         for &ctx in self.handlers.keys() {
-            on_update_end_fn(Some(ctx));
+            FSWatcher::on_update_end(Some(ctx));
         }
     }
 

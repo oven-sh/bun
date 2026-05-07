@@ -733,13 +733,18 @@ void JSDatabaseSync::closeInternal()
     // back-pointer into the connection, and sqlite3_close_v2 does NOT
     // tear them down, so delete any that JS hasn't already closed.
     if (m_db) {
-        for (auto* s : m_sessions) {
-            sqlite3session_delete(s);
-        }
-        m_sessions.clear();
+        deleteTrackedSessions();
         sqlite3_close_v2(m_db);
         m_db = nullptr;
     }
+}
+
+void JSDatabaseSync::deleteTrackedSessions()
+{
+    for (auto* s : m_sessions) {
+        sqlite3session_delete(s);
+    }
+    m_sessions.clear();
 }
 
 bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
@@ -1381,8 +1386,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
     auto span = buf->span();
     WTF::Vector<uint8_t> owned;
     if (!owned.tryAppend(span)) {
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
-            "changeset is too large"_s);
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED,
+            "Failed to allocate memory for changeset"_s);
     }
     // sqlite3changeset_apply declares pChangeset as `void*` (non-const)
     // for historical reasons; the buffer is not written to.
@@ -1635,6 +1640,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     // finalizing here would make the wrapper double-free a dangling
     // pointer. sqlite3_deserialize tolerates the outstanding stmts —
     // they simply fail if stepped, which the generation check prevents.
+    //
+    // Sessions are different: once stale, deleteSession()/the
+    // destructor assume closeInternal() already freed the handle and
+    // skip sqlite3session_delete. That's true for close()+open() but
+    // would be false here if we only bumped the generation — the
+    // preupdate hook would stay attached to the (unchanged) sqlite3*
+    // and silently record every subsequent write. Free them now, the
+    // same as closeInternal() does.
+    self->deleteTrackedSessions();
     self->bumpOpenGeneration();
 
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
@@ -3022,6 +3036,15 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         auto utf8 = sqlStr.utf8();
         sqlite3_stmt* stmt = nullptr;
         int r = sqlite3_prepare_v2(db->connection(), utf8.data(), static_cast<int>(utf8.length()), &stmt, nullptr);
+        // prepare() runs the authorizer callback (if any), which may
+        // throw — surface that over SQLite's generic "not authorized"
+        // so we don't overwrite the user's exception. Mirrors
+        // jsDatabaseSyncPrepare's CHECK_UDF_EXCEPTION.
+        db->takeIgnoreNextSqliteError();
+        if (scope.exception()) [[unlikely]] {
+            if (stmt) sqlite3_finalize(stmt);
+            return nullptr;
+        }
         if (r != SQLITE_OK) {
             if (stmt) sqlite3_finalize(stmt);
             throwSqliteError(globalObject, scope, db->connection());

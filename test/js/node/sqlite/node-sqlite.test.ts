@@ -846,6 +846,58 @@ describe("createTagStore()", () => {
     expect(sql.size).toBe(0);
     db.close();
   });
+
+  test("surfaces a thrown authorizer over SQLite's 'not authorized'", () => {
+    // SQLTagStore's prepare() runs sqlite3_prepare_v2() which fires the
+    // authorizer. If the authorizer throws, the pending JS exception
+    // must win over the generic ERR_SQLITE_ERROR — same as
+    // DatabaseSync.prototype.prepare()'s CHECK_UDF_EXCEPTION path.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t(x)");
+    const sql = db.createTagStore();
+    db.setAuthorizer(() => {
+      throw new TypeError("nope from authorizer");
+    });
+    expect(() => sql.get`SELECT x FROM t`).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: "nope from authorizer",
+      }),
+    );
+    db.setAuthorizer(null);
+    db.close();
+  });
+});
+
+test("deserialize() frees open sessions instead of orphaning their preupdate hook", () => {
+  // deserialize() bumps the open-generation to invalidate existing
+  // wrappers. Sessions become stale — but deleteSession() (and the
+  // destructor) assume "stale ⇒ closeInternal() already freed", so
+  // they skip sqlite3session_delete. That's only true for close()+
+  // open(); deserialize() must free the tracked handles itself or
+  // the preupdate hook stays live on the unchanged sqlite3* and
+  // keeps recording writes into an unreachable change buffer.
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+  const session = db.createSession();
+  const buf = db.serialize();
+  db.deserialize(buf);
+  // Wrapper reports closed — the handle was freed above, not leaked.
+  expect(() => session.changeset()).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_STATE" }),
+  );
+  // Symbol.dispose on a stale session is a silent no-op (no
+  // double-free of the already-deleted handle).
+  expect(() => session[Symbol.dispose]()).not.toThrow();
+  // DB is still usable and a fresh session works.
+  expect(db.isOpen).toBe(true);
+  db.exec("INSERT INTO t VALUES (1)");
+  const fresh = db.createSession();
+  db.exec("INSERT INTO t VALUES (2)");
+  expect(fresh.changeset().length).toBeGreaterThan(0);
+  fresh.close();
+  db.close();
+  Bun.gc(true);
 });
 
 describe("enableDefensive()", () => {

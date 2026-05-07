@@ -135,6 +135,15 @@ public:
 
     void trackSession(sqlite3_session* s) { m_sessions.append(s); }
     void untrackSession(sqlite3_session* s) { m_sessions.removeFirst(s); }
+    // Free every tracked sqlite3_session*. Called from closeInternal()
+    // and from deserialize() before bumpOpenGeneration() — both paths
+    // make existing Session wrappers report isStale(), and
+    // Session::deleteSession()/~JSNodeSqliteSession() assume "stale ⇒
+    // already freed" and skip sqlite3session_delete. If deserialize()
+    // bumped the generation WITHOUT freeing here, those handles would
+    // keep their preupdate hook live and silently record every
+    // subsequent write until db.close().
+    void deleteTrackedSessions();
 
     // setAuthorizer(cb) callback and the lazily-created limits wrapper.
     // Kept as GC-traced fields on the DatabaseSync cell rather than a

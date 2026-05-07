@@ -4898,15 +4898,49 @@ impl Blob {
 
                 #[cfg(target_os = "linux")]
                 {
+                    use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
                     // If we can use a copy-on-write clone of the buffer, do so.
-                    // TODO(port): blocked_on: store::Bytes.allocator —
-                    // ByteStore collapsed `ptr+len+cap+allocator` into `Vec<u8>`
-                    // (see Store.rs PORT NOTE), so there is no allocator handle to
-                    // downcast via `LinuxMemFdAllocator::from`. The COW-memfd fast
-                    // path is a perf optimization; fall through to the copying path
-                    // below until Phase B re-threads memfd identity (likely a tag on
-                    // `store::Bytes` set by `LinuxMemFdAllocator::create`).
-                    let _ = &self.store;
+                    if let Some(store) = &self.store {
+                        if let store::Data::Bytes(bytes) = &store.data {
+                            let allocated = bytes.allocated_slice();
+                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
+                            if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
+                                if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
+                                    // Zig: `allocator.ref(); defer allocator.deref();`
+                                    // Hold a ref across the FFI call so a concurrent
+                                    // store-deref cannot close the fd mid-mmap.
+                                    // SAFETY: `memfd` is the live Box-allocated ptr
+                                    // smuggled through `StdAllocator.ptr` by
+                                    // `LinuxMemFdAllocator::allocator`.
+                                    unsafe { (*memfd).ref_() };
+                                    let byte_offset = (buf as *mut u8 as usize)
+                                        .saturating_sub(allocated.as_ptr() as usize);
+                                    let result = jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
+                                        // SAFETY: `memfd` is live for the ref held above.
+                                        unsafe { (*memfd).fd }.native() as i64,
+                                        global,
+                                        byte_offset,
+                                        buf_len,
+                                        allocated.len(),
+                                        TYPED_ARRAY_VIEW,
+                                    );
+                                    // SAFETY: drop the ref taken above; `memfd` came
+                                    // from `Box::into_raw` (see `LinuxMemFdAllocator::deref`
+                                    // contract).
+                                    unsafe { LinuxMemFdAllocator::deref(memfd) };
+                                    debug!(
+                                        "toArrayBuffer COW clone({}, {}) = {}",
+                                        byte_offset,
+                                        buf_len,
+                                        (result != JSValue::ZERO) as u8
+                                    );
+                                    if result != JSValue::ZERO {
+                                        return Ok(result);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })

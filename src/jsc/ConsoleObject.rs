@@ -901,12 +901,11 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                // SAFETY: `to_object()` returned a live heap cell; borrow
-                // bounded by this stack frame.
-                let tabular_obj = unsafe { &*tabular_obj };
-                let mut rows_iter = jsc::JSPropertyIterator::<
-                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
-                >::init(global_object, tabular_obj)?;
+                let mut rows_iter = jsc::JSPropertyIterator::init(
+                    global_object,
+                    tabular_obj,
+                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
+                )?;
 
                 while let Some(row_key) = rows_iter.next()? {
                     self.update_columns_for_row(
@@ -1015,9 +1014,11 @@ impl<'a> TablePrinter<'a> {
                 };
                 // SAFETY: `to_cell()` returned `Some` above; pointer is a live JSC heap cell.
                 let row_obj = unsafe { &*cell }.to_object(global_object);
-                let mut rows_iter = jsc::JSPropertyIterator::<
-                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
-                >::init(global_object, row_obj)?;
+                let mut rows_iter = jsc::JSPropertyIterator::init(
+                    global_object,
+                    row_obj,
+                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
+                )?;
 
                 while let Some(row_key) = rows_iter.next()? {
                     self.print_row::<ENABLE_ANSI_COLORS>(

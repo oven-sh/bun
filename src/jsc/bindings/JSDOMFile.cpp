@@ -59,10 +59,6 @@ public:
         if (!value.isObject())
             return false;
 
-        // Fast path: real File instances (no proxy involved).
-        if (JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value)))
-            return true;
-
         // Walk the prototype chain ourselves instead of relying on
         // OrdinaryHasInstance. File.prototype is currently the same object as
         // Blob.prototype (see the TODO at the top of this file), so the

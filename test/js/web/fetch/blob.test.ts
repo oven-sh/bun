@@ -397,6 +397,16 @@ describe("File `instanceof` checks", () => {
     expect(({ __proto__: blob } as any) instanceof File).toBe(false);
   });
 
+  test("a File whose prototype has been stripped is not instanceof File", () => {
+    // setPrototypeOf(f, null) cuts the JS chain to nothing. Browsers and Node
+    // honour [[GetPrototypeOf]] and return false; previously Bun's fast path
+    // ignored the chain and returned true based on the underlying cell flag.
+    const f = new File(["hi"], "x.txt");
+    Object.setPrototypeOf(f, null);
+    expect(f instanceof File).toBe(false);
+    expect(f instanceof Blob).toBe(false);
+  });
+
   test("Proxy with getPrototypeOf trap that disclaims File is not instanceof File", () => {
     // If the trap explicitly returns a non-File prototype, the value should not
     // be `instanceof File` even if the underlying target is a real File.

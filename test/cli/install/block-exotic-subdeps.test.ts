@@ -284,4 +284,49 @@ blockExoticSubdeps = true
     expect(stderr).toContain("ws-member");
     expect(exitCode).not.toBe(0);
   });
+
+  test("does NOT block a folder dep that uses a plain semver for a workspace member", async () => {
+    // Regression: `linkWorkspacePackages` (default true) redirects a
+    // transitive plain-semver dep to a local workspace copy, giving it
+    // `Resolution.Tag.workspace`. The folder parent's *specifier* is still
+    // a plain npm semver — nobody wrote `workspace:` — so this must NOT
+    // trip blockExoticSubdeps.
+    using dir = tempDir("block-exotic-link-workspace-semver", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["pkgs/*"],
+        dependencies: {
+          "folder-parent": "file:./folder-parent",
+        },
+      }),
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      "folder-parent/package.json": JSON.stringify({
+        name: "folder-parent",
+        version: "1.0.0",
+        // Plain npm semver, NOT workspace:*. Bun's linkWorkspacePackages
+        // will still resolve this to the local ws-member copy.
+        dependencies: { "ws-member": "^1.0.0" },
+      }),
+      "pkgs/ws-member/package.json": JSON.stringify({
+        name: "ws-member",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: envForDir(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("blockExoticSubdeps");
+    expect(exitCode).toBe(0);
+  });
 });

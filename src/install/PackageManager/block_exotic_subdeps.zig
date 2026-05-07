@@ -1,7 +1,7 @@
 //! Enforces `install.blockExoticSubdeps` — refuses to install when any
-//! *transitive* dependency resolves to a non-registry source: git, github,
-//! remote or local tarball URLs, local folders, symlinks, or workspace
-//! references pulled in by a non-workspace parent.
+//! *transitive* dependency is **specified** with a non-registry source: git,
+//! github, remote/local tarball URLs, local folders, symlinks, or a literal
+//! `workspace:` reference pulled in by a non-workspace parent.
 //!
 //! Modeled on pnpm's feature of the same name:
 //! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
@@ -9,15 +9,27 @@
 //! Direct dependencies of the root package (and of any workspace package)
 //! are allowed to use exotic specifiers — only *nested* dependencies are
 //! restricted.
+//!
+//! We key off the **literal specifier** written in each nested `package.json`.
+//! Neither the parsed specifier tag nor the final resolution tag survives
+//! `install.linkWorkspacePackages` cleanly: the parser rewrites a registry
+//! semver like `^2.0.0` to `Dependency.Version.Tag.workspace` when the name
+//! matches a local workspace (Package.zig:1090-1107), and the resolver
+//! likewise points `resolutions[dep_id]` at the workspace package. Both
+//! erase the distinction between "parent asked for a registry version" and
+//! "parent asked for `workspace:`". The `literal` string never changes, so
+//! re-inferring the tag from it reproduces the specifier the remote package
+//! actually published — which is what this policy needs to judge.
 
 const Violation = struct {
     package_id: PackageID,
     parent_id: PackageID,
     dep_id: DependencyID,
+    literal_tag: Dependency.Version.Tag,
 };
 
 /// Walks the fully-resolved lockfile and emits an error for every
-/// transitive dependency whose resolution uses a non-registry source.
+/// transitive dependency whose literal specifier is a non-registry source.
 /// Returns true if any violations were found.
 pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
     if (!manager.options.enable.block_exotic_subdeps) return false;
@@ -52,8 +64,12 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
             if (dep_pkg_id == invalid_package_id) continue;
             if (dep_pkg_id >= pkgs.len) continue;
 
-            const dep_res = pkg_resolutions[dep_pkg_id];
-            if (!isExotic(dep_res.tag)) continue;
+            // Re-infer the specifier tag from the LITERAL string the parent's
+            // package.json actually wrote. See module comment for why neither
+            // `dep.version.tag` nor `dep_res.tag` is reliable here.
+            const literal = dependencies[dep_id].version.literal.slice(string_buf);
+            const literal_tag = Dependency.Version.Tag.infer(literal);
+            if (!isExoticSpecifier(literal_tag)) continue;
 
             const key = (@as(u64, parent_id) << 32) | @as(u64, dep_pkg_id);
             const gop = try seen.getOrPut(manager.allocator, key);
@@ -63,6 +79,7 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
                 .package_id = dep_pkg_id,
                 .parent_id = parent_id,
                 .dep_id = dep_id,
+                .literal_tag = literal_tag,
             });
         }
     }
@@ -77,16 +94,16 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) !bool {
         const parent_res = pkg_resolutions[v.parent_id];
         const dep = dependencies[v.dep_id];
         const dep_name = dep.name.slice(string_buf);
-        const dep_res = pkg_resolutions[v.package_id];
+        const literal = dep.version.literal.slice(string_buf);
 
         Output.prettyErrorln(
-            "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r> via <yellow>{s}<r> source <d>({f})<r>",
+            "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r><d>@{s}<r> via <yellow>{s}<r> source",
             .{
                 parent_name,
                 parent_res.fmt(string_buf, .auto),
                 dep_name,
-                @tagName(dep_res.tag),
-                dep_res.fmt(string_buf, .auto),
+                literal,
+                @tagName(v.literal_tag),
             },
         );
     }
@@ -103,20 +120,18 @@ inline fn isTopLevel(tag: Resolution.Tag) bool {
     return tag == .root or tag == .workspace;
 }
 
-/// A resolution tag is "exotic" if the package came from somewhere other
-/// than a registry. Registry-resolved packages have `Resolution.Tag.npm`.
-/// `root` and `uninitialized` aren't real install edges.
-///
-/// `.workspace` is reached here only when the parent is *not* a workspace
-/// (callers filter on `isTopLevel(parent_res.tag)` before dispatch), so a
-/// workspace-tagged dep at this layer means a non-workspace package has
-/// smuggled in a `workspace:` reference — treat that as exotic.
-inline fn isExotic(tag: Resolution.Tag) bool {
+/// A specifier tag is "exotic" when it names a non-registry source. Registry
+/// specifiers (`npm:`/plain semver/dist-tag) and `catalog:` references (which
+/// dereference to another specifier that's checked separately) are allowed.
+inline fn isExoticSpecifier(tag: Dependency.Version.Tag) bool {
     return switch (tag) {
-        .npm, .root, .uninitialized => false,
-        // folder, local_tarball, github, git, symlink, remote_tarball,
-        // workspace, single_file_module, and any future non-registry sources
-        else => true,
+        // uninitialized + npm + dist_tag — the NPM-registry-family specifiers.
+        .uninitialized, .npm, .dist_tag => false,
+        // catalog:name — indirection, the target is its own dep that gets
+        // its own independent check; don't double-flag the reference itself.
+        .catalog => false,
+        // folder, symlink, workspace, git, github, tarball — genuinely exotic.
+        .folder, .symlink, .workspace, .git, .github, .tarball => true,
     };
 }
 
@@ -126,6 +141,7 @@ const bun = @import("bun");
 const Output = bun.Output;
 
 const install = bun.install;
+const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;

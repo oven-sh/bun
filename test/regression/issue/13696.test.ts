@@ -124,14 +124,7 @@ for (const socketMode of ["tcp", "unix"] as const) {
     // it), the response must be emitted with status 200, every body chunk must
     // be delivered, and the response must end cleanly.
     expect({ lines, stderr }).toEqual({
-      lines: [
-        "request-seen",
-        "response-status:200",
-        "recv:chunk-0",
-        "recv:chunk-1",
-        "recv:chunk-2",
-        "response-end",
-      ],
+      lines: ["request-seen", "response-status:200", "recv:chunk-0", "recv:chunk-1", "recv:chunk-2", "response-end"],
       stderr: expect.not.stringContaining("request-error"),
     });
     expect(exitCode).toBe(0);

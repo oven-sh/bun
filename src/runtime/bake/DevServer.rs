@@ -2881,9 +2881,13 @@ impl DevServer {
         // — bumpalo chunks are heap-allocated, so the address is stable across
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.
-        let event_loop: bundler::EventLoop = Some(::core::ptr::NonNull::from(
-            heap.alloc(bun_event_loop::AnyEventLoop::js_current()),
-        ));
+        let event_loop: bun_bundler::linker_context_mod::EventLoop =
+            Some(::core::ptr::NonNull::from(heap.alloc(
+                bun_event_loop::AnyEventLoop::js(
+                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime.
+                    unsafe { &*self.vm }.event_loop().cast(),
+                ),
+            )));
 
         // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
         // `alloc: &Arena` derived from it. Zig's `heap.allocator()` is a

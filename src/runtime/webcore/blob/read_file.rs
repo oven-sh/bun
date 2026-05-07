@@ -179,16 +179,79 @@ pub struct ReadFile {
     pub state: AtomicU8, // ClosingState
 }
 
-impl ReadFile {
-    // TODO(port): `pub const getFd = FileOpener(@This()).getFd;` — model
-    // FileOpener/FileCloser as traits with default methods and impl them here.
-    pub fn get_fd(&mut self, then: fn(&mut Self, Fd)) {
-        FileOpener::<Self>::get_fd(self, then)
+// Zig: `pub const getFd = FileOpener(@This()).getFd;` / `doClose = FileCloser(@This()).doClose;`
+// — modeled as trait impls; the default methods on the traits provide the bodies.
+impl FileOpener for ReadFile {
+    fn opened_fd(&self) -> Fd { self.opened_fd }
+    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
+    fn set_errno(&mut self, e: bun_core::Error) { self.errno = Some(e); }
+    fn set_system_error(&mut self, e: jsc::SystemError) { self.system_error = Some(e); }
+    fn pathlike(&self) -> &PathOrFileDescriptor { &self.file_store.pathlike }
+    #[cfg(windows)]
+    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    #[cfg(windows)]
+    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    #[cfg(windows)]
+    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
+    #[cfg(windows)]
+    fn open_callback(&self) -> fn(&mut Self, Fd) { unreachable!() }
+}
+
+impl FileCloser for ReadFile {
+    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    fn opened_fd(&self) -> Fd { self.opened_fd }
+    fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
+    fn close_after_io(&self) -> bool { self.close_after_io }
+    fn set_close_after_io(&mut self, v: bool) { self.close_after_io = v; }
+    fn state(&self) -> &AtomicU8 { &self.state }
+    fn io_request(&mut self) -> Option<&mut bun_io::Request> { Some(&mut self.io_request) }
+    fn io_poll(&mut self) -> &mut bun_aio::FilePoll {
+        // ReadFile uses bun_io::Poll, not bun_aio::FilePoll; FileCloser only
+        // touches io_poll() in on_io_request_closed (after close_after_io path),
+        // which ReadFile drives through its own io_poll. The flag clear is a
+        // no-op here — return a dummy via unreachable since ReadFile's close
+        // path never reaches on_io_request_closed without going through the
+        // io::Request callback first.
+        // TODO(port): split FileCloser into io::Poll vs aio::FilePoll variants.
+        unreachable!("ReadFile uses io::Poll; on_io_request_closed not reached on this path")
     }
-    pub fn do_close(&mut self, is_allowed_to_close: bool) -> bool {
-        FileCloser::<Self>::do_close(self, is_allowed_to_close)
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
+    fn update(&mut self) { ReadFile::update(self) }
+    #[cfg(windows)]
+    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!() }
+
+    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
+        // SAFETY: request is &mut self.io_request (intrusive); recover parent.
+        let this: &mut ReadFile = unsafe {
+            &mut *((request as *mut io::Request as *mut u8)
+                .sub(offset_of!(ReadFile, io_request))
+                .cast::<ReadFile>())
+        };
+        fn on_done(ctx: *mut ()) {
+            // SAFETY: ctx is `self as *mut ReadFile` set below.
+            let this = unsafe { &mut *(ctx as *mut ReadFile) };
+            <ReadFile as FileCloser>::on_io_request_closed(this);
+        }
+        io::Action::Close(io::CloseAction {
+            fd: this.opened_fd,
+            poll: &mut this.io_poll,
+            ctx: this as *mut ReadFile as *mut (),
+            tag: <Self as FileCloser>::IO_TAG,
+            on_done,
+        })
     }
 
+    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+        // SAFETY: task is &mut self.task (intrusive); recover parent.
+        let this: &mut ReadFile = unsafe {
+            &mut *((task as *mut u8).sub(offset_of!(ReadFile, task)).cast::<ReadFile>())
+        };
+        this.close_after_io = false;
+        ReadFile::update(this);
+    }
+}
+
+impl ReadFile {
     pub fn update(&mut self) {
         #[cfg(windows)]
         {

@@ -794,12 +794,26 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
 // Hands BundleThread the field accessors it needs without exposing the layout.
-impl bun_threading::Node for JSBundleCompletionTask {
-    fn next(&self) -> *mut Self {
-        self.next
+// SAFETY: all four accessors touch the same `next` intrusive-link field;
+// `atomic_*` use `AtomicPtr` over its address.
+unsafe impl bun_threading::unbounded_queue::Node for JSBundleCompletionTask {
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
     }
-    fn set_next(&mut self, n: *mut Self) {
-        self.next = n;
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr; }
+    }
+    unsafe fn atomic_load_next(item: *mut Self, ordering: core::sync::atomic::Ordering) -> *mut Self {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .load(ordering)
+        }
+    }
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: core::sync::atomic::Ordering) {
+        unsafe {
+            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
+                .store(ptr, ordering)
+        }
     }
 }
 

@@ -109,21 +109,27 @@ pub type ParamType = clap::Param<clap::Help>;
 // `Param<Help>` literal, so leaf tables are real `&'static [_]`. Combined
 // tables use `LazyLock<Vec<_>>` (no const `++` in Rust).
 
-#[cfg(feature = "show_crash_trace")]
-macro_rules! maybe_debug_params { () => { DEBUG_PARAMS }; }
-#[cfg(not(feature = "show_crash_trace"))]
-macro_rules! maybe_debug_params { () => { ([] as [ParamType; 0]) }; }
-
-// PORT NOTE: `builtin.have_error_return_tracing` has no direct Rust analogue
-// (Zig-specific); gate behind a debug feature.
-#[cfg(feature = "error_return_tracing")]
-macro_rules! maybe_verbose_error_trace {
+// Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
+// `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
+macro_rules! maybe_debug_params {
     () => {
-        [parse_param!("--verbose-error-trace             Dump error return traces")]
+        if bun_core::env::SHOW_CRASH_TRACE { DEBUG_PARAMS } else { &[] as &[ParamType] }
     };
 }
-#[cfg(not(feature = "error_return_tracing"))]
-macro_rules! maybe_verbose_error_trace { () => { ([] as [ParamType; 0]) }; }
+
+// PORT NOTE: `builtin.have_error_return_tracing` is a Zig-only concept. Rust
+// has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
+// still gates extra crash diagnostics. Expose the flag in crash-trace builds
+// (debug/test/asan), which is the closest analogue.
+macro_rules! maybe_verbose_error_trace {
+    () => {
+        if bun_core::env::SHOW_CRASH_TRACE {
+            &[parse_param!("--verbose-error-trace             Dump error return traces")][..]
+        } else {
+            &[] as &[ParamType]
+        }
+    };
+}
 
 pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
     concat_params!(
@@ -265,17 +271,19 @@ pub static BUNX_COMMANDS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
     )
 });
 
-#[cfg(feature = "bake_debugging_features")]
+// Zig: `if (FeatureFlags.bake_debugging_features) [_]ParamType{...} else [_]ParamType{}`.
 macro_rules! maybe_bake_debug_params {
     () => {
-        [
-            parse_param!("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"),
-            parse_param!("--debug-no-minify                When --app is set, do not minify anything"),
-        ]
+        if FeatureFlags::BAKE_DEBUGGING_FEATURES {
+            &[
+                parse_param!("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"),
+                parse_param!("--debug-no-minify                When --app is set, do not minify anything"),
+            ][..]
+        } else {
+            &[] as &[ParamType]
+        }
     };
 }
-#[cfg(not(feature = "bake_debugging_features"))]
-macro_rules! maybe_bake_debug_params { () => { ([] as [ParamType; 0]) }; }
 
 pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
     concat_params!(
@@ -454,13 +462,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    #[cfg(feature = "error_return_tracing")]
-    {
-        if args.flag(b"--verbose-error-trace") {
-            // SAFETY: single-threaded CLI startup; this static is read on the
-            // crash/exit path on the same thread.
-            unsafe { bun_crash_handler::VERBOSE_ERROR_TRACE = true };
-        }
+    // PORT NOTE: Zig gated on `builtin.have_error_return_tracing`; see
+    // `maybe_verbose_error_trace!` above for the Rust mapping.
+    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
+        // SAFETY: single-threaded CLI startup; this static is read on the
+        // crash/exit path on the same thread.
+        unsafe { bun_crash_handler::VERBOSE_ERROR_TRACE = true };
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
@@ -2024,8 +2031,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    #[cfg(feature = "show_crash_trace")]
-    {
+    if bun_core::env::SHOW_CRASH_TRACE {
         // SAFETY: single-threaded CLI startup; argv slices are process-lifetime.
         unsafe {
             cli::debug_flags::RESOLVE_BREAKPOINTS =

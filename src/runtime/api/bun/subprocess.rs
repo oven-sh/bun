@@ -518,9 +518,9 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                if matches!(self.process.poller, spawn_process::Poller::Uv(_)) {
+                if matches!(self.process().poller, spawn_process::Poller::Uv(_)) {
                     self.pid_rusage =
-                        Some(spawn_process::uv_getrusage(self.process.poller.uv()));
+                        Some(spawn_process::uv_getrusage(self.process().poller.uv()));
                     break 'brk self.pid_rusage.as_ref().unwrap();
                 }
             }
@@ -531,7 +531,7 @@ impl Subprocess<'_> {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.process.has_exited()
+        self.process().has_exited()
     }
 
     pub fn compute_has_pending_activity(&self) -> bool {
@@ -552,7 +552,7 @@ impl Subprocess<'_> {
             return true;
         }
 
-        if !self.process.has_exited() {
+        if !self.process().has_exited() {
             return true;
         }
 
@@ -773,7 +773,7 @@ impl Subprocess<'_> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.process.has_exited() {
+        if this.process().has_exited() {
             // rely on GC to clean everything up in this case
             return Ok(JSValue::UNDEFINED);
         }
@@ -870,7 +870,7 @@ impl Subprocess<'_> {
     }
 
     pub fn has_killed(&self) -> bool {
-        self.process.has_killed()
+        self.process().has_killed()
     }
 
     pub fn try_kill(&mut self, sig: SignalCode) -> bun_sys::Result<()> {
@@ -978,7 +978,7 @@ impl Subprocess<'_> {
     }
 
     pub fn pid(&self) -> i32 {
-        i32::try_from(self.process.pid).unwrap()
+        i32::try_from(self.process().pid).unwrap()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1025,7 +1025,7 @@ impl Subprocess<'_> {
 
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
-            + self.process.memory_cost()
+            + self.process().memory_cost()
             + self.stdin.memory_cost()
             + self.stdout.memory_cost()
             + self.stderr.memory_cost()
@@ -1442,7 +1442,7 @@ impl Subprocess<'_> {
             return promise;
         }
 
-        match &self.process.status {
+        match &self.process().status {
             Status::Exited(exit) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
@@ -1469,7 +1469,7 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_exit_code(&self, _global: &JSGlobalObject) -> JSValue {
-        if let Status::Exited(exited) = &self.process.status {
+        if let Status::Exited(exited) = &self.process().status {
             return JSValue::js_number(exited.code as f64);
         }
         JSValue::NULL
@@ -1477,7 +1477,7 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
-        if let Some(signal) = self.process.signal_code() {
+        if let Some(signal) = self.process().signal_code() {
             // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
             // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
             // `bun_sys::SignalCode`.

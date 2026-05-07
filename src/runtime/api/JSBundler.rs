@@ -1448,11 +1448,7 @@ pub mod js_bundler {
             };
             let concurrent_task = ConcurrentTask::create(self.js_task.task());
             // SAFETY: bv2 backref is valid
-            unsafe {
-                (*self.bv2)
-                    .js_loop_for_plugins()
-                    .enqueue_task_concurrent(concurrent_task);
-            }
+            unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task) };
         }
 
         fn run_on_js_thread(&mut self) {

@@ -1375,9 +1375,13 @@ impl Value {
                     locked.readable = Default::default();
                 }
             }
-            Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                // Zig: `clearAndFree` / `Blob.deinit` / `str.deref` — all handled by
-                // dropping the variant payload via assignment.
+            Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
+                // Zig: `clearAndFree` / `str.deref` — handled by dropping the
+                // variant payload (Vec / Arc<WTFStringImpl>) via assignment.
+                *self = Value::Null;
+            }
+            Value::Blob(b) => {
+                b.deinit();
                 *self = Value::Null;
             }
             Value::Error(e) => e.reset(),

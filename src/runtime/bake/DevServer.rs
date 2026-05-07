@@ -1240,23 +1240,108 @@ impl DevServer<'_> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // SAFETY: app is set before set_routes is called (server init path)
-        let _app = unsafe { &mut *server.app.unwrap() };
-        // TODO(port): blocked_on: bun_uws_sys::App::{get,post,any,ws} —
-        // upstream signature is `(pattern: &[u8], handler: extern "C" fn, *mut c_void)`;
-        // `wrap_generic_request_handler` returning `impl Fn` cannot coerce to a
-        // C fn pointer for a const-generic `SSL`. Needs an extern "C" trampoline
-        // table per (handler, SSL) pair (see DevServer.zig:810-840).
-        // Silence unused warnings on the handlers we'd register here.
-        let _ = (
-            on_js_request as fn(_, _, _),
-            on_asset_request as fn(_, _, _),
-            on_src_request as fn(_, _, _),
-            on_not_found as fn(_, _, _),
-            on_incremental_visualizer as fn(_, _, _),
-            on_memory_visualizer as fn(_, _, _),
+        let app = unsafe { &mut *server.app.unwrap() };
+        let dev = self as *mut Self as *mut c_void;
+
+        // PORT NOTE: Zig's `wrapGenericRequestHandler(fn, is_ssl)` produced a
+        // monomorphized `extern fn(*DevServer, *Response, *Request)` per
+        // handler. The Rust equivalent is the ZST-fn-item trampoline pattern
+        // used by `server::server_body::AppRouteExt`: a generic `extern "C"`
+        // shim parameterized on the handler type `H` (which is zero-sized for
+        // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
+        // function pointer with the handler baked in.
+        macro_rules! route {
+            ($method:ident, $pattern:expr, $handler:expr) => {{
+                // Feed the handler into the type-system as a ZST so the
+                // trampoline can `mem::zeroed()` it without capturing.
+                let _h = $handler;
+                app.$method(
+                    $pattern,
+                    Some(dev_route_tramp::<_, SSL>(_h)),
+                    dev,
+                );
+            }};
+        }
+
+        route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(), on_js_request);
+        route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(), on_asset_request);
+        route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(), on_src_request);
+        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(),
+            |d: &mut DevServer, r: &mut Request, resp: AnyResponse| {
+                // LAYERING: ErrorReportRequest::run is typed against the
+                // keystone DevServer; bridge via `*mut ()`.
+                ErrorReportRequest::run(
+                    // SAFETY: see LAYERING note at `bundle_new_route_js_function_impl`.
+                    unsafe { &mut *(d as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) },
+                    r,
+                    resp,
+                )
+            });
+        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(),
+            |d: &mut DevServer, r: &mut Request, resp: AnyResponse| {
+                crate::bake::dev_server::UnrefSourceMapRequest::run(
+                    // SAFETY: see LAYERING note above.
+                    unsafe { &mut *(d as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) },
+                    r,
+                    resp,
+                )
+            });
+        route!(any, INTERNAL_PREFIX.as_bytes(), on_not_found);
+
+        app.ws(
+            const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
+            dev,
+            0,
+            crate::bake::dev_server::hmr_socket_behavior::<SSL>(),
         );
-        todo!("blocked_on: bun_uws_sys::App route-handler closure adapter + WebSocketBehavior::wrap")
+
+        #[cfg(feature = "bake_debugging_features")]
+        {
+            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes(),
+                on_incremental_visualizer);
+            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes(),
+                on_memory_visualizer);
+        }
+
+        // Only attach a catch-all handler if the framework has filesystem
+        // router types. Otherwise, this can just be Bun.serve's default handler.
+        if !self.framework.file_system_router_types.is_empty() {
+            route!(any, b"/*", on_request);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
+}
+
+/// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and the
+/// SSL-typed response from the raw `uws_res`, then calls the ZST handler.
+/// Returns the C fn pointer for `(H, SSL)`; `_h` is consumed only to bind `H`.
+#[inline(always)]
+fn dev_route_tramp<H, const SSL: bool>(
+    _h: H,
+) -> unsafe extern "C" fn(*mut bun_uws_sys::uws_res, *mut bun_uws_sys::Request, *mut c_void)
+where
+    H: Fn(&mut DevServer<'static>, &mut Request, AnyResponse) + Copy + 'static,
+{
+    debug_assert_eq!(::core::mem::size_of::<H>(), 0, "handler must be a ZST fn item");
+    unsafe extern "C" fn tramp<H, const SSL: bool>(
+        res: *mut bun_uws_sys::uws_res,
+        req: *mut bun_uws_sys::Request,
+        ud: *mut c_void,
+    ) where
+        H: Fn(&mut DevServer<'static>, &mut Request, AnyResponse) + Copy + 'static,
+    {
+        // SAFETY: H is a zero-sized fn item — conjuring it is sound.
+        let h: H = unsafe { ::core::mem::zeroed() };
+        // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and
+        // outlive the route; uWS guarantees they are non-null in callbacks.
+        let dev = unsafe { &mut *(ud as *mut DevServer<'static>) };
+        let req = unsafe { &mut *(req as *mut Request) };
+        let resp = AnyResponse::from_ssl::<SSL>(res);
+        h(dev, req, resp);
+    }
+    tramp::<H, SSL>
 }
 
 fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {

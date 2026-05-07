@@ -589,17 +589,20 @@ pub fn tick_queue_with_count(
     }
 
     while let Some(task) = el.tasks.read_item() {
-        // PORT NOTE: Zig increments `counter` via `defer` so it runs even on
-        // the HotReloadTask early-return path (where it's then immediately
-        // overwritten with 0). Hoisting before dispatch is observably
-        // equivalent and avoids a scopeguard.
+        // PORT NOTE: Zig increments `counter` via `defer counter.* += 1;` at
+        // the top of the loop body, so it fires on every scope exit including
+        // the HotReloadTask `return`. Hoisting it before dispatch keeps the
+        // Continue path identical and avoids a scopeguard.
         *counter += 1;
         match run_task(task, el, vm, global)? {
             RunTaskResult::Continue => {}
             RunTaskResult::EarlyReturn => {
-                // Zig: `counter.* = 0; return;` — hot reload runs immediately
-                // so it should not drain microtasks.
-                *counter = 0;
+                // Zig: `counter.* = 0; return;` followed by the deferred
+                // `counter.* += 1` (defers run after `return`, LIFO), so the
+                // observable result is `counter == 1`. Caller is
+                // `while tickWithCount(ctx) > 0` — must keep draining after a
+                // hot-reload task. Do NOT set 0 here.
+                *counter = 1;
                 return Ok(());
             }
         }

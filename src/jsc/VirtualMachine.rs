@@ -2730,11 +2730,12 @@ impl VirtualMachine {
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
-            args: alloc::vec::Vec::new(),
             graph: graph.as_ptr().cast(),
             smol: opts.smol,
+            mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            ..Default::default()
         };
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
@@ -2759,7 +2760,6 @@ impl VirtualMachine {
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
-            args: alloc::vec::Vec::new(),
             graph: opts
                 .graph
                 .map(|g| g.as_ptr().cast())
@@ -2767,14 +2767,18 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
+            // Spec VirtualMachine.zig:1477-1484 — `JSGlobalObject.create` is
+            // called with `worker.cpp_worker`, `worker.execution_context_id`,
+            // and `worker.mini` so the C++ ZigGlobalObject is born with its
+            // WorkerGlobalScope + debugger context id wired.
+            worker_ptr: worker.cpp_worker(),
+            context_id: Some(worker.execution_context_id() as i32),
+            mini_mode: worker.mini(),
+            ..Default::default()
         };
         // PORT NOTE: Zig open-coded the full struct init; we route through
         // [`init`] (which already wires console / event-loop / global / jsc_vm
-        // / RuntimeHooks) and then patch the worker-specific fields. The
-        // observable difference vs. open-coding is that `ZigGlobalObject__create`
-        // receives `worker_ptr = null` here and `worker.cpp_worker` is wired
-        // afterward by the C++ side; if that turns out to matter, add a
-        // `worker_ptr` field to `InitOptions`.
+        // / RuntimeHooks) and then patch the worker-specific fields.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };

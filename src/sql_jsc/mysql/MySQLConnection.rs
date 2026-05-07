@@ -329,7 +329,8 @@ impl MySQLConnection {
         let vm_ptr: *mut crate::jsc::VirtualMachine = crate::jsc::VirtualMachine::get();
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // produce overlapping `&mut` (rare_data accesses a disjoint field).
-        let tls_group = unsafe { (*vm_ptr).rare_data().mysql_group(&*vm_ptr, true) };
+        let tls_group: *mut bun_uws::SocketGroup =
+            unsafe { (*vm_ptr).rare_data().mysql_group::<true>(&*vm_ptr) };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested (Zig: `this.#secure.?`).

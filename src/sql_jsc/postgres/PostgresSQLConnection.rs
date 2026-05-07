@@ -433,7 +433,8 @@ impl PostgresSQLConnection {
         let vm_ptr: *mut VirtualMachine = self.vm;
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // produce overlapping `&mut` (rare_data accesses a disjoint field).
-        let tls_group = unsafe { (*vm_ptr).rare_data().postgres_group(&*vm_ptr, true) };
+        let tls_group: *mut bun_uws::SocketGroup =
+            unsafe { (*vm_ptr).rare_data().postgres_group::<true>(&*vm_ptr) };
 
         // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
         // a plain TCP socket in the Connected state.

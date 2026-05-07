@@ -2175,7 +2175,7 @@ pub fn create_shell_interpreter(
         (*interpreter).this_jsvalue = js_value;
         (*interpreter).keep_alive.ref_(global.bun_vm().cast());
     }
-    bun_core::analytics::Features::shell_inc();
+    bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
 

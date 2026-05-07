@@ -301,36 +301,24 @@ impl ReadFile {
     }
 
     #[cfg(not(windows))]
-    pub fn create<C: 'static>(
+    pub fn create<C: ReadFileCompletion>(
         store: StoreRef,
         off: SizeType,
         max_len: SizeType,
         context: *mut C,
-        callback: fn(ctx: *mut C, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>,
     ) -> Result<Box<ReadFile>, Error> {
-        // Zig used a local `Handler` struct to erase the type and swallow the
-        // JSTerminated error. We do the same with a monomorphized shim.
-        // TODO(port): properly propagate exception upwards (matches Zig TODO).
-        //
-        // Zig captured `callback` at comptime; Rust fn pointers cannot capture.
-        // TODO(port): comptime callback capture — model `callback` as a trait
-        // associated fn (or const-generic fn ptr once stable) so the shim is
-        // monomorphized per call site. For now we stash the typed fn pointer
-        // alongside ctx in a leaked pair so the erased shim can recover both.
-        struct Erased<C> {
-            ctx: *mut C,
-            callback: fn(*mut C, ReadFileResultType) -> jsc::JsTerminatedResult<()>,
+        // Zig used a local `Handler` struct whose `run` calls the comptime
+        // `callback` and swallows the JSTerminated error. `ReadFileCompletion`
+        // monomorphizes per `C`, so `handler_run::<C>` is that local struct's
+        // `run` and `on_complete_ctx` is the unwrapped `*mut C` — exactly the
+        // Zig layout (no extra heap box, nothing to leak on the `Err` path).
+        fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
+            // TODO(port): properly propagate exception upwards (matches Zig TODO).
+            let _ = C::run(ctx as *mut C, bytes);
         }
-        fn handler_run<C>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // SAFETY: ctx was Box::into_raw'd from Erased<C> below; we reclaim it here.
-            let erased = unsafe { Box::from_raw(ctx as *mut Erased<C>) };
-            let _ = (erased.callback)(erased.ctx, bytes);
-        }
-        let erased = Box::into_raw(Box::new(Erased { ctx: context, callback }));
-
         ReadFile::create_with_ctx(
             store,
-            erased as *mut c_void,
+            context as *mut c_void,
             handler_run::<C>,
             off,
             max_len,
@@ -1282,8 +1270,20 @@ impl<'a> ReadFileUV<'a> {
 }
 
 /// Trait modeling the `comptime Handler: type` parameter of `ReadFileUV.start`.
+/// Zig `@ptrCast(&Handler.run)` erases the typed ctx to `*anyopaque`; here the
+/// implementor supplies the already-erased thunk.
 pub trait ReadFileUvHandler {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType);
+}
+
+/// Any `ReadFileCompletion` is usable as a `ReadFileUV` handler — the libuv
+/// path stores the same `(ctx, run)` pair, just without the JSTerminated
+/// return (Zig swallowed it via `catch {}` in the POSIX path; the UV path's
+/// `Handler.run` is `void`-returning by contract).
+impl<C: ReadFileCompletion> ReadFileUvHandler for C {
+    fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
+        let _ = <C as ReadFileCompletion>::run(ctx as *mut C, bytes);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1291,5 +1291,5 @@ pub trait ReadFileUvHandler {
 //   source:     src/runtime/webcore/blob/read_file.zig (829 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      ReadFile::create comptime-callback erasure boxed as (ctx, fn) pair pending trait rework. ReadFileRead.buf models Zig's owned `[]u8` as &'static mut + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
+//   notes:      ReadFileRead.buf models Zig's owned `[]u8` as &'static mut + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
 // ──────────────────────────────────────────────────────────────────────────

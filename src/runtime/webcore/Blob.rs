@@ -472,7 +472,6 @@ impl BlobExt for Blob {
                 self.offset,
                 self.size,
                 handler,
-                Handler::<'_, F>::run,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task =

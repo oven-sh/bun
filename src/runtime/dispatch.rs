@@ -1037,7 +1037,7 @@ pub fn install_dispatch_hooks() {
     );
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
-    bun_jsc::set_run_task_hook(tick_queue_with_count);
+    bun_jsc::task::set_run_task_hook(tick_queue_with_count);
     bun_jsc::event_loop::set_tick_queue_hook(tick_queue_hook_adapter);
 }
 

@@ -1324,6 +1324,12 @@ impl Kqueue {
                 }
                 // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a
                 // separate heap allocation, disjoint from the `entries` borrow above.
+                // Launder the path bytes via the raw pointer so `rel` is decoupled
+                // from the `&mut self` activated for `emit()` — a named shared borrow
+                // of `watcher.path` cannot coexist with that exclusive reborrow.
+                // `path` is a `ZBox`; its heap bytes are a separate allocation.
+                let watcher_path: &[u8] =
+                    unsafe { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
                 let watcher = unsafe { &mut *entry.watcher };
 
                 let event_type: EventType =
@@ -1336,7 +1342,7 @@ impl Kqueue {
                 // kqueue has no filenames. For a file watch, report the basename; for a
                 // directory, report the subpath (empty for root → caller re-scans).
                 let rel: &[u8] = if entry.is_file && entry.subpath.is_empty() {
-                    path::basename(watcher.path.as_bytes())
+                    path::basename(watcher_path)
                 } else {
                     entry.subpath.as_bytes()
                 };

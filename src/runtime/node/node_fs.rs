@@ -7280,13 +7280,14 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
 //
 // The Rust port calls `bun_sys::unlink`/`libc::rmdir` which yield a raw errno
 // rather than a Zig error name, so this composes `std.posix.unlinkZ`'s
-// errno→error map with the Zig switch above. Notably EPERM lands in
-// AccessDenied (→ EACCES) and EISDIR/ENOTDIR/ENOTEMPTY are *not* in the
-// narrow set, so they fall through to EFAULT — matching Node's error surface
-// for `rm` without `recursive`.
+// errno→error map with the Zig switch above. Notably the vendored stdlib maps
+// `.PERM => error.PermissionDenied` (NOT `error.AccessDenied`), and
+// `PermissionDenied` is absent from the narrow Zig switch, so raw EPERM —
+// like EISDIR/ENOTDIR/ENOTEMPTY — falls through to EFAULT here to match the
+// composed Zig behavior bit-for-bit.
 fn map_rm_errno_narrow(e: E) -> E {
     match e {
-        E::EACCES | E::EPERM => E::EACCES,
+        E::EACCES => E::EACCES,
         E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }

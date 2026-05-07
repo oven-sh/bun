@@ -19,6 +19,7 @@ impl Default for Fraction {
     }
 }
 
+#[derive(Clone)]
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,
     pub reporters: Reporters,
@@ -56,6 +57,7 @@ pub enum Reporter {
     Lcov,
 }
 
+#[derive(Clone, Copy)]
 pub struct Reporters {
     pub text: bool,
     pub lcov: bool,

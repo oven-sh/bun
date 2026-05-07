@@ -849,11 +849,9 @@ impl RunCommand {
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
-        // Park `entry_path` in the process-lifetime arena (Zig: caller's
-        // `graph.entryPoint().name` is process-static; we copy to satisfy
-        // `vm.main: &'static [u8]` until that field is retyped to `Box<[u8]>`).
-        let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(entry_path);
-        vm.main = entry_path;
+        // `vm.main` is a BACKREF (`*const [u8]`); `entry_path` borrows the
+        // standalone graph's `entryPoint().name` (process-lifetime).
+        vm.set_main(entry_path);
 
         // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so

@@ -2593,8 +2593,7 @@ impl<'a> Transpiler<'a> {
         }
 
         if bun_core::FeatureFlags::TRACING
-            // SAFETY: `self.options.log` is non-null after `init`.
-            && unsafe { &*self.options.log }.level.at_least(logger::Level::Info)
+            && self.options.log().level.at_least(logger::Level::Info)
         {
             bun_core::Output::pretty_errorln(format_args!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",

@@ -2002,6 +2002,51 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    /// Shared-borrow the per-Transpiler `Log`.
+    ///
+    /// SAFETY: `self.log` is non-null once `from_api` / `Transpiler::init` has
+    /// run (Zig spec `options.zig:1714`: `log: *logger.Log`, non-optional).
+    /// The pointee is the caller-owned arena `Log` which outlives `self`. The
+    /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
+    /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
+    /// holds a live `&mut Log` from one of those aliases concurrently.
+    #[inline]
+    pub fn log(&self) -> &logger::Log {
+        unsafe { &*self.log }
+    }
+
+    /// Reborrow the per-Transpiler `Log` mutably. `&self` receiver (not
+    /// `&mut self`) so call sites can pass other `self.*` fields alongside the
+    /// result without a borrowck conflict — mirrors `Transpiler::log_mut`.
+    ///
+    /// SAFETY: see [`BundleOptions::log`]. Callers must not hold two results
+    /// live at once, nor hold a result across a `Resolver` / `Linker` call
+    /// that itself writes through the aliased `*mut Log`.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut(&self) -> &mut logger::Log {
+        unsafe { &mut *self.log }
+    }
+
+    /// Read-only view of the parsed `bunfig.toml` `[install]` block, if any.
+    ///
+    /// SAFETY: when `Some`, the `NonNull` points at the process-lifetime
+    /// `ctx.install: Box<BunInstall>` (see field doc), which outlives `self`
+    /// and is never mutated after CLI parsing. The sole consumer
+    /// (`PackageManager::init_with_runtime`) only reads through it.
+    #[inline]
+    pub fn install(&self) -> Option<&api::BunInstall> {
+        self.install.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Whether `bake.DevServer` is driving this bundle. The stored pointer is
+    /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
+    /// so no `&T` accessor is possible; bundler code only ever tests presence.
+    #[inline]
+    pub fn has_dev_server(&self) -> bool {
+        !self.dev_server.is_null()
+    }
+
     pub const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
         b"react",
         b"react-is",
@@ -2066,10 +2111,9 @@ impl<'a> BundleOptions<'a> {
         };
         // PORT NOTE: reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
-            // SAFETY: `self.log` is the per-Transpiler `*mut Log` (Zig
-            // `*logger.Log`); aliased into `Transpiler.log` / `Resolver.log`
-            // but no other `&mut` is live across this call.
-            unsafe { &mut *self.log },
+            // No other `&mut Log` is live across this call (see `log_mut`
+            // caller contract).
+            self.log_mut(),
             self.transform_options.define.clone(),
             self.target,
             loader_,
@@ -2327,9 +2371,8 @@ impl<'a> BundleOptions<'a> {
                 .iter()
                 .map(|s| s.as_ref())
                 .collect::<Vec<&[u8]>>(),
-            // SAFETY: `opts.log` is the caller's per-Transpiler `*mut Log`;
             // sole live `&mut` for this call (struct not yet returned).
-            unsafe { &mut *opts.log },
+            opts.log_mut(),
             opts.target,
         );
         opts.out_extensions = opts.target.out_extensions();

@@ -11,6 +11,9 @@ use bun_install::{
     PackageManager,
 };
 use bun_install::dependency;
+// `lockfile.packages.items_name()` is provided by an extension trait on
+// `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
+use crate::lockfile::package::PackageListExt as _;
 
 pub struct UpdateRequest {
     // TODO(port): lifetime — Zig leaks these (no deinit); using &'static for now
@@ -92,7 +95,6 @@ impl UpdateRequest {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
-            // TODO(port): MultiArrayList column accessor — Zig: lockfile.packages.items(.name)[id]
             Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf()))
         }
     }
@@ -302,19 +304,13 @@ impl UpdateRequest {
 
 pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
 pub use bun_install::package_manager::Options;
-// PORT NOTE: `Subcommand` is taken from `super` (not the crate-root façade) so
-// this file — which is mounted both at `crate::update_request` and at
-// `crate::package_manager_real::update_request` — picks up whichever
-// `Subcommand` its parent module defines. That keeps `parse(subcommand)`
-// type-compatible with each mount's caller (`bunx_command` / `update_request_jsc`
-// pass the lib.rs enum; `updatePackageJSONAndInstall` passes the
-// `package_manager_real` enum).
 pub use super::Subcommand;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/UpdateRequest.zig (218 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      name/version_buf leaked as &'static (no deinit in Zig); Dependency.Version tag+value union access needs Phase-B reshape; std.mem.replace stubbed
+//   confidence: high
+//   notes:      name/version_buf leaked as &'static (no deinit in Zig either —
+//               CLI-positional lifetime); Dependency.Version tag/value union
+//               accesses guarded by tag discriminant per Zig.
 // ──────────────────────────────────────────────────────────────────────────

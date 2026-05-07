@@ -922,13 +922,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // The per-iteration scopeguards capture the function-scope provenance
         // roots (`manager_ptr`/`extract_ctx_ptr`) — the body shadows
         // `manager`/`extract_ctx` are reborrows of those same roots (see
-        // `_drain_guard` setup), so dereffing a root in a guard is valid both
+        // drain `defer!` setup), so dereffing a root in a guard is valid both
         // before *and* after every body use of the shadow under Stacked Borrows.
-        let _put_task = scopeguard::guard((), move |()| {
+        scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
             unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
-        });
+        };
         manager.decrement_pending_tasks();
 
         if !task.log.msgs.is_empty() {
@@ -947,8 +947,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                let _put_net = scopeguard::guard((), move |()| {
-                    // SAFETY: see `_put_task` above — `manager_ptr` is the
+                scopeguard::defer! {
+                    // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `task.tag == PackageManifest`
                     // so `request.package_manifest` is the active union arm.
                     unsafe {
@@ -956,7 +956,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .preallocated_network_tasks
                             .put((*task_ptr).request.package_manifest.network);
                     }
-                });
+                };
                 if task.status == Task::Status::Fail {
                     // SAFETY: `task.tag == PackageManifest` — active union arm.
                     let req = unsafe { &*task.request.package_manifest };
@@ -1013,8 +1013,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                let _put_net = scopeguard::guard((), move |()| {
-                    // SAFETY: see `_put_task` above — `manager_ptr` is the
+                scopeguard::defer! {
+                    // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `task.tag == Extract` so
                     // `request.extract` is the active union arm.
                     unsafe {
@@ -1024,7 +1024,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 .put((*task_ptr).request.extract.network);
                         }
                     }
-                });
+                };
 
                 // SAFETY: `task.tag` selects the active union arm.
                 let tarball = match task.tag {
@@ -1161,14 +1161,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
                         // of `any_root_ptr` and the guard's read keeps provenance.
                         let any_root = unsafe { &mut *any_root_ptr };
-                        let _resolve_guard = scopeguard::guard((), move |()| {
+                        scopeguard::defer! {
                             // SAFETY: `any_root_ptr` outlives this labeled block and the
                             // body only touches it via the shadow above; `extract_ctx_ptr`
                             // is the function-scope provenance root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
-                        });
+                        };
 
                         for dep in dependency_list.into_iter() {
                             match dep {
@@ -1491,14 +1491,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
                         // of `any_root_ptr` and the guard's read keeps provenance.
                         let any_root = unsafe { &mut *any_root_ptr };
-                        let _resolve_guard = scopeguard::guard((), move |()| {
-                            // SAFETY: see Extract arm `_resolve_guard` — `any_root_ptr`
+                        scopeguard::defer! {
+                            // SAFETY: see Extract arm resolve `defer!` — `any_root_ptr`
                             // accessed only via the shadow; `extract_ctx_ptr` is the
                             // function-scope provenance root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
-                        });
+                        };
 
                         for dep in dependency_list.into_iter() {
                             match dep {

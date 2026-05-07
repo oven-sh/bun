@@ -660,6 +660,6 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
 //   source:     src/runtime/server/FileResponseStream.zig (411 lines)
 //   confidence: high
 //   notes:      intrusive RC + uWS callback aliasing means &mut self is reentrant
-//               via raw ptr; scopeguard closures capture *mut Self (not &self)
-//               so deref's Box::from_raw has write provenance.
+//               via raw ptr; DerefOnDrop holds *mut Self (not &self) so deref's
+//               Box::from_raw retains write provenance.
 // ──────────────────────────────────────────────────────────────────────────

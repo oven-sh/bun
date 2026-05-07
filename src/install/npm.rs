@@ -1504,18 +1504,17 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let fd = file.handle;
-                let _close = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
+                let _close = CloseOnDrop::file(&file);
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
                 match &rc {
                     bun_sys::Result::Err(err) => {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
-                        let _unlink = scopeguard::guard((), |_| {
-                            // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                        // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                        scopeguard::defer! {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
-                        });
+                        }
 
                         // Zig (npm.zig:1128) matches `.OPNOTSUPP`, which on
                         // Darwin is errno **45** (collapsed with NOTSUP). The

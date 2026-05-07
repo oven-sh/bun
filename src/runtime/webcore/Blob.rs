@@ -3920,12 +3920,23 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_last_modified(&mut self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = &self.store {
-            if let store::Data::File(file) = &store.data {
+            if matches!(store.data, store::Data::File(_)) {
+                // PORT NOTE: do not hold a pattern-bound `&File` across
+                // `resolve_file_stat` — it materializes `&mut File` on the same
+                // memory (Stacked Borrows UB; the optimizer may legally cache the
+                // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
+                // Re-read through the raw store pointer after the mutating call.
+                // Mirrors Zig, which re-loads `store.data.file.*` each time.
+                let store_ptr = store.as_ptr();
+                // SAFETY: `store_ptr` is the live `Box::into_raw` pointer behind
+                // `StoreRef`; single-threaded JS event loop ⇒ no concurrent writers.
+                let last_modified = unsafe { (*store_ptr).data.as_file() }.last_modified;
                 // last_modified can be already set during read.
-                if file.last_modified == jsc::INIT_TIMESTAMP as f64 && !self.is_s3() {
+                if last_modified == jsc::INIT_TIMESTAMP as f64 && !self.is_s3() {
                     resolve_file_stat(store);
                 }
-                return JSValue::js_number(file.last_modified);
+                // SAFETY: fresh borrow after possible mutation by `resolve_file_stat`.
+                return JSValue::js_number(unsafe { (*store_ptr).data.as_file() }.last_modified);
             }
         }
 
@@ -4166,10 +4177,23 @@ impl Blob {
                     }
                     return;
                 }
-                store::Data::File(file) => {
-                    if file.seekable.is_none() {
+                store::Data::File(_) => {
+                    // PORT NOTE: do not hold the pattern-bound `&File` across
+                    // `resolve_file_stat` — it materializes `&mut File` on the
+                    // same memory (Stacked Borrows UB; the optimizer may legally
+                    // cache the pre-call `seekable: None` and fall through to
+                    // `self.size = 0`). Re-read through the raw store pointer
+                    // after the mutating call. Mirrors Zig, which re-loads
+                    // `store.data.file.*` each time.
+                    let store_ptr = store.as_ptr();
+                    // SAFETY: `store_ptr` is the live `Box::into_raw` pointer
+                    // behind `StoreRef`; single-threaded JS event loop ⇒ no
+                    // concurrent writers.
+                    if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
                         resolve_file_stat(store);
                     }
+                    // SAFETY: fresh borrow after possible mutation.
+                    let file = unsafe { (*store_ptr).data.as_file() };
 
                     if file.seekable.is_some() && file.max_size != MAX_SIZE {
                         let store_size = file.max_size;
@@ -4209,10 +4233,18 @@ impl Blob {
                     }
                     return (self.offset, self.size);
                 }
-                store::Data::File(file) => {
-                    if file.seekable.is_none() {
+                store::Data::File(_) => {
+                    // PORT NOTE: see `resolve_size` — re-read through the raw
+                    // store pointer after `resolve_file_stat` to avoid the
+                    // stale-shared-borrow UB.
+                    let store_ptr = store.as_ptr();
+                    // SAFETY: `store_ptr` is the live `Box::into_raw` pointer
+                    // behind `StoreRef`; single-threaded JS event loop.
+                    if unsafe { (*store_ptr).data.as_file() }.seekable.is_none() {
                         resolve_file_stat(store);
                     }
+                    // SAFETY: fresh borrow after possible mutation.
+                    let file = unsafe { (*store_ptr).data.as_file() };
                     if file.seekable.is_some() && file.max_size != MAX_SIZE {
                         let store_size = file.max_size;
                         let offset = self.offset;

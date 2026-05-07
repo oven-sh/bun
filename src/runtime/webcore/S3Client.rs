@@ -638,9 +638,15 @@ impl S3Client {
         )?;
         // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
         let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: see `list_objects` — `store_ptr` live for `blob`; Zig-semantics
-        // shared-mutable interior on the JS event-loop thread.
-        unsafe { (*store_ptr).data.as_s3_mut().unlink(&*store_ptr, global, options) }
+        // SAFETY: see `list_objects` — `store_ptr` live for `blob` and never
+        // null; parent `Store` passed as `NonNull` to avoid an SB-invalidating
+        // shared reborrow alongside the `&mut S3` receiver.
+        unsafe {
+            (*store_ptr)
+                .data
+                .as_s3_mut()
+                .unlink(NonNull::new_unchecked(store_ptr), global, options)
+        }
     }
 
     /// Called by the generated JSCell wrapper's `finalize()`. Runs on the

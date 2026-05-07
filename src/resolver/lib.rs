@@ -239,7 +239,7 @@ pub mod fs {
         /// real fd budget — `need_to_close_files` depends on that to enable
         /// directory-fd caching.
         pub fn init(
-            top_level_dir: Option<&'static [u8]>,
+            top_level_dir: Option<&[u8]>,
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
             Self::init_with_force::<false>(top_level_dir)
         }
@@ -249,7 +249,7 @@ pub mod fs {
         /// harness which `chdir`s between fixtures and needs a fresh
         /// `top_level_dir`.
         pub fn init_with_force<const FORCE: bool>(
-            top_level_dir: Option<&'static [u8]>,
+            top_level_dir: Option<&[u8]>,
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
             // SAFETY: matches Zig global singleton init pattern; called from
             // `Transpiler::init` before any worker spawn.
@@ -259,7 +259,10 @@ pub mod fs {
                 }
             }
             let cwd: &'static [u8] = match top_level_dir {
-                Some(d) => d,
+                // PORT NOTE: intern into the process-lifetime `DirnameStore` so
+                // callers may pass a borrowed path without leaking it themselves
+                // (Zig had no lifetime; the singleton outlives every caller).
+                Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     // Spec fs.zig:161 — `bun.getcwdAlloc(allocator)`.
                     let mut buf = bun_paths::PathBuffer::default();

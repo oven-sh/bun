@@ -199,7 +199,14 @@ pub mod expect {
                 1,
                 out,
                 fmt_options,
-            )
+            )?;
+            // Zig: `try out.flush()` — `FormatOptions.flush` is false, so the
+            // formatter does not flush internally; a buffered `out` would
+            // otherwise drop trailing snapshot bytes. I/O failure is discarded
+            // (matches the `let _ = writer.flush()` pattern in pretty_format.rs;
+            // `JsResult` cannot carry a non-JS error).
+            let _ = out.flush();
+            Ok(())
         }
         #[inline]
         fn is_reg_exp(self) -> bool {
@@ -233,11 +240,11 @@ pub mod expect {
         }
         #[inline]
         fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-            Ok(self.get_own_by_value(global, key).is_some())
+            JSValue::has_own_property_value(self, global, key)
         }
         #[inline]
         fn is_uint32_as_any_int(self) -> bool {
-            self.is_any_int() && self.to_int32() >= 0
+            JSValue::is_uint32_as_any_int(self)
         }
         #[inline]
         fn is_big_int32(self) -> bool {
@@ -271,7 +278,8 @@ pub mod expect {
         }
         #[inline]
         fn to_u32(self) -> u32 {
-            self.to_int32() as u32
+            // Zig `toU32` (JSValue.zig:2160): clamp `toInt64()` into [0, u32::MAX].
+            self.to_int64().clamp(0, u32::MAX as i64) as u32
         }
         #[inline]
         fn bind(
@@ -328,9 +336,6 @@ pub mod expect {
         fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-        /// `JSGlobalObject::clear_exception` lives in the cfg-gated
-        /// `JSGlobalObject.rs`; until that file un-gates, expose the FFI here.
-        fn clear_exception_shim(&self);
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
@@ -346,14 +351,6 @@ pub mod expect {
         #[inline]
         fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
             self.throw_invalid_arguments(args)
-        }
-        #[inline]
-        fn clear_exception_shim(&self) {
-            unsafe extern "C" {
-                fn JSGlobalObject__clearException(global: *const JSGlobalObject);
-            }
-            // SAFETY: FFI — &self is a valid JSGlobalObject*; no extra preconditions.
-            unsafe { JSGlobalObject__clearException(self) }
         }
     }
 

@@ -2964,8 +2964,16 @@ impl DevServer {
         // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
         // param is `&bun_alloc::Arena` (== `&Bump`).
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        let ast_memory_allocator = heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
-        let _ast_scope = ast_memory_allocator.enter();
+        // PORT NOTE: `heap.alloc` returns `&mut T` borrowing `heap`, but `heap` is
+        // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
+        // and stable across the move of the `Bump` handle, so erase the borrow to a
+        // raw pointer (same rationale as `event_loop` below).
+        let ast_memory_allocator: *mut bun_js_parser::ASTMemoryAllocator =
+            heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
+        // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
+        // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
+        // and `_ast_scope` is dropped before `bv2` at end of this fn.
+        let _ast_scope = unsafe { &mut *ast_memory_allocator }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -4266,7 +4274,10 @@ pub fn finalize_bundle(
             unsafe { dev.inspector() }.map(|a| a as *mut _);
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
-            scopeguard::defer! { unsafe { (*current_bundle_ptr).promise.reset() } };
+            // PORT NOTE: copy the raw ptr so `defer!`'s by-ref capture does not
+            // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
+            let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
+            scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.reset() } };
             current_bundle!()
                 .promise
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
@@ -4456,7 +4467,10 @@ pub fn finalize_bundle(
 
     if current_bundle!().promise.strong.has_value() {
         // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
-        scopeguard::defer! { unsafe { (*current_bundle_ptr).promise.deinit_idempotently() } };
+        // PORT NOTE: copy the raw ptr so `defer!`'s by-ref capture does not
+        // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
+        let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
+        scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.deinit_idempotently() } };
         current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };

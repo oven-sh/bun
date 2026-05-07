@@ -1262,8 +1262,8 @@ pub struct Once<T, F = ()> {
     cell: std::sync::OnceLock<T>,
     f: F,
 }
-// SAFETY: OnceLock<T> handles the Sync; F is only read under its lock.
-unsafe impl<T: Send + Sync, F: Send + Sync> Sync for Once<T, F> {}
+// `Once<T, F>` is auto-`Sync` when `T: Send + Sync, F: Sync` via
+// `OnceLock<T>: Sync` — no `unsafe impl` needed.
 
 impl<T> Once<T, ()> {
     pub const fn new() -> Self { Self { cell: std::sync::OnceLock::new(), f: () } }

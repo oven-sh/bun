@@ -17,9 +17,14 @@ impl DoneCallback {
 
         // SAFETY: `this` was `Box::into_raw`'d by `JsClass::to_js` in
         // `create_unbound`; finalize is called exactly once by JSC lazy sweep.
-        // Dropping the Box drops `r#ref` (Rc::drop == deref) and frees the
-        // allocation (== allocator.destroy).
-        drop(unsafe { Box::from_raw(this) });
+        let mut boxed = unsafe { Box::from_raw(this) };
+        // `RefDataPtr` = `RefPtr<RefData>` has NO `Drop` impl (see
+        // src/ptr/ref_count.rs) — must explicitly decrement before the Box
+        // frees the allocation. Zig: `if (this.ref) |ref| ref.deref();`.
+        if let Some(r) = boxed.r#ref.take() {
+            r.deref();
+        }
+        drop(boxed); // == allocator.destroy
     }
 
     pub fn create_unbound(global: &JSGlobalObject) -> JSValue {

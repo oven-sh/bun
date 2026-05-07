@@ -1713,8 +1713,11 @@ impl Expect {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn not_implemented_static_prop(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    // PORT NOTE: Zig `notImplementedStaticProp` is a static-prop getter
+    // (`(globalThis, JSValue, JSValue)`, no `*Expect` receiver). The
+    // `host_fn(getter)` shape was wrong (it injects `&Self`). Unreferenced by
+    // codegen today, so kept as a plain assoc fn matching the static ABI.
+    pub fn not_implemented_static_prop(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
@@ -3047,10 +3050,6 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    /// JSValue.zero is used to indicate it was not a JSMockFunction
-    /// If there were no calls, it returns an empty JSArray*
-    fn JSMockFunction__getReturns(value: JSValue) -> JSValue;
-
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: *const bun_str::String,

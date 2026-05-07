@@ -33,7 +33,7 @@ use crate::server::StaticRoute;
  #[path = "../DevServer/DirectoryWatchStore.rs"] pub(crate) mod directory_watch_store_body;
  #[path = "../DevServer/ErrorReportRequest.rs"]  pub(crate) mod error_report_request_body;
  #[path = "../DevServer/HmrSocket.rs"]           pub(crate) mod hmr_socket_body;
- #[path = "../DevServer/HotReloadEvent.rs"]      pub(crate) mod hot_reload_event_body;
+ // HotReloadEvent body draft dissolved into this file (see struct + impl below).
  #[path = "../DevServer/IncrementalGraph.rs"]    pub(crate) mod incremental_graph_body;
  // PackedMap body draft dissolved into `packed_map.rs`.
  #[path = "../DevServer/RouteBundle.rs"]         pub(crate) mod route_bundle_body;
@@ -595,10 +595,23 @@ impl HotReloadEvent {
 
     /// `HotReloadEvent.run` — HotReloadEvent.zig:173. Main-thread side of the
     /// watcher → DevServer hand-off.
-    pub fn run(first: &mut HotReloadEvent) {
-        // SAFETY: `owner` is a BACKREF to the DevServer that owns the WatcherAtomics array
-        // containing this event; DevServer outlives all HotReloadEvents it holds.
-        let dev: *mut DevServer = first.owner as *mut DevServer;
+    ///
+    /// Takes a raw `*mut` because `first` is an inline element of
+    /// `(*first.owner).watcher_atomics.events[_]`; holding a `&mut HotReloadEvent`
+    /// parameter while also materialising `&mut DevServer` would create two
+    /// aliasing unique borrows. All event accesses go through the raw pointer
+    /// and `&mut DevServer` is re-borrowed per use, scoped to not overlap any
+    /// live `&mut *current`.
+    ///
+    /// # Safety
+    /// `first` must point at a live `HotReloadEvent` owned by
+    /// `(*first).owner.watcher_atomics.events`, and this fn must run on the
+    /// DevServer thread (sole mutator of `*owner` outside `watcher_atomics`).
+    pub unsafe fn run(first: *mut HotReloadEvent) {
+        // SAFETY: caller contract — `first` is live; `owner` is a BACKREF to the
+        // DevServer that owns the WatcherAtomics array containing this event;
+        // DevServer outlives all HotReloadEvents it holds.
+        let dev: *mut DevServer = unsafe { (*first).owner } as *mut DevServer;
         // SAFETY: see above; `magic` read is non-aliasing.
         debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
@@ -608,31 +621,39 @@ impl HotReloadEvent {
 
         #[cfg(debug_assertions)]
         {
-            debug_assert!(first.debug_mutex.try_lock());
-            debug_assert!(first.contention_indicator.load(Ordering::SeqCst) == 0);
+            // SAFETY: `first` is live and exclusively owned by this thread.
+            debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
-        // SAFETY: `dev` is the unique BACKREF; this fn runs on the DevServer thread.
-        let dev_ref = unsafe { &mut *dev };
-
-        if dev_ref.current_bundle.is_some() {
-            dev_ref.next_bundle.reload_event = Some(first as *mut HotReloadEvent);
+        // SAFETY: `dev` is the unique BACKREF; this fn runs on the DevServer
+        // thread. No `&mut *first` is live across this borrow.
+        if unsafe { (*dev).current_bundle.is_some() } {
+            // SAFETY: as above; `next_bundle` is disjoint from `watcher_atomics`.
+            unsafe { (*dev).next_bundle.reload_event = Some(first) };
             return;
         }
 
         // PERF(port): was stack-fallback allocator (4096 bytes) — profile in Phase B
         let mut entry_points = EntryPointList::default();
 
-        first.process_file_list(dev_ref, &mut entry_points);
+        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
+        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
+        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
+        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
 
-        let timer = first.timer;
+        // SAFETY: `first` is live; `timer` was set by
+        // `WatcherAtomics::watcher_acquire_event` before submission.
+        let timer = unsafe { (*first).timer };
 
         // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
-        // a pointer into `dev.watcher_atomics.events` while `dev_ref` is live;
-        // re-borrow each iteration to avoid aliasing UB.
-        let mut current: *mut HotReloadEvent = first as *mut HotReloadEvent;
+        // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
+        // to avoid aliasing UB.
+        let mut current: *mut HotReloadEvent = first;
         loop {
-            // SAFETY: `current` always points at a live event owned by `dev.watcher_atomics`.
+            // SAFETY: `current` always points at a live event owned by
+            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
+            // disjoint per the note above.
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
             match unsafe { (*dev).watcher_atomics.recycle_event_from_dev_server(current) } {
@@ -648,7 +669,7 @@ impl HotReloadEvent {
             }
         }
 
-        // SAFETY: `dev` is valid; re-borrow after the raw-ptr loop.
+        // SAFETY: `dev` is valid; no `&mut *current` is live past this point.
         let dev_ref = unsafe { &mut *dev };
 
         if entry_points.set.count() == 0 {

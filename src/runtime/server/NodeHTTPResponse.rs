@@ -870,6 +870,7 @@ impl NodeHTTPResponse {
         &mut self,
         _global: &JSGlobalObject,
         _frame: &CallFrame,
+        _this_value: JSValue,
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doPause");
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)

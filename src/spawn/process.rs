@@ -10,17 +10,6 @@ use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-#[cfg(not(windows))]
-#[allow(non_camel_case_types)]
-mod uv {
-    //! Forward-declares for libuv types referenced from cross-platform struct
-    //! shapes (`WindowsStdio`, `WindowsStdioResult`). The Zig source guards
-    //! every `uv.*` dereference behind `if (Environment.isWindows)`; on
-    //! non-Windows builds these are only ever `*mut`/`Box` handles that are
-    //! never dereferenced, so an opaque `c_void` forward-declare is the
-    //! correct extern-type representation (PORTING.md: "type used opaquely").
-    pub type Pipe = core::ffi::c_void;
-}
 
 // ─── §Dispatch: cross-tier exit handlers ─────────────────────────────────────
 // Zig: `TaggedPointerUnion` of 12 concrete *Handler types living in higher-tier
@@ -1853,14 +1842,11 @@ impl PosixSpawnResult {
         let pidfd_flags = Self::pidfd_flags_for_linux();
 
         let attempt = 'brk: {
-            let rc = spawn_sys::pidfd_open(
-                i32::try_from(self.pid).unwrap(),
-                pidfd_flags,
-            );
+            let rc = bun_sys::pidfd_open(self.pid, pidfd_flags);
             if let Err(e) = &rc {
                 if e.get_errno() == bun_sys::E::EINVAL {
                     // Retry once, incase they don't support PIDFD_NONBLOCK.
-                    break 'brk spawn_sys::pidfd_open(i32::try_from(self.pid).unwrap(), 0);
+                    break 'brk bun_sys::pidfd_open(self.pid, 0);
                 }
             }
             rc
@@ -1905,7 +1891,7 @@ impl PosixSpawnResult {
                 }
                 Err(err)
             }
-            Ok(rc) => Ok(rc),
+            Ok(fd) => Ok(fd.native()),
         }
     }
 
@@ -1931,215 +1917,15 @@ pub type SpawnProcessResult = PosixSpawnResult;
 pub type SpawnProcessResult = WindowsSpawnResult;
 
 // ─── spawn_process bodies + sync runner ──────────────────────────────────────
-// Missing `bun_sys` surface (POSIX_SPAWN_* flags, set_close_on_exec,
-// socketpair_for_shell, memfd helpers, pidfd_open, Syscall tags) is shimmed
-// locally in `spawn_sys` so this file stays edit-only while the `bun_sys`
-// crate catches up. All shims call straight through to libc / extern "C".
-#[allow(dead_code)]
-pub mod spawn_sys {
-    use super::*;
-    use core::ffi::c_int;
 
-    // ── POSIX_SPAWN_* flags (Zig: bun.c.POSIX_SPAWN_*). ──
-    // libc carries the standard ones; the Apple extensions are in `<spawn.h>`
-    // but not exported by the `libc` crate, so define them by value.
-    pub const POSIX_SPAWN_SETSIGDEF: i32 = libc::POSIX_SPAWN_SETSIGDEF as i32;
-    pub const POSIX_SPAWN_SETSIGMASK: i32 = libc::POSIX_SPAWN_SETSIGMASK as i32;
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub const POSIX_SPAWN_SETSID: i32 = libc::POSIX_SPAWN_SETSID as i32;
-    #[cfg(target_os = "macos")]
-    pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT (Apple <spawn.h>)
-    #[cfg(target_os = "macos")]
-    pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC (Apple <spawn.h>)
-
-    // ── bun.sys.Tag aliases used below. The real Tag enum is `bun_sys::Tag`
-    //    (opaque u16); until the full table lands, use a single placeholder so
-    //    Error::from_code keeps the .syscall slot populated. ──
-    pub const TAG_PIDFD_OPEN: bun_sys::Tag = bun_sys::Tag(0);
-    pub const TAG_SOCKETPAIR: bun_sys::Tag = bun_sys::Tag(0);
-    pub const TAG_FCNTL: bun_sys::Tag = bun_sys::Tag(0);
-    pub const TAG_MEMFD_CREATE: bun_sys::Tag = bun_sys::Tag(0);
-
-    pub const INVALID_FD: Fd = Fd::INVALID;
-
-    /// Raw libc `environ` global (null-terminated `char **`). The `libc` crate
-    /// doesn't export the `environ` static on all targets, so declare it here.
-    /// Unlike `bun_sys::environ()` (which returns a counted slice), this
-    /// returns the underlying null-terminated array pointer suitable for
-    /// `posix_spawn` envp.
-    #[cfg(unix)]
-    pub fn raw_environ() -> *const *const c_char {
-        unsafe extern "C" { static mut environ: *const *const c_char; }
-        // SAFETY: `environ` is the process-global C environment array.
-        unsafe { environ }
-    }
-
-    // ── set_close_on_exec — fcntl(FD_CLOEXEC). ──
-    #[cfg(unix)]
-    pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
-        // SAFETY: fcntl(2) on a caller-supplied fd.
-        unsafe {
-            let prev = libc::fcntl(fd.native(), libc::F_GETFD);
-            if prev < 0 {
-                return Err(bun_sys::Error::from_code_int(errno_int(), TAG_FCNTL));
-            }
-            if libc::fcntl(fd.native(), libc::F_SETFD, prev | libc::FD_CLOEXEC) < 0 {
-                return Err(bun_sys::Error::from_code_int(errno_int(), TAG_FCNTL));
-            }
-        }
-        Ok(())
-    }
-
-    // ── socketpair / socketpair_for_shell (Zig: sys.socketpair / sys.socketpairForShell). ──
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum SocketpairMode { Blocking, Nonblocking }
-
-    #[cfg(unix)]
-    pub fn socketpair(
-        domain: c_int,
-        socktype: c_int,
-        protocol: c_int,
-        mode: SocketpairMode,
-    ) -> Maybe<[Fd; 2]> {
-        socketpair_impl(domain, socktype, protocol, mode, false)
-    }
-
-    #[cfg(unix)]
-    pub fn socketpair_for_shell(
-        domain: c_int,
-        socktype: c_int,
-        protocol: c_int,
-        mode: SocketpairMode,
-    ) -> Maybe<[Fd; 2]> {
-        socketpair_impl(domain, socktype, protocol, mode, true)
-    }
-
-    #[cfg(unix)]
-    fn socketpair_impl(
-        domain: c_int,
-        socktype: c_int,
-        protocol: c_int,
-        mode: SocketpairMode,
-        for_shell: bool,
-    ) -> Maybe<[Fd; 2]> {
-        let mut fds: [c_int; 2] = [0; 2];
-        // SAFETY: libc socketpair into a 2-int array.
-        // Spec (sys.zig:3144-3166) loops on EINTR for both Linux and libc paths.
-        loop {
-            let rc = unsafe { libc::socketpair(domain, socktype, protocol, fds.as_mut_ptr()) };
-            if rc != 0 {
-                let e = errno_int();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(bun_sys::Error::from_code_int(e, TAG_SOCKETPAIR));
-            }
-            break;
-        }
-        let pair = [Fd::from_native(fds[0]), Fd::from_native(fds[1])];
-        // CLOEXEC on the parent-kept end; the child end is dup2'd over.
-        let _ = set_close_on_exec(pair[0]);
-        let _ = set_close_on_exec(pair[1]);
-        if mode == SocketpairMode::Nonblocking {
-            let _ = bun_sys::set_nonblocking(pair[0]);
-            let _ = bun_sys::set_nonblocking(pair[1]);
-        }
-        // macOS: spec (sys.zig:3180-3199) — when `for_shell`, set NEITHER fd's
-        // SO_NOSIGPIPE (the child must receive SIGPIPE so `yes | head` terminates)
-        // and instead bump RCVBUF/SNDBUF to 128 KB. When `!for_shell`, set
-        // SO_NOSIGPIPE on BOTH fds.
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: setsockopt on freshly-created socketpair fds.
-            unsafe {
-                if for_shell {
-                    let so_recvbuf: c_int = 1024 * 128;
-                    let so_sendbuf: c_int = 1024 * 128;
-                    libc::setsockopt(
-                        fds[1], libc::SOL_SOCKET, libc::SO_RCVBUF,
-                        &so_recvbuf as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
-                    );
-                    libc::setsockopt(
-                        fds[0], libc::SOL_SOCKET, libc::SO_SNDBUF,
-                        &so_sendbuf as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
-                    );
-                } else {
-                    let on: c_int = 1;
-                    libc::setsockopt(
-                        fds[0], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
-                        &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
-                    );
-                    libc::setsockopt(
-                        fds[1], libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
-                        &on as *const _ as *const c_void, core::mem::size_of::<c_int>() as u32,
-                    );
-                }
-            }
-        }
-        let _ = for_shell;
-        Ok(pair)
-    }
-
-    // ── memfd helpers (Linux). ──
-    #[cfg(target_os = "linux")]
-    static MEMFD_ENOSYS: AtomicBool = AtomicBool::new(false);
-
-    #[cfg(target_os = "linux")]
-    pub fn can_use_memfd() -> bool {
-        !MEMFD_ENOSYS.load(Ordering::Relaxed)
-    }
-
-    #[derive(Clone, Copy)]
-    pub enum MemfdFlag { CrossProcess, Private }
-
-    #[cfg(target_os = "linux")]
-    pub fn memfd_create(name: &[u8], flag: MemfdFlag) -> Maybe<Fd> {
-        // CrossProcess → no MFD_CLOEXEC (the child needs to inherit it via dup2);
-        // Private → MFD_CLOEXEC.
-        let flags: u32 = match flag {
-            MemfdFlag::CrossProcess => 0,
-            MemfdFlag::Private => libc::MFD_CLOEXEC,
-        };
-        // name is a static byte string with no interior NUL; build a CString once.
-        let cname = std::ffi::CString::new(name).unwrap_or_else(|_| std::ffi::CString::new("bun_memfd").unwrap());
-        // SAFETY: libc memfd_create with a NUL-terminated name.
-        let rc = unsafe { libc::memfd_create(cname.as_ptr(), flags) };
-        if rc < 0 {
-            let e = errno_int();
-            if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
-                MEMFD_ENOSYS.store(true, Ordering::Relaxed);
-            }
-            return Err(bun_sys::Error::from_code_int(e, TAG_MEMFD_CREATE));
-        }
-        Ok(Fd::from_native(rc))
-    }
-
-    // ── pidfd_open (Linux). ──
-    #[cfg(target_os = "linux")]
-    pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<PidFdType> {
-        // SAFETY: raw Linux syscall; SYS_pidfd_open available since 5.3.
-        let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as c_int, flags as c_int) };
-        if rc < 0 {
-            return Err(bun_sys::Error::from_code_int(errno_int(), TAG_PIDFD_OPEN));
-        }
-        Ok(rc as PidFdType)
-    }
-
-    #[inline]
-    pub fn errno_int() -> c_int {
-        // SAFETY: errno_location returns thread-local errno pointer.
-        unsafe { *bun_sys::c::errno_location() }
-    }
-
-    #[inline]
-    pub fn get_errno(rc: isize) -> bun_sys::E {
-        bun_sys::get_errno(rc)
-    }
-}
+// Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
+#[cfg(target_os = "macos")]
+const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
+#[cfg(target_os = "macos")]
+const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
 mod spawn_process_body {
 use super::*;
-use super::spawn_sys;
 use core::ffi::CStr;
 use bun_sys::FdExt as _;
 
@@ -2236,14 +2022,14 @@ pub fn spawn_process_posix(
     let mut attr = PosixSpawnAttr::init()?;
     // defer attr.deinit() — Drop
 
-    let mut flags: i32 = spawn_sys::POSIX_SPAWN_SETSIGDEF | spawn_sys::POSIX_SPAWN_SETSIGMASK;
+    let mut flags: i32 = libc::POSIX_SPAWN_SETSIGDEF as i32 | libc::POSIX_SPAWN_SETSIGMASK as i32;
 
     #[cfg(target_os = "macos")]
     {
-        flags |= spawn_sys::POSIX_SPAWN_CLOEXEC_DEFAULT;
+        flags |= super::POSIX_SPAWN_CLOEXEC_DEFAULT;
 
         if options.use_execve_on_macos {
-            flags |= spawn_sys::POSIX_SPAWN_SETEXEC;
+            flags |= super::POSIX_SPAWN_SETEXEC;
 
             if matches!(options.stdin, PosixStdio::Buffer)
                 || matches!(options.stdout, PosixStdio::Buffer)
@@ -2261,7 +2047,7 @@ pub fn spawn_process_posix(
         // TODO(port): @hasDecl check — assume present on platforms that define it
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            flags |= spawn_sys::POSIX_SPAWN_SETSID;
+            flags |= libc::POSIX_SPAWN_SETSID as i32;
         }
         attr.detached = true;
     }
@@ -2353,14 +2139,14 @@ pub fn spawn_process_posix(
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
-                        let label: &[u8] = match i {
-                            0 => b"spawn_stdio_stdin",
-                            1 => b"spawn_stdio_stdout",
-                            2 => b"spawn_stdio_stderr",
-                            _ => b"spawn_stdio_generic",
+                        let label: &CStr = match i {
+                            0 => c"spawn_stdio_stdin",
+                            1 => c"spawn_stdio_stdout",
+                            2 => c"spawn_stdio_stderr",
+                            _ => c"spawn_stdio_generic",
                         };
 
-                        let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess)
+                        let fd = match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess)
                         {
                             Ok(fd) => fd,
                             Err(_) => break 'use_memfd,
@@ -2377,19 +2163,9 @@ pub fn spawn_process_posix(
 
                 let fds: [Fd; 2] = 'brk: {
                     let pair_result = if !options.no_sigpipe {
-                        spawn_sys::socketpair_for_shell(
-                            libc::AF_UNIX,
-                            libc::SOCK_STREAM,
-                            0,
-                            spawn_sys::SocketpairMode::Blocking,
-                        )
+                        bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
                     } else {
-                        spawn_sys::socketpair(
-                            libc::AF_UNIX,
-                            libc::SOCK_STREAM,
-                            0,
-                            spawn_sys::SocketpairMode::Blocking,
-                        )
+                        bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
                     };
                     let pair = match pair_result {
                         Ok(p) => p,
@@ -2501,16 +2277,7 @@ pub fn spawn_process_posix(
             }
             PosixStdio::Ipc | PosixStdio::Buffer => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
-                let fds: [Fd; 2] = match spawn_sys::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM,
-                    0,
-                    if is_ipc {
-                        spawn_sys::SocketpairMode::Nonblocking
-                    } else {
-                        spawn_sys::SocketpairMode::Blocking
-                    },
-                ) {
+                let fds: [Fd; 2] = match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
                     Ok(p) => p,
                     Err(e) => return Ok(Err(e)),
                 };
@@ -2827,6 +2594,11 @@ pub fn spawn_process_windows(
     unsafe {
         // SAFETY: all-zero is valid uv::Process
         (*process).poller = Poller::Uv(core::mem::zeroed());
+        // Back-pointer for `on_exit_uv` / `on_close_uv` (replaces Zig
+        // `@fieldParentPtr`, which has no sound Rust equivalent for default-repr
+        // enum variant payloads). Every libuv handle starts with `data: *mut c_void`.
+        let Poller::Uv(ref mut uv_proc) = (*process).poller else { unreachable!() };
+        uv_proc.data = process.cast::<c_void>();
     }
 
     // defer dup_fds cleanup — handled below at each exit
@@ -3679,7 +3451,7 @@ pub mod sync {
         // its NOTE_FORK-drain rescan), before `no_orphans_kq` drops/closes.
         #[cfg(target_os = "macos")]
         scopeguard::defer! {
-            if no_orphans_kq.fd() != spawn_sys::INVALID_FD {
+            if no_orphans_kq.fd() != Fd::INVALID {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_releaseKq() };
             }
@@ -3718,7 +3490,7 @@ pub mod sync {
             // each discovered descendant. waitMacKqueue registers the
             // script's own knote.
             #[cfg(target_os = "macos")]
-            if no_orphans_kq.fd() != spawn_sys::INVALID_FD {
+            if no_orphans_kq.fd() != Fd::INVALID {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid) };
             }
@@ -3764,23 +3536,23 @@ pub mod sync {
 
         let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
         let mut out_fds: [Fd; 2] = [
-            process.stdout.unwrap_or(spawn_sys::INVALID_FD),
-            process.stderr.unwrap_or(spawn_sys::INVALID_FD),
+            process.stdout.unwrap_or(Fd::INVALID),
+            process.stderr.unwrap_or(Fd::INVALID),
         ];
         let mut success = false;
         // defer cleanup — handled at end / via guards below
         // TODO(port): errdefer — manual cleanup at each error return below
 
         let mut out_fds_to_wait_for: [Fd; 2] = [
-            process.stdout.unwrap_or(spawn_sys::INVALID_FD),
-            process.stderr.unwrap_or(spawn_sys::INVALID_FD),
+            process.stdout.unwrap_or(Fd::INVALID),
+            process.stderr.unwrap_or(Fd::INVALID),
         ];
 
         if process.memfds[1] {
-            out_fds_to_wait_for[0] = spawn_sys::INVALID_FD;
+            out_fds_to_wait_for[0] = Fd::INVALID;
         }
         if process.memfds[2] {
-            out_fds_to_wait_for[1] = spawn_sys::INVALID_FD;
+            out_fds_to_wait_for[1] = Fd::INVALID;
         }
 
         // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
@@ -3833,8 +3605,8 @@ pub mod sync {
                 // plain poll() loop so `.buffer` stdio still drains instead
                 // of being dropped (or deadlocking) in a blind `wait4()`.
             }
-            while out_fds_to_wait_for[0] != spawn_sys::INVALID_FD
-                || out_fds_to_wait_for[1] != spawn_sys::INVALID_FD
+            while out_fds_to_wait_for[0] != Fd::INVALID
+                || out_fds_to_wait_for[1] != Fd::INVALID
             {
                 for i in 0..2 {
                     if let Some(err) =
@@ -3850,7 +3622,7 @@ pub mod sync {
                     unsafe { core::mem::zeroed() };
                 let mut poll_len: usize = 0;
                 for &fd in &out_fds_to_wait_for {
-                    if fd == spawn_sys::INVALID_FD {
+                    if fd == Fd::INVALID {
                         continue;
                     }
                     poll_fds_buf[poll_len] = libc::pollfd {
@@ -3915,7 +3687,7 @@ pub mod sync {
         }
 
         for &fd in out_fds {
-            if fd != spawn_sys::INVALID_FD {
+            if fd != Fd::INVALID {
                 fd.close();
             }
         }
@@ -3960,7 +3732,7 @@ pub mod sync {
         // kqueue() failed in spawnPosix (EMFILE/ENOMEM): let the caller's
         // plain `poll()` loop drain `.buffer` stdio and reap. The spawnPosix
         // defers (pgroup-kill, killTracked() — empty set) still run.
-        if kq_fd == spawn_sys::INVALID_FD {
+        if kq_fd == Fd::INVALID {
             return None;
         }
 
@@ -4005,7 +3777,7 @@ pub mod sync {
             add(&mut changes_buf, &mut changes_len, libc::SIGCHLD as usize, libc::EVFILT_SIGNAL, 0, 0);
         }
         for (i, &fd) in out_fds_to_wait_for.iter().enumerate() {
-            if fd != spawn_sys::INVALID_FD {
+            if fd != Fd::INVALID {
                 add(&mut changes_buf, &mut changes_len, usize::try_from(fd.cast()).unwrap(), libc::EVFILT_READ, 0, i);
             }
         }
@@ -4187,7 +3959,7 @@ pub mod sync {
                 if rc >= 0 {
                     Fd::from_native(rc)
                 } else {
-                    spawn_sys::INVALID_FD
+                    Fd::INVALID
                 }
             };
             (fd, restore)
@@ -4201,8 +3973,8 @@ pub mod sync {
         // `getppid()`.
         let mut ppid_fd = AutoCloseFd::invalid();
         if ppid > 1 {
-            match spawn_sys::pidfd_open(ppid, 0) {
-                Maybe::Ok(fd) => ppid_fd = AutoCloseFd::new(Fd::from_native(fd)),
+            match bun_sys::pidfd_open(ppid, 0) {
+                Maybe::Ok(fd) => ppid_fd = AutoCloseFd::new(fd),
                 Maybe::Err(e) => {
                     if e.get_errno() == bun_sys::E::ESRCH {
                         Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
@@ -4233,9 +4005,9 @@ pub mod sync {
             Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
         }
 
-        let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == spawn_sys::INVALID_FD;
+        let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == Fd::INVALID;
         let timeout_ms: i32 =
-            if need_ppid_fallback || chld_fd.fd() == spawn_sys::INVALID_FD { 100 } else { -1 };
+            if need_ppid_fallback || chld_fd.fd() == Fd::INVALID { 100 } else { -1 };
 
         let mut child_status: Option<Status> = None;
         loop {
@@ -4294,16 +4066,16 @@ pub mod sync {
                 *len += 1;
             };
             for &fd in out_fds_to_wait_for.iter() {
-                if fd != spawn_sys::INVALID_FD {
+                if fd != Fd::INVALID {
                     push(&mut buf, &mut pfds_len, fd);
                 }
             }
             let ppid_idx = pfds_len;
-            if ppid_fd.fd() != spawn_sys::INVALID_FD {
+            if ppid_fd.fd() != Fd::INVALID {
                 push(&mut buf, &mut pfds_len, ppid_fd.fd());
             }
             let chld_idx = pfds_len;
-            if chld_fd.fd() != spawn_sys::INVALID_FD {
+            if chld_fd.fd() != Fd::INVALID {
                 push(&mut buf, &mut pfds_len, chld_fd.fd());
             }
 
@@ -4317,7 +4089,7 @@ pub mod sync {
                 }
             }
 
-            if (ppid_fd.fd() != spawn_sys::INVALID_FD && buf[ppid_idx].revents != 0)
+            if (ppid_fd.fd() != Fd::INVALID && buf[ppid_idx].revents != 0)
                 || (need_ppid_fallback && unsafe { libc::getppid() } != ppid)
             {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
@@ -4325,7 +4097,7 @@ pub mod sync {
 
             // Drain the signalfd so the next poll blocks; the actual reap
             // happens at the top of the next iteration.
-            if chld_fd.fd() != spawn_sys::INVALID_FD && buf[chld_idx].revents != 0 {
+            if chld_fd.fd() != Fd::INVALID && buf[chld_idx].revents != 0 {
                 // SAFETY: zeroed signalfd_siginfo is valid for read target
                 let mut si: libc::signalfd_siginfo = unsafe { core::mem::zeroed() };
                 let si_bytes = unsafe {
@@ -4351,7 +4123,7 @@ pub mod sync {
     /// otherwise. Shared by the `poll()` path and the no-orphans wait loops.
     #[cfg(unix)]
     fn drain_fd(fd: &mut Fd, out_fd: &mut Fd, bytes: &mut Vec<u8>) -> Option<bun_sys::Error> {
-        if *fd == spawn_sys::INVALID_FD {
+        if *fd == Fd::INVALID {
             return None;
         }
         loop {
@@ -4375,8 +4147,8 @@ pub mod sync {
                     unsafe { bytes.set_len(bytes.len() + bytes_read) };
                     if bytes_read == 0 {
                         fd.close();
-                        *fd = spawn_sys::INVALID_FD;
-                        *out_fd = spawn_sys::INVALID_FD;
+                        *fd = Fd::INVALID;
+                        *out_fd = Fd::INVALID;
                         return None;
                     }
                 }

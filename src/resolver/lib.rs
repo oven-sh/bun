@@ -2791,14 +2791,54 @@ use core::ptr::NonNull;
 use std::cell::RefCell;
 use std::io::Write as _;
 
-// ── FORWARD_DECL stubs for higher-tier crates ─────────────────────────────
-// TODO(b2-blocked): bun_install / bun_bundler / bun_http — replace with real
-// imports once those crates compile and the dep edges are restored in Cargo.toml.
-pub(crate) mod __forward_decls {
-    use super::*;
+// ── Cross-crate type surface ──────────────────────────────────────────────
+// Higher-tier symbols are reached through lower-tier crates:
+//   • install value types + AutoInstaller trait — bun_install_types (MOVE_DOWN)
+//   • HardcodedModule alias table              — bun_resolve_builtins
+//   • StandaloneModuleGraph                    — trait below; impl in bun_standalone_graph
+//   • perf / crash_handler                     — real bun_perf / bun_crash_handler
+use ::bun_semver as Semver;
+use ::bun_install_types::resolver_hooks as Install;
+use ::bun_install_types::resolver_hooks::{
+    AutoInstaller, EnqueueResult, Features as InstallFeatures, PreinstallState, Resolution,
+    TaskCallbackContext, WakeHandler,
+};
+use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
+use crate::cache::Set as CacheSet;
 
-    // ── bun_install ─────────────────────────────────────────────────────
-    pub mod Install {
+/// Resolver's view of a compiled-standalone-binary module graph. The concrete
+/// `bun_standalone_graph::Graph` (which depends on `bun_bundler`) implements
+/// this; the resolver holds a trait object so it stays below both in the dep
+/// graph. The path-prefix predicate lives in
+/// `bun_options_types::standalone_path` (MOVE_DOWN) and is callable without a
+/// graph instance.
+pub trait StandaloneModuleGraph: Send + Sync {
+    /// Look up `name` (already known to be under the standalone virtual root)
+    /// and return the embedded file's canonical name slice if present.
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]>;
+}
+
+/// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /
+/// `Dependency.Behavior`). Re-exports the canonical `bun_install_types` items.
+pub mod Dependency {
+    pub use ::bun_install_types::resolver_hooks::{
+        Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag,
+    };
+    pub mod version {
+        pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
+    }
+}
+
+/// Transitional re-export module: `package_json.rs` and a few external crates
+/// still spell these paths via `__forward_decls`; the items are now real
+/// re-exports of `bun_install_types` (no local stubs).
+pub(crate) mod __forward_decls {
+    pub use ::bun_install_types::resolver_hooks as Install;
+    pub use ::bun_install_types::resolver_hooks::Resolution;
+    pub use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
+    /// Legacy alias for `Install` — kept until `package_json.rs` callers are
+    /// migrated to `bun_install_types::resolver_hooks` directly.
+    pub mod _deleted_Install {
         pub type PackageID = u32;
         pub type DependencyID = u32;
         pub const INVALID_PACKAGE_ID: PackageID = u32::MAX;

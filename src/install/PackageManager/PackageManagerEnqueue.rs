@@ -620,7 +620,7 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
+pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask<'static>) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
@@ -637,7 +637,7 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
+pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask<'static>) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",

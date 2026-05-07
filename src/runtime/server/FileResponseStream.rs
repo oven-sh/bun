@@ -570,6 +570,7 @@ impl FileResponseStream {
 /// point. Construct via [`FileResponseStream::ref_guard`] (which also bumps the
 /// count) or directly when adopting a ref taken elsewhere (e.g. the in-flight
 /// read ref taken before `reader.read()`).
+#[must_use = "dropping immediately releases the ref"]
 struct DerefOnDrop(*mut FileResponseStream);
 impl Drop for DerefOnDrop {
     fn drop(&mut self) {

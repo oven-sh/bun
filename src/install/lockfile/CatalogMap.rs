@@ -277,8 +277,14 @@ impl CatalogMap {
         Ok(found_any)
     }
 
+    // PORT NOTE: reshaped for borrowck — Zig threads `*Lockfile` through, but
+    // the only field this body touches is `lockfile.catalogs`, and the call
+    // site in `pnpm.rs` must simultaneously hold `&mut StringBuf` (which
+    // already borrows `lockfile.buffers.string_bytes` + `lockfile.string_pool`).
+    // Taking `&mut Lockfile` here would alias those borrows, so narrow to
+    // `&mut CatalogMap` and let the caller split the disjoint fields.
     pub fn from_pnpm_lockfile(
-        lockfile: &mut Lockfile,
+        catalogs: &mut CatalogMap,
         log: &mut Log,
         catalogs_obj: &mut E::Object,
         string_buf: &mut StringBuf,
@@ -294,22 +300,17 @@ impl CatalogMap {
                 continue;
             };
 
-            // PORT NOTE: reshaped for borrowck — the Zig version threads
-            // `*Lockfile` through; here `string_buf` already borrows the
-            // lockfile's `string_bytes`/`string_pool`, so we resolve the
-            // group up front and pass only what's disjoint.
             if group_name_str == b"default" {
                 put_entries_from_pnpm_lockfile(
-                    &mut lockfile.catalogs.default,
+                    &mut catalogs.default,
                     log,
                     entries_obj,
                     string_buf,
                 )?;
             } else {
                 let group_name = string_buf.append(group_name_str)?;
-                let group = lockfile
-                    .catalogs
-                    .get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
+                let group =
+                    catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
                 put_entries_from_pnpm_lockfile(group, log, entries_obj, string_buf)?;
             }
         }

@@ -763,7 +763,10 @@ impl Stringifier {
 
                             // only write the registry if it's not the default. empty string means default registry
                             // SAFETY: `tag == Npm` in this match arm.
-                            let url_slice = unsafe { res.value.npm.url }.slice(buf);
+                            // `String::slice` ties the return to `&self` as well as `buf`, so
+                            // bind the union read to a local instead of slicing a temporary.
+                            let url = unsafe { res.value.npm.url };
+                            let url_slice = url.slice(buf);
                             write!(
                                 writer,
                                 "\"{}\", ",
@@ -1535,7 +1538,7 @@ pub fn parse_into_binary_lockfile(
                     name_hash,
                     version_sliced.slice,
                     &version_sliced,
-                    log,
+                    &mut *log,
                     manager.as_deref_mut(),
                 ) {
                     Some(v) => v,
@@ -1588,7 +1591,7 @@ pub fn parse_into_binary_lockfile(
                     dep_name_hash,
                     version_sliced.slice,
                     &version_sliced,
-                    log,
+                    &mut *log,
                     manager.as_deref_mut(),
                 ) {
                     Some(v) => v,
@@ -1671,7 +1674,7 @@ pub fn parse_into_binary_lockfile(
                         dep_name_hash,
                         version_sliced.slice,
                         &version_sliced,
-                        log,
+                        &mut *log,
                         manager.as_deref_mut(),
                     ) {
                         Some(v) => v,

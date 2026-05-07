@@ -879,9 +879,9 @@ impl TestReporterHandle {
 pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
         bun_core::scoped_log!(TestReporterAgent, "enable");
-        debugger.test_reporter_agent.handle = agent;
+        dbg.test_reporter_agent.handle = agent;
 
         // Retroactively report any tests that were already discovered before
         // the debugger connected.
@@ -901,9 +901,9 @@ pub extern "C" fn Bun__TestReporterAgentEnable(agent: *mut TestReporterHandle) {
 pub extern "C" fn Bun__TestReporterAgentDisable(_agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
         bun_core::scoped_log!(TestReporterAgent, "disable");
-        debugger.test_reporter_agent.handle = core::ptr::null_mut();
+        dbg.test_reporter_agent.handle = core::ptr::null_mut();
     }
 }
 
@@ -992,9 +992,9 @@ impl LifecycleHandle {
 pub extern "C" fn Bun__LifecycleAgentEnable(agent: *mut LifecycleHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.
-    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
         bun_core::scoped_log!(LifecycleAgent, "enable");
-        debugger.lifecycle_reporter_agent.handle = agent;
+        dbg.lifecycle_reporter_agent.handle = agent;
     }
 }
 

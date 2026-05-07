@@ -1832,7 +1832,12 @@ impl DocEnd {
         self.content_handler(lolhtml::DocEnd::append, call_frame.this(), global_object, content, content_options)
     }
 
-    // TODO(port): host_fn.wrapInstanceMethod — `append` wraps `append_`.
+    // ── host_fn.wrapInstanceMethod hand-expansion ────────────────────────
+
+    pub fn append(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.append_(call_frame, global, content, opts))
+    }
 
     pub fn finalize(this: *mut DocEnd) {
         Self::deref(this);

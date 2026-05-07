@@ -193,7 +193,7 @@ pub fn validate_int32(
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
+                value.to_fmt(&mut formatter)
             ),
         ));
     }
@@ -208,7 +208,7 @@ pub fn validate_int32(
                 name,
                 min,
                 max,
-                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
+                value.to_fmt(&mut formatter)
             ),
         ));
     }
@@ -231,7 +231,7 @@ pub fn validate_uint32(
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
+                value.to_fmt(&mut formatter)
             ),
         ));
     }
@@ -247,7 +247,7 @@ pub fn validate_uint32(
                 name,
                 min,
                 max,
-                jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value)
+                value.to_fmt(&mut formatter)
             ),
         ));
     }

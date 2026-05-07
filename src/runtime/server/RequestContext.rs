@@ -1608,7 +1608,9 @@ where
                     if let Some(response) = self.response_weakref.get() {
                         if let Some(mut headers_) = response.swap_init_headers() {
                             self.do_write_headers(&mut headers_);
-                            headers_.deref();
+                            // `HeadersRef` releases the +1 ref in Drop; do NOT
+                            // call `.deref()` explicitly (would double-free).
+                            drop(headers_);
                         }
                     }
                     let cr = {
@@ -3188,7 +3190,11 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            headers_.deref();
+            // Zig: `defer headers_.deref()`. `HeadersRef` is RAII — its Drop
+            // already calls `WebCore__FetchHeaders__deref`, so an explicit
+            // `.deref()` here would resolve (via DerefMut) to the inherent
+            // `FetchHeaders::deref` and double-free the C++ object.
+            drop(headers_);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);
@@ -3664,6 +3670,16 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
+/// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
+/// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
+/// blanket H3 impls but never serve requests at runtime — HTTP/3 always
+/// implies TLS. If a future refactor ever routes a promise reaction through
+/// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
+#[cold]
+unsafe extern "C" fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {
+    unreachable!("RequestContext promise reaction for non-TLS HTTP/3 instantiation");
+}
+
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
 // Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
 // where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
@@ -3735,13 +3751,16 @@ macro_rules! request_ctx_exports {
                     $on_reject_stream,
                 ),
             )*
-            // Never instantiated (HTTP/3 requires TLS); placeholder so this
-            // is exhaustive at const-eval time.
+            // `(false, _, true)` — plain-HTTP/3 — is type-instantiated by the
+            // blanket H3 impls in server_body.rs but never reaches the promise
+            // path at runtime (HTTP/3 requires TLS). We can't const-panic here
+            // because rustc evaluates this assoc const for every monomorph; a
+            // runtime trap keeps the failure loud without breaking the build.
             _ => (
-                host_on_resolve::<crate::server::HTTPServer, false, false, false>,
-                host_on_reject::<crate::server::HTTPServer, false, false, false>,
-                host_on_resolve_stream::<crate::server::HTTPServer, false, false, false>,
-                host_on_reject_stream::<crate::server::HTTPServer, false, false, false>,
+                unreachable_host_fn,
+                unreachable_host_fn,
+                unreachable_host_fn,
+                unreachable_host_fn,
             ),
         }
     }

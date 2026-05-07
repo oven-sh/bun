@@ -427,6 +427,40 @@ impl JSValue {
         // SAFETY: pure FFI conversion (BigInt / cell fallback).
         unsafe { JSC__JSValue__toInt64(self) }
     }
+    /// `JSValue.isUInt32AsAnyInt()` (JSValue.zig) — true iff this value is a
+    /// non-negative integer (Int32 fast-path or integral double in u32 range).
+    #[inline]
+    pub fn is_uint32_as_any_int(self) -> bool {
+        unsafe extern "C" {
+            fn JSC__JSValue__isUInt32AsAnyInt(this: JSValue) -> bool;
+        }
+        // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
+        unsafe { JSC__JSValue__isUInt32AsAnyInt(self) }
+    }
+    /// `JSValue.toUInt64NoTruncate()` (JSValue.zig) — read a non-negative
+    /// integer (Int32/double/BigInt) as `u64` without going through ToNumber.
+    #[inline]
+    pub fn to_uint64_no_truncate(self) -> u64 {
+        unsafe extern "C" {
+            fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
+        }
+        // SAFETY: pure FFI conversion; C++ handles any tagged JSValue.
+        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
+    }
+    /// `JSValue.createUninitializedUint8Array(global, len)` — allocate a new
+    /// `Uint8Array` of `len` bytes without zeroing. Backing memory is
+    /// uninitialized; caller must write every byte before exposing it to JS.
+    #[inline]
+    pub fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JSValue {
+        unsafe extern "C" {
+            fn JSC__JSValue__createUninitializedUint8Array(
+                global: *const JSGlobalObject,
+                len: usize,
+            ) -> JSValue;
+        }
+        // SAFETY: `global` is a live borrow.
+        unsafe { JSC__JSValue__createUninitializedUint8Array(global, len) }
+    }
     pub fn coerce_to_i32(self, global: &JSGlobalObject) -> JsResult<i32> {
         // SAFETY: `global` is live; FFI may set an exception.
         host_fn::from_js_host_call_generic(global, || unsafe {

@@ -877,9 +877,9 @@ impl VirtualMachine {
     /// [`run_with_api_lock`].
     pub fn load_macro_entry_point(
         &mut self,
-        entry_path: &str,
-        function_name: &str,
-        specifier: &str,
+        entry_path: &[u8],
+        function_name: &[u8],
+        specifier: &[u8],
         hash: i32,
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         use bun_collections::hash_map::Entry;
@@ -895,14 +895,14 @@ impl VirtualMachine {
                     // lifetime, and `entry_path` is only borrowed for the
                     // duration of `generate` (it copies into `code_buffer`).
                     let entry_path_static: &'static [u8] =
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(entry_path.as_bytes()) };
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(entry_path) };
                     MacroEntryPoint::generate(
                         &mut *ep,
                         &mut self.transpiler,
                         &Fs::PathName::init(entry_path_static),
-                        function_name.as_bytes(),
+                        function_name,
                         hash,
-                        specifier.as_bytes(),
+                        specifier,
                     )?;
                     let raw = Box::into_raw(ep);
                     v.insert(raw.cast());
@@ -2760,6 +2760,8 @@ impl VirtualMachine {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
             graph: graph.as_ptr().cast(),
+            log: opts.log,
+            env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
@@ -2793,6 +2795,8 @@ impl VirtualMachine {
                 .graph
                 .map(|g| g.as_ptr().cast())
                 .unwrap_or(core::ptr::null_mut()),
+            log: opts.log,
+            env_loader: opts.env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -2831,6 +2835,8 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:1495 `initBake`.
     pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
+            log: opts.log,
+            env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,

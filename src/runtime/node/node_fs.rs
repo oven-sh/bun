@@ -376,11 +376,9 @@ use bun_sys as Syscall;
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
 //
-// These wrap symbols whose canonical home moved (or hasn't been wired into
-// `bun_sys`/`bun_core` yet) so the hundreds of call sites below — which
-// mirror `node_fs.zig` 1:1 — don't have to be rewritten per-line. Each is a
-// thin forwarder; bodies that are genuinely missing upstream are `todo!` with
-// a `blocked_on:` tag.
+// These wrap symbols whose canonical home moved under the Rust crate split so
+// the hundreds of call sites below — which mirror `node_fs.zig` 1:1 — don't
+// have to be rewritten per-line. Each is a thin forwarder.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.strings.withoutNTPrefix` — lives in `bun_string::strings::paths`

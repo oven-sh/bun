@@ -6375,8 +6375,12 @@ pub trait FileCloser: Sized {
             self.state()
                 .store(ClosingState::Closing as u8, core::sync::atomic::Ordering::SeqCst);
             if let Some(io_request) = self.io_request() {
-                // TODO(port): @atomicStore on the io_request.callback fn pointer.
-                io_request.callback = Self::schedule_close;
+                // Zig: `@atomicStore(?*const fn, &io_request.callback, scheduleClose, .seq_cst)`.
+                // The io thread reads `callback` after popping from its MPSC
+                // queue; a plain store here is a data race. `bun_io::Request::
+                // store_callback_seq_cst` lowers to a volatile write + SeqCst
+                // fence (Rust has no `AtomicFnPtr`).
+                io_request.store_callback_seq_cst(Self::schedule_close);
                 if !io_request.scheduled {
                     bun_io::Loop::get().schedule(io_request);
                 }

@@ -134,7 +134,9 @@ impl Blob {
     pub fn init(bytes: Vec<u8>, global_this: &JSGlobalObject) -> Blob {
         let size = bytes.len() as SizeType;
         let store = if !bytes.is_empty() {
-            Some(NonNull::from(Box::leak(Store::init(bytes))))
+            // SAFETY: `Box::into_raw` never returns null. Ownership is the +1
+            // initial ref released via `Store::deref` → `Box::from_raw`.
+            Some(unsafe { NonNull::new_unchecked(Box::into_raw(Store::init(bytes))) })
         } else {
             None
         };
@@ -449,7 +451,9 @@ pub mod store {
                 data: Data::File(File::init(pathlike, mime_type)),
                 ..Default::default()
             });
-            Ok(NonNull::from(Box::leak(store)))
+            // SAFETY: `Box::into_raw` never returns null. Paired with
+            // `Box::from_raw` in `Store::deref` on last-ref.
+            Ok(unsafe { NonNull::new_unchecked(Box::into_raw(store)) })
         }
 
         /// `Store.mime_type` setter — replaces the in-tree
@@ -492,7 +496,7 @@ pub mod store {
 
         /// `Store.deref()` (Store.zig:171). Consumes one reference; on last
         /// ref, drops & frees the heap `Store` (which was created via
-        /// `Box::leak` in `init`/`init_file`/`new`).
+        /// `Box::into_raw` in `init`/`init_file`/`new`).
         ///
         /// # Safety
         /// `this` must be a +1-ref pointer obtained from `Store::new`/`init`/

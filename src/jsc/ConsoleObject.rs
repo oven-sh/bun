@@ -528,7 +528,9 @@ fn message_with_type_and_level_(
 pub struct TablePrinter<'a> {
     global_object: &'a JSGlobalObject,
     level: MessageLevel,
-    value_formatter: Formatter<'a>,
+    /// Per-cell value formatter. Public so callers (e.g. `Bun.inspect.table`)
+    /// can override `depth` / `ordered_properties` / `single_line` after init.
+    pub value_formatter: Formatter<'a>,
 
     tabular_data: JSValue,
     properties: JSValue,

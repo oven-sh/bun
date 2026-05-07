@@ -2507,29 +2507,34 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     });
     let result = Box::into_raw(result);
 
-    // PORT NOTE: Zig matched `worker.ctx.loop().*` on `EventLoopHandle::{js,mini}`.
-    // `LinkerContext.r#loop` is currently CYCLEBREAK-erased to `Option<NonNull<()>>`
-    // (LinkerContext.rs:43); the discriminant lives in T6. Until that un-erases to
-    // `bun_event_loop::EventLoopHandle`, treat the erased pointer as a
-    // `MiniEventLoop` (the CLI is the only path that reaches here without a JS VM).
-    // TODO(port): re-expand to `Js`/`Mini` match once `linker.r#loop` is
-    // `bun_event_loop::EventLoopHandle`.
-    // SAFETY: worker.ctx backref valid.
+    // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
+    // SAFETY: worker.ctx backref valid; `linker.r#loop` is a live AnyEventLoop
+    // owned by the BundleThread / runtime for the duration of the bundle.
     let r#loop = unsafe { (*worker.ctx).linker.r#loop };
     worker.unget();
-    if let Some(mini) = r#loop {
-        let mini = mini.cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
-        // SAFETY: erased BACKREF to a live MiniEventLoop for the bundle pass.
-        unsafe {
-            (*mini.as_ptr()).enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+    let Some(any_loop) = r#loop else {
+        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
+        on_complete(result);
+        return;
+    };
+    // SAFETY: BACKREF — `any_loop` outlives this parse task.
+    match unsafe { &mut *any_loop.as_ptr() } {
+        bun_event_loop::AnyEventLoop::AnyEventLoop::Js { owner, vtable } => {
+            // SAFETY: vtable populated by runtime; `owner` is a live `*mut jsc::EventLoop`.
+            unsafe {
+                (vtable.enqueue_task_concurrent)(
+                    *owner,
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result),
+                );
+            }
+        }
+        bun_event_loop::AnyEventLoop::AnyEventLoop::Mini(mini) => {
+            mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
                 result,
                 on_complete_mini,
                 offset_of!(Result, task),
             );
         }
-    } else {
-        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
-        on_complete(result);
     }
 }
 

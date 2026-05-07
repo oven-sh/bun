@@ -1644,7 +1644,7 @@ impl<'a> PackageInstaller<'a> {
                                 self.lockfile.packages.items_meta(),
                                 self.manager.options.cpu,
                                 self.manager.options.os,
-                                self.current_tree_id,
+                                Some(self.current_tree_id),
                             ) {
                                 if PackageManager::verbose_install() {
                                     Output::pretty_errorln(format_args!(
@@ -1949,7 +1949,7 @@ impl<'a> PackageInstaller<'a> {
                         self.lockfile.packages.items_meta(),
                         self.manager.options.cpu,
                         self.manager.options.os,
-                        self.current_tree_id,
+                        Some(self.current_tree_id),
                     ) {
                         if PackageManager::verbose_install() {
                             Output::pretty_errorln(format_args!(

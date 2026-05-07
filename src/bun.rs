@@ -1126,16 +1126,24 @@ static mut NEEDS_PROC_SELF_WORKAROUND: bool = false;
 
 /// TODO: move to bun.sys
 fn get_fd_path_via_cwd(fd: bun_sys::RawFd, buf: &mut PathBuffer) -> Result<&mut [u8], bun_core::Error> {
-    let prev_fd = bun_sys::openat_z(FD::cwd().native(), bun_str::zstr!("."), O::DIRECTORY, 0)?;
-    let mut needs_chdir = false;
-    let _guard = scopeguard::guard((), |_| {
-        if needs_chdir {
-            bun_sys::fchdir(prev_fd).expect("unreachable");
+    /// RAII: closes `prev_fd` on drop and, once `restore` is set, fchdirs back to it first.
+    struct CwdRestore {
+        prev_fd: bun_sys::RawFd,
+        restore: bool,
+    }
+    impl Drop for CwdRestore {
+        fn drop(&mut self) {
+            if self.restore {
+                bun_sys::fchdir(self.prev_fd).expect("unreachable");
+            }
+            bun_sys::close(self.prev_fd);
         }
-        bun_sys::close(prev_fd);
-    });
+    }
+
+    let prev_fd = bun_sys::openat_z(FD::cwd().native(), bun_str::zstr!("."), O::DIRECTORY, 0)?;
+    let mut guard = CwdRestore { prev_fd, restore: false };
     bun_sys::fchdir(fd)?;
-    needs_chdir = true;
+    guard.restore = true;
     bun_sys::getcwd(buf)
 }
 
@@ -2384,8 +2392,7 @@ pub fn self_exe_path() -> Result<&'static bun_str::ZStr, bun_core::Error> {
         if MEMO.set.load(Ordering::Acquire) {
             return Ok(bun_str::ZStr::from_raw(MEMO.value.as_ptr(), MEMO.len));
         }
-        MEMO.lock.lock();
-        let _guard = scopeguard::guard((), |_| MEMO.lock.unlock());
+        let _guard = MEMO.lock.lock_guard();
         if MEMO.set.load(Ordering::Acquire) {
             return Ok(bun_str::ZStr::from_raw(MEMO.value.as_ptr(), MEMO.len));
         }
@@ -2943,8 +2950,7 @@ impl<R: Copy> Once<R> {
 
     #[cold]
     fn call_slow(&self, f: impl FnOnce() -> R) -> R {
-        self.mutex.lock();
-        let _guard = scopeguard::guard((), |_| self.mutex.unlock());
+        let _guard = self.mutex.lock_guard();
         if !self.done.load(Ordering::Acquire) {
             // SAFETY: exclusive under mutex
             unsafe {

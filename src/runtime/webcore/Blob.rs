@@ -12,7 +12,7 @@ use bun_core::{self as bun, Output};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_str::{self, strings, String as BunString, ZigString, ZigStringSlice};
+use bun_str::{self, strings, OwnedString, String as BunString, ZigString, ZigStringSlice};
 use bun_sys::{self, Fd, FdExt as _};
 use bun_jsc::StringJsc as _;
 use bun_http_types::MimeType::MimeType;
@@ -2101,15 +2101,17 @@ pub fn write_file_internal(
             if data.is_string() {
                 let len = data.get_length(global_this)?;
                 if len < 256 * 1024 {
-                    let str = data.to_bun_string(global_this)?;
+                    // +1 WTF ref; `OwnedString` releases it on scope exit
+                    // (Zig: `defer str.deref()`).
+                    let str = OwnedString::new(data.to_bun_string(global_this)?);
                     let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
                         PathOrBlob::Blob(b) => b.store.as_ref().unwrap().data.as_file().pathlike.clone(),
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                        write_string_to_file_fast::<true>(global_this, pathlike, str, &mut needs_async)
+                        write_string_to_file_fast::<true>(global_this, pathlike, str.get(), &mut needs_async)
                     } else {
-                        write_string_to_file_fast::<false>(global_this, pathlike, str, &mut needs_async)
+                        write_string_to_file_fast::<false>(global_this, pathlike, str.get(), &mut needs_async)
                     };
                     if !needs_async {
                         return Ok(result);

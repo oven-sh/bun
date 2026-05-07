@@ -151,16 +151,10 @@ impl WTFTimer {
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn cancel(this: *mut Self) {
-        // SAFETY: per fn contract.
-        unsafe { (*this).lock.lock() };
-        // PORT NOTE: bun_threading::Mutex is lock()/unlock(), not RAII.
-        // scopeguard so the early-return below still unlocks.
-        // `move` so the closure captures `this` (a Copy raw ptr) by value,
-        // not by &-borrow — otherwise borrowck refuses the addr_of_mut! below.
-        let _g = scopeguard::guard((), move |()| {
-            // SAFETY: per fn contract — `this` outlives this scope.
-            unsafe { (*this).lock.unlock() };
-        });
+        // SAFETY: per fn contract — `this` outlives this scope. `lock_guard`
+        // stores `*const Mutex` (no borrow of `*this` is held), so the
+        // `addr_of_mut!` below remains legal.
+        let _g = unsafe { (*this).lock.lock_guard() };
 
         // SAFETY: per fn contract.
         if unsafe { (*this).script_execution_context_id }.valid() {
@@ -294,8 +288,7 @@ pub extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
 pub extern "C" fn WTFTimer__secondsUntilTimer(this: *mut WTFTimer) -> f64 {
     // SAFETY: `this` is a live WTFTimer per caller contract.
     let this_ref = unsafe { &*this };
-    this_ref.lock.lock();
-    let _g = scopeguard::guard((), |()| this_ref.lock.unlock());
+    let _g = this_ref.lock.lock_guard();
     if this_ref.event_loop_timer.state == EventLoopTimerState::ACTIVE {
         let next = &this_ref.event_loop_timer.next;
         // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack

@@ -11,7 +11,7 @@ use bun_http::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
-use bun_str::{MutableString, String as BunString, ZigStringSlice};
+use bun_str::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -415,16 +415,16 @@ impl FetchTasklet {
         let buffer_reset = core::cell::Cell::new(true);
         bun_output::scoped_log!(FetchTasklet, "onBodyReceived success={} has_more={}", success, self.result.has_more);
         // PORT NOTE: Zig `defer { if (buffer_reset) ...reset() }` runs on `try` failure paths too.
-        // Capture a raw ptr so the guard can reset on every exit (incl. `?`) without holding a
+        // Capture a raw ptr so the defer can reset on every exit (incl. `?`) without holding a
         // long-lived &mut borrow of self.
         let scheduled_buf: *mut MutableString = &mut self.scheduled_response_buffer;
-        let _reset_guard = scopeguard::guard((), |()| {
+        scopeguard::defer! {
             if buffer_reset.get() {
-                // SAFETY: `self` outlives this guard (guard is a local in this fn) and no other
+                // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
                 // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
                 unsafe { (*scheduled_buf).reset() };
             }
-        });
+        }
 
         if !success {
             // PORT NOTE: `defer err.deinit()` handled by Drop — `err` is dropped at scope exit
@@ -832,8 +832,7 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let hostname = BunString::clone_utf8(&certificate_info.hostname);
-                    let _hostname_guard = scopeguard::guard((), |_| hostname.deref());
+                    let hostname = OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
                     let js_hostname: JSValue = match hostname.to_js(global_object) {
                         Ok(v) => v,
                         Err(e) => {

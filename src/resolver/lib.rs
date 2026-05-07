@@ -3009,26 +3009,24 @@ pub mod allocators {
     pub use bun_alloc::ItemStatus as Status;
 }
 
-// CYCLEBREAK: bun_bundler::options — TYPE_ONLY. `ModuleType`/`Loader`/`Target`/
-// `LoaderHashTable` already moved down to `bun_options_types::BundleEnums`;
-// `jsx::Pragma` lives in `crate::tsconfig_json::options::jsx`.
-// TODO(b0-genuine): bun_bundler::options::{BundleOptions, Packages} — MOVE_DOWN
-// to bun_options_types. Until then, `BundleOptions` is FORWARD_DECL'd here with
-// exactly the fields the resolver reads.
-// PORT NOTE: `pub` so `bun_bundler::transpiler::Transpiler::init` can build the
-// `BundleOptions` subset to hand to `Resolver::init1` (the canonical
-// `bun_bundler::options::BundleOptions` is a higher-tier nominal type; until
-// MOVE_DOWN to `bun_options_types` lands the bundler projects its fields into
-// this FORWARD_DECL subset at the call site).
+// Resolver-tier `options` — the canonical resolver-input types.
+//
+// MOVE_DOWN COMPLETE for the resolver↔bundler cycle: these are the types the
+// resolver reads, defined at the lowest tier that can name all their parts
+// (`jsx::Pragma`/`ConditionsMap` live in this crate; `Target`/`Loader` in
+// `bun_options_types`). `bun_bundler::options::BundleOptions` is the ~200-field
+// CLI/config aggregate; `bun_bundler::transpiler::resolver_bundle_options_subset`
+// projects it into this struct for `Resolver::init1`. These are NOT a re-decl
+// of the bundler type — the bundler depends on this crate and re-exports them.
 pub mod options {
     pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, ModuleType, Target};
     pub use crate::tsconfig_json::options::jsx;
 
-    /// FORWARD_DECL: `bun_bundler::options::Packages`.
+    /// Port of `bundler/options.zig` `Packages`.
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub enum Packages { #[default] Bundle, External }
 
-    /// FORWARD_DECL: `bun_bundler::options::ExternalModules`.
+    /// Port of `bundler/options.zig` `ExternalModules`.
     #[derive(Default)]
     pub struct ExternalModules {
         pub patterns: Vec<WildcardPattern>,

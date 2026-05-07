@@ -196,10 +196,10 @@ impl<'a> CssModule<'a> {
             }
 
             // The composes property can only be used within a simple class selector.
-            return css::Maybe::Err(css::PrinterErrorKind::invalid_composes_selector);
+            return Err(css::PrinterErrorKind::invalid_composes_selector);
         }
 
-        css::Maybe::Ok(())
+        Ok(())
     }
 
     pub fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {

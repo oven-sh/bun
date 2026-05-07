@@ -1385,8 +1385,8 @@ impl DirectoryWatchStore {
                 let mut zbuf = bun_paths::path_buffer_pool::get();
                 let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
                 match bun_sys::open(zpath, bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                    bun_sys::Maybe::Ok(fd) => (fd, true),
-                    bun_sys::Maybe::Err(err) => match err.get_errno() {
+                    Ok(fd) => (fd, true),
+                    Err(err) => match err.get_errno() {
                         // If this directory doesn't exist, a watcher should be placed
                         // on the parent directory. Then, if this directory is later
                         // created, the watcher can be properly initialized.
@@ -1421,8 +1421,8 @@ impl DirectoryWatchStore {
         let watch_index = match unsafe { &mut (*dev).bun_watcher }
             .add_directory::<false>(fd, &dir_name, bun_watcher::Watcher::get_hash(&dir_name))
         {
-            bun_sys::Maybe::Err(_) => return Err(DirectoryWatchInsertError::Ignore),
-            bun_sys::Maybe::Ok(id) => id,
+            Err(_) => return Err(DirectoryWatchInsertError::Ignore),
+            Ok(id) => id,
         };
 
         // Disarm errdefer guards: success path.

@@ -57,11 +57,9 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
-/// `union(enum) { err: SystemError, result: Result }`
-pub enum Maybe<R> {
-    Err(SystemError),
-    Result(R),
-}
+/// `union(enum) { err: SystemError, result: Result }` — collapsed to a
+/// `core::result::Result` alias in Phase F so callers get `?` for free.
+pub type Maybe<R> = core::result::Result<R, SystemError>;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

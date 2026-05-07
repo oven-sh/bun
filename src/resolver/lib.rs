@@ -2399,7 +2399,7 @@ pub mod dir_entry_accessor {
         fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
-                    return Maybe::Ok(None);
+                    return Ok(None);
                 };
                 // SAFETY: ARENA — `*mut Entry` points into the EntryStore BSSList
                 // singleton ('static lifetime); `RealFS.entries_mutex` serializes access.
@@ -2417,12 +2417,12 @@ pub mod dir_entry_accessor {
                 // re-narrows the lifetime so it never escapes the iter result.
                 // Mirrors Zig `nextval.key_ptr.*`.
                 let name: *const [u8] = &**key;
-                Maybe::Ok(Some(DirEntryIterResult {
+                Ok(Some(DirEntryIterResult {
                     name: DirEntryNameWrapper { value: name },
                     kind: fskind,
                 }))
             } else {
-                Maybe::Ok(None)
+                Ok(None)
             }
         }
 
@@ -2510,14 +2510,14 @@ pub mod dir_entry_accessor {
             }
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
-            // return Maybe::Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
+            // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
             match res {
                 EntriesOption::Entries(entry) => {
                     // SAFETY: ARENA — `entry: &'static mut DirEntry` borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
                     let p: *const DirEntry = &**entry;
-                    Ok(Maybe::Ok(DirEntryHandle { value: Some(unsafe { &*p }) }))
+                    Ok(Ok(DirEntryHandle { value: Some(unsafe { &*p }) }))
                 }
                 EntriesOption::Err(err) => Err(err.original_err),
             }
@@ -2533,7 +2533,7 @@ pub mod dir_entry_accessor {
             let cwd = FS::instance().fs.cwd;
             path_buf[..cwd.len()].copy_from_slice(cwd);
             // TODO(port): Zig version has no return; assuming it should return the copied slice
-            Maybe::Ok(&path_buf[..cwd.len()])
+            Ok(&path_buf[..cwd.len()])
         }
     }
 }

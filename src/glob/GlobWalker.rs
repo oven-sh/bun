@@ -128,10 +128,7 @@ pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     // Zig used a single buf for both `getFdPath` and `joinZBuf`; Rust borrowck
     // forbids overlapping &mut, so split into two buffers.
     let mut dir_buf = PathBuffer::uninit();
-    let dir = match Syscall::get_fd_path(fd, &mut dir_buf) {
-        Maybe::Err(e) => return Maybe::Err(e),
-        Maybe::Ok(s) => s,
-    };
+    let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
     let mut join_buf = PathBuffer::uninit();
     let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
@@ -239,10 +236,7 @@ impl Accessor for SyscallAccessor {
     type DirIter = SyscallDirIter;
 
     fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
-        Ok(match Syscall::open(path, O::DIRECTORY | O::RDONLY, 0) {
-            Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(fd) => Maybe::Ok(SyscallHandle { value: fd }),
-        })
+        Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
     }
 
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
@@ -251,10 +245,7 @@ impl Accessor for SyscallAccessor {
             return statat_windows(handle.value, path);
         }
         #[cfg(not(windows))]
-        match Syscall::fstatat(handle.value, path) {
-            Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(s) => Maybe::Ok(s),
-        }
+        Syscall::fstatat(handle.value, path)
     }
 
     /// Like statat but does not follow symlinks.
@@ -269,10 +260,8 @@ impl Accessor for SyscallAccessor {
 
     fn openat(handle: SyscallHandle, path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
         Ok(
-            match Syscall::openat(handle.value, path, O::DIRECTORY | O::RDONLY, 0) {
-                Maybe::Err(err) => Maybe::Err(err),
-                Maybe::Ok(fd) => Maybe::Ok(SyscallHandle { value: fd }),
-            },
+            Syscall::openat(handle.value, path, O::DIRECTORY | O::RDONLY, 0)
+                .map(|fd| SyscallHandle { value: fd }),
         )
     }
 
@@ -282,10 +271,8 @@ impl Accessor for SyscallAccessor {
     }
 
     fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
-        match Syscall::getcwd(&mut path_buf[..]) {
-            Maybe::Err(e) => Maybe::Err(e),
-            Maybe::Ok(len) => Maybe::Ok(&path_buf[..len]),
-        }
+        let len = Syscall::getcwd(&mut path_buf[..])?;
+        Ok(&path_buf[..len])
     }
 }
 
@@ -555,25 +542,25 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let pathz =
                         unsafe { ZStr::from_raw(pathz_owned.as_ptr(), pathz_owned.len() - 1) };
                     let fd = match A::open(pathz)? {
-                        Maybe::Err(e) => {
+                        Err(e) => {
                             if e.get_errno() == E::ENOTDIR {
                                 self.iter_state = IterState::Matched(path);
-                                return Ok(Maybe::Ok(()));
+                                return Ok(Ok(()));
                             }
                             // Doesn't exist
                             if e.get_errno() == E::ENOENT {
                                 self.iter_state = IterState::GetNext;
-                                return Ok(Maybe::Ok(()));
+                                return Ok(Ok(()));
                             }
                             return Ok(
-                                Maybe::Err(e.with_path(matched_as_slice::<SENTINEL>(&path))),
+                                Err(e.with_path(matched_as_slice::<SENTINEL>(&path))),
                             );
                         }
-                        Maybe::Ok(fd) => fd,
+                        Ok(fd) => fd,
                     };
                     let _ = A::close(fd);
                     self.iter_state = IterState::Matched(path);
-                    return Ok(Maybe::Ok(()));
+                    return Ok(Ok(()));
                 }
 
                 // In the above branch, if `starting_component_idx >= pattern_components.len` then
@@ -601,7 +588,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let (path_buf_ptr, root_path_len) = {
             let path_buf: &mut PathBuffer = &mut self.walker.path_buf;
             if root_path.len() >= path_buf.len() {
-                return Ok(Maybe::Err(
+                return Ok(Err(
                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(root_path),
                 ));
             }
@@ -612,15 +599,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // SAFETY: path_buf[root_path_len] == 0 written above; buffer outlives `cwd_fd` open call.
         let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
-            Maybe::Err(err) => {
+            Err(err) => {
                 let len = root_path_len + 1;
-                return Ok(Maybe::Err(self.walker.handle_sys_err_with_path(
+                return Ok(Err(self.walker.handle_sys_err_with_path(
                     err,
                     // SAFETY: NUL at index len-1 written above
                     unsafe { ZStr::from_raw(path_buf_ptr, len) },
                 )));
             }
-            Maybe::Ok(fd) => fd,
+            Ok(fd) => fd,
         };
 
         if count_fds::<A>() {
@@ -637,11 +624,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         } else {
             self.transition_to_dir_iter_state::<true>(root_work_item)?
         };
-        if let Maybe::Err(err) = trans {
-            return Ok(Maybe::Err(err));
+        if let Err(err) = trans {
+            return Ok(Err(err));
         }
 
-        Ok(Maybe::Ok(()))
+        Ok(Ok(()))
     }
 
     pub fn close_cwd_fd(&mut self) {
@@ -702,7 +689,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if let Some(fd) = work_item.fd {
                     self.close_disallowing_cwd(fd);
                 }
-                return Ok(Maybe::Err(
+                return Ok(Err(
                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
                         .with_path(&work_item.path),
                 ));
@@ -726,20 +713,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     &mut dir_path_buf,
                     &mut had_dot_dot,
                 ) {
-                    Maybe::Err(e) => {
+                    Err(e) => {
                         if let Some(fd) = work_item.fd {
                             self.close_disallowing_cwd(fd);
                         }
-                        return Ok(Maybe::Err(e));
+                        return Ok(Err(e));
                     }
-                    Maybe::Ok(i) => i,
+                    Ok(i) => i,
                 };
                 if norm as usize >= self.walker.pattern_components.len() {
                     if let Some(fd) = work_item.fd {
                         self.close_disallowing_cwd(fd);
                     }
                     self.iter_state = IterState::GetNext;
-                    return Ok(Maybe::Ok(()));
+                    return Ok(Ok(()));
                 }
                 break 'set self.walker.single_set(norm);
             }
@@ -758,12 +745,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if ROOT {
                 if had_dot_dot {
                     break 'fd match A::openat(self.cwd_fd, dir_path)? {
-                        Maybe::Err(err) => {
-                            return Ok(Maybe::Err(
+                        Err(err) => {
+                            return Ok(Err(
                                 self.walker.handle_sys_err_with_path(err, dir_path),
                             ));
                         }
-                        Maybe::Ok(fd_) => {
+                        Ok(fd_) => {
                             self.bump_open_fds();
                             fd_
                         }
@@ -775,12 +762,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
 
             match A::openat(self.cwd_fd, dir_path)? {
-                Maybe::Err(err) => {
-                    return Ok(Maybe::Err(
+                Err(err) => {
+                    return Ok(Err(
                         self.walker.handle_sys_err_with_path(err, dir_path),
                     ));
                 }
-                Maybe::Ok(fd_) => {
+                Ok(fd_) => {
                     self.bump_open_fds();
                     fd_
                 }
@@ -806,19 +793,19 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // SAFETY: dupe_z NUL-terminates
                 let pathz_ref = unsafe { ZStr::from_raw(pathz.as_ptr(), pathz.len() - 1) };
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
-                    Maybe::Err(e_) => {
+                    Err(e_) => {
                         let e: SysError = e_;
                         self.close_disallowing_cwd(fd);
                         if e.get_errno() == E::ENOENT {
                             self.iter_state = IterState::GetNext;
-                            return Ok(Maybe::Ok(()));
+                            return Ok(Ok(()));
                         }
-                        return Ok(Maybe::Err(e.with_path(
+                        return Ok(Err(e.with_path(
                             self.walker.pattern_components[idx as usize]
                                 .pattern_slice(&self.walker.pattern),
                         )));
                     }
-                    Maybe::Ok(stat) => stat,
+                    Ok(stat) => stat,
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
@@ -837,7 +824,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 } else {
                     self.iter_state = IterState::GetNext;
                 }
-                return Ok(Maybe::Ok(()));
+                return Ok(Ok(()));
             }
         }
 
@@ -874,7 +861,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             at_cwd,
         });
 
-        Ok(Maybe::Ok(()))
+        Ok(Ok(()))
     }
 
     /// Compute an optional NtQueryDirectoryFile FileName filter for the current
@@ -930,26 +917,26 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     else {
                         unreachable!()
                     };
-                    return Ok(Maybe::Ok(Some(path)));
+                    return Ok(Ok(Some(path)));
                 }
                 IterState::GetNext => {
                     // Done
                     if self.walker.workbuf.is_empty() {
-                        return Ok(Maybe::Ok(None));
+                        return Ok(Ok(None));
                     }
                     let work_item = self.walker.workbuf.pop().unwrap();
                     match work_item.kind {
                         WorkItemKind::Directory => {
-                            if let Maybe::Err(err) =
+                            if let Err(err) =
                                 self.transition_to_dir_iter_state::<false>(work_item)?
                             {
-                                return Ok(Maybe::Err(err));
+                                return Ok(Err(err));
                             }
                             continue;
                         }
                         WorkItemKind::Symlink => {
                             if work_item.path.len() >= MAX_PATH_BYTES {
-                                return Ok(Maybe::Err(
+                                return Ok(Err(
                                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
                                         .with_path(&work_item.path),
                                 ));
@@ -984,8 +971,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         scratch_path_buf,
                                         &mut has_dot_dot,
                                     ) {
-                                        Maybe::Err(e) => return Ok(Maybe::Err(e)),
-                                        Maybe::Ok(i) => i,
+                                        Err(e) => return Ok(Err(e)),
+                                        Ok(i) => i,
                                     };
                                     if norm as usize >= walker.pattern_components.len() {
                                         self.iter_state = IterState::GetNext;
@@ -1011,12 +998,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             self.iter_state = IterState::GetNext;
                             let maybe_dir_fd: Option<A::Handle> =
                                 match A::openat(self.cwd_fd, symlink_full_path_z)? {
-                                    Maybe::Err(err) => 'brk: {
+                                    Err(err) => 'brk: {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
                                         if self.walker.error_on_broken_symlinks {
-                                            return Ok(Maybe::Err(
+                                            return Ok(Err(
                                                 self.walker.handle_sys_err_with_path(
                                                     err,
                                                     symlink_full_path_z,
@@ -1029,13 +1016,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             match self.walker.prepare_matched_path_symlink(
                                                 symlink_full_path_z.as_bytes(),
                                             )? {
-                                                Some(p) => return Ok(Maybe::Ok(Some(p))),
+                                                Some(p) => return Ok(Ok(Some(p))),
                                                 None => continue 'outer,
                                             }
                                         }
                                         continue 'outer;
                                     }
-                                    Maybe::Ok(fd) => {
+                                    Ok(fd) => {
                                         self.bump_open_fds();
                                         Some(fd)
                                     }
@@ -1047,7 +1034,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     match self.walker.prepare_matched_path_symlink(
                                         symlink_full_path_z.as_bytes(),
                                     )? {
-                                        Some(p) => return Ok(Maybe::Ok(Some(p))),
+                                        Some(p) => return Ok(Ok(Some(p))),
                                         None => continue,
                                     }
                                 }
@@ -1072,7 +1059,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     .walker
                                     .prepare_matched_path_symlink(symlink_full_path_z.as_bytes())?
                                 {
-                                    Some(p) => return Ok(Maybe::Ok(Some(p))),
+                                    Some(p) => return Ok(Ok(Some(p))),
                                     None => continue,
                                 }
                             }
@@ -1083,7 +1070,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
-                        Maybe::Err(err) => {
+                        Err(err) => {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
@@ -1095,9 +1082,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if let IterState::Directory(d) = &mut self.iter_state {
                                 d.iter_closed = true;
                             }
-                            return Ok(Maybe::Err(err));
+                            return Ok(Err(err));
                         }
-                        Maybe::Ok(ent) => ent,
+                        Ok(ent) => ent,
                     };
                     let Some(entry) = entry else {
                         let dir_fd = dir.fd;
@@ -1132,7 +1119,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     .walker
                                     .prepare_matched_path(entry_name, dir_dir_path)?
                                 {
-                                    Some(prepared) => return Ok(Maybe::Ok(Some(prepared))),
+                                    Some(prepared) => return Ok(Ok(Some(prepared))),
                                     None => continue,
                                 }
                             }
@@ -1156,7 +1143,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     .prepare_matched_path(entry_name, dir_dir_path)?
                                 {
                                     Some(prepared_path) => {
-                                        return Ok(Maybe::Ok(Some(prepared_path)));
+                                        return Ok(Ok(Some(prepared_path)));
                                     }
                                     None => continue,
                                 }
@@ -1197,7 +1184,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     .prepare_matched_path(entry_name, dir_dir_path)?
                                 {
                                     Some(prepared_path) => {
-                                        return Ok(Maybe::Ok(Some(prepared_path)));
+                                        return Ok(Ok(Some(prepared_path)));
                                     }
                                     None => continue,
                                 }
@@ -1216,8 +1203,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 unsafe { ZStr::from_raw(name_z.as_ptr(), name_z.len() - 1) };
                             let stat_result = A::lstatat(dir_fd, name_z_ref);
                             let real_kind = match stat_result {
-                                Maybe::Ok(st) => bun_sys::kind_from_mode(st.st_mode as u32),
-                                Maybe::Err(_) => continue,
+                                Ok(st) => bun_sys::kind_from_mode(st.st_mode as u32),
+                                Err(_) => continue,
                             };
 
                             match real_kind {
@@ -1228,7 +1215,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             .prepare_matched_path(entry_name, dir_dir_path)?
                                         {
                                             Some(prepared) => {
-                                                return Ok(Maybe::Ok(Some(prepared)));
+                                                return Ok(Ok(Some(prepared)));
                                             }
                                             None => continue,
                                         }
@@ -1254,7 +1241,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             .prepare_matched_path(entry_name, dir_dir_path)?
                                         {
                                             Some(prepared_path) => {
-                                                return Ok(Maybe::Ok(Some(prepared_path)));
+                                                return Ok(Ok(Some(prepared_path)));
                                             }
                                             None => continue,
                                         }
@@ -1285,7 +1272,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                                 .prepare_matched_path(entry_name, dir_dir_path)?
                                             {
                                                 Some(prepared_path) => {
-                                                    return Ok(Maybe::Ok(Some(prepared_path)));
+                                                    return Ok(Ok(Some(prepared_path)));
                                                 }
                                                 None => continue,
                                             }
@@ -1536,7 +1523,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             this.debug_pattern_components();
         }
 
-        Ok(Maybe::Ok(this))
+        Ok(Ok(this))
     }
 
     pub fn handle_sys_err_with_path(&mut self, err: SysError, path_buf: &ZStr) -> SysError {
@@ -1559,18 +1546,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
         if self.pattern_components.is_empty() {
-            return Ok(Maybe::Ok(()));
+            return Ok(Ok(()));
         }
 
         let mut iter = Iterator::new(self);
-        if let Maybe::Err(err) = iter.init()? {
-            return Ok(Maybe::Err(err));
+        if let Err(err) = iter.init()? {
+            return Ok(Err(err));
         }
 
         loop {
             let path = match iter.next()? {
-                Maybe::Err(err) => return Ok(Maybe::Err(err)),
-                Maybe::Ok(matched_path) => matched_path,
+                Err(err) => return Ok(Err(err)),
+                Ok(matched_path) => matched_path,
             };
             let Some(path) = path else { break };
             log!("walker: matched path: {}", bstr::BStr::new(&path));
@@ -1579,7 +1566,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let _ = path;
         }
 
-        Ok(Maybe::Ok(()))
+        Ok(Ok(()))
     }
 
     // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
@@ -1621,7 +1608,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             match pattern_components[component_idx as usize].syntax_hint {
                 SyntaxHint::Dot => {
                     if len + 2 >= MAX_PATH_BYTES {
-                        return Maybe::Err(
+                        return Err(
                             SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
                                 .with_path(&path_buf[..len]),
                         );
@@ -1641,7 +1628,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 SyntaxHint::DotBack => {
                     *encountered_dot_dot = true;
                     if len + 3 >= MAX_PATH_BYTES {
-                        return Maybe::Err(
+                        return Err(
                             SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
                                 .with_path(&path_buf[..len]),
                         );
@@ -1666,7 +1653,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         *dir_path_len = len;
 
-        Maybe::Ok(component_idx)
+        Ok(component_idx)
     }
 
     // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
@@ -1723,8 +1710,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                         scratch_path_buf,
                         encountered_dot_dot,
                     ) {
-                        Maybe::Err(e) => return Maybe::Err(e),
-                        Maybe::Ok(i) => i,
+                        Err(e) => return Err(e),
+                        Ok(i) => i,
                     }
                 }
                 _ => component_idx,
@@ -1747,7 +1734,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             };
         }
 
-        Maybe::Ok(component_idx)
+        Ok(component_idx)
     }
 
     fn match_pattern_dir(

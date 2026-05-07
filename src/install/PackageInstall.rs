@@ -688,10 +688,12 @@ impl<'a> PackageInstall<'a> {
     pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
-                self.verify_git_resolution(&resolution.value.git, root_node_modules_dir)
+                // SAFETY: tag == Git ⇒ `value.git` is the active field.
+                self.verify_git_resolution(unsafe { &resolution.value.git }, root_node_modules_dir)
             }
             resolution::Tag::Github => {
-                self.verify_git_resolution(&resolution.value.github, root_node_modules_dir)
+                // SAFETY: tag == Github ⇒ `value.github` is the active field.
+                self.verify_git_resolution(unsafe { &resolution.value.github }, root_node_modules_dir)
             }
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {
@@ -846,7 +848,10 @@ impl<'a> PackageInstall<'a> {
         if package_json_checker.parse_expr().is_err() {
             return false;
         }
-        if log.errors > 0 || !package_json_checker.has_found_name {
+        // PORT NOTE: reshaped for borrowck — `log` is exclusively borrowed by the
+        // checker's lexer; route the read through `lexer.log_mut()` (single
+        // provenance chain, see PackageJSONVersionChecker doc).
+        if package_json_checker.lexer.log_mut().errors > 0 || !package_json_checker.has_found_name {
             return false;
         }
         // workspaces aren't required to have a version

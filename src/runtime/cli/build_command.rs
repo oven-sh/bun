@@ -258,7 +258,11 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                let base_public_path = target_base_public_path_root(compile_target.os);
+                let base_public_path =
+                    bun_standalone_module_graph::StandaloneModuleGraph::target_base_public_path(
+                        compile_target.os,
+                        b"root/",
+                    );
 
                 this_transpiler.options.public_path = base_public_path.into();
 

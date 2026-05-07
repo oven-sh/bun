@@ -474,24 +474,21 @@ impl FrameHeader {
         buf[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
         writer.write(&buf).unwrap_or(0) != 0
     }
+    /// Decode a complete 9-byte big-endian frame header.
+    ///
+    /// Zig accumulates raw wire bytes directly into the packed `struct(u72)`
+    /// across two `from()` calls and byte-swaps at the end. `FrameHeader` here
+    /// is not `#[repr(packed)]` (its `length` is a widened `u32`), so the
+    /// caller assembles the 9 raw bytes on the stack and hands us the finished
+    /// buffer instead — no per-instance or thread-local scratch needed.
     #[inline]
-    fn from<const END: bool>(dst: &mut FrameHeader, src: &[u8], offset: usize) {
-        // TODO(port): Zig copies raw bytes into packed struct then byteSwapAllFields at END.
-        // We accumulate into a 9-byte scratch buffer instead since FrameHeader is not #[repr(packed)].
-        // Phase B: verify wire layout matches Zig packed struct(u72) exactly.
-        thread_local! {
-            static SCRATCH: RefCell<[u8; FrameHeader::BYTE_SIZE]> =
-                const { RefCell::new([0u8; FrameHeader::BYTE_SIZE]) };
+    fn decode(raw: &[u8; Self::BYTE_SIZE]) -> Self {
+        Self {
+            length: ((raw[0] as u32) << 16) | ((raw[1] as u32) << 8) | (raw[2] as u32),
+            type_: raw[3],
+            flags: raw[4],
+            stream_identifier: u32::from_be_bytes([raw[5], raw[6], raw[7], raw[8]]),
         }
-        SCRATCH.with_borrow_mut(|b| {
-            b[offset..offset + src.len()].copy_from_slice(src);
-            if END {
-                dst.length = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
-                dst.type_ = b[3];
-                dst.flags = b[4];
-                dst.stream_identifier = u32::from_be_bytes([b[5], b[6], b[7], b[8]]);
-            }
-        });
     }
 }
 

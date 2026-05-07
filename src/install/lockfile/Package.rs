@@ -800,7 +800,7 @@ impl Package<u64> {
                 }
             }
 
-            bin_extern_strings_count = package_version.bin.count_strings(
+            bin_extern_strings_count = package_version.bin.count(
                 &manifest.string_buf,
                 &manifest.extern_strings_bin_entries,
                 &mut string_builder,

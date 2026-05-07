@@ -761,7 +761,7 @@ impl Tree {
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
-                if dep_behavior.is_bundled() {
+                if dependency.behavior.is_bundled() {
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: true,
@@ -769,7 +769,7 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    if dep_behavior.is_optional_peer() {
+                    if dependency.behavior.is_optional_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
                             hoist_root_id,
@@ -807,11 +807,11 @@ impl Tree {
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
                     if cfg!(debug_assertions) {
-                        debug_assert!(!builder.pending_optional_peers.contains_key(&dep_name_hash));
+                        debug_assert!(!builder.pending_optional_peers.contains_key(&dependency.name_hash));
                     }
 
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -830,7 +830,7 @@ impl Tree {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) =
-                        builder.pending_optional_peers.fetch_swap_remove(&dep_name_hash)
+                        builder.pending_optional_peers.fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
                         for &unresolved_dep_id in peers.keys() {
@@ -868,7 +868,7 @@ impl Tree {
                     // later if it's possible to resolve it.
                     let entry = builder
                         .pending_optional_peers
-                        .get_or_put(dep_name_hash)?;
+                        .get_or_put(dependency.name_hash)?;
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }

@@ -1224,7 +1224,15 @@ impl Lockfile {
 
         // Don't allow invalid memory to happen
         if !updates.is_empty() {
-            let string_buf = new.buffers.string_bytes.as_slice();
+            // `UpdateRequest.version_buf` is `&'static [u8]` (PORTING.md
+            // §`[]const u8` struct-field — Zig stores raw `[]const u8`). The
+            // slice points into `new.buffers.string_bytes`, and `new` is
+            // *returned* to the caller below, so the storage outlives every
+            // `UpdateRequest` the caller threads it through. Erase the
+            // `&'_` → `&'static` step here; SAFETY: `new` (Box<Lockfile>) is
+            // moved to the caller and never freed before `updates` is consumed.
+            let string_buf: &'static [u8] =
+                unsafe { &*(new.buffers.string_bytes.as_slice() as *const [u8]) };
             let slice = new.packages.slice();
 
             // updates might be applied to the root package.json or one
@@ -1247,8 +1255,7 @@ impl Lockfile {
                                 continue;
                             }
                             update.version_buf = string_buf;
-                            // TODO(port): version_buf is a borrowed slice into new.buffers — lifetime hazard
-                            update.version = dep.version;
+                            update.version = dep.version.clone();
                             update.package_id = package_id;
 
                             continue 'request_updated;

@@ -345,30 +345,22 @@ impl<'a> Parser<'a> {
         match &expr.data {
             ExprData::ENull(_) => {
                 // env = null -> disable default .env files
-                // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                
-                { self.ctx.args.disable_default_env_files = true; }
+                self.ctx.args.disable_default_env_files = true;
             }
             ExprData::EBoolean(boolean) => {
                 if !boolean.value {
-                    // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                    
-                    { self.ctx.args.disable_default_env_files = true; }
+                    self.ctx.args.disable_default_env_files = true;
                 }
             }
             ExprData::EObject(obj) => {
                 if let Some(file_expr) = obj.get().get(b"file") {
                     match &file_expr.data {
                         ExprData::ENull(_) => {
-                            // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                            
-                            { self.ctx.args.disable_default_env_files = true; }
+                            self.ctx.args.disable_default_env_files = true;
                         }
                         ExprData::EBoolean(boolean) => {
                             if !boolean.value {
-                                // TODO(b2-blocked): api::TransformOptions.disable_default_env_files (peechy codegen)
-                                
-                                { self.ctx.args.disable_default_env_files = true; }
+                                self.ctx.args.disable_default_env_files = true;
                             }
                         }
                         _ => {
@@ -410,35 +402,27 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"define") {
             self.expect(&expr, ExprTag::EObject)?;
-            // TODO(b2-blocked): api::TransformOptions.define / api::StringMap (peechy codegen)
-            
-            {
-                let obj = expr.data.e_object().unwrap();
-                let properties = obj.properties.slice();
-                let mut valid_count: usize = 0;
-                for prop in properties {
-                    if !matches!(prop.value.as_ref().unwrap().data, ExprData::EString(_)) {
-                        continue;
-                    }
-                    valid_count += 1;
-                }
-                let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-                let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-                for prop in properties {
-                    let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else { continue };
-                    let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else { continue };
-                    keys.push(estring_to_owned(k, self.bump));
-                    values.push(estring_to_owned(v, self.bump));
-                }
-                self.ctx.args.define = Some(api::StringMap { keys, values });
+            let obj = expr.data.e_object().unwrap();
+            let properties = obj.properties.slice();
+            let valid_count = properties
+                .iter()
+                .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
+                .count();
+            let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+            let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+            for prop in properties {
+                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else { continue };
+                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else { continue };
+                keys.push(estring_to_owned(k, self.bump));
+                values.push(estring_to_owned(v, self.bump));
             }
+            self.ctx.args.define = Some(api::StringMap { keys, values });
         }
 
         if let Some(expr) = expr_get(&json, b"origin") {
             self.expect_string(&expr)?;
-            // TODO(b2-blocked): api::TransformOptions.origin (peechy codegen)
-            
-            { self.ctx.args.origin = Some(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump)); }
+            self.ctx.args.origin =
+                Some(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump));
         }
 
         if let Some(env_expr) = expr_get(&json, b"env") {
@@ -449,12 +433,8 @@ impl<'a> Parser<'a> {
             if let Some(expr) = expr_get(&json, b"serve") {
                 if let Some(port) = expr_get(&expr, b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
-                    // TODO(b2-blocked): api::TransformOptions.port (peechy codegen)
-                    
-                    {
-                        let p = expr_as_number(&port).unwrap() as u16;
-                        self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
-                    }
+                    let p = expr_as_number(&port).unwrap() as u16;
+                    self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
                 }
             }
 
@@ -572,14 +552,8 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = expr_get(&test_, b"coverageDir") {
                     self.expect_string(&expr)?;
-                    // TODO(b2-blocked): CodeCoverageOptions.reports_directory is `&'static [u8]`
-                    // (proc-lifetime CLI string); needs retype to Box<[u8]> before this can
-                    // accept a parsed value.
-                    
-                    {
-                        self.ctx.test_options.coverage.reports_directory =
-                            estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
-                    }
+                    self.ctx.test_options.coverage.reports_directory =
+                        estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
                 }
 
                 if let Some(expr) = expr_get(&test_, b"coverageThreshold") {

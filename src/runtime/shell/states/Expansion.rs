@@ -5,7 +5,7 @@
 //! produces zero or more output strings.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{log, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
@@ -81,7 +81,16 @@ impl Expansion {
         // async paths (CmdSubst → Script spawn, glob → ShellGlobTask, brace
         // expansion) are still gated and fall through with a TODO marker.
         // blocked_on: bun_glob::GlobWalker, ShellExecEnv::dupe_for_subshell
-        let me = interp.as_expansion_mut(this);
+        let event_loop = interp.event_loop;
+        let command_ctx = interp.command_ctx;
+        // Split-borrow: the node arena vs. the worker-argv UTF-8 cache, so
+        // `expand_simple_no_io` can populate the latter for `$N` expansion
+        // while we hold `&mut me.out.buf`.
+        let Interpreter { nodes, vm_args_utf8, .. } = interp;
+        let me = match &mut nodes[this.idx()] {
+            Node::Expansion(v) => v,
+            other => panic!("expected Node::Expansion at {}, got {:?}", this, other.kind()),
+        };
         if matches!(me.state, ExpansionState::Idle) {
             me.state = ExpansionState::Walking { idx: 0 };
             // SAFETY: `node` points into the AST arena (`ShellArgs::__arena`)
@@ -90,7 +99,10 @@ impl Expansion {
             let shell = me.base.shell();
             match atom {
                 ast::Atom::Simple(s) => {
-                    Self::expand_simple_no_io(shell, s, &mut me.out.buf, true);
+                    Self::expand_simple_no_io(
+                        shell, s, &mut me.out.buf, true,
+                        event_loop, command_ctx, vm_args_utf8,
+                    );
                 }
                 ast::Atom::Compound(c) => {
                     // Spec (Expansion.zig next() lines 186-203 +
@@ -108,7 +120,10 @@ impl Expansion {
                         // Spec line 377 passes expand_tilde=true here (a Tilde
                         // mid-compound is impossible by grammar, so this only
                         // matters for fidelity).
-                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, true);
+                        Self::expand_simple_no_io(
+                            shell, s, &mut me.out.buf, true,
+                            event_loop, command_ctx, vm_args_utf8,
+                        );
                     }
                     if leading_tilde {
                         match me.out.buf.first() {
@@ -124,7 +139,7 @@ impl Expansion {
             }
             me.state = ExpansionState::Done;
         }
-        let parent = interp.as_expansion(this).base.parent;
+        let parent = me.base.parent;
         interp.child_done(parent, this, 0)
     }
 
@@ -137,6 +152,9 @@ impl Expansion {
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
         expand_tilde: bool,
+        event_loop: EventLoopHandle,
+        command_ctx: *mut bun_options_types::Context::ContextData,
+        vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
@@ -159,10 +177,8 @@ impl Expansion {
                     v.deref();
                 }
             }
-            ast::SimpleAtom::VarArgv(_) => {
-                // TODO(port): Expansion.zig `expandVarArgv` reaches into
-                // `vm.main`/`vm.argv`/`worker.argv`. Empty until the
-                // VirtualMachine accessors are wired.
+            ast::SimpleAtom::VarArgv(int) => {
+                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
             ast::SimpleAtom::Asterisk => out.push(b'*'),
             ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),

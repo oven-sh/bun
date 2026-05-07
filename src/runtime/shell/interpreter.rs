@@ -327,6 +327,10 @@ pub struct Interpreter {
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
     pub vm_args_utf8: Vec<bun_str::ZigStringSlice>,
+
+    /// `bun run` CLI context for `$N` expansion on the mini event loop.
+    /// Null when constructed from JS (no `ContextData` is reachable).
+    pub command_ctx: *mut bun_options_types::Context::ContextData,
 }
 
 #[repr(transparent)]
@@ -600,6 +604,7 @@ impl Interpreter {
             estimated_size_for_gc: 0,
             last_err: None,
             vm_args_utf8: Vec::new(),
+            command_ctx: ctx,
         });
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
@@ -607,10 +612,6 @@ impl Interpreter {
         if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.stdin {
             r.set_interp(interp_ptr);
         }
-        // PORT NOTE: Zig stores `command_ctx` on the struct; the Rust struct
-        // doesn't have that field yet (no builtin reads it). Preserve the
-        // pointer for when `which`/argv builtins land.
-        let _ = ctx;
 
         // ── optional cwd override (Zig `init` tail) ────────────────────────
         if let Some(c) = cwd_ {
@@ -1506,6 +1507,91 @@ impl Interpreter {
             }
         }
         self.vm_args_utf8[idx as usize].slice()
+    }
+
+    /// Spec: Expansion.zig `expandVarArgv`. Appends the value of `$N` to
+    /// `out`. Takes the relevant interpreter fields by-part so callers can
+    /// split-borrow alongside the node arena.
+    pub fn append_var_argv(
+        out: &mut Vec<u8>,
+        original_int: u8,
+        event_loop: EventLoopHandle,
+        command_ctx: *mut bun_options_types::Context::ContextData,
+        vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
+    ) {
+        let mut int = original_int;
+        match event_loop {
+            EventLoopHandle::Js { .. } => {
+                if int == 0 {
+                    if let Ok(p) = bun_core::self_exe_path() {
+                        out.extend_from_slice(p.as_bytes());
+                    }
+                    return;
+                }
+                int -= 1;
+
+                let vm_ptr = event_loop
+                    .bun_vm()
+                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
+                if vm_ptr.is_null() {
+                    return;
+                }
+                // SAFETY: `bun_vm()` on a JS event loop returns the live
+                // `*VirtualMachine` owning that loop.
+                let vm = unsafe { &*vm_ptr };
+                let main = vm.main();
+                if !main.is_empty() {
+                    if int == 0 {
+                        out.extend_from_slice(main);
+                        return;
+                    }
+                    int -= 1;
+                }
+
+                if let Some(worker_ptr) = vm.worker {
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // to a live `*WebWorker` for the worker's lifetime.
+                    let worker =
+                        unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                    let argv = worker.argv();
+                    if int as usize >= argv.len() {
+                        return;
+                    }
+                    if vm_args_utf8.len() != argv.len() {
+                        vm_args_utf8.reserve(argv.len());
+                        for arg in argv {
+                            // SAFETY: each `WTFStringImpl` in `argv` is a live
+                            // `*WTF::StringImpl` borrowed from `worker.argv`.
+                            vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                        }
+                    }
+                    out.extend_from_slice(vm_args_utf8[int as usize].slice());
+                    return;
+                }
+
+                if (int as usize) < vm.argv.len() {
+                    out.extend_from_slice(&vm.argv[int as usize]);
+                }
+            }
+            EventLoopHandle::Mini(_) => {
+                if command_ctx.is_null() {
+                    return;
+                }
+                // SAFETY: `command_ctx` is the process-global `ContextData`
+                // (see `init`); it outlives the interpreter.
+                let ctx = unsafe { &*command_ctx };
+                if int as usize >= 1 + ctx.passthrough.len() {
+                    return;
+                }
+                if int == 0 {
+                    if let Some(last) = ctx.positionals.last() {
+                        out.extend_from_slice(last);
+                    }
+                    return;
+                }
+                out.extend_from_slice(&ctx.passthrough[int as usize - 1]);
+            }
+        }
     }
 }
 

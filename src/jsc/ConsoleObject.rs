@@ -4329,12 +4329,9 @@ pub mod formatter {
                 return Ok(());
             }
 
-            let _ = (&mut writer, pf!("<r>")); // silence unused while gated above
-            // TODO(port-cycle): `crate::DOMFormData` is a `stub_ty!` placeholder
-            // (no `JsClass` impl yet); the real downcast lives behind the
-            // gated `bun_runtime` block above. Hard-disabled until the
-            // `DOMFormData` JsClass derive lands.
-            if false /* value.as_::<crate::DOMFormData>().is_some() */ {
+            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
+            // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
+            if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
                     self.quote_keys = true;

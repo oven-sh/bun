@@ -1235,7 +1235,7 @@ pub mod dispatch {
     unsafe impl Sync for DevServerHandle {}
     pub struct DevServerVTable {
         pub barrel_needed_exports:
-            unsafe fn(*mut ()) -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,
+            unsafe fn(*mut ()) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>,
         pub log_for_resolution_failures:
             unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> *mut bun_logger::Log,
         /// `dev.finalizeBundle(bv2, result)` — DevServer.zig:2239.

@@ -915,7 +915,8 @@ pub fn edit(
             );
         } else {
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
-                let old_props = current_package_json.data.e_object().unwrap().properties.slice();
+                let obj = current_package_json.data.e_object().unwrap();
+                let old_props = obj.properties.slice();
                 let mut root_properties: Vec<G::Property> =
                     Vec::with_capacity(old_props.len() + 2);
                 for p in old_props {
@@ -945,7 +946,8 @@ pub fn edit(
                     logger::Loc::EMPTY,
                 );
             } else if needs_new_dependency_list || needs_new_trusted_dependencies_list {
-                let old_props = current_package_json.data.e_object().unwrap().properties.slice();
+                let obj = current_package_json.data.e_object().unwrap();
+                let old_props = obj.properties.slice();
                 let mut root_properties: Vec<G::Property> =
                     Vec::with_capacity(old_props.len() + 1);
                 for p in old_props {

@@ -1421,11 +1421,33 @@ impl EntryPointList {
     }
 }
 impl DevServer {
-    /// `DevServer.relativePath` — DevServer.zig. Full body in gated draft.
-    pub fn relative_path<'a>(&self, _buf: &'a mut bun_paths::PathBuffer, path: &'a [u8]) -> &'a [u8] {
-        let _ = &self.root;
-        // TODO(port): blocked_on: dev_server_body::DevServer::relative_path port
-        path
+    /// `DevServer.relativePath` — DevServer.zig:4225.
+    pub fn relative_path<'a>(
+        &self,
+        relative_path_buf: &'a mut bun_paths::PathBuffer,
+        path: &'a [u8],
+    ) -> &'a [u8] {
+        if !bun_paths::is_absolute(path) {
+            return path;
+        }
+
+        if path.len() >= self.root.len() + 1
+            && path[self.root.len()] == b'/'
+            && path.starts_with(&*self.root)
+        {
+            return &path[self.root.len() + 1..];
+        }
+
+        let rel = bun_paths::resolve_path::relative_platform_buf::<
+            bun_paths::resolve_path::platform::Auto,
+            true,
+        >(&mut relative_path_buf[..], &self.root, path);
+        // SAFETY: `rel` borrows `relative_path_buf`, which is exclusively owned
+        // by the caller; in-place mutation only flips path separators.
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(unsafe {
+            core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
+        });
+        rel
     }
 }
 impl DirectoryWatchStore {

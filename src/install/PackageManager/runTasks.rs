@@ -23,9 +23,13 @@ use bun_install::lockfile::{Lockfile, Package};
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
+use crate::dependency::Behavior;
+use crate::lifecycle_script_runner::InstallCtx;
+use crate::isolated_install::installer as store_installer;
+use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
 
 use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
-use super::{directories, enqueue};
+use super::{directories, enqueue, set_preinstall_state};
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
@@ -177,7 +181,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
                 let node = unsafe { &mut *manager.downloads_node.unwrap() };
-                if completed_items != node.completed_items || has_updated_this_run {
+                if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
+                    || has_updated_this_run
+                {
                     node.set_completed_items(completed_items);
                     node.set_estimated_total_items(manager.total_tasks as usize);
                 }

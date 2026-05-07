@@ -391,25 +391,76 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache_recursive(&mut self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm = unsafe { &mut *global_this.bun_vm() };
-        let path = input_path;
+        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
+        // `&mut` per use site so the recursive call (which does the same) doesn't pop our
+        // SB tag mid-loop.
+        let vm_ptr = global_this.bun_vm();
+        #[allow(unused_mut)]
+        let mut path = input_path;
         #[cfg(windows)]
-        let _ = path; // TODO(port): win32 normalize_buf via thread-local
-
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(path) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        if let Some(_dir) = root_dir_info {
-            // TODO(port): `DirInfo::get_entries_const()` + `EntryMap` iteration —
-            // upstream `bun_resolver::DirInfo` does not expose a stable iterator
-            // surface yet; the recursive walk is deferred.
-            todo!("blocked_on: bun_resolver::DirInfo::get_entries_const iteration");
+        let normalized: Vec<u8>;
+        #[cfg(windows)]
+        {
+            // PORT NOTE: Zig used a `ThreadlocalBuffers` slot. `with_borrow_mut` can't
+            // hand back a slice that outlives the closure, so copy out (cold reload path).
+            normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
+                // SAFETY: `vm_ptr` is live; `transpiler.fs` is the FileSystem singleton.
+                unsafe { &*(*vm_ptr).transpiler.fs }
+                    .normalize_buf(&mut buf[..], input_path)
+                    .to_vec()
+            });
+            path = &normalized;
         }
 
-        let _ = vm.transpiler.resolver.bust_dir_cache(path);
+        let root_dir_info =
+            match unsafe { &mut *vm_ptr }.transpiler.resolver.read_dir_info(path) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+
+        if let Some(dir) = root_dir_info {
+            // SAFETY: `dir` points into the resolver's BSSMap singleton; valid until
+            // `bust_dir_cache(path)` for THIS path runs (after the loop).
+            let dir_ref = unsafe { &*dir };
+            if let Some(entries) = dir_ref.get_entries_const() {
+                'outer: for &entry_ptr in entries.data.values() {
+                    // SAFETY: `entry_ptr` is a `*mut Entry` into the process-static
+                    // EntryStore; no other live `&mut` to it in this scope.
+                    let base = unsafe { &*entry_ptr }.base();
+                    if base.first() == Some(&b'.') {
+                        continue 'outer;
+                    }
+                    // SAFETY: `transpiler.fs` is the FileSystem singleton; `&mut .fs`
+                    // (the `Implementation` field) is the lazy-stat receiver.
+                    let kind = {
+                        let fs_impl = unsafe { &mut (*(*vm_ptr).transpiler.fs).fs };
+                        unsafe { &mut *entry_ptr }.kind(fs_impl, false)
+                    };
+                    if kind == Fs::EntryKind::Dir {
+                        for banned_dir in Router::BANNED_DIRS.iter() {
+                            if unsafe { &*entry_ptr }.base() == *banned_dir {
+                                continue 'outer;
+                            }
+                        }
+                        let entry = unsafe { &*entry_ptr };
+                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                        // SAFETY: see above. `abs()` writes into a thread-local buffer;
+                        // copy out before recursing (recursion overwrites it).
+                        let full_path =
+                            unsafe { &*(*vm_ptr).transpiler.fs }.abs(&abs_parts).to_vec();
+                        let _ = unsafe { &mut *vm_ptr }
+                            .transpiler
+                            .resolver
+                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
+                                &full_path,
+                            ));
+                        self.bust_dir_cache_recursive(global_this, &full_path);
+                    }
+                }
+            }
+        }
+
+        let _ = unsafe { &mut *vm_ptr }.transpiler.resolver.bust_dir_cache(path);
     }
 
     pub fn bust_dir_cache(&mut self, global_this: &JSGlobalObject) {
@@ -431,14 +482,21 @@ impl FileSystemRouter {
 
         let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        let vm_ptr = global_this.bun_vm();
+        let vm = unsafe { &mut *vm_ptr };
 
         let mut log = Log::Log::new();
-        // TODO(port): errdefer-style swap of `vm.transpiler.resolver.log`; see constructor note.
-        let _orig_log: *mut Log::Log = vm.transpiler.resolver.log;
-        let _ = &_orig_log;
+        let orig_log: *mut Log::Log = vm.transpiler.resolver.log;
+        vm.transpiler.resolver.log = &mut log;
+        let _restore_log = scopeguard::guard((), move |_| {
+            // SAFETY: `vm_ptr` is live; runs before `log` drops (declared after it).
+            unsafe { (*vm_ptr).transpiler.resolver.log = orig_log };
+        });
 
         this.bust_dir_cache(global_this);
+        // PORT NOTE: `bust_dir_cache` re-derives `&mut *vm_ptr` internally; rebind here so
+        // our `vm` borrow is fresh under Stacked Borrows.
+        let vm = unsafe { &mut *vm_ptr };
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&this.router.config.dir) {
             Ok(Some(info)) => info,

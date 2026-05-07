@@ -173,7 +173,7 @@ impl Dependency {
     /// Zig: `Dependency.clone`. Renamed to `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
     /// rely on the trait method for shallow copy).
-    pub fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry + ?Sized>(
+    pub fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         buf: &[u8],
@@ -183,7 +183,7 @@ impl Dependency {
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
-    pub fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry + ?Sized>(
+    pub fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         name_buf: &[u8],

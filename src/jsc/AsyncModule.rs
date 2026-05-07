@@ -96,11 +96,11 @@ pub struct DeferredDependencyError {
     pub err: bun_core::Error,
 }
 
-// TODO(port): AsyncModule carries <'a>; Queue is embedded intrusively in
-// VirtualMachine via @fieldParentPtr, so it cannot itself be generic over a
-// borrowed lifetime. Using 'static here as a placeholder — Phase B must
-// reconcile (likely by storing raw ptrs or restructuring AsyncModule's slices
-// to (off,len) pairs into `string_buf`).
+// TODO(port): AsyncModule carries <'a> only for `package_json` /
+// `global_this`; Queue is embedded intrusively in VirtualMachine via
+// @fieldParentPtr, so it cannot itself be generic over a borrowed lifetime.
+// Using 'static here — both referents live for the VM lifetime. Phase B:
+// switch `global_this` / `package_json` to raw ptrs to drop the lifetime.
 pub type Map = Vec<AsyncModule<'static>>;
 
 #[derive(Default)]
@@ -1307,6 +1307,5 @@ impl<'a> AsyncModule<'a> {
 //               fulfill() real (called from RuntimeTranspilerStore). Queue
 //               method bodies / init / done / on_done / resolve_error /
 //               download_error / resume_loading_module ported and un-gated.
-//               Self-referential string_buf slices still need (off,len)
-//               restructure (TODO(port)).
+//               string_buf slices stored as (off,len) — struct is movable.
 // ──────────────────────────────────────────────────────────────────────────

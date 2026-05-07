@@ -468,95 +468,9 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
-// Local shim for `globalObject.throwNotEnoughArguments(name, expected, got)` —
-// upstream `bun_jsc::JSGlobalObject` doesn't expose it yet, so several runtime
-// modules each carry a tiny extension trait until it's promoted.
-trait JSGlobalObjectBunObjExt {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError;
-}
-impl JSGlobalObjectBunObjExt for JSGlobalObject {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
-
-/// `bun.String.toJSArray` — the un-gated `bun_jsc::bun_string_jsc` module lacks
-/// `to_js_array`; declare the C++ symbol locally (matches src/jsc/bun_string_jsc.rs:111).
-#[inline]
-fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        fn BunString__createArray(
-            global: *mut JSGlobalObject,
-            ptr: *const BunString,
-            len: usize,
-        ) -> JSValue;
-    }
-    // SAFETY: `array` ptr/len from a live slice; `global` borrowed for call duration.
-    let v = unsafe { BunString__createArray(global as *const _ as *mut _, array.as_ptr(), array.len()) };
-    if global.has_exception() { Err(jsc::JsError::Thrown) } else { Ok(v) }
-}
-
-// ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
-// `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the
-// inherent JSC conversion methods live on the *separate* `bun_jsc::zig_string::
-// ZigString` (same `#[repr(C)] (ptr,len)` layout). Forward through the raw C++
-// symbols so callers in this file can stay on `bun_str::ZigString`.
-unsafe extern "C" {
-    fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toAtomicValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
-}
-trait ZigStringToJs {
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
-    fn with_encoding(self) -> Self;
-}
-impl ZigStringToJs for ZigString {
-    #[inline]
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if self.is_globally_allocated() {
-            return self.to_external_value(global);
-        }
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toValueGC(self, global) }
-    }
-    #[inline]
-    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: see `to_js`.
-        unsafe { ZigString__toAtomicValue(self, global) }
-    }
-    #[inline]
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: see `to_js`.
-        unsafe { ZigString__toExternalValue(self, global) }
-    }
-    /// `ZigString.withEncoding()` — auto-detect UTF-8 vs Latin-1 and tag the
-    /// pointer accordingly. Mirrors src/jsc/ZigString.rs:842.
-    #[inline]
-    fn with_encoding(mut self) -> Self {
-        if !self.is_16bit() && !strings::is_all_ascii(self.slice()) {
-            self.mark_utf8();
-        }
-        self
-    }
-}
-
-// PORT NOTE: `bun_gen::bun_object::BracesOptions` is codegen output from
-// BunObject.bind.ts. The `bun_gen` crate is not yet wired, so define the
-// generated shape locally per the `.bind.ts` schema. Field order matches the
-// codegen `extern struct` (`GeneratedBindings.zig:53`: `parse`, `tokenize`)
-// because the C++ dispatch shim passes `*const BracesOptions` by C ABI.
+/// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
 pub mod r#gen {
-    #[repr(C)]
-    #[derive(Default, Clone, Copy)]
-    pub struct BracesOptions {
-        pub parse: bool,
-        pub tokenize: bool,
-    }
+    pub use bun_jsc::generated::bun_object::BracesOptions;
 }
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
@@ -1592,15 +1506,7 @@ pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
 
 #[bun_jsc::host_fn]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // PORT NOTE: `bun_jsc::VM` (the lib.rs opaque stub) lacks `shrink_footprint`;
-    // the real impl lives in the gated `bun_jsc::vm` module. Call the C++ symbol
-    // directly (matches src/jsc/VM.rs:125). Signature matches the other extern
-    // decl in this file to satisfy `clashing_extern_declarations`.
-    unsafe extern "C" {
-        fn JSC__VM__shrinkFootprint(vm: *mut core::ffi::c_void);
-    }
-    // SAFETY: `global_object.vm()` returns a live JSC VM; FFI has no extra preconditions.
-    unsafe { JSC__VM__shrinkFootprint((global_object.vm() as *const jsc::VM as *mut jsc::VM).cast()) };
+    global_object.vm().shrink_footprint();
     Ok(JSValue::UNDEFINED)
 }
 
@@ -2138,17 +2044,13 @@ pub extern "C" fn Bun__escapeHTML8(
 pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];
-    // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
-    if !unsafe { super::JSC__JSValue__isUInt32AsAnyInt(size) } {
+    if !size.is_uint32_as_any_int() {
         return Err(global_this.throw_invalid_arguments("Expected a positive number"));
     }
-    // SAFETY: `size` encodes a non-negative integer (checked above); `global_this` is live.
-    Ok(unsafe {
-        super::JSC__JSValue__createUninitializedUint8Array(
-            global_this,
-            super::JSC__JSValue__toUInt64NoTruncate(size) as usize,
-        )
-    })
+    Ok(JSValue::create_uninitialized_uint8_array(
+        global_this,
+        size.to_uint64_no_truncate() as usize,
+    ))
 }
 
 #[bun_jsc::host_fn]

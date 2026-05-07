@@ -2050,6 +2050,26 @@ pub trait OptionsEnvArg {
     fn from_buf(buf: Vec<u8>) -> Self;
 }
 
+/// Zig `[:0]const u8` arm of `appendOptionsEnv`: `default_allocator.allocSentinel`
+/// + never freed (process-lifetime argv storage). The leaked allocation matches
+/// the Zig alloc/free pairing exactly — argv entries live for the process.
+impl OptionsEnvArg for &'static ZStr {
+    fn from_slice(s: &[u8]) -> Self {
+        let mut v = Vec::with_capacity(s.len() + 1);
+        v.extend_from_slice(s);
+        v.push(0);
+        let z: &'static [u8] = v.leak();
+        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
+        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+    }
+    fn from_buf(mut buf: Vec<u8>) -> Self {
+        buf.push(0);
+        let z: &'static [u8] = buf.leak();
+        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
+        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+    }
+}
+
 /// Zig: `bun.appendOptionsEnv` — parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (Zig callers prepend a placeholder at [0]).

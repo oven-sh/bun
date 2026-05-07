@@ -11,9 +11,6 @@ use bun_resolver::{self as resolver, fs as Fs};
 use bun_bundler::options::{self, Loader, Target};
 use bun_bundler::BundleV2;
 use bun_options_types::CompileTarget::CompileTarget;
-use bun_options_types::ImportKind;
-use bun_jsc::AnyTask::AnyTask;
-use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_js_parser::ast::Index;
@@ -21,8 +18,6 @@ use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
 use bun_string::MutableString;
-
-bun_output::declare_scope!(Transpiler, visible);
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.

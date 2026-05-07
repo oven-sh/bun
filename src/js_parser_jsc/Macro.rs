@@ -458,13 +458,15 @@ pub struct Run<'a> {
     pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
     // PORT NOTE: Zig carried `allocator: std.mem.Allocator` (always
-    // `default_allocator`). The Rust AST uses arena-owned slices
-    // (`EString::init` lifetime-erases its borrow), so `coerce` needs a bump
-    // arena to back property keys / UTF-16 string data / `from_blob` JSON
-    // sub-parsing. Owned here so it drops when the `Run` does — the `Expr`
-    // tree it backs is consumed/printed before `MacroContext::call` returns
-    // (Store reset is disabled for that window).
-    pub bump: bun_alloc::Arena,
+    // `default_allocator`, mimalloc, process-lifetime — slices backing
+    // `E.String` data / property keys are never freed). The Rust AST uses
+    // arena-owned slices (`EString::init` lifetime-erases its borrow), so
+    // `coerce` needs a bump arena to back property keys / UTF-16 string data /
+    // `from_blob` JSON sub-parsing. The arena is *borrowed* from
+    // `MacroContext` (stored long-term in the `Transpiler`) so the slices
+    // outlive `run_async` — the returned `Expr` is spliced into the AST and
+    // printed long after this frame returns.
+    pub bump: &'a bun_alloc::Arena,
     pub id: i32,
     pub log: &'a mut Log,
     pub source: &'a Source,
@@ -476,6 +478,7 @@ impl<'a> Run<'a> {
     pub fn run_async(
         macro_: &Macro,
         log: &mut Log,
+        bump: &bun_alloc::Arena,
         function_name: &[u8],
         caller: Expr,
         args: &[JSValue],
@@ -508,7 +511,7 @@ impl<'a> Run<'a> {
             macro_,
             // SAFETY: `vm.global` is set during init and live for the VM lifetime.
             global: unsafe { &*(*vm).global },
-            bump: bun_alloc::Arena::new(),
+            bump,
             id,
             log,
             source,
@@ -637,7 +640,7 @@ impl<'a> Run<'a> {
                     let blob_ref = BlobRef { owner: blob.cast(), vtable: &BLOB_VTABLE };
                     return Expr::from_blob(
                         blob_ref,
-                        &self.bump,
+                        self.bump,
                         mime_type,
                         self.log,
                         self.caller.loc,

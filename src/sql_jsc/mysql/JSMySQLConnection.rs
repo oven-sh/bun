@@ -6,7 +6,7 @@ use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    HasAutoFlush, JSGlobalObject, JSValue, JsRef, JsResult, KeepAlive, VirtualMachine,
+    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsRef, JsResult, KeepAlive, VirtualMachine,
     VirtualMachineSqlExt as _,
 };
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
@@ -45,8 +45,7 @@ pub struct JSMySQLConnection {
     ref_count: Cell<u32>,
     js_value: JsRef,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
-    // TODO(port): lifetime — JSC_BORROW rust_type is `&JSGlobalObject`; struct lifetime deferred to Phase B
-    global_object: &'static JSGlobalObject,
+    global_object: GlobalRef,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton
     vm: *mut VirtualMachine,
     poll_ref: KeepAlive,
@@ -434,7 +433,7 @@ impl JSMySQLConnection {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
             if self.js_value.is_not_empty() && !self.js_value.is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
-                self.js_value.upgrade(self.global_object);
+                self.js_value.upgrade(&self.global_object);
             }
             if self.connection.status == my_sql_connection::Status::Connected
                 && self.connection.is_idle()
@@ -574,10 +573,7 @@ impl JSMySQLConnection {
         let ptr: *mut JSMySQLConnection = Box::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsRef::empty(),
-            // SAFETY: JSC_BORROW — JSGlobalObject / VirtualMachine outlive every
-            // m_ctx payload (they own the heap that holds the JS wrapper).
-            // Lifetime-extend the param refs via raw-ptr roundtrip.
-            global_object: unsafe { &*(global_object as *const JSGlobalObject) },
+            global_object: GlobalRef::from(global_object),
             vm,
             poll_ref: KeepAlive::default(),
             connection: my_sql_connection::MySQLConnection::init(
@@ -813,7 +809,7 @@ impl JSMySQLConnection {
             let _ = write!(&mut message, "{}", args);
         }
 
-        let err = mysql_error_to_js(self.global_object, &message, error_code);
+        let err = mysql_error_to_js(&self.global_object, &message, error_code);
         self.fail_with_js_value(err);
     }
 
@@ -849,7 +845,7 @@ impl JSMySQLConnection {
             return;
         }
 
-        let Some(on_close) = self.consume_on_close_callback(self.global_object) else {
+        let Some(on_close) = self.consume_on_close_callback(&self.global_object) else {
             return;
         };
         on_close.ensure_still_alive();
@@ -860,7 +856,7 @@ impl JSMySQLConnection {
         let mut js_error = value.to_error().unwrap_or(value);
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
-                self.global_object,
+                &self.global_object,
                 b"Connection closed",
                 AnyMySQLErrorT::ConnectionClosed,
             );
@@ -872,14 +868,14 @@ impl JSMySQLConnection {
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
         loop_.run_callback(
             on_close,
-            self.global_object,
+            &self.global_object,
             JSValue::UNDEFINED,
             &[js_error, queries_array],
         );
     }
 
     fn fail(&mut self, message: &[u8], err: AnyMySQLErrorT) {
-        let instance = mysql_error_to_js(self.global_object, message, err);
+        let instance = mysql_error_to_js(&self.global_object, message, err);
         self.fail_with_js_value(instance);
     }
 
@@ -887,7 +883,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return;
         }
-        let Some(on_connect) = self.consume_on_connect_callback(self.global_object) else {
+        let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
             return;
         };
         on_connect.ensure_still_alive();
@@ -916,7 +912,7 @@ impl JSMySQLConnection {
         // `to_js` call site.
         let cached_structure_ptr: Option<*const CachedStructure> = match result_mode {
             ResultMode::Objects => self.js_value.try_get().map(|value| {
-                let cs = statement.structure(value, self.global_object);
+                let cs = statement.structure(value, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 cs as *const CachedStructure
             }),
@@ -926,7 +922,7 @@ impl JSMySQLConnection {
         let fields_flags = statement.fields_flags;
         // PERF(port): was stack-fallback allocator (4096 bytes)
         let mut row = ResultSet::Row {
-            global_object: self.global_object,
+            global_object: &self.global_object,
             columns: &statement.columns,
             binary: !request.is_simple(),
             raw: result_mode == ResultMode::Raw,
@@ -949,7 +945,7 @@ impl JSMySQLConnection {
         // Process row data
         let row_value = row
             .to_js(
-                self.global_object,
+                &self.global_object,
                 pending_value,
                 structure,
                 fields_flags,
@@ -1006,7 +1002,7 @@ impl JSMySQLConnection {
                     request.reject_with_js_value(self.get_queries_array(), err_);
                 } else {
                     request
-                        .reject_with_js_value(self.get_queries_array(), err.to_js(self.global_object));
+                        .reject_with_js_value(self.get_queries_array(), err.to_js(&self.global_object));
                 }
             }
         } else {
@@ -1017,7 +1013,7 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                self.fail_with_js_value(err.to_js(self.global_object));
+                self.fail_with_js_value(err.to_js(&self.global_object));
             }
         }
     }
@@ -1083,7 +1079,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         };
         if !handshake_was_successful {
             // ssl_error.toJS(this.#globalObject) catch return
-            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, this.global_object) else {
+            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
                 return;
             };
             this.fail_with_js_value(v);

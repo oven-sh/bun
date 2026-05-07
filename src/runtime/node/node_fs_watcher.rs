@@ -11,7 +11,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    JSGlobalObject, JSValue, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine,
+    GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine,
     ZigStringJsc as _,
 };
 use bun_string::ZigString;
@@ -42,8 +42,7 @@ pub struct FSWatcher {
     persistent: bool,
     path_watcher: Option<*mut path_watcher::PathWatcher>,
     poll_ref: KeepAlive,
-    // TODO(port): lifetime — JSC_BORROW; lives as long as `ctx` (singleton VM)
-    global_this: &'static JSGlobalObject,
+    global_this: GlobalRef,
     // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
     pub(super) js_this: JSValue,
     encoding: Encoding,
@@ -669,10 +668,10 @@ impl FSWatcher {
         // SAFETY: ownership of `this` transfers to the GC wrapper here; the
         // wrapper's finalize hook is `FSWatcher::finalize` which calls
         // `Box::from_raw(this)`.
-        let js_this = unsafe { Self::to_js_ptr(this, this_ref.global_this) };
+        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
         this_ref.js_this = js_this;
-        js::listener_set_cached(js_this, this_ref.global_this, listener);
+        js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
         if let Some(s) = &this_ref.signal {
             // already aborted?
@@ -715,15 +714,15 @@ impl FSWatcher {
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
                 let args = [
-                    EventType::Error.to_js(self.global_this),
+                    EventType::Error.to_js(&self.global_this),
                     if err.is_empty_or_undefined_or_null() {
-                        CommonAbortReason::UserAbort.to_js(self.global_this)
+                        CommonAbortReason::UserAbort.to_js(&self.global_this)
                     } else {
                         err
                     },
                 ];
                 if listener
-                    .call_with_global_this(self.global_this, &args)
+                    .call_with_global_this(&self.global_this, &args)
                     .is_err()
                 {
                     self.global_this.clear_exception();
@@ -747,9 +746,9 @@ impl FSWatcher {
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
                 let global_object = self.global_this;
-                let err_js = err.to_js(global_object);
-                let args = [EventType::Error.to_js(global_object), err_js];
-                if let Err(e) = listener.call_with_global_this(global_object, &args) {
+                let err_js = err.to_js(&global_object);
+                let args = [EventType::Error.to_js(&global_object), err_js];
+                if let Err(e) = listener.call_with_global_this(&global_object, &args) {
                     self.global_this.report_active_exception_as_unhandled(e);
                 }
             }
@@ -766,7 +765,7 @@ impl FSWatcher {
         let Some(listener) = js::listener_get_cached(js_this) else {
             return;
         };
-        emit_js::<EVENT_TYPE>(listener, self.global_this, file_name);
+        emit_js::<EVENT_TYPE>(listener, &self.global_this, file_name);
     }
 
     pub fn emit<const EVENT_TYPE: EventType>(&mut self, file_name: &[u8]) {
@@ -782,22 +781,22 @@ impl FSWatcher {
         let mut filename: JSValue = JSValue::UNDEFINED;
         if !file_name.is_empty() {
             if self.encoding == Encoding::Buffer {
-                filename = match jsc::ArrayBuffer::create_buffer(global_object, file_name) {
+                filename = match jsc::ArrayBuffer::create_buffer(&global_object, file_name) {
                     Ok(v) => v,
                     Err(_) => return, // TODO: properly propagate exception upwards
                 };
             } else if self.encoding == Encoding::Utf8 {
-                filename = ZigString::from_utf8(file_name).to_js(global_object);
+                filename = ZigString::from_utf8(file_name).to_js(&global_object);
             } else {
                 // convert to desired encoding
-                filename = match Encoder::to_string(file_name, global_object, self.encoding) {
+                filename = match Encoder::to_string(file_name, &global_object, self.encoding) {
                     Ok(v) => v,
                     Err(_) => return,
                 };
             }
         }
 
-        emit_js::<EVENT_TYPE>(listener, global_object, filename);
+        emit_js::<EVENT_TYPE>(listener, &global_object, filename);
     }
 }
 
@@ -888,7 +887,7 @@ impl FSWatcher {
                     // balanced and the count stays > 0 while the close event is emitted.
                     self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
                     bun_output::scoped_log!(fs_watch, "emit('close')");
-                    emit_js::<{ EventType::Close }>(listener, self.global_this, JSValue::UNDEFINED);
+                    emit_js::<{ EventType::Close }>(listener, &self.global_this, JSValue::UNDEFINED);
                     self.unref_task();
                 }
             }
@@ -974,10 +973,7 @@ impl FSWatcher {
                 .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
             persistent: args.persistent,
             path_watcher: None,
-            // SAFETY: JSGlobalObject is a singleton that outlives FSWatcher (JSC_BORROW per LIFETIMES.tsv).
-            global_this: unsafe {
-                core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(args.global_this)
-            },
+            global_this: GlobalRef::from(args.global_this),
             js_this: JSValue::ZERO,
             encoding: args.encoding,
             closed: false,

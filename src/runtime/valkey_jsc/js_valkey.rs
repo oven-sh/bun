@@ -6,7 +6,8 @@ use core::ptr::NonNull;
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_jsc::{
-    self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
+    self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef,
+    JsResult,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::socket::SSLConfig;
@@ -111,12 +112,12 @@ pub use crate::generated_classes::js_RedisClient as Js;
 
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &mut JSValkeyClient) -> JsResult<Self> {
-        let callback_map = JSMap::create(valkey_parent.global_object);
+        let callback_map = JSMap::create(&valkey_parent.global_object);
         let parent_this = valkey_parent.this_value.try_get().expect("unreachable");
 
         Js::subscription_callback_map_set_cached(
             parent_this,
-            valkey_parent.global_object,
+            &valkey_parent.global_object,
             callback_map,
         );
 
@@ -351,7 +352,7 @@ impl SubscriptionCtx {
     pub fn close(&mut self, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
             let go = self.parent().global_object;
-            debug_assert!(self.is_deletable(go).expect("unreachable"));
+            debug_assert!(self.is_deletable(&go).expect("unreachable"));
         }
 
         if let Some(parent_this) = self.parent().this_value.try_get() {
@@ -373,7 +374,7 @@ impl SubscriptionCtx {
 // macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
 pub struct JSValkeyClient {
     pub client: valkey::ValkeyClient,
-    pub global_object: &'static JSGlobalObject,
+    pub global_object: GlobalRef,
     pub this_value: JsRef,
     pub poll_ref: KeepAlive,
 
@@ -450,15 +451,12 @@ impl JSValkeyClient {
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
     ) -> JsResult<*mut JSValkeyClient> {
-        // SAFETY: JSGlobalObject is a heap singleton alive for the VM lifetime
-        // (Phase A models it as `&'static`).
-        let global_object: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
+        let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
         let vm_ref = vm;
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(global_object)?
+            arguments[0].to_bun_string(&global_object)?
         } else {
             // SAFETY: `vm.transpiler.env` is set during VM init and points at the
             // process-lifetime `bun_dotenv::Loader`; never null on the JS thread.
@@ -611,7 +609,7 @@ impl JSValkeyClient {
             && !arguments[1].is_undefined_or_null()
             && arguments[1].is_object()
         {
-            Options::from_js(global_object, arguments[1])?
+            Options::from_js(&global_object, arguments[1])?
         } else {
             valkey::Options::default()
         };
@@ -740,9 +738,7 @@ impl JSValkeyClient {
         &self,
         global_object: &JSGlobalObject,
     ) -> Result<*mut JSValkeyClient, bun_alloc::AllocError> {
-        // SAFETY: see `create_no_js_no_pubsub`.
-        let global_object: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
+        let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
 
         // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
@@ -863,7 +859,7 @@ impl JSValkeyClient {
         debug!(
             "removeSubscription: entering, has subscriptions: {}",
             self._subscription_ctx
-                .has_subscriptions(self.global_object)
+                .has_subscriptions(&self.global_object)
                 .unwrap_or(false)
         );
         self.ref_();
@@ -872,7 +868,7 @@ impl JSValkeyClient {
         // This is the last subscription, restore original flags
         if !self
             ._subscription_ctx
-            .has_subscriptions(self.global_object)
+            .has_subscriptions(&self.global_object)
             .unwrap_or(false)
         {
             self.client.flags.enable_offline_queue =
@@ -1255,7 +1251,7 @@ impl JSValkeyClient {
 
         if let Some(this_value) = self.this_value.try_get() {
             let hello_value: JSValue = 'js_hello: {
-                match protocol_jsc::resp_value_to_js(value, global_object) {
+                match protocol_jsc::resp_value_to_js(value, &global_object) {
                     Ok(v) => break 'js_hello v,
                     Err(err) => {
                         // TODO: how should we handle this? old code ignore the exception instead
@@ -1265,7 +1261,7 @@ impl JSValkeyClient {
                     }
                 }
             };
-            Js::hello_set_cached(this_value, global_object, hello_value);
+            Js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
             if let Some(on_connect) = Js::onconnect_get_cached(this_value) {
                 let js_value = this_value;
@@ -1274,15 +1270,15 @@ impl JSValkeyClient {
             }
 
             if let Some(promise) = Js::connection_promise_get_cached(this_value) {
-                Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
+                Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
                 // SAFETY: cached slot held a valid JSPromise; downcast is checked.
                 let js_promise = unsafe { &mut *promise.as_promise().unwrap() };
                 if self.client.flags.connection_promise_returns_client {
                     debug!("Resolving connection promise with client instance");
-                    js_promise.resolve(global_object, this_value)?;
+                    js_promise.resolve(&global_object, this_value)?;
                 } else {
                     debug!("Resolving connection promise with HELLO response");
-                    js_promise.resolve(global_object, hello_value)?;
+                    js_promise.resolve(&global_object, hello_value)?;
                 }
                 self.client.flags.connection_promise_returns_client = false;
             }
@@ -1342,11 +1338,11 @@ impl JSValkeyClient {
         }
 
         // Extract channel and message
-        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], global_object) else {
+        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], &global_object) else {
             debug!("Failed to convert channel to JS");
             return;
         };
-        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], global_object) else {
+        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], &global_object) else {
             debug!("Failed to convert message to JS");
             return;
         };
@@ -1354,7 +1350,7 @@ impl JSValkeyClient {
         // Invoke callbacks for this channel with message and channel as arguments
         if self
             ._subscription_ctx
-            .invoke_callbacks(global_object, channel_value, &[message_value, channel_value])
+            .invoke_callbacks(&global_object, channel_value, &[message_value, channel_value])
             .is_err()
         {
             return;
@@ -1397,7 +1393,7 @@ impl JSValkeyClient {
 
         // Create an error value
         let error_value = protocol_jsc::valkey_error_to_js(
-            global_object,
+            &global_object,
             b"Connection closed",
             protocol::RedisError::ConnectionClosed,
         );
@@ -1409,16 +1405,16 @@ impl JSValkeyClient {
 
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
-                Js::connection_promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
+                Js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
                 // SAFETY: cached slot held a valid JSPromise.
                 unsafe { &mut *promise.as_promise().unwrap() }
-                    .reject(global_object, Ok(error_value))?;
+                    .reject(&global_object, Ok(error_value))?;
             }
         }
 
         // Call onClose callback if it exists
         if let Some(on_close) = Js::onclose_get_cached(this_jsvalue) {
-            if let Err(e) = on_close.call(global_object, this_jsvalue, &[error_value]) {
+            if let Err(e) = on_close.call(&global_object, this_jsvalue, &[error_value]) {
                 global_object.report_active_exception_as_unhandled(e);
             }
         }
@@ -1448,7 +1444,7 @@ impl JSValkeyClient {
             // SAFETY: VM-owned; non-null on the JS thread.
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
-            if let Err(e) = on_close.call(global_object, this_value, &[value]) {
+            if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
                 global_object.report_active_exception_as_unhandled(e);
             }
         }
@@ -1726,7 +1722,7 @@ impl JSValkeyClient {
         let subs_deletable: bool = self.client.flags.finalized
             || !self
                 ._subscription_ctx
-                .has_subscriptions(self.global_object)
+                .has_subscriptions(&self.global_object)
                 .unwrap_or(false);
 
         let has_activity =
@@ -1761,14 +1757,14 @@ impl JSValkeyClient {
                 // It is 100% safe to drop the strong reference there and let
                 // the object be GC'd, but we're not doing that now.
                 debug!("upgrading this_value since we are connected/connecting");
-                self.this_value.upgrade(self.global_object);
+                self.this_value.upgrade(&self.global_object);
             }
             valkey::Status::Disconnected => {
                 // If we're disconnected, we need to check if we have any pending activity.
                 if has_activity {
                     debug!("upgrading this_value since there is pending activity");
                     // If we have pending activity, we need to keep the object alive.
-                    self.this_value.upgrade(self.global_object);
+                    self.this_value.upgrade(&self.global_object);
                 } else {
                     debug!("downgrading this_value since there is no pending activity");
                     // If we don't have any pending activity, we can drop the strong reference.
@@ -1925,7 +1921,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         ssl_error: &uws::us_bun_verify_error_t,
     ) -> JsTerminatedResult<()> {
         let ssl_js_value =
-            match crate::socket::uws_jsc::verify_error_to_js(ssl_error, this.global_object) {
+            match crate::socket::uws_jsc::verify_error_to_js(ssl_error, &this.global_object) {
                 Ok(v) => v,
                 Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1957,7 +1953,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.flags.is_manually_closed = true;
         let this_ptr = this as *mut JSValkeyClient;
         let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client.close() });
-        narrow_terminated(this.client.fail_with_js_value(this.global_object, err_value))
+        narrow_terminated(this.client.fail_with_js_value(&this.global_object, err_value))
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`

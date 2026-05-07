@@ -4,7 +4,7 @@ use core::ptr;
 use core::ptr::NonNull;
 
 use bun_core::Output;
-use bun_jsc::{self as jsc, JSGlobalObject, SysErrorJsc};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, SysErrorJsc};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
@@ -41,7 +41,7 @@ pub struct WindowsNamedPipeContext {
 
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     vm: &'static VirtualMachine,
-    global_this: &'static JSGlobalObject,
+    global_this: GlobalRef,
     task: AnyTask,
     task_event: EventState,
     is_open: bool,
@@ -194,12 +194,12 @@ impl WindowsNamedPipeContext {
         if self.is_open {
             match self.socket {
                 SocketType::Tls(tls) => {
-                    let js_err = err.to_js(self.global_this);
+                    let js_err = err.to_js(&self.global_this);
                     // SAFETY: see `on_open`.
                     unsafe { (*tls).handle_error(js_err) };
                 }
                 SocketType::Tcp(tcp) => {
-                    let js_err = err.to_js(self.global_this);
+                    let js_err = err.to_js(&self.global_this);
                     // SAFETY: see `on_open`.
                     unsafe { (*tcp).handle_error(js_err) };
                 }
@@ -284,10 +284,7 @@ impl WindowsNamedPipeContext {
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
-        // SAFETY: JSC_BORROW — the global object / VM are process-global singletons
-        // that outlive every `WindowsNamedPipeContext`; extend the borrow to `'static`
-        // so they can be stored in the heap-allocated struct.
-        let global_this: &'static JSGlobalObject = unsafe { &*(global_this as *const JSGlobalObject) };
+        let global_this = GlobalRef::from(global_this);
         let vm: &'static VirtualMachine = global_this.bun_vm();
         // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
@@ -477,5 +474,5 @@ impl Drop for WindowsNamedPipeContext {
 //   source:     src/runtime/socket/WindowsNamedPipeContext.zig (307 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      intrusive refcount w/ deferred-task self-destroy + raw ctx ptr through uws callbacks; create() uses MaybeUninit+ptr::write for self-referential init; TLSSocket/TCPSocket Arc semantics need verification vs IntrusiveArc; &'static JSGlobalObject/VirtualMachine fields are JSC_BORROW
+//   notes:      intrusive refcount w/ deferred-task self-destroy + raw ctx ptr through uws callbacks; create() uses MaybeUninit+ptr::write for self-referential init; TLSSocket/TCPSocket Arc semantics need verification vs IntrusiveArc; GlobalRef/VirtualMachine fields are JSC_BORROW
 // ──────────────────────────────────────────────────────────────────────────

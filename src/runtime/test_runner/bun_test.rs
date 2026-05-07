@@ -6,7 +6,7 @@ use std::rc::{Rc, Weak};
 use crate::allocators::allocation_scope::AllocationScope;
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use super::jest::{Jest, TestRunner, FileId, FileColumns as _};
@@ -889,13 +889,9 @@ impl BunTest {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        // SAFETY: `RunTestsTask` stores `&'static JSGlobalObject` (Zig stored a
-        // raw `*JSGlobalObject`). The per-thread global outlives every queued
-        // task; erase the anonymous lifetime via raw-ptr round-trip.
-        let global_static: &'static JSGlobalObject = unsafe { &*(global_this as *const JSGlobalObject) };
         let done_callback_test = Box::into_raw(Box::new(RunTestsTask {
             weak: weak.clone(),
-            global_this: global_static,
+            global_this: GlobalRef::from(global_this),
             phase,
         }));
         // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
@@ -1481,7 +1477,7 @@ impl RefData {
 
 pub struct RunTestsTask {
     pub weak: BunTestPtrWeak,
-    pub global_this: &'static JSGlobalObject,
+    pub global_this: GlobalRef,
     // TODO(port): lifetime — JSGlobalObject borrow stored across task tick
     pub phase: RefDataValue,
 }
@@ -1494,12 +1490,12 @@ impl RunTestsTask {
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
-        if let Err(e) = BunTest::run(strong.clone(), this.global_this) {
+        if let Err(e) = BunTest::run(strong.clone(), &this.global_this) {
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();
             bt.on_uncaught_exception(
-                this.global_this,
+                &this.global_this,
                 Some(this.global_this.take_exception(e)),
                 false,
                 this.phase.clone(),

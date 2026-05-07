@@ -11,7 +11,7 @@ use bun_http::{AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTP
 use bun_http::Method;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_str::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
@@ -63,7 +63,7 @@ pub struct FetchTasklet {
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
     pub javascript_vm: &'static VirtualMachine,
-    pub global_this: &'static JSGlobalObject, // TODO(port): JSC_BORROW lifetime; using 'static to match javascript_vm
+    pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
     // PORT NOTE: ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
     // starts at 2) and shared with the HTTP thread via raw ptr; was `Option<Arc<_>>` in
@@ -76,7 +76,7 @@ pub struct FetchTasklet {
     /// buffer used to stream response to JS
     pub scheduled_response_buffer: MutableString,
     /// response weak ref we need this to track the response JS lifetime
-    pub response: jsc::Weak<'static, FetchTasklet>,
+    pub response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
     // PORT NOTE: Response is intrusively refcounted; raw ptr matches Zig `?*Response`.
     pub native_response: Option<*mut Response>,
@@ -394,11 +394,11 @@ impl FetchTasklet {
         let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
             return;
         };
-        if let Some(stream) = stream_ref.get(self.global_this) {
+        if let Some(stream) = stream_ref.get(&self.global_this) {
             if let Some(signal) = self.signal {
                 // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
                 if unsafe { (*signal).aborted() } {
-                    stream.abort(self.global_this);
+                    stream.abort(&self.global_this);
                     return;
                 }
             }
@@ -406,7 +406,7 @@ impl FetchTasklet {
             let global_this = self.global_this;
             self.ref_(); // lets only unref when sink is done
             // +1 because the task refs the sink
-            let sink = ResumableSink::init_exact_refs(global_this, stream, self as *mut _, 2);
+            let sink = ResumableSink::init_exact_refs(&global_this, stream, self as *mut _, 2);
             self.sink = Some(sink);
         }
     }
@@ -438,9 +438,9 @@ impl FetchTasklet {
             let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
-            if let Some(readable) = self.readable_stream_ref.get(global_this) {
+            if let Some(readable) = self.readable_stream_ref.get(&global_this) {
                 if let readable_stream::Source::Bytes(bytes) = readable.ptr {
-                    js_err = err.to_js(global_this);
+                    js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
                     // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                     unsafe { (*bytes).on_data(StreamResult::Err(StreamError::JSValue(js_err)))? };
@@ -448,7 +448,7 @@ impl FetchTasklet {
             }
             if let Some(sink) = self.sink {
                 if js_err.is_empty() {
-                    js_err = err.to_js(global_this);
+                    js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
                 }
                 // SAFETY: sink alive while self.sink is Some
@@ -463,13 +463,13 @@ impl FetchTasklet {
                 let body = unsafe { (*response).get_body_value() };
                 // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                 // now; narrow back to the real `JsTerminated` here (Zig: `try body.toErrorInstance`).
-                body.to_error_instance(err, global_this)
+                body.to_error_instance(err, &global_this)
                     .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
             }
             return Ok(());
         }
 
-        if let Some(readable) = self.readable_stream_ref.get(global_this) {
+        if let Some(readable) = self.readable_stream_ref.get(&global_this) {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
@@ -505,7 +505,7 @@ impl FetchTasklet {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(global_this) {
+            if let Some(readable) = response.get_body_readable_stream(&global_this) {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived CurrentResponse BodyReadableStream");
                 if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                     // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
@@ -520,7 +520,7 @@ impl FetchTasklet {
                         }))?;
                     } else {
                         readable.value.ensure_still_alive();
-                        response.detach_readable_stream(global_this);
+                        response.detach_readable_stream(&global_this);
                         // SAFETY: see above.
                         bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
                             Vec::<u8>::from_borrowed_slice_dangerous(chunk)
@@ -572,7 +572,7 @@ impl FetchTasklet {
                     // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, self.global_this, headers)
+                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
                         .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }
@@ -682,10 +682,10 @@ impl FetchTasklet {
                 let mut result = self.on_reject();
 
                 promise_value.ensure_still_alive();
-                let r = promise.reject_with_async_stack(global_this, result.to_js(global_this));
+                let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
                 result.reset();
 
-                tracker.did_dispatch(global_this);
+                tracker.did_dispatch(&global_this);
                 self.promise = jsc::JSPromiseStrong::empty();
                 cleanup(self);
                 return r;
@@ -705,21 +705,21 @@ impl FetchTasklet {
         }
 
         let tracker = self.tracker;
-        tracker.will_dispatch(global_this);
+        tracker.will_dispatch(&global_this);
         // defer block:
         let dispatch_cleanup = |this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
-            tracker.did_dispatch(global_this);
+            tracker.did_dispatch(&global_this);
             this.promise = jsc::JSPromiseStrong::empty();
         };
 
         let success = self.result.is_success();
         let result = if success {
-            StrongOptional::create(self.on_resolve(), global_this)
+            StrongOptional::create(self.on_resolve(), &global_this)
         } else {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
-            let err_js = value.to_js(global_this);
+            let err_js = value.to_js(&global_this);
             if let Some(sink) = self.sink {
                 // SAFETY: sink alive while self.sink is Some
                 unsafe { (*sink).cancel(err_js) };
@@ -738,7 +738,7 @@ impl FetchTasklet {
         struct Holder {
             held: StrongOptional,
             promise: jsc::JSPromiseStrong,
-            global_object: &'static JSGlobalObject,
+            global_object: GlobalRef,
             task: AnyTask,
         }
 
@@ -750,7 +750,7 @@ impl FetchTasklet {
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
                 res.ensure_still_alive();
-                let r = prom.resolve(self_.global_object, res);
+                let r = prom.resolve(&self_.global_object, res);
                 self_.held.deinit();
                 self_.promise = jsc::JSPromiseStrong::empty();
                 drop(self_);
@@ -764,7 +764,7 @@ impl FetchTasklet {
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
                 res.ensure_still_alive();
-                let r = prom.reject_with_async_stack(self_.global_object, res);
+                let r = prom.reject_with_async_stack(&self_.global_object, res);
                 self_.held.deinit();
                 self_.promise = jsc::JSPromiseStrong::empty();
                 drop(self_);
@@ -824,7 +824,7 @@ impl FetchTasklet {
                     let global_object = self.global_this;
                     let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
                     // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
-                    let js_cert = match X509::to_js(unsafe { &mut *x509 }, global_object) {
+                    let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             match e {
@@ -837,9 +837,9 @@ impl FetchTasklet {
                             let check_result = global_object.try_take_exception().unwrap();
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
-                            self.abort_reason.set(global_object, check_result);
+                            self.abort_reason.set(&global_object, check_result);
                             self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(self.global_this);
+                            self.tracker.did_cancel(&self.global_this);
                             // we need to abort the request
                             if let Some(http_) = self.http.as_mut() {
                                 http::http_thread().schedule_shutdown(http_);
@@ -849,7 +849,7 @@ impl FetchTasklet {
                         }
                     };
                     let hostname = OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
-                    let js_hostname: JSValue = match hostname.to_js(global_object) {
+                    let js_hostname: JSValue = match hostname.to_js(&global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             match e {
@@ -861,9 +861,9 @@ impl FetchTasklet {
                             }
                             let hostname_err_result = global_object.try_take_exception().unwrap();
                             self.is_waiting_abort = self.result.has_more;
-                            self.abort_reason.set(global_object, hostname_err_result);
+                            self.abort_reason.set(&global_object, hostname_err_result);
                             self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(self.global_this);
+                            self.tracker.did_cancel(&self.global_this);
                             if let Some(http_) = self.http.as_mut() {
                                 http::http_thread().schedule_shutdown(http_);
                             }
@@ -874,7 +874,7 @@ impl FetchTasklet {
                     js_hostname.ensure_still_alive();
                     js_cert.ensure_still_alive();
                     let check_result = match check_server_identity.call(
-                        global_object,
+                        &global_object,
                         JSValue::UNDEFINED,
                         &[js_hostname, js_cert],
                     ) {
@@ -886,9 +886,9 @@ impl FetchTasklet {
                     if check_result.is_any_error() {
                         // mark to wait until deinit
                         self.is_waiting_abort = self.result.has_more;
-                        self.abort_reason.set(global_object, check_result);
+                        self.abort_reason.set(&global_object, check_result);
                         self.signal_store.aborted.store(true, Ordering::Relaxed);
-                        self.tracker.did_cancel(self.global_this);
+                        self.tracker.did_cancel(&self.global_this);
 
                         // we need to abort the request
                         if let Some(http_) = self.http.as_mut() {
@@ -917,14 +917,14 @@ impl FetchTasklet {
 
         if let Some(signal) = self.signal {
             // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
-            if let Some(reason) = unsafe { (*signal).reason_if_aborted(self.global_this) } {
+            if let Some(reason) = unsafe { (*signal).reason_if_aborted(&self.global_this) } {
                 // PORT NOTE: `AbortReason::to_body_value_error` lives in bun_jsc but
                 // would forward-depend on bun_runtime; reconstruct the trivial
                 // mapping at the call site (per AbortSignal.rs note).
                 let out = match reason {
                     jsc::abort_signal::AbortReason::Common(r) => BodyValueError::AbortReason(r),
                     jsc::abort_signal::AbortReason::Js(v) => {
-                        BodyValueError::JSValue(StrongOptional::create(v, self.global_this))
+                        BodyValueError::JSValue(StrongOptional::create(v, &self.global_this))
                     }
                 };
                 self.clear_abort_signal();
@@ -1148,7 +1148,7 @@ impl FetchTasklet {
     /// Must be called before releasing readable_stream_ref, while the Strong ref
     /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
     fn clear_stream_cancel_handler(&mut self) {
-        if let Some(readable) = self.readable_stream_ref.get(self.global_this) {
+        if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let source = unsafe { (*bytes).parent() };
@@ -1172,7 +1172,7 @@ impl FetchTasklet {
             return BodyValue::Error(err);
         }
         if self.is_waiting_body {
-            let mut pending = body::PendingValue::new(self.global_this);
+            let mut pending = body::PendingValue::new(&self.global_this);
             pending.size_hint = self.get_size_hint();
             pending.task = Some(self as *mut _ as *mut c_void);
             pending.on_start_streaming = Some(FetchTasklet::on_start_streaming_http_response_body_callback);
@@ -1247,11 +1247,12 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = Box::into_raw(Box::new(self.to_response()));
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
-        let response_js = Response::make_maybe_pooled(self.global_this, response);
+        let global_this = self.global_this;
+        let response_js = Response::make_maybe_pooled(&global_this, response);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,
-            self.global_this,
+            &global_this,
             jsc::WeakRefType::FetchResponse,
             self,
         );
@@ -1261,7 +1262,7 @@ impl FetchTasklet {
     }
 
     pub fn get(
-        global_this: &'static JSGlobalObject,
+        global_this: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
@@ -1278,7 +1279,7 @@ impl FetchTasklet {
             result: HTTPClientResult::default(),
             metadata: None,
             javascript_vm: jsc_vm,
-            global_this,
+            global_this: GlobalRef::from(global_this),
             request_body: fetch_options.body, // TODO(port): move semantics; FetchOptions consumed
             request_body_streaming_buffer: None,
             response_buffer: MutableString::default(),
@@ -1498,7 +1499,7 @@ impl FetchTasklet {
         // SAFETY: callback context; this is alive while signal listener is registered
         let this = unsafe { &mut *this };
         reason.ensure_still_alive();
-        this.abort_reason.set(this.global_this, reason);
+        this.abort_reason.set(&this.global_this, reason);
         this.abort_task();
         if let Some(sink) = this.sink {
             // SAFETY: sink alive while this.sink is Some
@@ -1512,8 +1513,8 @@ impl FetchTasklet {
         if this.is_waiting_request_stream_start {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
                 this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get(this.global_this) {
-                    stream.cancel_with_reason(this.global_this, reason);
+                if let Some(stream) = stream_ref.get(&this.global_this) {
+                    stream.cancel_with_reason(&this.global_this, reason);
                 }
             }
         }
@@ -1642,7 +1643,7 @@ impl FetchTasklet {
                 return;
             }
             if !js_error.is_undefined_or_null() {
-                self.abort_reason.set(self.global_this, js_error);
+                self.abort_reason.set(&self.global_this, js_error);
             }
             self.abort_task();
         } else {
@@ -1669,7 +1670,7 @@ impl FetchTasklet {
 
     pub fn abort_task(&mut self) {
         self.signal_store.aborted.store(true, Ordering::Relaxed);
-        self.tracker.did_cancel(self.global_this);
+        self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {
             http::http_thread().schedule_shutdown(http_);
@@ -1677,7 +1678,7 @@ impl FetchTasklet {
     }
 
     pub fn queue(
-        global: &'static JSGlobalObject,
+        global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
@@ -1896,7 +1897,7 @@ pub struct FetchOptions {
     pub proxy_headers: Option<Headers>,
     pub url_proxy_buffer: Box<[u8]>,
     pub signal: Option<*mut AbortSignal>,
-    pub global_this: Option<&'static JSGlobalObject>,
+    pub global_this: Option<GlobalRef>,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
     pub check_server_identity: StrongOptional,

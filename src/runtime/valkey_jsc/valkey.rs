@@ -6,7 +6,7 @@ use bun_collections::{VecExt, ByteVecExt};
 use core::mem::offset_of;
 
 use bun_collections::OffsetByteList;
-use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -332,7 +332,7 @@ enum SubscribeHandled {
 pub struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
-    global_this: &'static JSGlobalObject,
+    global_this: GlobalRef,
     in_flight: command::promise_pair::Queue,
     queue: command::entry::Queue,
 }
@@ -342,11 +342,11 @@ impl DeferredFailure {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = *self;
-        let err = valkey_error_to_js(this.global_this, &*this.message, this.err);
+        let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
             &mut this.queue,
-            this.global_this,
+            &this.global_this,
             err,
         )
     }
@@ -620,9 +620,7 @@ impl ValkeyClient {
                     message: Box::<[u8]>::from(message),
 
                     err,
-                    // SAFETY: `vm.global` is set at VM init and remains valid for the
-                    // VM's lifetime; we only need a `&'static` view.
-                    global_this: vm.global(),
+                    global_this: GlobalRef::from(vm.global()),
                     in_flight: core::mem::replace(
                         &mut self.in_flight,
                         command::promise_pair::Queue::init(),
@@ -641,8 +639,8 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         self.fail_with_js_value(
-            global_this,
-            valkey_error_to_js(global_this, message, err),
+            &global_this,
+            valkey_error_to_js(&global_this, message, err),
         )
     }
 
@@ -906,13 +904,13 @@ impl ValkeyClient {
         match value {
             RESPValue::Error(_) => {
                 if let Some(p) = pair {
-                    p.promise.reject(global_this, resp_value_to_js(value, global_this))?;
+                    p.promise.reject(&global_this, resp_value_to_js(value, &global_this))?;
                 }
                 Ok(SubscribeHandled::Handled)
             }
             RESPValue::Push(push) => {
                 let p = self.parent();
-                let sub_count = p._subscription_ctx.channels_subscribed_to_count(global_this)?;
+                let sub_count = p._subscription_ctx.channels_subscribed_to_count(&global_this)?;
 
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::MAP.get(&push.kind) {
                     match msg_type {
@@ -930,7 +928,7 @@ impl ValkeyClient {
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(global_this, JSValue::js_number(f64::from(sub_count)))?;
+                                    .resolve(&global_this, JSValue::js_number(f64::from(sub_count)))?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -944,7 +942,7 @@ impl ValkeyClient {
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(global_this, JSValue::UNDEFINED)?;
+                                    .resolve(&global_this, JSValue::UNDEFINED)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1184,13 +1182,13 @@ impl ValkeyClient {
         let _exit = self.vm.enter_event_loop_scope();
 
         if matches!(value, RESPValue::Error(_)) {
-            let js_err = match resp_value_to_js(value, global_this) {
+            let js_err = match resp_value_to_js(value, &global_this) {
                 Ok(v) => v,
                 Err(err) => global_this.take_error(err),
             };
-            promise_ptr.reject(global_this, Ok(js_err))?;
+            promise_ptr.reject(&global_this, Ok(js_err))?;
         } else {
-            promise_ptr.resolve(global_this, value)?;
+            promise_ptr.resolve(&global_this, value)?;
         }
         Ok(())
     }
@@ -1398,7 +1396,7 @@ impl ValkeyClient {
             Status::Connecting | Status::Connected => {
                 if command.write(self.writer()).is_err() {
                     let global = self.global_object();
-                    let _ = promise.reject(global, Ok(global.create_out_of_memory_error()));
+                    let _ = promise.reject(&global, Ok(global.create_out_of_memory_error()));
                     return Ok(());
                 }
             }
@@ -1528,7 +1526,7 @@ impl ValkeyClient {
     }
 
     #[inline]
-    fn global_object(&mut self) -> &'static JSGlobalObject {
+    fn global_object(&mut self) -> GlobalRef {
         self.parent().global_object
     }
 

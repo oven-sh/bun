@@ -28,7 +28,7 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    JSValue, JSGlobalObject, CallFrame, JSObject, JSCell, JsError, JsResult, JSType,
+    JSValue, JSGlobalObject, GlobalRef, CallFrame, JSObject, JSCell, JsError, JsResult, JSType,
     MarkedArgumentBuffer, JSArrayIterator, ErrorCode, ErrorBuilder,
     ExternColumnIdentifier, ExternColumnIdentifierValue,
     StrongOptional, JsRef, CoerceTo, ThrowFmtArgs,

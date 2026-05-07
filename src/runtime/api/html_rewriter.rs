@@ -11,7 +11,7 @@ use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_string::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
     StringJsc as _, bun_string_jsc,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
@@ -649,7 +649,7 @@ pub struct BufferOutputSink {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self crosses FFI as lol-html userdata).
     ref_count: Cell<u32>,
-    pub global: &'static JSGlobalObject, // JSC_BORROW
+    pub global: GlobalRef, // JSC_BORROW
     pub bytes: MutableString,
     pub rewriter: *mut lolhtml_sys::HTMLRewriter, // null when unset
     pub context: Rc<RefCell<LOLHTMLContext>>,
@@ -681,15 +681,9 @@ impl BufferOutputSink {
         original: *mut Response,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
     ) -> JsResult<JSValue> {
-        // TODO(port): JSC_BORROW lifetime — Zig stores *JSGlobalObject by raw
-        // pointer; storing &'static here is a Phase-A approximation.
-        // SAFETY: JSGlobalObject outlives the sink (VM-lifetime; sink is freed
-        // before VM teardown).
-        let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
-
         let sink = Box::into_raw(Box::new(BufferOutputSink {
             ref_count: Cell::new(1),
-            global: global_static,
+            global: GlobalRef::from(global),
             bytes: MutableString::init_empty(),
             rewriter: core::ptr::null_mut(),
             context,
@@ -709,7 +703,7 @@ impl BufferOutputSink {
             webcore::response::Init { status_code: 200, ..Default::default() },
             webcore::Body {
                 value: {
-                    let mut pv = webcore::body::PendingValue::new(global_static);
+                    let mut pv = webcore::body::PendingValue::new(global);
                     pv.task = Some(sink as *mut core::ffi::c_void);
                     webcore::body::Value::Locked(pv)
                 },
@@ -753,7 +747,7 @@ impl BufferOutputSink {
             // the local is dropped).
             unsafe { (*sink_error_ptr).ensure_still_alive() };
             // SAFETY: VM outlives this guard (sync stack frame).
-            let vm = global_static.bun_vm().as_mut();
+            let vm = VirtualMachine::get().as_mut();
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
             scope.apply(vm);
         }
@@ -812,7 +806,7 @@ impl BufferOutputSink {
 
         // Hold off on cloning until we're actually done.
         // SAFETY: (*sink).response == result (set above), live heap allocation.
-        let response_js_value = unsafe { (*(*sink).response).to_js((*sink).global) };
+        let response_js_value = unsafe { (*(*sink).response).to_js(&(*sink).global) };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe { (*sink).response_value.set(global, response_js_value) };
 
@@ -824,7 +818,7 @@ impl BufferOutputSink {
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };
         // SAFETY: original is a live *Response kept alive by caller; sink live.
-        let owned_readable_stream = unsafe { (*original).get_body_readable_stream((*sink).global) };
+        let owned_readable_stream = unsafe { (*original).get_body_readable_stream(&(*sink).global) };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe {
             (*sink).ref_();
@@ -834,7 +828,7 @@ impl BufferOutputSink {
                 // `on_finished_buffering` takes `*mut BufferOutputSink`. The
                 // wrapper trampoline restores the concrete type.
                 Self::on_finished_buffering_trampoline,
-                (*sink).global,
+                &(*sink).global,
             ));
         }
         response_js_value.ensure_still_alive();
@@ -858,11 +852,11 @@ impl BufferOutputSink {
                         "ERR_STREAM_ALREADY_FINISHED",
                         "Stream already used, please create a new one",
                     );
-                    err.to_error_instance(global_static)
+                    err.to_error_instance(global)
                 }
                 _ => {
                     let err = system_error("ERR_STREAM_CANNOT_PIPE", "Failed to pipe stream");
-                    err.to_error_instance(global_static)
+                    err.to_error_instance(global)
                 }
             });
         }
@@ -931,10 +925,10 @@ impl BufferOutputSink {
                 }
             }
             if is_async {
-                let _ = sink_body_value.to_error_instance(err.dupe(global), global);
+                let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
                 // TODO: properly propagate exception upwards
             } else {
-                let ret_err = create_lolhtml_error(global);
+                let ret_err = create_lolhtml_error(&global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
                 // SAFETY: tmp_sync_error points at sink_error stack local in
@@ -975,11 +969,11 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), &global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
-                return Some(create_lolhtml_error(global));
+                return Some(create_lolhtml_error(&global));
             }
         }
 
@@ -988,11 +982,11 @@ impl BufferOutputSink {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
-                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
+                    .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), &global);
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
-                return Some(create_lolhtml_error(global));
+                return Some(create_lolhtml_error(&global));
             }
         }
 
@@ -1011,7 +1005,7 @@ impl BufferOutputSink {
             }),
         );
 
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, self.global, None);
+        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
         // TODO: properly propagate exception upwards
     }
 
@@ -1058,7 +1052,7 @@ pub struct DocumentHandler {
     pub on_text_callback: Option<JSValue>,
     pub on_end_callback: Option<JSValue>,
     pub this_object: JSValue,
-    pub global: &'static JSGlobalObject, // JSC_BORROW
+    pub global: GlobalRef, // JSC_BORROW
 }
 
 impl DocumentHandler {
@@ -1100,15 +1094,13 @@ impl DocumentHandler {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
-        let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
         let handler = DocumentHandler {
             on_doc_type_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
             on_end_callback: None,
             this_object,
-            global: global_static,
+            global: GlobalRef::from(global),
         };
 
         // errdefer: unprotect any callbacks we've protected so far on failure.
@@ -1205,15 +1197,15 @@ pub trait HandlerLike {
 }
 
 impl HandlerLike for DocumentHandler {
-    fn global(&self) -> &JSGlobalObject { self.global }
+    fn global(&self) -> &JSGlobalObject { &self.global }
     fn this_object(&self) -> JSValue { self.this_object }
 }
 impl HandlerLike for ElementHandler {
-    fn global(&self) -> &JSGlobalObject { self.global }
+    fn global(&self) -> &JSGlobalObject { &self.global }
     fn this_object(&self) -> JSValue { self.this_object }
 }
 impl HandlerLike for EndTagHandler {
-    fn global(&self) -> &JSGlobalObject { self.global }
+    fn global(&self) -> &JSGlobalObject { &self.global }
 }
 
 /// Trait abstracting the wrapper-type bits `HandlerCallback` needs.
@@ -1360,19 +1352,17 @@ pub struct ElementHandler {
     pub on_comment_callback: Option<JSValue>,
     pub on_text_callback: Option<JSValue>,
     pub this_object: JSValue,
-    pub global: &'static JSGlobalObject, // JSC_BORROW
+    pub global: GlobalRef, // JSC_BORROW
 }
 
 impl ElementHandler {
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<ElementHandler> {
-        // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
-        let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
         let handler = ElementHandler {
             on_element_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
             this_object,
-            global: global_static,
+            global: GlobalRef::from(global),
         };
 
         // errdefer: guard the OWNED value so success returns it via into_inner.
@@ -2067,7 +2057,7 @@ pub struct EndTagHandler {
     // TODO(port): bare JSValue heap field kept alive via JSC gcProtect —
     // evaluate bun_jsc::Strong in Phase B (see DocumentHandler note).
     pub callback: Option<JSValue>,
-    pub global: &'static JSGlobalObject, // JSC_BORROW
+    pub global: GlobalRef, // JSC_BORROW
 }
 
 impl EndTagHandler {
@@ -2417,11 +2407,8 @@ impl Element {
             return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
         }
 
-        // SAFETY: JSC_BORROW — JSGlobalObject outlives the EndTagHandler
-        // (VM-lifetime; handler freed before VM teardown).
-        let global_static: &'static JSGlobalObject = unsafe { &*(global_object as *const _) };
         let end_tag_handler = Box::into_raw(Box::new(EndTagHandler {
-            global: global_static,
+            global: GlobalRef::from(global_object),
             callback: Some(function),
         }));
 

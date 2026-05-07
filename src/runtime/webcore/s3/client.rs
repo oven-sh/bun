@@ -6,7 +6,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_http::HeadersExt as _;
 use bun_string::MutableString;
 #[allow(unused_imports)]
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_str as strings;
@@ -487,8 +487,7 @@ pub fn writable_stream(
     // SAFETY (JSC_BORROW): `global_this` outlives the task (it owns the VM/heap that owns the
     // JS objects which keep the task alive); transmute the borrow to `'static` for storage in
     // the heap-allocated MultiPartUpload, matching the Zig pointer field.
-    let global_static: &'static JSGlobalObject =
-        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+    let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
         queue: None,
@@ -563,7 +562,7 @@ pub struct S3UploadStreamWrapper {
     pub callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
     pub path: *const [u8],
-    pub global: &'static JSGlobalObject, // JSC_BORROW
+    pub global: GlobalRef, // JSC_BORROW
 }
 
 /// Intrusive ref-counted handle. `ref()`/`deref()` from the Zig `bun.ptr.RefCount` mixin
@@ -639,7 +638,7 @@ impl S3UploadStreamWrapper {
                 // if we have a explicit error, reject the promise
                 // if not when calling .fail will create a S3Error instance
                 // this match the previous behavior
-                let _ = self.end_promise.reject(self.global, Ok(js_err)); // TODO: properly propagate exception upwards
+                let _ = self.end_promise.reject(&self.global, Ok(js_err)); // TODO: properly propagate exception upwards
                 self.end_promise = bun_jsc::JSPromiseStrong::empty();
             }
             // SAFETY: `task` is live (intrusive-ref'd) for the lifetime of this wrapper.
@@ -667,7 +666,7 @@ impl S3UploadStreamWrapper {
         match &result {
             S3UploadResult::Success => {
                 if self_.end_promise.has_value() {
-                    self_.end_promise.resolve(self_.global, JSValue::js_number(0.0))?;
+                    self_.end_promise.resolve(&self_.global, JSValue::js_number(0.0))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -675,7 +674,7 @@ impl S3UploadStreamWrapper {
                 if let Some(sink) = self_.sink.take() {
                     // sink in progress, cancel it (will call writeEndRequest for cleanup and will reject the endPromise)
                     // SAFETY: path borrowed from task which outlives self
-                    let js_err = s3_error_to_js(err, self_.global, Some(unsafe { &*self_.path }));
+                    let js_err = s3_error_to_js(err, &self_.global, Some(unsafe { &*self_.path }));
                     // SAFETY: sink is a live Box-allocated ResumableSink.
                     unsafe { (*sink).cancel(js_err) };
                     // SAFETY: deref_ releases our ref (associated fn — raw-ptr receiver).
@@ -683,8 +682,8 @@ impl S3UploadStreamWrapper {
                 } else if self_.end_promise.has_value() {
                     // SAFETY: path borrowed from task which outlives self
                     let path = unsafe { &*self_.path };
-                    let js_err = s3_error_to_js(err, self_.global, Some(path));
-                    self_.end_promise.reject(self_.global, Ok(js_err))?;
+                    let js_err = s3_error_to_js(err, &self_.global, Some(path));
+                    self_.end_promise.reject(&self_.global, Ok(js_err))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -839,8 +838,7 @@ pub fn upload_stream(
     //
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
-    let global_static: &'static JSGlobalObject =
-        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+    let global_static = GlobalRef::from(global_this);
     let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
@@ -892,7 +890,7 @@ pub fn upload_stream(
     let ctx = unsafe { &mut *ctx_ptr };
     // +1 because the ctx refs the sink
     ctx.sink = Some(ResumableSink::init_exact_refs(
-        global_static,
+        &global_static,
         readable_stream,
         ctx_ptr,
         2,
@@ -1086,7 +1084,7 @@ pub fn readable_stream(
     pub struct S3DownloadStreamWrapper {
         pub readable_stream_ref: ReadableStreamStrong,
         pub path: Box<[u8]>,
-        pub global: &'static JSGlobalObject, // JSC_BORROW
+        pub global: GlobalRef, // JSC_BORROW
     }
 
     impl S3DownloadStreamWrapper {
@@ -1109,14 +1107,14 @@ pub fn readable_stream(
                 }
             });
 
-            if let Some(readable) = self_.readable_stream_ref.get(self_.global) {
+            if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
                 if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
                     // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
                     let bytes = unsafe { &mut *bytes };
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
                             crate::webcore::streams::StreamError::JSValue(
-                                s3_error_to_js(&err, self_.global, Some(&self_.path)),
+                                s3_error_to_js(&err, &self_.global, Some(&self_.path)),
                             ),
                         ))?;
                         return Ok(());
@@ -1142,7 +1140,7 @@ pub fn readable_stream(
         /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
         /// Must be called before releasing readable_stream_ref.
         fn clear_stream_cancel_handler(&mut self) {
-            if let Some(readable) = self.readable_stream_ref.get(self.global) {
+            if let Some(readable) = self.readable_stream_ref.get(&self.global) {
                 if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
                     // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
                     let source = unsafe { (*bytes).parent() };
@@ -1185,8 +1183,7 @@ pub fn readable_stream(
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
     // owns the readable stream which keeps the wrapper reachable via cancel_ctx); store as
     // `'static` for the heap-allocated wrapper, matching the Zig pointer field.
-    let global_static: &'static JSGlobalObject =
-        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+    let global_static = GlobalRef::from(global_this);
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.

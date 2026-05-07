@@ -18,7 +18,7 @@ use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Output;
 use bun_http::websocket::{Opcode, WebsocketHeader};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_jsc::event_loop::EventLoop;
 use bun_ptr::IntrusiveRc;
 use bun_string::{self as bstr_mod, strings, ZigString};
@@ -80,10 +80,7 @@ pub struct WebSocket<const SSL: bool> {
 
     pub send_buffer: LinearFifo<u8, DynamicBuffer<u8>>,
 
-    // TODO(port): LIFETIMES.tsv classifies as JSC_BORROW (&JSGlobalObject), but this
-    // struct is heap-allocated via bun.new and returned to C++ as *anyopaque, so a
-    // borrowed lifetime param is not expressible. Using &'static; revisit in Phase B.
-    pub global_this: &'static JSGlobalObject,
+    pub global_this: GlobalRef,
     pub poll_ref: KeepAlive,
 
     pub header_fragment: Option<u8>,
@@ -184,7 +181,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn clear_data(&mut self) {
         log!("clearData");
-        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
+        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.ping_received = false;
@@ -1176,7 +1173,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     Err(_) => return false,
                 };
                 Copy::copy_compressed(
-                    self.global_this,
+                    &self.global_this,
                     &mut writable[..frame_size],
                     &compressed,
                     opcode,
@@ -1212,7 +1209,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             .send_buffer
             .writable_with_size(write_len)
             .expect("unreachable");
-        bytes.copy(self.global_this, &mut writable[..write_len], content_byte_len, opcode);
+        bytes.copy(&self.global_this, &mut writable[..write_len], content_byte_len, opcode);
         self.send_buffer.update(write_len);
 
         if do_write {
@@ -1309,7 +1306,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
-            Mask::fill_in_place(self.global_this, mask_buf, to_mask);
+            Mask::fill_in_place(&self.global_this, mask_buf, to_mask);
             // PORT NOTE: copy the ≤(6+125)-byte frame to a stack array so the
             // slice does not alias `&mut self` across `enqueue_encoded_bytes`
             // (PORTING.md §Forbidden: aliased-&mut). `enqueue_encoded_bytes`
@@ -1380,7 +1377,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let (head, tail) = final_body_bytes.split_at_mut(6);
             let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
             let payload = &mut tail[..slice_len - 6];
-            Mask::fill_in_place(self.global_this, mask_buf, payload);
+            Mask::fill_in_place(&self.global_this, mask_buf, payload);
         }
         let slice = &final_body_bytes[..slice_len];
 
@@ -1460,7 +1457,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(len);
         if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-            bytes.copy(this.global_this, &mut inline_buf[..frame_size], slice.len(), opcode);
+            bytes.copy(&this.global_this, &mut inline_buf[..frame_size], slice.len(), opcode);
             let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
             return;
         }
@@ -1522,7 +1519,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let frame_size = WebsocketHeader::frame_size_including_mask(data.len());
             if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
                 let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-                bytes.copy(this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
+                bytes.copy(&this.global_this, &mut inline_buf[..frame_size], data.len(), opcode);
                 let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
@@ -1568,7 +1565,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
-                    bytes.copy(this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
+                    bytes.copy(&this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
                     let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                     return;
                 }
@@ -1578,7 +1575,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 debug_assert!(frame_size <= STACK_FRAME_SIZE);
-                bytes.copy(this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
+                bytes.copy(&this.global_this, &mut inline_buf[..frame_size], byte_len, opcode);
                 let _ = this.enqueue_encoded_bytes(&inline_buf[..frame_size]);
                 return;
             }
@@ -1599,7 +1596,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
+        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
         unsafe { (*out.as_ptr()).did_abrupt_close(code) };
@@ -1612,7 +1609,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
-        self.poll_ref.unref(Self::vm_loop_ctx(self.global_this));
+        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
         unsafe { (*out.as_ptr()).did_close(code, reason) };
@@ -1694,7 +1691,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub extern "C" fn init(
         outgoing: *mut CppWebSocket,
         input_socket: *mut c_void,
-        global_this: &'static JSGlobalObject,
+        global_this: &JSGlobalObject,
         buffered_data: *mut u8,
         buffered_data_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
@@ -1721,7 +1718,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_pending_chunk_len: 0,
             receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
             send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-            global_this,
+            global_this: GlobalRef::from(global_this),
             poll_ref: KeepAlive::init(),
             header_fragment: None,
             payload_length_frame_bytes: [0u8; 8],
@@ -1830,7 +1827,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub extern "C" fn init_with_tunnel(
         outgoing: *mut CppWebSocket,
         tunnel_ptr: *mut c_void,
-        global_this: &'static JSGlobalObject,
+        global_this: &JSGlobalObject,
         buffered_data: *mut u8,
         buffered_data_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
@@ -1873,7 +1870,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_pending_chunk_len: 0,
             receive_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
             send_buffer: LinearFifo::<u8, DynamicBuffer<u8>>::init(),
-            global_this,
+            global_this: GlobalRef::from(global_this),
             poll_ref: KeepAlive::init(),
             header_fragment: None,
             payload_length_frame_bytes: [0u8; 8],
@@ -2081,7 +2078,7 @@ macro_rules! export_websocket_client {
         pub extern "C" fn $init(
             outgoing: *mut CppWebSocket,
             input_socket: *mut c_void,
-            global_this: &'static JSGlobalObject,
+            global_this: &JSGlobalObject,
             buffered_data: *mut u8,
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,
@@ -2096,7 +2093,7 @@ macro_rules! export_websocket_client {
         pub extern "C" fn $init_with_tunnel(
             outgoing: *mut CppWebSocket,
             tunnel_ptr: *mut c_void,
-            global_this: &'static JSGlobalObject,
+            global_this: &JSGlobalObject,
             buffered_data: *mut u8,
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,

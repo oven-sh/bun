@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
@@ -169,10 +169,7 @@ impl Listener {
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
 
-        // SAFETY: JSC_BORROW — global lives for the program; Handlers stores `&'static`.
-        let global_static: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
-        let handlers = Handlers::from_js(global_static, socket_obj, this.handlers.mode == SocketMode::Server)?;
+        let handlers = Handlers::from_js(global, socket_obj, this.handlers.mode == SocketMode::Server)?;
         // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
         // `markActive`. Without this, closing any of them after reload would underflow the
@@ -195,11 +192,8 @@ impl Listener {
 
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
-        // SAFETY: JSC_BORROW — global lives for the program.
-        let global_static: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, global_static, true)?;
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, true)?;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
         // (excluding handlers, which are moved out below). // TODO(port): verify SocketConfig Drop semantics
 
@@ -266,7 +260,7 @@ impl Listener {
                 // we need to add support for the backlog parameter on listen here we use the
                 // default value of nodejs
                 match WindowsNamedPipeListeningContext::listen(
-                    global_static,
+                    global,
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
@@ -550,8 +544,8 @@ impl Listener {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(
                 // SAFETY: this_socket just allocated above.
-                unsafe { (*this_socket).get_this_value(global) },
-                global,
+                unsafe { (*this_socket).get_this_value(&global) },
+                &global,
                 default_data,
             );
         }
@@ -596,8 +590,8 @@ impl Listener {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(
                 // SAFETY: this_socket just allocated above.
-                unsafe { (*this_socket).get_this_value(global) },
-                global,
+                unsafe { (*this_socket).get_this_value(&global) },
+                &global,
                 default_data,
             );
         }
@@ -918,17 +912,14 @@ impl Listener {
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
-        // SAFETY: bun_vm() returns a JSC_BORROW that lives for the program; widen to 'static.
         let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
-        let global_static: &'static JSGlobalObject =
-            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
 
         // is_server=false: this is the client connect path. Handlers.mode must be
         // .client so markInactive() takes the allocator.destroy branch — the
         // .server branch does @fieldParentPtr("handlers", this) to reach a
         // Listener, but here handlers live in a standalone allocator.create()
         // block (see below), so that would read past the allocation.
-        let mut socket_config = SocketConfig::from_js(vm, opts, global_static, false)?;
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, false)?;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — Drop on SocketConfig
 
         let port = socket_config.port;
@@ -1485,7 +1476,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
     pub listener: Option<NonNull<Listener>>,
-    pub global_this: &'static JSGlobalObject,
+    pub global_this: GlobalRef,
     pub vm: *mut VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }
@@ -1565,7 +1556,7 @@ impl WindowsNamedPipeListeningContext {
     }
 
     pub fn listen(
-        global_this: &'static JSGlobalObject,
+        global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
@@ -1578,7 +1569,7 @@ impl WindowsNamedPipeListeningContext {
             // initialised by `uv_pipe_init`).
             uv_pipe: unsafe { core::mem::zeroed() },
             listener: NonNull::new(listener),
-            global_this,
+            global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm_ptr(),
             ctx: None,
         }));

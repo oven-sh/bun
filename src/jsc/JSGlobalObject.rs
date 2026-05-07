@@ -30,6 +30,59 @@ pub struct JSGlobalObject {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+/// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
+///
+/// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
+/// heap structs. `'static` was a lie — the global lives as long as its
+/// `VirtualMachine`, not the process — and the lie forced every constructor to
+/// `transmute` a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
+/// centralises that one `unsafe` inside [`Deref`] (the global outlives any
+/// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
+/// `From<&JSGlobalObject>` impl makes construction safe at every call site.
+///
+/// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via the
+/// raw pointer, matching `JSGlobalObject`'s own auto-traits (single JS thread).
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct GlobalRef(*const JSGlobalObject);
+
+impl GlobalRef {
+    #[inline(always)]
+    pub fn new(global: &JSGlobalObject) -> Self {
+        Self(global)
+    }
+
+    /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
+    #[inline(always)]
+    pub fn as_ptr(self) -> *mut JSGlobalObject {
+        self.0 as *mut JSGlobalObject
+    }
+}
+
+impl core::ops::Deref for GlobalRef {
+    type Target = JSGlobalObject;
+    #[inline(always)]
+    fn deref(&self) -> &JSGlobalObject {
+        // SAFETY: constructed only from a live `&JSGlobalObject`; the global is
+        // owned by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
+        // Single `unsafe` for what was previously ~90 `transmute`s to `'static`.
+        unsafe { &*self.0 }
+    }
+}
+
+impl From<&JSGlobalObject> for GlobalRef {
+    #[inline(always)]
+    fn from(g: &JSGlobalObject) -> Self {
+        Self::new(g)
+    }
+}
+
+impl core::fmt::Debug for GlobalRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("GlobalRef").field(&self.0).finish()
+    }
+}
+
 impl JSGlobalObject {
     /// Raw `*mut JSGlobalObject` for FFI. Sound for callees that mutate: the
     /// `UnsafeCell` field gives `&self` interior-mutable provenance, so the
@@ -1630,10 +1683,10 @@ unsafe extern "C" {
 
 impl ScriptExecutionContextIdentifier {
     /// Returns `None` if the context referred to by `self` no longer exists.
-    pub fn global_object(self) -> Option<&'static JSGlobalObject> {
+    pub fn global_object(self) -> Option<GlobalRef> {
         // SAFETY: FFI call returns a valid pointer or null; the JSGlobalObject is
         // owned by the VM and outlives any ScriptExecutionContext id pointing at it.
-        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }
+        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }.map(GlobalRef::from)
     }
 
     /// Returns `None` if the context referred to by `self` no longer exists.

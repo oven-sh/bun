@@ -1029,6 +1029,10 @@ impl readable_stream::SourceContext for FileReader {
     fn set_ref_unref(&mut self, e: bool) { Self::set_ref_or_unref(self, e) }
     fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
     fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
+    fn set_raw_mode(&mut self, flag: bool) -> Option<sys::Result<()>> {
+        Some(Self::set_raw_mode(self, flag))
+    }
+    fn set_flowing(&mut self, flag: bool) { Self::set_flowing(self, flag) }
     // toBufferedValue: null
 }
 

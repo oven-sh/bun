@@ -8,6 +8,16 @@ path = "lib.rs"
 
 [dependencies]
 libc.workspace = true
+parking_lot.workspace = true
+scopeguard.workspace = true
+bun_aio.workspace = true
+bun_analytics.workspace = true
 bun_core.workspace = true
-bun_sys.workspace = true
+bun_crash_handler.workspace = true
 bun_event_loop.workspace = true
+bun_io.workspace = true
+bun_output.workspace = true
+bun_ptr.workspace = true
+bun_string.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true

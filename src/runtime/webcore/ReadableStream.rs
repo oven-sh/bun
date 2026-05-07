@@ -502,6 +502,8 @@ pub enum Tag {
     Bytes = 4,
 }
 
+// Clone/Copy: bitwise OK — variant pointers are non-owning handles to
+// JSC-managed loader objects (lifetime governed by the stream/JS heap).
 #[derive(Copy, Clone)]
 pub enum Source {
     Invalid,

@@ -1272,6 +1272,8 @@ pub struct TaskCallbackContext {
 /// tier); `bun_install::PackageManager::wake` casts at the call site.
 /// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
 /// lives in this crate — so callers pass the borrow directly.
+// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
+// installed; the handler fn-ptrs are POD.
 #[derive(Default, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,

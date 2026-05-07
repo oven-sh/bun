@@ -83,6 +83,9 @@ pub union Value {
     pub uint8: u64,
 }
 
+// Clone/Copy: bitwise — `ptr` is logically OWNED (freed by `deinit`), but the
+// type is `#[repr(C)]` POD passed across FFI by value (Zig pattern). Ownership
+// is single-writer by convention; never call `deinit` on more than one copy.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Array {

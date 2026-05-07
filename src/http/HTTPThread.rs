@@ -227,6 +227,9 @@ pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode field offset in Phase B.
 pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
+// Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
+// caller-owned config (Zig `[]stringZ`), not heap we free. The `Vec` itself
+// deep-clones its slot list.
 #[derive(Clone)]
 pub struct InitOpts {
     // TODO(port): lifetime — Zig `[]stringZ` borrowed from caller config; copied into spawned thread.

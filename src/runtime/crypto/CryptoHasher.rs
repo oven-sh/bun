@@ -801,7 +801,7 @@ pub struct CryptoHasherZig {
 
 /// Trait for the Zig-std hash algorithms used by `CryptoHasherZig`.
 /// Replaces the comptime `(string, type)` table + `@typeInfo` introspection.
-// TODO(port): impl this trait for each algo in `bun_crypto_std` (Phase B).
+/// Implemented for each algo in `zig_crypto_algos` below.
 pub trait ZigHashAlgo: Default + Clone + 'static {
     const NAME: &'static [u8];
     const ALGORITHM: evp::Algorithm;
@@ -1119,7 +1119,7 @@ pub trait StaticHasher: 'static {
     fn new_digest() -> Self::Digest;
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut Self::Digest);
-    fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<*mut boring_ssl::ENGINE>);
+    fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
     /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
     /// extern (`${NAME}__getConstructor`, generate-classes.ts:2449). Replaces the
     /// Zig `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm
@@ -1147,13 +1147,10 @@ macro_rules! impl_static_hasher {
             #[inline]
             fn final_(&mut self, out: &mut Self::Digest) { <$ty>::r#final(self, out) }
             #[inline]
-            fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<*mut boring_ssl::ENGINE>) {
+            fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
                 // so the VM-owned engine pointer threads through without a cast.
-                // SAFETY: `engine` is the live, process-lifetime BoringSSL ENGINE
-                // owned by `RareData` (or `None` in the no-engine arm); `as_mut()`
-                // yields the `Option<&mut ENGINE>` shape `<$ty>::hash` expects.
-                <$ty>::hash(input, out, engine.and_then(|p| unsafe { p.as_mut() }))
+                <$ty>::hash(input, out, engine)
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -1311,13 +1308,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         if H::HAS_ENGINE {
-            H::hash(
-                input.slice(),
-                &mut output_digest_buf,
-                Some(boring_engine(global)),
-            );
+            H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
         } else {
-            H::hash(input.slice(), &mut output_digest_buf, None);
+            H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
         }
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
@@ -1334,9 +1327,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(output_buf) = &output {
             let bytes = output_buf.byte_slice();
             if bytes.len() < H::DIGEST {
+                // Zig `comptimePrint` → runtime `format_args!`; observable string is identical.
                 return Err(global.throw_invalid_arguments(
-                    // TODO(port): comptimePrint with H::DIGEST — const_format can't see trait
-                    // assoc consts generically; Phase B can specialize per-H or format at runtime.
                     format_args!("TypedArray must be at least {} bytes", H::DIGEST),
                 ));
             }
@@ -1349,13 +1341,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         if H::HAS_ENGINE {
-            H::hash(
-                input.slice(),
-                output_digest_slice,
-                Some(boring_engine(global)),
-            );
+            H::hash(input.slice(), output_digest_slice, boring_engine(global));
         } else {
-            H::hash(input.slice(), output_digest_slice, None);
+            H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
         }
 
         if let Some(output_buf) = output {

@@ -498,8 +498,9 @@ pub fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    let str = value.to_bun_string(global_this)?;
-    // `str` drops (derefs) at scope exit — Zig had `defer str.deref()`.
+    // Zig: `defer str.deref()`. `bun_str::String` is `Copy` with no `Drop`;
+    // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
+    let str = bun_str::OwnedString::new(value.to_bun_string(global_this)?);
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }

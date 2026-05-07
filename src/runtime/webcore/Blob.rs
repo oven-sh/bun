@@ -909,27 +909,48 @@ impl BlobExt for Blob {
                     .map_err(|_| core::fmt::Error)?;
                 }
                 store::Data::File(file) => {
-                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>FileRef<r>"))?;
+                    bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>FileRef<r>")?;
                     match &file.pathlike {
                         PathOrFileDescriptor::Path(path) => {
-                            // TODO(port): Output::pretty_fmt with embedded {s}
-                            write!(writer, " (\"{}\")", bstr::BStr::new(path.slice()))?;
+                            bun_core::write_pretty!(
+                                writer,
+                                ENABLE_ANSI_COLORS,
+                                " (<green>\"{s}\"<r>)<r>",
+                                bstr::BStr::new(path.slice()),
+                            )?;
                         }
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
                                 bun_sys::WindowsFd::Uv(uv_file) => {
-                                    write!(writer, " (fd: {})", uv_file)?;
+                                    bun_core::write_pretty!(
+                                        writer,
+                                        ENABLE_ANSI_COLORS,
+                                        " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
+                                        uv_file,
+                                    )?;
                                 }
                                 bun_sys::WindowsFd::Windows(handle) => {
                                     if cfg!(debug_assertions) {
                                         panic!("this shouldn't be reachable.");
                                     }
-                                    write!(writer, " (fd: 0x{:x})", handle as usize)?;
+                                    // Zig: `0x{x}` — pretty_fmt! doesn't rewrite `{x}`,
+                                    // so use the Rust hex spec inline.
+                                    bun_core::write_pretty!(
+                                        writer,
+                                        ENABLE_ANSI_COLORS,
+                                        " (<r>fd<d>:<r> <yellow>0x{:x}<r>)<r>",
+                                        handle as usize,
+                                    )?;
                                 }
                             }
                             #[cfg(not(windows))]
-                            write!(writer, " (fd: {})", fd.native())?;
+                            bun_core::write_pretty!(
+                                writer,
+                                ENABLE_ANSI_COLORS,
+                                " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
+                                fd.native(),
+                            )?;
                         }
                     }
                 }

@@ -1,5 +1,5 @@
 use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::{self as bstr, strings, String as BunString, ZigString};
+use bun_str::{self as bstr, strings, OwnedString, String as BunString, ZigString};
 use bun_str::strings::EncodingNonAscii;
 use bun_sys::UV_E;
 

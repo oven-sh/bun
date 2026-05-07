@@ -2274,6 +2274,26 @@ macro_rules! pretty_errorln {
     }};
 }
 
+/// `write!` an `Output.prettyFmt`-style template to an arbitrary `fmt::Write`
+/// sink, branching on a (possibly const-generic) color flag so each branch gets
+/// the proc-macro-expanded literal template.
+///
+/// Port of Zig `writer.print(comptime Output.prettyFmt(FMT, enable_ansi_colors), .{args})`
+/// for `writeFormat`-style impls that take `comptime enable_ansi_colors: bool`.
+/// The `pretty_fmt!` proc-macro requires a `true`/`false` *literal*, so the
+/// const-generic is dispatched here; only one arm executes at runtime, so each
+/// `$arg` evaluates exactly once.
+#[macro_export]
+macro_rules! write_pretty {
+    ($w:expr, $colors:expr, $fmt:expr $(, $arg:expr)* $(,)?) => {
+        if $colors {
+            ::core::write!($w, $crate::pretty_fmt!($fmt, true) $(, $arg)*)
+        } else {
+            ::core::write!($w, $crate::pretty_fmt!($fmt, false) $(, $arg)*)
+        }
+    };
+}
+
 // ── printCommand ──────────────────────────────────────────────────────────
 
 /// Argument shape accepted by `command`/`commandOut`. Mirrors the Zig `anytype`

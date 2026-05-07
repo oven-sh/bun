@@ -1047,6 +1047,18 @@ impl OwnedString {
     pub fn get(&self) -> String {
         self.0
     }
+    /// View `&[OwnedString]` as `&[String]` for FFI sites that take a raw
+    /// `*const BunString` array (e.g. `BunString__createArray`). Sound because
+    /// `OwnedString` is `#[repr(transparent)]` over `String`; the borrow keeps
+    /// every element alive for the call, and `Drop` still runs on the owning
+    /// slice afterwards — the Rust spelling of Zig's
+    /// `defer { for (items) |s| s.deref(); }` around `toJSArray`.
+    #[inline]
+    pub fn as_raw_slice(owned: &[OwnedString]) -> &[String] {
+        // SAFETY: `#[repr(transparent)]` guarantees identical size/align/ABI
+        // with the inner `String`; we only reborrow, never transfer ownership.
+        unsafe { core::slice::from_raw_parts(owned.as_ptr().cast::<String>(), owned.len()) }
+    }
 }
 impl core::ops::Deref for OwnedString {
     type Target = String;

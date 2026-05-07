@@ -1161,6 +1161,21 @@ impl Drop for EnsureStillAlive {
 /// `jsc.JSPromise.Strong` — a `Strong.Optional` typed to hold a `JSPromise`.
 pub use self::js_promise::Strong as JSPromiseStrong;
 
+/// `JSPromise.Status` (JSPromise.zig) — surfaced at the crate root as
+/// `PromiseStatus` for downstream callers (web_worker.rs / fetch.rs reference
+/// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
+pub use self::js_promise::Status as PromiseStatus;
+
+/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
+/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
+/// submodule taking a direct `bun_ptr` dep.
+pub use bun_ptr::RefPtr;
+
+/// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
+/// so submodules ported from Zig can write `crate::String` (the Zig spelling
+/// is `bun.String`, which the lazy import graph routed via `jsc`).
+pub use bun_string::String;
+
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
 /// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;

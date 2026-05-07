@@ -301,16 +301,23 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 
     /// Extend the slice by 1 element.
     pub fn append(&mut self, item: T) -> Result<(), OverflowError> {
-        let new_item_ptr = self.add_one()?;
-        *new_item_ptr = item;
+        // PORT NOTE: Zig's `new_item_ptr.* = item` is a raw bitwise store. The naive Rust
+        // transliteration `*new_item_ptr = item` would drop the (uninitialized) prior occupant
+        // of the slot first — UB that manifests as a bad free when `T` owns heap memory.
+        self.ensure_unused_capacity(1)?;
+        self.append_assume_capacity(item);
         Ok(())
     }
 
     /// Extend the slice by 1 element, asserting the capacity is already
     /// enough to store the new item.
     pub fn append_assume_capacity(&mut self, item: T) {
-        let new_item_ptr = self.add_one_assume_capacity();
-        *new_item_ptr = item;
+        debug_assert!(self.len < BUFFER_CAPACITY);
+        let i = self.len;
+        self.len += 1;
+        // Write into the `MaybeUninit` slot directly so no drop runs on the previous
+        // (uninitialized) contents — matches Zig's raw `ptr.* = item` semantics.
+        self.buffer[i].write(item);
     }
 
     /// Remove the element at index `i`, shift elements after index

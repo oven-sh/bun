@@ -2680,12 +2680,13 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
     );
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Gated heavy body
 // ─── createShellInterpreter ─────────────────────────────────────────────────
 // Host fn for `Bun.$` template tag — `BunObject_callback_createShellInterpreter`.
 // Port of `Interpreter.createShellInterpreter` (interpreter.zig:773).
 
+// C++ side (`ShellBindings.cpp`) takes `void* ptr` — `Interpreter` is opaque
+// across the boundary, layout is irrelevant.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn Bun__createShellInterpreter(
         global: *const crate::jsc::JSGlobalObject,

@@ -196,12 +196,16 @@ pub const CREATE_PARSED_SHELL_SCRIPT: bun_jsc::JSHostFnZig =
 // `generate-classes.ts` (`${T}__createWithValues`). Takes ownership of the
 // boxed payload (via `Box::into_raw`) and roots `marked_argument_buffer` values
 // on the C++ wrapper's `m_values` array.
+//
+// `ptr` is `void*` on the C++ side; declaring it as such here (rather than
+// `*mut ParsedShellScript`) matches the ABI exactly and avoids the
+// `improper_ctypes` lint on a non-`#[repr(C)]` payload struct.
 #[cfg(all(windows, target_arch = "x86_64"))]
 unsafe extern "sysv64" {
     #[link_name = "ParsedShellScript__createWithValues"]
     fn ParsedShellScript__createWithValues(
         global: *mut JSGlobalObject,
-        ptr: *mut ParsedShellScript,
+        ptr: *mut core::ffi::c_void,
         marked_argument_buffer: *mut core::ffi::c_void,
     ) -> JSValue;
 }
@@ -210,7 +214,7 @@ unsafe extern "C" {
     #[link_name = "ParsedShellScript__createWithValues"]
     fn ParsedShellScript__createWithValues(
         global: *mut JSGlobalObject,
-        ptr: *mut ParsedShellScript,
+        ptr: *mut core::ffi::c_void,
         marked_argument_buffer: *mut core::ffi::c_void,
     ) -> JSValue;
 }
@@ -310,7 +314,7 @@ fn create_parsed_shell_script_impl(
     let this_jsvalue = unsafe {
         ParsedShellScript__createWithValues(
             global.as_mut_ptr(),
-            parsed_shell_script_ptr,
+            parsed_shell_script_ptr.cast::<core::ffi::c_void>(),
             marked_argument_buffer as *mut MarkedArgumentBuffer as *mut core::ffi::c_void,
         )
     };

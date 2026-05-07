@@ -193,6 +193,7 @@ static MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
     b"unsubscribe" => Method::UNSUBSCRIBE,
 };
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Optional {
     Any,
     Method(Set),

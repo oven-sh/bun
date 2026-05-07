@@ -886,15 +886,40 @@ pub mod sync {
     }
     // `deinit` → `Drop` (Vec<u8> auto-frees).
 
+    // ──────────────────────────────────────────────────────────────────────
+    // §Dispatch one-shot hook (PORTING.md) for `bun.spawnSync`. Body lives in
+    // `bun_runtime::api::bun::process::sync::spawn` (depends on
+    // `posix_spawn::wait4`, `ParentDeathWatchdog`, `JobControl` tcsetpgrp
+    // dance, `bun_crash_handler` SIGCHLD reset — all higher-tier). Registered
+    // by `bun_runtime` at startup so `bun_install`/`bun_patch` can block on
+    // a child without the dep cycle.
+    // ──────────────────────────────────────────────────────────────────────
+
+    pub type SyncSpawnFn =
+        fn(&Options) -> core::result::Result<bun_sys::Maybe<Result>, bun_core::Error>;
+
+    static SYNC_SPAWN_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// Called once from `bun_runtime` init.
+    pub fn set_sync_spawn_hook(f: SyncSpawnFn) {
+        SYNC_SPAWN_HOOK.store(f as *mut (), Ordering::Release);
+    }
+
     /// `bun.spawnSync(opts)` (process.zig:2065) — blocking spawn, returns
-    /// `!Maybe(sync.Result)`. The actual subprocess machinery lives in
-    /// `bun_runtime::api::bun::process::sync` at a higher tier; this
-    /// crate only owns the data shapes so `bun_install` can name them
-    /// without a dep cycle (runtime → install → spawn).
+    /// `!Maybe(sync.Result)`. Dispatches to
+    /// `bun_runtime::api::bun::process::sync::spawn` via [`SYNC_SPAWN_HOOK`].
     pub fn spawn(
-        _opts: &Options,
+        opts: &Options,
     ) -> core::result::Result<bun_sys::Maybe<Result>, bun_core::Error> {
-        todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle — install via vtable in Phase B)")
+        let p = SYNC_SPAWN_HOOK.load(Ordering::Acquire);
+        debug_assert!(
+            !p.is_null(),
+            "bun_spawn::sync::SYNC_SPAWN_HOOK not installed — \
+             bun_runtime must call set_sync_spawn_hook() at startup",
+        );
+        // SAFETY: `p` was stored from a `SyncSpawnFn` (same layout).
+        let f: SyncSpawnFn = unsafe { core::mem::transmute::<*mut (), SyncSpawnFn>(p) };
+        f(opts)
     }
 }
 

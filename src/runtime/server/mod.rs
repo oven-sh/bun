@@ -153,8 +153,15 @@ pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
-    // SAFETY: resp is a live uws response handle for the duration of the
-    // request callback (callers hold it from `AnyResponse::{SSL,TCP}`).
+    // Zig spec (server.zig:8-16) takes `?*Response` and no-ops on null. The
+    // route handlers (`StaticRoute`/`FileRoute`) call here from completion
+    // paths where the request may already be aborted/detached.
+    if resp.is_null() {
+        return;
+    }
+    // SAFETY: non-null checked above; resp is a live uws response handle for
+    // the duration of the request callback (callers hold it from
+    // `AnyResponse::{SSL,TCP}`).
     let resp = unsafe { &mut *resp };
     if let Some(text) = HTTPStatusText::get(status) {
         resp.write_status(text);

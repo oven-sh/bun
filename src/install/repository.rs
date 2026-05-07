@@ -385,25 +385,25 @@ impl Repository {
         B: StringBuilderLike,
     {
         Repository {
-            owner: builder.append_string(self.owner.slice(buf)),
-            repo: builder.append_string(self.repo.slice(buf)),
-            committish: builder.append_string(self.committish.slice(buf)),
-            resolved: builder.append_string(self.resolved.slice(buf)),
-            package_name: builder.append_string(self.package_name.slice(buf)),
+            owner: builder.append::<String>(self.owner.slice(buf)),
+            repo: builder.append::<String>(self.repo.slice(buf)),
+            committish: builder.append::<String>(self.committish.slice(buf)),
+            resolved: builder.append::<String>(self.resolved.slice(buf)),
+            package_name: builder.append::<String>(self.package_name.slice(buf)),
         }
     }
 
-    pub fn eql(lhs: &Repository, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        if !lhs.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
+    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
             return false;
         }
-        if !lhs.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
             return false;
         }
-        if lhs.resolved.is_empty() || rhs.resolved.is_empty() {
-            return lhs.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+        if self.resolved.is_empty() || rhs.resolved.is_empty() {
+            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
         }
-        lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
+        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
     }
 
     pub fn format_as(

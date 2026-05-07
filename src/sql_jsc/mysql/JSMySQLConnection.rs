@@ -423,7 +423,7 @@ impl JSMySQLConnection {
         // potential free.
         // SAFETY: `&mut self` is live.
         let _ref = unsafe { Self::ref_guard(self) };
-        let _loop_guard = self.vm().event_loop().entered();
+        let _loop_guard = unsafe { self.vm().event_loop_mut() }.entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection.flush_queue() {
             self.fail(b"Authentication failed", AnyMySQLErrorT::AuthenticationFailed);
@@ -445,7 +445,7 @@ impl JSMySQLConnection {
         // unique owner; no `&`/`&mut Self` outlives the `Box::from_raw` below.
         unsafe {
             (*this).stop_timers();
-            (*this).poll_ref.unref((*this).vm());
+            (*this).poll_ref.unref((*this).vm_ctx());
             (*this).unregister_auto_flusher();
 
             (*this).connection.cleanup();
@@ -481,16 +481,16 @@ impl JSMySQLConnection {
             if self.connection.status == my_sql_connection::Status::Connected
                 && self.connection.is_idle()
             {
-                self.poll_ref.unref(self.vm());
+                self.poll_ref.unref(self.vm_ctx());
             } else {
-                self.poll_ref.r#ref(self.vm());
+                self.poll_ref.r#ref(self.vm_ctx());
             }
             return;
         }
         if self.js_value.is_not_empty() && self.js_value.is_strong() {
             self.js_value.downgrade();
         }
-        self.poll_ref.unref(self.vm());
+        self.poll_ref.unref(self.vm_ctx());
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
@@ -693,7 +693,7 @@ impl JSMySQLConnection {
         }
         this.connection.status = my_sql_connection::Status::Connecting;
         this.reset_connection_timeout();
-        this.poll_ref.r#ref(vm);
+        this.poll_ref.r#ref(vm.vm_ctx());
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
         this.js_value.set_strong(js_value, global_object);
@@ -762,13 +762,13 @@ impl JSMySQLConnection {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_ref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.r#ref(this.vm());
+        this.poll_ref.r#ref(this.vm_ctx());
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_unref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(this.vm());
+        this.poll_ref.unref(this.vm_ctx());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -905,7 +905,7 @@ impl JSMySQLConnection {
             return;
         };
         on_close.ensure_still_alive();
-        let loop_ = self.vm().event_loop();
+        let loop_ = unsafe { self.vm().event_loop_mut() };
         // loop.enter();
         // defer loop.exit();
         self.ensure_js_value_is_alive();
@@ -1196,7 +1196,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return;
         }
 
-        let _loop_guard = vm.event_loop().entered();
+        let _loop_guard = unsafe { vm.event_loop_mut() }.entered();
         this.ensure_js_value_is_alive();
 
         if let Err(e) = this.connection.read_and_process_data(data) {

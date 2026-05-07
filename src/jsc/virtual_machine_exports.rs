@@ -51,7 +51,9 @@ pub extern "C" fn Bun__readOriginTimerStart(vm: &VirtualMachine) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bool {
     use crate::virtual_machine::IPCInstanceUnion;
-    match &global.bun_vm().ipc {
+    // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
+    // JSGlobalObject::bun_vm contract.
+    match unsafe { &(*global.bun_vm()).ipc } {
         Some(IPCInstanceUnion::Initialized(inst)) => {
             // SAFETY: `inst` was produced by `IPCInstance::new` (Box::into_raw)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.

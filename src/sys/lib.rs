@@ -817,8 +817,9 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
         // SAFETY: `ptr` is this thread's private 32-byte buffer; no other
         // reference to it exists while we write `len + 1 <= 32` bytes.
         unsafe {
-            (*ptr)[..len].copy_from_slice(&name[..len]);
-            (*ptr)[len] = 0;
+            let buf = &mut *ptr;
+            buf[..len].copy_from_slice(&name[..len]);
+            buf[len] = 0;
         }
         ptr.cast::<core::ffi::c_char>()
     })

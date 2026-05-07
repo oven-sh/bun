@@ -834,8 +834,10 @@ impl<'a> PatchTask<'a> {
         // Clone the slice/resolution out first.
         let pkg_name_slice =
             pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes).to_vec();
+        // PORT NOTE: `Resolution` is `Copy`; copy out so the lockfile borrow ends
+        // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
-            pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize].clone();
+            pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
         let mut folder_path_buf = PathBuffer::uninit();
         let stuff = package_manager::compute_cache_dir_and_subpath(

@@ -278,8 +278,7 @@ pub mod expect {
         }
         #[inline]
         fn to_u32(self) -> u32 {
-            // Zig `toU32` (JSValue.zig:2160): clamp `toInt64()` into [0, u32::MAX].
-            self.to_int64().clamp(0, u32::MAX as i64) as u32
+            JSValue::to_u32(self)
         }
         #[inline]
         fn bind(

@@ -347,23 +347,6 @@ impl Drop for ConsoleStreamLock {
     }
 }
 
-/// RAII: flush the wrapped writer on drop. Holds a raw pointer so the body can
-/// keep a unique `&mut` borrow of the same writer; the guard only dereferences
-/// at scope exit when no other borrow is live (mirrors Zig `defer writer.flush()`).
-struct FlushOnDrop {
-    writer: *mut dyn bun_io::Write,
-    enabled: bool,
-}
-
-impl Drop for FlushOnDrop {
-    fn drop(&mut self) {
-        if self.enabled {
-            // SAFETY: `writer` outlives this guard; no borrow is live at drop.
-            let _ = unsafe { (*self.writer).flush() };
-        }
-    }
-}
-
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -3162,11 +3145,15 @@ pub mod formatter {
             // `drop(writer); writer = WrappedWriter { .. }` reassignment.
             let writer_failed_ptr: *const bool = core::ptr::addr_of!(writer.failed);
             let self_failed_ptr: *mut bool = &mut self.failed;
-            let _writer_failed = scopeguard::guard((), move |_| unsafe {
-                if *writer_failed_ptr {
-                    *self_failed_ptr = true;
+            scopeguard::defer! {
+                // SAFETY: both pointees are stack locals that outlive this
+                // guard; no other borrow is live at the drop point.
+                unsafe {
+                    if *writer_failed_ptr {
+                        *self_failed_ptr = true;
+                    }
                 }
-            });
+            }
 
             if FORMAT.can_have_circular_references() {
                 if !self.stack_check.is_safe_to_recurse() {
@@ -3212,11 +3199,15 @@ pub mod formatter {
             // at scope-exit time, exactly like Zig's late-evaluated `defer`.
             let map_ptr: *mut visited::Map = &mut self.map;
             let rbr_ptr: *const bool = &remove_before_recurse;
-            let _circular_cleanup = scopeguard::guard((), move |_| unsafe {
-                if FORMAT.can_have_circular_references() && *rbr_ptr {
-                    let _ = (*map_ptr).remove(&value);
+            scopeguard::defer! {
+                // SAFETY: `self.map` / `remove_before_recurse` outlive this
+                // guard; no other borrow is live at the drop point.
+                unsafe {
+                    if FORMAT.can_have_circular_references() && *rbr_ptr {
+                        let _ = (*map_ptr).remove(&value);
+                    }
                 }
-            });
+            }
 
             // Helper macro: `pfmt!(fmt, ENABLE_ANSI_COLORS)`.
             macro_rules! pf {
@@ -3519,11 +3510,15 @@ pub mod formatter {
                         false
                     };
                     let map_restore_ptr: *mut visited::Map = &mut self.map;
-                    let _restore = scopeguard::guard((), move |_| unsafe {
-                        if was_in_map {
-                            let _ = (*map_restore_ptr).insert(value, ());
+                    scopeguard::defer! {
+                        // SAFETY: `self.map` outlives this guard; no other
+                        // borrow is live at the drop point.
+                        unsafe {
+                            if was_in_map {
+                                let _ = (*map_restore_ptr).insert(value, ());
+                            }
                         }
-                    });
+                    }
 
                     if writer.failed { self.failed = true; }
                     drop(writer);

@@ -121,15 +121,16 @@ impl Scripts {
     }
 
     /// return: (first_index, total, entries)
+    /// PORT NOTE: Zig also passed `*const Lockfile` (for `allocator`); the
+    /// allocator is gone in Rust and the parameter was already unused — drop
+    /// it so callers can split-borrow `lockfile.{packages, scripts}` while
+    /// this only reads `lockfile_buf`.
     pub fn get_script_entries(
         &self,
-        lockfile: &Lockfile,
         lockfile_buf: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> (i8, u8, [Option<Box<[u8]>>; SCRIPT_NAMES_LEN]) {
-        // `lockfile.allocator` dropped — global mimalloc; `Box::from` dupes.
-        let _ = lockfile;
         let mut script_index: u8 = 0;
         let mut first_script_index: i8 = -1;
         let mut scripts: [Option<Box<[u8]>>; 6] = [const { None }; 6];
@@ -218,8 +219,8 @@ impl Scripts {
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> Option<List> {
+        let _ = lockfile;
         let (first_index, total, scripts) = self.get_script_entries(
-            lockfile,
             lockfile_buf,
             resolution_tag,
             add_node_gyp_rebuild_script,

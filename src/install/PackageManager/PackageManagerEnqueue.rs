@@ -456,13 +456,11 @@ pub fn enqueue_dependency_to_root(
             break 'brk id;
         }
 
-        // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
-        // takes `&mut PackageManager`; `builder` already borrows
-        // `this.lockfile`. Detach `this` via a raw pointer for the call
-        // (Zig passes both freely).
-        let this_ptr: *mut PackageManager = this;
-        // SAFETY: see note above; sole live `&mut PackageManager`.
-        let mut builder = unsafe { &mut *this_ptr }.lockfile.string_builder();
+        // `clone_with_different_buffers` only needs the npm-alias registry,
+        // so split-borrow `this.known_npm_aliases` alongside the lockfile
+        // string builder + the `dependencies`/`resolutions` columns.
+        let known_npm_aliases = &mut this.known_npm_aliases;
+        let (mut builder, lf) = this.lockfile.string_builder_split();
         let dummy = Dependency {
             name: SemverString::init(name, name),
             name_hash: Semver::string::Builder::string_hash(name),
@@ -475,25 +473,15 @@ pub fn enqueue_dependency_to_root(
             return DependencyToEnqueue::Failure(err.into());
         }
 
-        // SAFETY: `builder` borrows `this.lockfile.buffers.string_bytes`;
-        // `clone_with_different_buffers` only reads `this.options` /
-        // `this.workspace_package_json_cache`, never the string buffer.
         let dep = dummy
-            .clone_with_different_buffers(
-                unsafe { &mut *this_ptr },
-                name,
-                version_buf,
-                &mut builder,
-            )
+            .clone_with_different_buffers(known_npm_aliases, name, version_buf, &mut builder)
             .expect("unreachable");
         builder.clamp();
-        let index = this.lockfile.buffers.dependencies.len();
-        this.lockfile.buffers.dependencies.push(dep);
-        this.lockfile.buffers.resolutions.push(invalid_package_id);
+        let index = lf.dependencies.len();
+        lf.dependencies.push(dep);
+        lf.resolutions.push(invalid_package_id);
         if cfg!(debug_assertions) {
-            debug_assert!(
-                this.lockfile.buffers.dependencies.len() == this.lockfile.buffers.resolutions.len()
-            );
+            debug_assert!(lf.dependencies.len() == lf.resolutions.len());
         }
         break 'brk index;
     } as DependencyID;
@@ -2598,27 +2586,24 @@ fn get_or_put_resolved_package(
 
                 {
                     // only need name and path
-                    // PORT NOTE: reshaped for borrowck — split lockfile
-                    // borrows through a raw root so `string_builder` (mut)
-                    // and `str` (shared) can coexist.
-                    let lockfile_ptr: *mut Lockfile::Lockfile = &mut *this.lockfile;
-                    // SAFETY: `string_builder` borrows `string_bytes` mutably;
-                    // `str` only reads from it via the offset table.
-                    let mut builder = unsafe { &mut *lockfile_ptr }.string_builder();
+                    // PORT NOTE: copy the two slices out of `string_bytes`
+                    // before creating the builder — `StringBuilder::allocate`
+                    // may grow the buffer and invalidate borrows into it, so
+                    // owned copies are required regardless of borrowck.
+                    let name_slice: Vec<u8> = this.lockfile.str(&name).to_vec();
+                    let folder_path: Vec<u8> = this.lockfile.str(&folder).to_vec();
+                    let mut builder = this.lockfile.string_builder();
 
-                    builder.count(unsafe { &*lockfile_ptr }.str(&name));
-                    builder.count(unsafe { &*lockfile_ptr }.str(&folder));
+                    builder.count(&name_slice);
+                    builder.count(&folder_path);
 
                     builder.allocate().expect("OOM");
 
-                    let name_slice = unsafe { &*lockfile_ptr }.str(&name);
-                    let folder_path = unsafe { &*lockfile_ptr }.str(&folder);
-
-                    package.name = builder.append::<SemverString>(name_slice);
+                    package.name = builder.append::<SemverString>(&name_slice);
                     package.name_hash = name_hash;
 
                     package.resolution = Resolution::init(ResolutionTagged::Folder(
-                        builder.append::<SemverString>(folder_path),
+                        builder.append::<SemverString>(&folder_path),
                     ));
 
                     package.scripts.filled = true;

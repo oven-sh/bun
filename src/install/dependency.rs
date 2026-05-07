@@ -29,6 +29,18 @@ impl NpmAliasRegistry for PackageManager {
     }
 }
 
+/// Field-level impl so callers that have already split-borrowed
+/// `PackageManager` (e.g. they hold `&mut manager.lockfile` for a
+/// `StringBuilder`) can pass `&mut manager.known_npm_aliases` directly to
+/// `Dependency::clone_in` / `OverrideMap::clone` instead of a full
+/// `&mut PackageManager`.
+impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
+    #[inline]
+    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
+        self.insert(hash, Clone::clone(version));
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // URI
 // ──────────────────────────────────────────────────────────────────────────

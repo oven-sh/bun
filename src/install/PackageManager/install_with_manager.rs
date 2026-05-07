@@ -162,17 +162,15 @@ pub fn install_with_manager(
             if manager.subcommand == Subcommand::Update {
                 // existing lockfile, get the original version is updating
                 // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while
-                // also mutating `manager.updating_packages`. Route through a raw
-                // provenance root and reborrow disjoint fields through it.
-                let mgr: *mut PackageManager = manager;
-                // SAFETY: `mgr` is the sole provenance root; the shared
-                // `lockfile` reborrow and the `&mut updating_packages` reborrow
-                // touch disjoint `PackageManager` fields.
-                let lockfile: &Lockfile = unsafe { &(*mgr).lockfile };
+                // also mutating `manager.updating_packages`. Field-level split
+                // borrow keeps the disjoint columns alive without raw pointers.
+                let lockfile: &Lockfile = &manager.lockfile;
+                let updating_packages = &mut manager.updating_packages;
                 let packages = lockfile.packages.slice();
                 let resolutions = packages.items_resolution();
-                let workspace_package_id = unsafe { &mut (*mgr).root_package_id }
-                    .get(lockfile, unsafe { (*mgr).workspace_name_hash });
+                let workspace_package_id = manager
+                    .root_package_id
+                    .get(lockfile, manager.workspace_name_hash);
                 let workspace_dep_list = packages.items_dependencies()[workspace_package_id as usize];
                 let workspace_res_list = packages.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps = workspace_dep_list.get(&lockfile.buffers.dependencies);
@@ -188,7 +186,7 @@ pub fn install_with_manager(
                         continue;
                     }
 
-                    if let Some(entry_ptr) = unsafe { &mut (*mgr).updating_packages }
+                    if let Some(entry_ptr) = updating_packages
                         .get_mut(dep.name.slice(&lockfile.buffers.string_bytes))
                     {
                         let original_resolution: Resolution = resolutions[package_id as usize];
@@ -324,34 +322,26 @@ pub fn install_with_manager(
 
                 had_any_diffs = manager.summary.has_diffs();
 
-                // PORT NOTE: reshaped for borrowck — `string_builder()` borrows
-                // `&mut manager.lockfile.{buffers.string_bytes, string_pool}`
-                // for the builder's lifetime, but the body below also touches
-                // `manager.lockfile.{packages, buffers.dependencies, …}` and
-                // `manager` itself. Derive a single raw provenance root for the
-                // *new* lockfile (`manager.lockfile`) so we can hand-reborrow
-                // disjoint columns alongside the builder (Zig `*T` semantics).
-                let mgr: *mut PackageManager = manager;
-                // SAFETY: `mgr` is the sole provenance root from here through
-                // `builder.clamp()`. Every reborrow of `*to_lockfile` below is
-                // for a field disjoint from `string_bytes`/`string_pool` (the
-                // two columns the builder owns), so no `&mut` overlap.
-                let to_lockfile: *mut Lockfile = unsafe { &mut *(*mgr).lockfile };
+                // Split-borrow `manager.lockfile` so the `StringBuilder`
+                // (which owns `buffers.string_bytes` + `string_pool`) and the
+                // remaining lockfile columns can coexist without raw-pointer
+                // reborrows. `manager.{summary, known_npm_aliases,
+                // patched_dependencies_to_remove}` are disjoint top-level
+                // fields and can be accessed alongside `manager.lockfile`.
+                let summary = &manager.summary;
+                let known_npm_aliases = &mut manager.known_npm_aliases;
+                let patched_dependencies_to_remove = &mut manager.patched_dependencies_to_remove;
+                let (mut builder_, lf) = manager.lockfile.string_builder_split();
+                let builder = &mut builder_;
 
                 if !had_any_diffs {
                     // always grab latest scripts for root package
-                    let mut builder_ = unsafe { &mut *to_lockfile }.string_builder();
-                    let builder = &mut builder_;
-
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
                     builder.allocate()?;
-                    unsafe { &mut (*to_lockfile).packages }.items_scripts_mut()[0] =
+                    lf.packages.items_scripts_mut()[0] =
                         maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
                 } else {
-                    let mut builder_ = unsafe { &mut *to_lockfile }.string_builder();
-                    // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
-                    let builder = &mut builder_;
                     // If you changed packages, we will copy over the new package from the new lockfile
                     let new_dependencies = maybe_root.dependencies.get(&lockfile.buffers.dependencies);
 
@@ -369,45 +359,31 @@ pub fn install_with_manager(
                         builder.count(patch_dep.path.slice(&lockfile.buffers.string_bytes));
                     }
 
-                    // PORT NOTE: reshaped for borrowck — Zig passes `&lockfile`
-                    // while also borrowing `lockfile.overrides` / `.catalogs`.
-                    // Both `count` and the field accesses are shared reads, but
-                    // `new_dependencies` already holds `&lockfile.buffers.
-                    // dependencies`; a `&mut lockfile` would conflict. Route the
-                    // whole-struct ref through a `*const` derived from a shared
-                    // borrow so all reads share one provenance root.
-                    {
-                        let lockfile_ptr: *const Lockfile = &lockfile;
-                        // SAFETY: `count` only reads `(*lockfile_ptr).buffers.
-                        // string_bytes`; the `.overrides`/`.catalogs` reborrows
-                        // are also shared, so all accesses stay SharedReadOnly.
-                        unsafe { (*lockfile_ptr).overrides.count(&*lockfile_ptr, builder) };
-                        unsafe { (*lockfile_ptr).catalogs.count(&*lockfile_ptr, builder) };
-                    }
+                    lockfile.overrides.count(&lockfile.buffers.string_bytes, builder);
+                    lockfile.catalogs.count(&lockfile.buffers.string_bytes, builder);
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
 
-                    let off = unsafe { &(*to_lockfile).buffers.dependencies }.len() as u32;
+                    let off = lf.dependencies.len() as u32;
                     let len = new_dependencies.len() as u32;
-                    let old_resolutions_list = unsafe { &(*to_lockfile).packages }.items_resolutions()[0];
-                    unsafe { &mut (*to_lockfile).packages }.items_dependencies_mut()[0] =
+                    let old_resolutions_list = lf.packages.items_resolutions()[0];
+                    lf.packages.items_dependencies_mut()[0] =
                         lockfile::DependencySlice::new(off, len);
-                    unsafe { &mut (*to_lockfile).packages }.items_resolutions_mut()[0] =
+                    lf.packages.items_resolutions_mut()[0] =
                         lockfile::PackageIDSlice::new(off, len);
                     builder.allocate()?;
 
                     let all_name_hashes: Vec<PackageNameHash> = 'brk: {
-                        if !unsafe { &(*mgr).summary }.overrides_changed {
+                        if !summary.overrides_changed {
                             break 'brk Vec::new();
                         }
-                        let hashes_len =
-                            unsafe { &(*to_lockfile).overrides }.map.len() + lockfile.overrides.map.len();
+                        let hashes_len = lf.overrides.map.len() + lockfile.overrides.map.len();
                         if hashes_len == 0 {
                             break 'brk Vec::new();
                         }
                         let mut all_name_hashes: Vec<PackageNameHash> = Vec::with_capacity(hashes_len);
-                        all_name_hashes.extend_from_slice(unsafe { &(*to_lockfile).overrides }.map.keys());
+                        all_name_hashes.extend_from_slice(lf.overrides.map.keys());
                         all_name_hashes.extend_from_slice(lockfile.overrides.map.keys());
-                        let mut i = unsafe { &(*to_lockfile).overrides }.map.len();
+                        let mut i = lf.overrides.map.len();
                         while i < all_name_hashes.len() {
                             if all_name_hashes[..i].contains(&all_name_hashes[i]) {
                                 let last = all_name_hashes.len() - 1;
@@ -420,66 +396,48 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    // PORT NOTE: reshaped for borrowck — Zig: `lockfile.overrides
-                    // .clone(manager, &lockfile, manager.lockfile, builder)`
-                    // borrows `manager` + `manager.lockfile` + the local
-                    // `lockfile` + a field of `lockfile`. `new_dependencies`
-                    // already holds `&lockfile.buffers.dependencies`, so derive
-                    // a `*const` for the whole-struct read instead of `&mut`.
-                    {
-                        let from_lockfile: *const Lockfile = &lockfile;
-                        // SAFETY: `clone` reads `*from_lockfile` (string_bytes)
-                        // and appends into `*to_lockfile` via `builder`; the
-                        // four reborrows touch disjoint storage and the
-                        // `from_lockfile` side is SharedReadOnly.
-                        unsafe {
-                            (*to_lockfile).overrides = (*from_lockfile).overrides.clone(
-                                &mut *mgr,
-                                &*from_lockfile,
-                                builder,
-                            )?;
-                            (*to_lockfile).catalogs = (*from_lockfile).catalogs.clone(
-                                &mut *mgr,
-                                &*from_lockfile,
-                                builder,
-                            )?;
-                        }
-                    }
+                    *lf.overrides = lockfile.overrides.clone(
+                        known_npm_aliases,
+                        &lockfile.buffers.string_bytes,
+                        builder,
+                    )?;
+                    *lf.catalogs = lockfile.catalogs.clone(
+                        known_npm_aliases,
+                        &lockfile.buffers.string_bytes,
+                        builder,
+                    )?;
 
                     // PORT NOTE: `ArrayHashMap::clone()` is an inherent fallible method (Zig:
                     // `try trusted_dependencies.clone(allocator)`), not the `Clone` trait, so
                     // `Option::clone` won't see it — map by hand.
-                    unsafe {
-                        (*to_lockfile).trusted_dependencies = match &lockfile.trusted_dependencies {
-                            Some(td) => Some(td.clone()?),
-                            None => None,
-                        };
-                    }
+                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
+                        Some(td) => Some(td.clone()?),
+                        None => None,
+                    };
 
-                    unsafe { &mut (*to_lockfile).buffers.dependencies }.reserve(len as usize);
-                    unsafe { &mut (*to_lockfile).buffers.resolutions }.reserve(len as usize);
+                    lf.dependencies.reserve(len as usize);
+                    lf.resolutions.reserve(len as usize);
 
                     // PORT NOTE: copy `old_resolutions` to a temporary Vec —
                     // the slice indexes into `buffers.resolutions`, which we're
                     // about to grow via spare-capacity writes / `set_len` below.
-                    let old_resolutions: Vec<PackageID> = old_resolutions_list
-                        .get(unsafe { &(*to_lockfile).buffers.resolutions })
-                        .to_vec();
+                    let old_resolutions: Vec<PackageID> =
+                        old_resolutions_list.get(lf.resolutions).to_vec();
 
                     // PORT NOTE: Zig slices raw spare capacity via `.items.ptr[off .. off + len]`,
                     // `@memset`s it (no drop), then extends `.items.len`. Mirror that ordering:
                     // write into `spare_capacity_mut()` (MaybeUninit) and only then `set_len`, so we
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
-                    debug_assert_eq!(unsafe { &(*to_lockfile).buffers.dependencies }.len(), off as usize);
-                    debug_assert_eq!(unsafe { &(*to_lockfile).buffers.resolutions }.len(), off as usize);
+                    debug_assert_eq!(lf.dependencies.len(), off as usize);
+                    debug_assert_eq!(lf.resolutions.len(), off as usize);
                     {
-                        let spare = unsafe { &mut (*to_lockfile).buffers.dependencies }.spare_capacity_mut();
+                        let spare = lf.dependencies.spare_capacity_mut();
                         for slot in &mut spare[..len as usize] {
                             slot.write(Dependency::default());
                         }
                     }
                     {
-                        let spare = unsafe { &mut (*to_lockfile).buffers.resolutions }.spare_capacity_mut();
+                        let spare = lf.resolutions.spare_capacity_mut();
                         for slot in &mut spare[..len as usize] {
                             slot.write(invalid_package_id);
                         }
@@ -487,54 +445,47 @@ pub fn install_with_manager(
                     // SAFETY: capacity reserved above and the `[off .. off+len)` tail was just
                     // initialized via `MaybeUninit::write`.
                     unsafe {
-                        (*to_lockfile).buffers.dependencies.set_len((off + len) as usize);
-                        (*to_lockfile).buffers.resolutions.set_len((off + len) as usize);
+                        lf.dependencies.set_len((off + len) as usize);
+                        lf.resolutions.set_len((off + len) as usize);
                     }
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
-                        // SAFETY: `clone_in` appends to `builder` (string_bytes) and reads
-                        // `*mgr` for the npm-alias registry; neither overlaps the
-                        // `buffers.dependencies`/`resolutions` slots we write here.
                         let cloned =
-                            new_dep.clone_in(unsafe { &mut *mgr }, &lockfile.buffers.string_bytes, builder)?;
-                        unsafe { (&mut (*to_lockfile).buffers.dependencies)[off as usize + i] = cloned };
+                            new_dep.clone_in(known_npm_aliases, &lockfile.buffers.string_bytes, builder)?;
+                        lf.dependencies[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
-                            unsafe {
-                                (&mut (*to_lockfile).buffers.resolutions)[off as usize + i] =
-                                    old_resolutions[mapping[i] as usize];
-                            }
+                            lf.resolutions[off as usize + i] =
+                                old_resolutions[mapping[i] as usize];
                         }
                     }
 
-                    unsafe { &mut (*to_lockfile).packages }.items_scripts_mut()[0] =
+                    lf.packages.items_scripts_mut()[0] =
                         maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
 
                     // Update workspace paths
                     {
-                        let dst = unsafe { &mut (*to_lockfile).workspace_paths };
-                        dst.reserve(lockfile.workspace_paths.len());
-                        dst.clear();
+                        lf.workspace_paths.reserve(lockfile.workspace_paths.len());
+                        lf.workspace_paths.clear();
                         let mut iter = lockfile.workspace_paths.iter();
                         while let Some((key, value)) = iter.next() {
                             // The string offsets will be wrong so fix them
                             let path = value.slice(&lockfile.buffers.string_bytes);
                             let str = builder.append::<SemverString>(path);
                             // PERF(port): was assume_capacity
-                            dst.insert(*key, str);
+                            lf.workspace_paths.insert(*key, str);
                         }
                     }
 
                     // Update workspace versions
                     {
-                        let dst = unsafe { &mut (*to_lockfile).workspace_versions };
-                        dst.reserve(lockfile.workspace_versions.len());
-                        dst.clear();
+                        lf.workspace_versions.reserve(lockfile.workspace_versions.len());
+                        lf.workspace_versions.clear();
                         let mut iter = lockfile.workspace_versions.iter();
                         while let Some((key, value)) = iter.next() {
                             // Copy version string offsets
                             let version = value.append(&lockfile.buffers.string_bytes, builder);
                             // PERF(port): was assume_capacity
-                            dst.insert(*key, version);
+                            lf.workspace_versions.insert(*key, version);
                         }
                     }
 
@@ -544,8 +495,7 @@ pub fn install_with_manager(
                         while let Some((key, value)) = iter.next() {
                             let pkg_name_and_version_hash = *key;
                             debug_assert!(value.patchfile_hash_is_null);
-                            let gop = unsafe { &mut (*to_lockfile).patched_dependencies }
-                                .entry(pkg_name_and_version_hash);
+                            let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);
                             // PORT NOTE: ArrayHashMap getOrPut semantics → entry API approximation
                             match gop {
                                 bun_collections::array_hash_map::MapEntry::Vacant(v) => {
@@ -575,24 +525,21 @@ pub fn install_with_manager(
                         }
 
                         let mut count: usize = 0;
-                        for (key, _) in unsafe { &(*to_lockfile).patched_dependencies }.iter() {
+                        for (key, _) in lf.patched_dependencies.iter() {
                             if !lockfile.patched_dependencies.contains_key(key) {
                                 count += 1;
                             }
                         }
                         if count > 0 {
-                            let to_remove_set =
-                                unsafe { &mut (*mgr).patched_dependencies_to_remove };
-                            to_remove_set.reserve(count);
-                            for (key, _) in unsafe { &(*to_lockfile).patched_dependencies }.iter() {
+                            patched_dependencies_to_remove.reserve(count);
+                            for (key, _) in lf.patched_dependencies.iter() {
                                 if !lockfile.patched_dependencies.contains_key(key) {
-                                    to_remove_set.insert(*key, ());
+                                    patched_dependencies_to_remove.insert(*key, ());
                                 }
                             }
-                            let to_remove: Vec<u64> = to_remove_set.keys().to_vec();
+                            let to_remove: Vec<u64> = patched_dependencies_to_remove.keys().to_vec();
                             for hash in to_remove {
-                                let _ = unsafe { &mut (*to_lockfile).patched_dependencies }
-                                    .ordered_remove(&hash);
+                                let _ = lf.patched_dependencies.ordered_remove(&hash);
                             }
                         }
                     }
@@ -941,30 +888,25 @@ pub fn install_with_manager(
     {
         // PORT NOTE: reshaped for borrowck — Zig holds shared slices into
         // `packages.items(.resolution/.meta/.scripts)` while pushing into
-        // `manager.lockfile.scripts`. Iterate by index and copy each row to
-        // the stack so the `&mut manager.lockfile.scripts` write doesn't
-        // overlap a live `&manager.lockfile.packages` borrow.
-        let lockfile: *mut Lockfile = &mut *manager.lockfile;
-        // SAFETY: `packages` (read-only column slices) and `scripts` (the
-        // `Vec` push targets) are disjoint fields of `*lockfile`.
-        let packages_len = unsafe { &(*lockfile).packages }.len();
-        for pkg_i in 0..packages_len {
-            let resolution = unsafe { &(*lockfile).packages }.items_resolution()[pkg_i];
+        // `manager.lockfile.scripts`. Field-level split borrow keeps the two
+        // disjoint columns alive simultaneously without raw-pointer routing.
+        let lockfile = &mut *manager.lockfile;
+        let packages = &lockfile.packages;
+        let string_bytes = lockfile.buffers.string_bytes.as_slice();
+        let lockfile_scripts = &mut lockfile.scripts;
+        for pkg_i in 0..packages.len() {
+            let resolution = packages.items_resolution()[pkg_i];
             if resolution.tag != ResolutionTag::Workspace {
                 continue;
             }
-            let meta = unsafe { &(*lockfile).packages }.items_meta()[pkg_i];
+            let meta = packages.items_meta()[pkg_i];
             if !meta.has_install_script() {
                 continue;
             }
-            let scripts = unsafe { &(*lockfile).packages }.items_scripts()[pkg_i];
+            let scripts = packages.items_scripts()[pkg_i];
             let add_node_gyp = !scripts.has_any();
-            let (first_index, _, entries) = scripts.get_script_entries(
-                unsafe { &*lockfile },
-                unsafe { &(*lockfile).buffers.string_bytes },
-                ResolutionTag::Workspace,
-                add_node_gyp,
-            );
+            let (first_index, _, entries) =
+                scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
             if cfg!(debug_assertions) {
                 debug_assert!(first_index != -1);
@@ -978,7 +920,7 @@ pub fn install_with_manager(
                 // PERF(port): was `inline for` over comptime entries — profile in Phase B
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
                     if let Some(entry) = maybe_entry {
-                        unsafe { &mut (*lockfile).scripts }.hook_mut(i).push(entry);
+                        lockfile_scripts.hook_mut(i).push(entry);
                     }
                 }
             }

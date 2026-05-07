@@ -51,18 +51,24 @@ impl OverrideMap {
         });
     }
 
-    pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
+    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
+    /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
+    /// can split-borrow the lockfile alongside a live `StringBuilder`.
+    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         for dep in self.map.values() {
-            dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
+            dep.count(string_bytes, builder);
         }
     }
 
     /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
     /// the new-side buffer lives inside `new_builder`. Dropped to avoid the alias.
-    pub fn clone(
+    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
+    /// caller already holding `&mut manager.lockfile` can pass
+    /// `&mut manager.known_npm_aliases` instead of the whole manager.
+    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
-        pm: &mut PackageManager,
-        old_lockfile: &Lockfile,
+        pm: &mut PM,
+        old_string_bytes: &[u8],
         new_builder: &mut StringBuilder,
     ) -> Result<OverrideMap, Error> {
         let mut new = OverrideMap::default();
@@ -70,10 +76,7 @@ impl OverrideMap {
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile in Phase B
-            new.map.put_assume_capacity(
-                *k,
-                v.clone_in(pm, old_lockfile.buffers.string_bytes.as_slice(), new_builder)?,
-            );
+            new.map.put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
         }
 
         Ok(new)

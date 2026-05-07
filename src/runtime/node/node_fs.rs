@@ -3227,6 +3227,9 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
+            // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
+            // releases the parsed path (matches node_fs.zig).
+            let path = scopeguard::guard(path, |p| p.deinit());
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -3239,7 +3242,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("Invalid flag") })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments("Invalid flag"))?;
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal_ptr) = AbortSignal::from_js(value) {
@@ -3248,13 +3251,13 @@ pub mod args {
                             *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
-                            path.deinit();
                             return Err(ctx.throw_invalid_argument_type_value("signal", "AbortSignal", value));
                         }
                     }
                 }
             }
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
+            let path = scopeguard::ScopeGuard::into_inner(path);
             Ok(ReadFile { path, encoding, flag, limit_size_for_javascript: true, signal: abort_signal, ..Default::default() })
         }
         pub fn aborted(&self) -> bool {
@@ -5450,15 +5453,27 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // PORT NOTE: Zig used a 256 KB *stack* buffer in the async case and the
-        // VM's `rareData().pipeReadBuffer()` (a per-VM 256 KB heap slab) in the
-        // sync case. Rust can't put 256 KB on the stack portably, and the
-        // RareData accessor is ``-gated (b2-cycle), so for round 3
-        // both flavors use a transient heap buffer. Same observable behaviour;
-        // revisit once `rare_data().pipe_read_buffer()` is real.
-        let mut tmp_read_backing: Vec<u8> = vec![0u8; 256 * 1024];
+        // Zig: `var async_stack_buffer: [if (flavor == .sync) 0 else 256*1024]u8`,
+        // and in the sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
+        // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
+        // zero-length so the loop is skipped and we fall through to fstat.
+        // Rust can't put 256 KB on the stack portably, so the async path
+        // heap-allocates instead — same observable behaviour.
+        let mut async_stack_buffer: Vec<u8> =
+            if flavor == Flavor::Sync { Vec::new() } else { vec![0u8; 256 * 1024] };
+        let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
+            match self.vm {
+                // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
+                // `rare_data()` lazily inits the heap slab and the returned
+                // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
+                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
+                None => &mut [][..],
+            }
+        } else {
+            &mut async_stack_buffer[..]
+        };
         let temporary_read_buffer_before_stat_call: &[u8] = {
-            let mut available: &mut [u8] = &mut tmp_read_backing[..];
+            let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
                 match Syscall::read(fd, available) {
                     Maybe::Err(err) => return Maybe::Err(err),
@@ -5469,7 +5484,7 @@ impl NodeFS {
                     }
                 }
             }
-            &tmp_read_backing[..total]
+            &pre_stat_buf[..total]
         };
 
         if did_succeed {
@@ -5553,7 +5568,6 @@ impl NodeFS {
         // but keeps the slice handed to `Syscall::read` valid.
         let cap = buf.capacity();
         buf.resize(cap, 0);
-        drop(tmp_read_backing);
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.

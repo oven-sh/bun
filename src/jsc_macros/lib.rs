@@ -180,8 +180,10 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             },
             quote! { ::bun_jsc::JSValue },
             quote! {
-                // SAFETY: see `Method`.
-                let __t = unsafe { &*__this };
+                // SAFETY: see `Method`. Materialise `&mut Self` so getters that
+                // need to lazily mutate (cache, observe-flags) keep write
+                // provenance — `&mut T` reborrows to `&T` for read-only getters.
+                let __t = unsafe { &mut *__this };
                 let __g = unsafe { &*__global };
                 ::bun_jsc::__macro_support::host_fn_result(__g, Self::#fn_name(__t, __g))
             },

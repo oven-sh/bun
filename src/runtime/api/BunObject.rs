@@ -1934,7 +1934,7 @@ pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use bun_standalone_graph::{StandaloneModuleGraph, File as GraphFile};
+    use bun_standalone_graph::{Graph as StandaloneModuleGraph, File as GraphFile};
     use crate::webcore::blob::Blob;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = unsafe { &*global_this.bun_vm() };

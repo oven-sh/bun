@@ -1125,11 +1125,12 @@ impl Kqueue {
 
     /// Caller holds `manager.mutex`.
     fn add_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
-        Kqueue::add_one(manager, watcher, &watcher.path, b"", watcher.is_file)?;
+        // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap.
+        let root = ZStr::boxed(watcher.path.as_bytes());
+        let watcher_is_file = watcher.is_file;
+        Kqueue::add_one(manager, watcher, &root, b"", watcher_is_file)?;
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
-            // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap.
-            let root = watcher.path.clone();
             walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
                 let _ = Kqueue::add_one(manager, watcher, abs, rel, is_file);
             });
@@ -1144,7 +1145,6 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
-        use bun_sys::c::{Kevent, EV, EVFILT, NOTE};
         let plat: *mut Kqueue = manager.platform.get();
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
@@ -1168,45 +1168,49 @@ impl Kqueue {
         };
         let kq = unsafe { (*plat).kq };
 
-        // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
-        let mut kev: Kevent = unsafe { core::mem::zeroed() };
+        // SAFETY: all-zero is a valid libc::kevent (#[repr(C)] POD).
+        let mut kev: libc::kevent = unsafe { core::mem::zeroed() };
         kev.ident = usize::try_from(fd.native()).unwrap();
-        kev.filter = EVFILT::VNODE;
-        kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
-        kev.fflags =
-            NOTE::WRITE | NOTE::DELETE | NOTE::RENAME | NOTE::EXTEND | NOTE::ATTRIB | NOTE::LINK | NOTE::REVOKE;
-        kev.udata = generation;
+        kev.filter = libc::EVFILT_VNODE;
+        kev.flags = libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE;
+        kev.fflags = libc::NOTE_WRITE
+            | libc::NOTE_DELETE
+            | libc::NOTE_RENAME
+            | libc::NOTE_EXTEND
+            | libc::NOTE_ATTRIB
+            | libc::NOTE_LINK
+            | libc::NOTE_REVOKE;
+        kev.udata = generation as *mut c_void;
         let mut changes = [kev];
-        let krc = sys::syscall::kevent(kq.native(), changes.as_mut_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null());
+        // SAFETY: FFI; kq is a valid kqueue fd; changes is a 1-element array.
+        let krc = unsafe {
+            sys::c::kevent(kq.native(), changes.as_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null())
+        };
         if krc < 0 {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            let errno = sys::get_errno(krc);
+            let errno = sys::last_errno();
             fd.close();
             if !subpath.is_empty() {
                 return Ok(()); // best-effort on children
             }
-            return Err(sys::Error {
-                errno: (errno as u32) as _,
-                syscall: Syscall::Kevent,
-                ..Default::default()
-            });
+            return Err(sys::Error::from_code_int(errno, Tag::kevent));
         }
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
         unsafe {
-            (*plat).entries.put(
-                i32::try_from(fd.native()).unwrap(),
+            handle_oom((*plat).entries.put(
+                fd.native(),
                 KqEntry {
                     watcher: watcher as *mut PathWatcher,
                     fd,
-                    subpath: ZStr::from_bytes(subpath),
+                    subpath: ZStr::boxed(subpath),
                     generation,
                     is_file,
                 },
-            );
+            ));
         }
-        watcher.platform.fds.push(i32::try_from(fd.native()).unwrap());
+        watcher.platform.fds.push(fd.native());
         Ok(())
     }
 
@@ -1215,10 +1219,10 @@ impl Kqueue {
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
         let entries = unsafe { &mut (*manager.platform.get()).entries };
         for &ident in watcher.platform.fds.iter() {
-            if let Some(kv) = entries.fetch_swap_remove(&ident) {
+            if let Some((_k, v)) = entries.fetch_swap_remove(&ident) {
                 // Closing the fd auto-removes the kevent.
-                kv.value.fd.close();
-                // kv.value.subpath dropped here.
+                v.fd.close();
+                // v.subpath dropped here.
             }
         }
         watcher.platform.fds.clear();

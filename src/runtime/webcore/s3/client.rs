@@ -499,7 +499,11 @@ pub fn writable_stream(
         request_payer,
         credentials,
         poll_ref: KeepAlive::init(),
-        vm: VirtualMachine::get(),
+        // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
+        // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
+        // keeping this task alive). Dereference to `&'static` for storage, matching the
+        // Zig pointer field.
+        vm: unsafe { &*VirtualMachine::get() },
         global_this: global_static,
         buffered: StreamBuffer::default(),
         path: Box::<[u8]>::from(path),
@@ -644,7 +648,8 @@ impl S3UploadStreamWrapper {
             }
         } else {
             // SAFETY: `task` is live (intrusive-ref'd) for the lifetime of this wrapper.
-            let _ = unsafe { &mut *self.task }.write_bytes(b"", true);
+            // Zig spec: `_ = bun.handleOom(this.task.writeBytes("", true))` — abort on OOM.
+            let _ = unsafe { &mut *self.task }.write_bytes(b"", true).expect("OOM");
         }
     }
 
@@ -670,8 +675,8 @@ impl S3UploadStreamWrapper {
                     let js_err = s3_error_to_js(err, self_.global, Some(unsafe { &*self_.path }));
                     // SAFETY: sink is a live Box-allocated ResumableSink.
                     unsafe { (*sink).cancel(js_err) };
-                    // SAFETY: deref_ releases our ref.
-                    unsafe { (*sink).deref_() };
+                    // SAFETY: deref_ releases our ref (associated fn — raw-ptr receiver).
+                    unsafe { ResumableS3UploadSink::deref_(sink) };
                 } else if self_.end_promise.has_value() {
                     // SAFETY: path borrowed from task which outlives self
                     let path = unsafe { &*self_.path };
@@ -834,7 +839,10 @@ pub fn upload_stream(
         request_payer,
         credentials,
         poll_ref: KeepAlive::init(),
-        vm: VirtualMachine::get(),
+        // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
+        // outlives every MultiPartUpload. Dereference to `&'static` for storage, matching
+        // the Zig pointer field.
+        vm: unsafe { &*VirtualMachine::get() },
         global_this: global_static,
         buffered: StreamBuffer::default(),
         path: Box::<[u8]>::from(path),

@@ -183,26 +183,6 @@ pub struct Subprocess<'a> {
 // removed — `*mut Process` has no sound placeholder anyway.
 
 // ── local extension shims for upstream types missing methods ────────────────
-// `JSValue::push` exists in JSValue.zig but not yet in bun_jsc::JSValue. Wrap
-// the same `JSC__JSValue__push` extern the Zig codegen calls.
-trait JsValuePushExt {
-    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
-}
-impl JsValuePushExt for JSValue {
-    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        unsafe extern "C" {
-            fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
-        }
-        // SAFETY: `self` is an array cell (callers create it via
-        // `create_empty_array`); `global` is live; FFI may run JS (allocation).
-        unsafe { JSC__JSValue__push(self, global, value) };
-        if global.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
-        Ok(())
-    }
-}
-
 // `bun_jsc::AnyPromise` (the crate-root raw-pointer enum) lacks
 // resolve/reject; the lifetime-carrying `bun_jsc::any_promise::AnyPromise`
 // has them but `JSValue::as_any_promise()` returns the former. Bridge via the

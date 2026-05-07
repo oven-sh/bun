@@ -1001,7 +1001,7 @@ impl<'a> ReadFileUV<'a> {
         )
         .err_enum()
         {
-            self.errno = Some(bun_core::errno_to_err(errno));
+            self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             self.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::Fstat).to_system_error());
             self.on_finish();

@@ -389,9 +389,8 @@ impl Glob {
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
-        // TODO(port): arena is moved into GlobWalker via init/init_with_cwd (per doc comment).
-        // Non-AST crate would normally delete the arena, but bun_glob::BunGlobWalker
-        // consumes it. Verify ownership transfer in Phase B.
+        // PORT NOTE: GlobWalker::init/init_with_cwd own their allocations (Box) in
+        // the Rust port; the arena here is vestigial and only mirrors Zig structure.
         let glob_walker = match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
             Err(err) => {
                 drop(arena);

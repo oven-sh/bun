@@ -13,7 +13,55 @@
 // - [Symbol.toStringTag] matches the class name
 
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { BlockList } from "node:net";
+import { join } from "node:path";
+
+// These code paths only run once per class at startup, so there is no runtime
+// behavior to distinguish the hoisted form from the per-class form. Instead,
+// assert on the codegen output itself: run generate-classes.ts into a temp
+// directory and verify the shared helpers are emitted and the per-class
+// construct bodies route through them instead of each open-coding the
+// newTarget / createSubclassStructure / reifyStaticProperties sequence.
+test("generate-classes.ts emits shared Constructor/Prototype helpers instead of per-class boilerplate", async () => {
+  const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
+  const classesFiles = [...new Bun.Glob("src/**/*.classes.ts").scanSync({ cwd: repoRoot, absolute: true })].sort();
+  expect(classesFiles.length).toBeGreaterThan(10);
+
+  using out = tempDir("generated-classes-codegen", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(repoRoot, "src", "codegen", "generate-classes.ts"), ...classesFiles, String(out)],
+    env: { ...bunEnv, BUN_SILENT: "1" },
+    cwd: repoRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  const cpp = await Bun.file(join(String(out), "ZigGeneratedClasses.cpp")).text();
+  const count = (needle: string) => cpp.split(needle).length - 1;
+
+  // Shared helpers are emitted once. Compare counts so failure output stays
+  // readable (the file is ~3 MB).
+  expect(count("constructGeneratedWrapper(")).toBeGreaterThan(0);
+  expect(count("callGeneratedConstructorIllegal(")).toBeGreaterThan(0);
+  expect(count("finishGeneratedPrototype(")).toBeGreaterThan(0);
+  expect(count("finishGeneratedConstructor(")).toBeGreaterThan(0);
+
+  // The subclass-structure resolution is now written once, not once per class.
+  // Before this change it appeared once per constructible class (~47 copies).
+  expect(count("InternalFunction::createSubclassStructure")).toBeLessThanOrEqual(2);
+
+  // The ERR_ILLEGAL_CONSTRUCTOR throw body appears once in the shared helper,
+  // not once per class (~45 copies before).
+  expect(count("ErrorCode::ERR_ILLEGAL_CONSTRUCTOR")).toBeLessThanOrEqual(2);
+
+  // reifyStaticProperties is routed through a single non-template wrapper
+  // instead of being stamped into every finishCreation body (~100 copies before).
+  expect(count("reifyStaticProperties(")).toBeLessThanOrEqual(2);
+}, 60_000);
 
 describe("generated class construction", () => {
   test("new + prototype methods + [Symbol.toStringTag]", () => {

@@ -1688,7 +1688,7 @@ it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno + a
     },
   });
   try {
-    Bun.serve({
+    using second = Bun.serve({
       port: server.port,
       fetch() {
         return new Response("ok");

@@ -816,7 +816,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
+                        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -928,7 +928,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     && c.options.compile
                 {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
+                        c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -1008,7 +1008,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 display_size: display_size as u32,
                 output_kind,
                 input_loader: if chunk.entry_point.is_entry_point() {
-                    unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
+                    c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize]
                 } else {
                     Loader::Js
                 },
@@ -1073,7 +1073,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
 
         if !is_standalone {
-            output_files.insert_additional_output_files(unsafe { &mut (*c.parse_graph).additional_output_files });
+            output_files.insert_additional_output_files(&mut c.parse_graph_mut().additional_output_files);
         }
     }
 

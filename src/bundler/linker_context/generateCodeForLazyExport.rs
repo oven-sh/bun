@@ -59,7 +59,9 @@ pub fn generate_code_for_lazy_export(
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
     #[cfg(feature = "css")]
-    let all_sources = this.parse_graph().input_files.items_source();
+    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
+    // across `&mut *this.log` below (split borrow).
+    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     #[cfg(feature = "css")]
     let all_css_asts: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
     #[cfg(feature = "css")]

@@ -767,7 +767,9 @@ pub fn post_process_js_chunk(
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            &c.resolver().opts.output_dir,
+            // SAFETY: resolver backref; raw deref because this arg is passed
+            // to `c.generate_source_map_for_chunk(&mut self, …)` (split borrow).
+            unsafe { &(*c.resolver).opts.output_dir },
             can_have_shifts,
         )?;
     }

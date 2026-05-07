@@ -78,13 +78,10 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
-    // `pushScopeForParsePass`/`popScope` keep it non-dangling.
-    // PORT NOTE: takes `&mut self` (not `&self`) so two live `&mut Scope` cannot
-    // alias from a shared `&P` — see PORTING.md §Forbidden (aliased &mut).
+    // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {
-        unsafe { &mut *self.current_scope }
+        self.current_scope_mut()
     }
 
     pub fn visit_and_append_stmt(

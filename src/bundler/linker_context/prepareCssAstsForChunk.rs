@@ -117,8 +117,8 @@ fn prepare_css_asts_for_chunk_impl(_c: &mut LinkerContext, _chunk: &mut Chunk, _
 
 #[cfg(feature = "css")]
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
-    // PORT NOTE: `c.parse_graph` is a raw `*mut Graph`; deref once for the
-    // SoA column accessors. Safe — the parse graph outlives all link tasks.
+    // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
+    // across `&mut *c.log` below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
 

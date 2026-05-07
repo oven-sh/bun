@@ -579,7 +579,8 @@ pub fn write_output_files_to_disk(
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files =
             &mut output_files.output_files[additional_start..];
-        // SAFETY: parse_graph set during init; outlives this call.
+        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
+        // across `&mut *c.log` below (split borrow).
         let parse_graph = unsafe { &mut *c.parse_graph };
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),

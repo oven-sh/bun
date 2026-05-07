@@ -1772,7 +1772,9 @@ impl<'a> LinkerContext<'a> {
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part { stmts: out_stmts as *mut [Stmt], ..Default::default() }];
 
-        let parse_graph = self.parse_graph();
+        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
+        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
+        let parse_graph = unsafe { &*self.parse_graph };
 
         // PORT NOTE: `Options.allocator` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
@@ -1932,7 +1934,9 @@ impl<'a> LinkerContext<'a> {
 
         let all_css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
-        let all_sources: &[Source] = self.parse_graph().input_files.items_source();
+        // SAFETY: parse_graph backref; raw deref because `all_sources` is held
+        // across `&mut self.mangled_props` below (split borrow).
+        let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
         // Collect all local css names
         // PERF(port): was stack-fallback alloc

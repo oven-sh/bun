@@ -1116,7 +1116,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
-                // TODO(b2-blocked): self.notify_inspector_server_stopped().
+                self.notify_inspector_server_stopped();
                 if abrupt {
                     self.flags.insert(ServerFlags::TERMINATED);
                 }
@@ -1125,8 +1125,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         self.unref();
 
-        // TODO(b2-blocked): if !SSL { self.vm.remove_listening_socket_for_watch_mode(listener.socket().fd()) }
-        // TODO(b2-blocked): self.notify_inspector_server_stopped().
+        if !SSL {
+            // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
+            // from `self.listener`; deref'd once to read the socket fd.
+            let fd = unsafe { (*listener).socket().fd() };
+            self.vm_mut().remove_listening_socket_for_watch_mode(fd);
+        }
+        self.notify_inspector_server_stopped();
 
         if let server_config::Address::Unix(path) = &self.config.address {
             let bytes = path.to_bytes();
@@ -1199,12 +1204,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
-        if socket.is_none() {
+        let Some(socket) = socket else {
             return self.on_listen_failed();
-        }
-        self.listener = socket;
+        };
+        self.listener = Some(socket);
         // TODO(b2-blocked): vm.event_loop_handle = Async::Loop::get();
-        // TODO(b2-blocked): if !SSL { vm.add_listening_socket_for_watch_mode(socket.fd()) }
+        if !SSL {
+            // SAFETY: `socket` is a live uws ListenSocket FFI handle just bound
+            // by `app.listen`; deref'd once to read the socket fd.
+            let fd = unsafe { (*socket).socket().fd() };
+            self.vm_mut().add_listening_socket_for_watch_mode(fd);
+        }
     }
 
     /// Full body in `server_body.rs::on_listen_failed()` — drains BoringSSL
@@ -1809,6 +1819,16 @@ unsafe extern "C" {
         route_list_object: jsc::JSValue,
         request_object: *mut jsc::JSValue,
         req: *mut uws_sys::Request,
+    ) -> jsc::JSValue;
+
+    /// Generated C++ factory (ServerRouteList.cpp): builds the per-server
+    /// `RouteList` JS object holding `{ path, callback }` pairs so the
+    /// `:param` parser and `callRoute` dispatcher have a stable index space.
+    fn Bun__ServerRouteList__create(
+        global_object: *const jsc::JSGlobalObject,
+        callbacks: *mut jsc::JSValue,
+        paths: *mut bun_string::ZigString,
+        paths_length: usize,
     ) -> jsc::JSValue;
 }
 

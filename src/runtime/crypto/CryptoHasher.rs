@@ -1487,16 +1487,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         let mut output_digest_buf: H::Digest = H::new_digest();
         let output_digest_slice: &mut H::Digest;
         if let Some(output_buf) = &output {
-            let bytes = output_buf.byte_slice();
-            if bytes.len() < H::DIGEST {
+            let bytes_len = output_buf.byte_slice().len();
+            if bytes_len < H::DIGEST {
                 return Err(global.throw_invalid_arguments(
                     format_args!("TypedArray must be at least {} bytes", H::DIGEST),
                 ));
             }
-            // SAFETY: bytes.len() >= H::DIGEST; H::Digest = [u8; H::DIGEST].
-            output_digest_slice = unsafe {
-                &mut *(bytes.as_ptr() as *mut u8 as *mut H::Digest)
-            };
+            // SAFETY: `bytes_len >= H::DIGEST`; `H::Digest = [u8; H::DIGEST]`;
+            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
+            // `&mut` directly from the raw `*mut u8` field — never via
+            // `&[u8].as_ptr()` (Stacked-Borrows UB).
+            output_digest_slice = unsafe { &mut *(output_buf.ptr as *mut H::Digest) };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
             output_digest_slice = &mut output_digest_buf;

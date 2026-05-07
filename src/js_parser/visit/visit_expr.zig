@@ -838,9 +838,12 @@ pub fn VisitExpr(
                     // order when two valued defines both match (e.g. `--define:X.Y=a` and
                     // `--define:globalThis.X.Y=b` for a `globalThis.X.Y` expression). Scan
                     // all matches, accumulate side-effect flags, and prefer the longest
-                    // (most specific) valued match.
+                    // (most specific) valued match. A pending drop flag from a valueless
+                    // match only applies if no valued match wins, otherwise a less-specific
+                    // `--drop` would silently drop a more-specific `--define`'d substitution.
                     var best_value: ?*const DefineData = null;
                     var best_len: usize = 0;
+                    var drop_pending = false;
                     for (parts) |*define| {
                         if (!p.isDotDefineMatch(expr, define.parts)) continue;
 
@@ -850,7 +853,7 @@ pub fn VisitExpr(
                         }
 
                         if (in.assign_target == .none and define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
-                            p.method_call_must_be_replaced_with_undefined = true;
+                            drop_pending = true;
                         }
 
                         // Copy the side-effect flags over in case this expression is unused.
@@ -870,6 +873,10 @@ pub fn VisitExpr(
 
                     if (best_value) |data| {
                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, data);
+                    }
+
+                    if (drop_pending) {
+                        p.method_call_must_be_replaced_with_undefined = true;
                     }
                 }
 

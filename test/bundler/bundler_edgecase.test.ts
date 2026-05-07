@@ -243,6 +243,22 @@ describe("bundler", () => {
     },
     capture: ['"via_globalThis"', '"bare"'],
   });
+  // A more-specific `--define:globalThis.X.Y` must win over a less-specific
+  // `--drop=X.Y` for a `globalThis.X.Y(...)` call: the substituted identifier
+  // should be emitted, not dropped to `undefined`.
+  itBundled("edgecase/NodeEnvDefineBeatsDropAcrossGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.console.log("x"));
+      `,
+    },
+    target: "browser",
+    drop: ["console.log"],
+    define: {
+      "globalThis.console.log": "myLogger",
+    },
+    capture: ['myLogger("x")'],
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

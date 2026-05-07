@@ -335,8 +335,16 @@ impl Context {
         self.input.src = in_.map_or(ptr::null(), |p| p.as_ptr().cast());
         self.input.size = in_.map_or(0, |p| p.len());
         self.input.pos = 0;
-        self.output.dst = out.as_ref().map_or(ptr::null_mut(), |p| p.as_ptr() as *mut c_void);
-        self.output.size = out.as_ref().map_or(0, |p| p.len());
+        match out {
+            Some(p) => {
+                self.output.size = p.len();
+                self.output.dst = p.as_mut_ptr().cast();
+            }
+            None => {
+                self.output.size = 0;
+                self.output.dst = ptr::null_mut();
+            }
+        }
         self.output.pos = 0;
     }
 

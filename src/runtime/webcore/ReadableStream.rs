@@ -350,16 +350,19 @@ impl ReadableStream {
                 // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.
-                let mut reader = NewSource::<ByteBlobLoader>::new(NewSource {
+                let reader = NewSource::<ByteBlobLoader>::new(NewSource {
                     global_this,
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
+                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
+                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
+                let reader = unsafe { &mut *reader };
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::File(_) => {
-                let mut reader = NewSource::<FileReader>::new(NewSource {
+                let reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
@@ -379,7 +382,9 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 store.ref_();
-                reader.to_readable_stream(global_this)
+                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
+                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
+                unsafe { &mut *reader }.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();

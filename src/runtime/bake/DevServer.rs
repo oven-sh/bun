@@ -2915,7 +2915,7 @@ impl DevServer {
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
-            Some(bundler::BakeOptions {
+            Some(bundler::bundle_v2::BakeOptions {
                 framework: framework_as_bundler_view(&self.framework),
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.

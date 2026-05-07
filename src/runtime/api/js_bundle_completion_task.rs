@@ -1167,4 +1167,3 @@ impl CompletionStruct for JSBundleCompletionTask {
 //               do_compilation drives StandaloneModuleGraph.to_executable +
 //               sourcemap side-file writes via NodeFS.write_file_with_path_buffer.
 // ──────────────────────────────────────────────────────────────────────────
-fn __test_body_check() { let _x: u32 = "string"; }

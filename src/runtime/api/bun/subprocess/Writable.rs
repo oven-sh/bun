@@ -308,36 +308,42 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(
-        &mut self,
-        global_this: &JSGlobalObject,
-        subprocess: *mut Subprocess,
-    ) -> JSValue {
-        // PORT NOTE: reshaped for borrowck — `self` is `&mut subprocess.stdin`;
-        // take `subprocess` as raw ptr so the caller can pass both halves.
-        match core::mem::replace(self, Writable::Ignore) {
+    pub fn to_js(subprocess: *mut Subprocess, global_this: &JSGlobalObject) -> JSValue {
+        // PORT NOTE: reshaped for borrowck — Zig passed `*Writable` (== `&stdin`)
+        // and `*Subprocess` separately, which alias. Take only the parent raw
+        // pointer and project `stdin` here so no two `&mut` overlap at any point.
+        // SAFETY: caller passes a live `*mut Subprocess`; raw projection of `stdin`.
+        let stdin = unsafe { core::ptr::addr_of_mut!((*subprocess).stdin) };
+        // SAFETY: `stdin` is a valid `*mut Writable`; the `&mut` is dropped at the
+        // end of `replace`, before `*subprocess` is reborrowed below.
+        match core::mem::replace(unsafe { &mut *stdin }, Writable::Ignore) {
             Writable::Fd(fd) => {
-                *self = Writable::Fd(fd);
+                // SAFETY: see above; sole live borrow.
+                unsafe { *stdin = Writable::Fd(fd) };
                 fd.to_js(global_this)
             }
             Writable::Memfd(fd) => {
-                *self = Writable::Memfd(fd);
+                // SAFETY: see above; sole live borrow.
+                unsafe { *stdin = Writable::Memfd(fd) };
                 JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
             Writable::Buffer(buffer) => {
-                *self = Writable::Buffer(buffer);
+                // SAFETY: see above; sole live borrow.
+                unsafe { *stdin = Writable::Buffer(buffer) };
                 JSValue::UNDEFINED
             }
             Writable::Inherit => {
-                *self = Writable::Inherit;
+                // SAFETY: see above; sole live borrow.
+                unsafe { *stdin = Writable::Inherit };
                 JSValue::UNDEFINED
             }
             Writable::Pipe(pipe_nn) => {
-                // self already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
+                // stdin already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
                 // SAFETY: pipe is live (held a +1 in this enum).
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
-                // SAFETY: caller passes the live `*mut Subprocess` whose `.stdin` is `self`.
+                // SAFETY: caller passes a live `*mut Subprocess`; the `&mut *stdin`
+                // borrow above has ended, so this whole-struct reborrow is unique.
                 let subprocess = unsafe { &mut *subprocess };
                 if subprocess.process.has_exited()
                     && !subprocess.flags.contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)

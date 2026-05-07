@@ -1345,7 +1345,7 @@ impl WindowsStub {
 // Re-exports of the FSWatcher callback fns called directly from emit paths.
 #[inline]
 fn on_path_update_fn(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-    FSWatcher::on_path_update(ctx, event, is_file)
+    (FSWatcher::ON_PATH_UPDATE)(ctx, event, is_file)
 }
 #[inline]
 fn on_update_end_fn(ctx: Option<*mut c_void>) {
@@ -1356,6 +1356,5 @@ fn on_update_end_fn(ctx: Option<*mut c_void>) {
 // PORT STATUS
 //   source:     src/runtime/node/path_watcher.zig (958 lines)
 //   confidence: medium
-//   todos:      10
-//   notes:      owned ZStr type, DirIterator API, InotifyEvent path, milli_timestamp() all guessed
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

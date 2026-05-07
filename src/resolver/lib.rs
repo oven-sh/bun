@@ -7356,7 +7356,6 @@ impl<'a> Resolver<'a> {
                     let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top_unsafe_path.len()) };
                     // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
                     unsafe { *restore_at = 0 };
-                    let restore = scopeguard::guard((), move |_| unsafe { *restore_at = prev_char });
                     // SAFETY: NUL written above
                     let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top_unsafe_path.len()) };
 

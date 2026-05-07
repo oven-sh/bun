@@ -2269,13 +2269,10 @@ impl ThreadSafeFunction {
 
     pub fn dispatch_one(&mut self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        // PORT NOTE: borrowck — capture the lock by raw ptr so the scopeguard
-        // closure doesn't hold a shared borrow of `*self` across the `&mut self`
-        // calls below. `Mutex::unlock` takes `&self` and is Sync.
-        let lock_ptr: *const Mutex = &self.lock;
         let (has_more, task) = 'brk: {
-            self.lock.lock();
-            let _g = scopeguard::guard((), |_| unsafe { (*lock_ptr).unlock() });
+            // `MutexGuard` holds the lock by raw pointer, so it does not borrow
+            // `*self` across the `&mut self` calls below.
+            let _g = self.lock.lock_guard();
             // PORT NOTE: reshaped for borrowck — Zig holds the lock across these reads.
             let was_blocked = self.queue.is_blocked();
             let Some(t) = self.queue.data.read_item() else {
@@ -2472,17 +2469,7 @@ impl ThreadSafeFunction {
         mode: napi_threadsafe_function_release_mode,
         already_locked: bool,
     ) -> napi_status {
-        // PORT NOTE: borrowck — see `dispatch_one`.
-        let lock_ptr: *const Mutex = &self.lock;
-        if !already_locked {
-            self.lock.lock();
-        }
-        let _g = scopeguard::guard((), move |_| {
-            if !already_locked {
-                // SAFETY: lock_ptr points into `*self`, which outlives `_g`.
-                unsafe { (*lock_ptr).unlock() };
-            }
-        });
+        let _g = (!already_locked).then(|| self.lock.lock_guard());
 
         if self.thread_count.load(Ordering::SeqCst) < 0 {
             return NapiStatus::invalid_arg as napi_status;

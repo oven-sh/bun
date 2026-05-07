@@ -9,13 +9,18 @@ use bun_core::Error;
 // `bun_json::Expr`, so storing the parser-crate type here would create a
 // cross-tier mismatch.
 use crate::bun_json::Expr;
-use bun_js_printer::options::Indentation;
+// LAYERING: `Indentation` lives in `bun_logger::js_printer` (T2, MOVE_DOWN from
+// the printer crate). `bun_js_printer::options::Indentation` re-exports the
+// same type, so consumers passing `MapEntry.indentation` into
+// `bun_js_printer::PrintJsonOptions` see no mismatch.
+use bun_logger::js_printer::options::Indentation;
 use bun_logger::{Log, Source};
-use bun_paths::{self, is_absolute, PathBuffer};
-use bun_sys::File;
+use bun_paths::is_absolute;
+#[cfg(windows)]
+use bun_paths::PathBuffer;
 
-use bun_install::initialize_store;
 use crate::bun_json as json;
+use crate::initialize_store;
 
 pub struct MapEntry {
     pub root: Expr,
@@ -136,21 +141,26 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
-        let entry = self.map.get_or_put(path);
-        if entry.found_existing {
-            return GetResult::Entry(entry.value_ptr);
+        // PORT NOTE: reshaped for borrowck — Zig `getOrPut` reserves a slot
+        // first and `remove`s on failure while still holding `entry.value_ptr`.
+        // Rust cannot hold the entry borrow across `self.map.remove`, so check
+        // membership up front and only insert into the map after a successful
+        // read+parse. Net map state is identical on every path.
+        if self.map.contains_key(path) {
+            return GetResult::Entry(self.map.get_mut(path).unwrap());
         }
 
-        // TODO(port): Zig used a single dupeZ for both the map key and File::to_source.
-        // Here we allocate a ZStr for to_source and a separate Box<[u8]> for the map key
-        // (assigned after success below, matching get_with_source). StringHashMap key
-        // ownership semantics in Rust TBD.
-        let key = bun_str::ZStr::from_bytes(path);
+        // Zig: `allocator.dupeZ(u8, path)` — owned NUL-terminated copy reused
+        // both as the map key and the path handed to `File.toSource`. The Rust
+        // `StringHashMap` boxes its own key on insert, so this `ZBox` is only
+        // for the `to_source` call below.
+        let key = bun_core::ZBox::from_bytes(path);
 
-        let source = match File::to_source(&key, Default::default()) {
+        // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
+        // cyclebreak; `bun_sys` cannot name `Source`).
+        let source = match bun_logger::to_source(&key, Default::default()) {
             Ok(s) => s,
             Err(err) => {
-                let _ = self.map.remove(key.as_bytes());
                 drop(key);
                 return GetResult::ReadErr(err.into());
             }
@@ -161,24 +171,23 @@ impl WorkspacePackageJSONCache {
         }
 
         let json_bump = bun_alloc::Arena::new();
-        let json_result = parse_package_json(&source, log, &json_bump, opts.guess_indentation);
-
-        let parsed = match json_result {
+        let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
-                let _ = self.map.remove(key.as_bytes());
-                // TODO(port): bun.handleErrorReturnTrace(err, @errorReturnTrace()) — no Rust equivalent
-                return GetResult::ParseErr(err.into());
+                // Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())` — no Rust equivalent.
+                return GetResult::ParseErr(err);
             }
         };
 
-        *entry.value_ptr = MapEntry {
-            root: parsed.root.deep_clone(),
+        let value = MapEntry {
+            root: bun_core::handle_oom(parsed.root.deep_clone()),
             source,
             indentation: parsed.indentation,
         };
 
-        *entry.key_ptr = Box::<[u8]>::from(path);
+        let entry = bun_core::handle_oom(self.map.get_or_put(path));
+        debug_assert!(!entry.found_existing);
+        *entry.value_ptr = value;
 
         GetResult::Entry(entry.value_ptr)
     }
@@ -205,9 +214,9 @@ impl WorkspacePackageJSONCache {
             &buf[..text.len()]
         };
 
-        let entry = self.map.get_or_put(path);
-        if entry.found_existing {
-            return GetResult::Entry(entry.value_ptr);
+        // PORT NOTE: reshaped for borrowck — see `get_with_path` above.
+        if self.map.contains_key(path) {
+            return GetResult::Entry(self.map.get_mut(path).unwrap());
         }
 
         if opts.init_reset_store {
@@ -215,23 +224,22 @@ impl WorkspacePackageJSONCache {
         }
 
         let json_bump = bun_alloc::Arena::new();
-        let json_result = parse_package_json(source, log, &json_bump, opts.guess_indentation);
-
-        let parsed = match json_result {
+        let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
-                let _ = self.map.remove(path);
-                return GetResult::ParseErr(err.into());
+                return GetResult::ParseErr(err);
             }
         };
 
-        *entry.value_ptr = MapEntry {
-            root: parsed.root.deep_clone(),
+        let value = MapEntry {
+            root: bun_core::handle_oom(parsed.root.deep_clone()),
             source: source.clone(),
             indentation: parsed.indentation,
         };
 
-        *entry.key_ptr = Box::<[u8]>::from(path);
+        let entry = bun_core::handle_oom(self.map.get_or_put(path));
+        debug_assert!(!entry.found_existing);
+        *entry.value_ptr = value;
 
         GetResult::Entry(entry.value_ptr)
     }
@@ -240,7 +248,6 @@ impl WorkspacePackageJSONCache {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/WorkspacePackageJSONCache.zig (161 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      get_or_put entry borrow overlaps self.map.remove on error path — Phase B must reshape (remove-then-reinsert or raw entry API); StringHashMap key ownership TBD (both fns now store owned Box<[u8]>); comptime GetJSONOptions demoted to runtime
+//   confidence: high
+//   notes:      get_or_put/remove borrow conflict reshaped to contains_key→insert-on-success (same net map state); StringHashMap owns its key (no key_ptr write needed); File::toSource MOVE_DOWN to bun_logger::to_source; Indentation unified via bun_js_printer re-export of bun_logger::js_printer::Indentation.
 // ──────────────────────────────────────────────────────────────────────────

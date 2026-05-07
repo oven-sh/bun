@@ -227,9 +227,15 @@ impl Bin {
                     let current_len = extern_strings.len();
                     let num_props: usize = props.len() * 2;
                     extern_strings
-                        .reserve_exact((current_len + num_props).saturating_sub(extern_strings.len()));
-                    // PORT NOTE: reshaped for borrowck — Zig wrote into the spare-capacity
-                    // region by raw pointer; here we push into the Vec.
+                        .try_reserve_exact((current_len + num_props).saturating_sub(extern_strings.len()))
+                        .map_err(|_| AllocError)?;
+                    // PORT NOTE: reshaped for borrowck — Zig bumped `items.len += num_props`
+                    // up-front and wrote into the spare-capacity region by raw pointer
+                    // (leaving partially-init slots on mid-loop bailout); here we push
+                    // incrementally so a bailout leaves only the slots actually written.
+                    // The returned `Bin` is `Tag::None` on bailout so the slots are never
+                    // indexed either way — strictly safer/less wasteful, no caller-visible
+                    // divergence.
                     let mut i: usize = 0;
                     for bin_prop in props {
                         let Some(key_str) = E::prop_key_str(bin_prop) else {
@@ -1120,9 +1126,9 @@ impl<'a> Linker<'a> {
         };
         let _close = scopeguard::guard((), |_| bunx_file.close());
 
-        let rel_target = path::relative_buf_z(
+        let rel_target = resolve_path::relative_buf_z(
             self.rel_buf,
-            path::dirname(abs_dest.as_bytes(), path::Style::Auto).unwrap_or(b""),
+            resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
             abs_target.as_bytes(),
         );
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b"..\\"));

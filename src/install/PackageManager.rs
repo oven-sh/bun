@@ -1241,6 +1241,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
+    let path_buf_len = path_buf.len();
     let mut cursor = &mut path_buf[..];
     write!(
         cursor,
@@ -1251,7 +1252,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         SEP_STR,
         FILE_NAME
     )?;
-    let written = path_buf.len() - cursor.len();
+    let written = path_buf_len - cursor.len();
     let npm_config_node_gyp = &path_buf[..written];
 
     let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
@@ -1591,7 +1592,13 @@ pub fn init(
                     )?;
                     if subcommand == Subcommand::Pm {
                         use crate::bun_json::ExprAccessors;
-                        if let Some(name) = json.get(b"name").and_then(|e| e.as_string()) {
+                        // UFCS: `Expr` has an inherent `as_string(&Bump)` that
+                        // shadows the `ExprAccessors::as_string(&self)` ext-trait
+                        // method under method resolution; call the trait directly.
+                        if let Some(name) = json
+                            .get(b"name")
+                            .and_then(|e| ExprAccessors::as_string(&e))
+                        {
                             root_package_json_name_at_time_of_init = Box::<[u8]>::from(name);
                         }
                     }
@@ -1779,7 +1786,7 @@ pub fn init(
         });
         let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(
-            install_ref,
+            &mut **install_ref,
             env,
             true,
             &[
@@ -1794,7 +1801,7 @@ pub fn init(
             Box::new(Api::BunInstall::default())
         });
         let npmrc_local = ZBox::from_bytes(b".npmrc");
-        ini::load_npmrc_config(install_ref, env, true, &[&*npmrc_local]);
+        ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
     }
     let cpu_count = bun_core::get_thread_count();
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.

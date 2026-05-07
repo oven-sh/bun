@@ -640,88 +640,81 @@ impl S3Client {
         drop(unsafe { Box::from_raw(this) });
         // `IntrusiveRc<S3Credentials>` deref happens via Drop — matches Zig `credentials.deref()`.
     }
-}
 
-// ── Static methods ────────────────────────────────────────────────────────
-// PORT NOTE: `#[bun_jsc::host_fn]` (Free kind) emits a shim that calls the
-// function by bare name, so these must live at module scope rather than
-// inside `impl S3Client { }` (where `Self::` would be required).
+    // ── Static methods ────────────────────────────────────────────────────
+    // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
+    // wrappers that call these as `S3Client::static_*(global, callframe)`,
+    // so they must be associated fns (no `#[bun_jsc::host_fn]` needed — the
+    // codegen layer already handles the `host_fn_result` wrapping).
 
-#[bun_jsc::host_fn]
-pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::write(global, callframe)
-}
+    pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::write(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::presign(global, callframe)
-}
+    pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::presign(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::exists(global, callframe)
-}
+    pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::exists(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::size(global, callframe)
-}
+    pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::size(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::unlink(global, callframe)
-}
+    pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::unlink(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<2>();
-    // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-    let vm = unsafe { &*global.bun_vm() };
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+    pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = unsafe { &*global.bun_vm() };
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
 
-    let Some(path) = PathLike::from_js(global, &mut args)? else {
-        return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
-    };
+        let Some(path) = PathLike::from_js(global, &mut args)? else {
+            return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
+        };
 
-    S3File::construct_internal_js(global, path, args.next_eat())
-}
+        S3File::construct_internal_js(global, path, args.next_eat())
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    S3File::stat(global, callframe)
-}
+    pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        S3File::stat(global, callframe)
+    }
 
-#[bun_jsc::host_fn]
-pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let args = callframe.arguments_as_array::<2>();
-    let object_keys = args[0];
-    let options = opt_js(args[1]);
+    pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_as_array::<2>();
+        let object_keys = args[0];
+        let options = opt_js(args[1]);
 
-    // get credentials from env
-    // SAFETY: `bun_vm()` returns the live per-global VM raw pointer (JS thread);
-    // `transpiler.env` is the process-singleton dotenv loader, set during init
-    // and live for the VM lifetime.
-    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
-        (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
-    });
+        // get credentials from env
+        // SAFETY: `bun_vm()` returns the live per-global VM raw pointer (JS thread);
+        // `transpiler.env` is the process-singleton dotenv loader, set during init
+        // and live for the VM lifetime.
+        let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+            (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
+        });
 
-    // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-    let blob = S3File::construct_s3_file_with_s3_credentials(
-        global,
-        PathLike::default(),
-        options,
-        existing_credentials,
-    )?;
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let blob = S3File::construct_s3_file_with_s3_credentials(
+            global,
+            PathLike::default(),
+            options,
+            existing_credentials,
+        )?;
 
-    // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-    let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-    // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`;
-    // Zig-semantics shared-mutable interior on the JS event-loop thread.
-    unsafe {
-        (*store_ptr)
-            .data
-            .as_s3_mut()
-            .list_objects(&*store_ptr, global, object_keys, options)
+        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
+        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+        // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`;
+        // Zig-semantics shared-mutable interior on the JS event-loop thread.
+        unsafe {
+            (*store_ptr)
+                .data
+                .as_s3_mut()
+                .list_objects(&*store_ptr, global, object_keys, options)
+        }
     }
 }
 

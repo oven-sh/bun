@@ -1283,7 +1283,7 @@ impl BunxCommand {
                         let out: &[u8] = destination.as_bytes();
                         let stored = fs.dirname_store.append_slice(out)?;
                         Run::run_binary(
-                            &ctx,
+                            ctx,
                             stored,
                             destination,
                             top_level_dir,

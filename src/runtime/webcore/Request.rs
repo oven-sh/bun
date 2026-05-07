@@ -458,10 +458,8 @@ impl Request {
         )))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_call]
-    pub extern "C" fn estimated_size(this: *mut Request) -> usize {
-        // SAFETY: called from JSC codegen with live m_ctx
-        unsafe { (*this).reported_estimated_size }
+    pub fn estimated_size(&self) -> usize {
+        self.reported_estimated_size
     }
 
     pub fn get_remote_socket_info(&mut self, global_object: &JSGlobalObject) -> Option<JSValue> {
@@ -806,10 +804,8 @@ impl Request {
         self.url.deref();
         self.url = BunString::empty();
 
-        if let Some(signal) = self.signal.take() {
-            // SAFETY: `self.signal` held a +1-ref'd live AbortSignal*.
-            unsafe { signal.as_ref().unref() };
-        }
+        // Zig: `signal.unref()` — AbortSignalRef::Drop unrefs the C++ handle.
+        self.signal = None;
         // internal_event_callback.deinit() → Drop on Strong inside; explicit take to match timing
         self.internal_event_callback = InternalJSEventCallback::default();
     }

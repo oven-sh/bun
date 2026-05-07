@@ -326,8 +326,12 @@ impl Response {
         self.url.to_utf8()
     }
 
+    /// Internal accessor: clone the response URL string.
+    /// PORT NOTE: Zig had both `getUrl()` (returns the string) and `getURL()`
+    /// (the JS getter). They collide under snake_case, so the JS getter keeps
+    /// `get_url` (codegen calls that name) and this becomes `url()`.
     #[inline]
-    pub fn get_url(&self) -> BunString {
+    pub fn url(&self) -> BunString {
         self.url.clone()
     }
 
@@ -351,10 +355,8 @@ impl Response {
         self.init.method
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn estimated_size(this: *mut Response) -> usize {
-        // SAFETY: called by JSC codegen with valid m_ctx pointer
-        unsafe { (*this).reported_estimated_size }
+    pub fn estimated_size(this: &Response) -> usize {
+        this.reported_estimated_size
     }
 
     #[inline]
@@ -578,9 +580,10 @@ impl Response {
         self.init.status_code >= 200 && self.init.status_code <= 299
     }
 
-    // PORT NOTE: Zig getUrl vs getURL collide under snake_case — JS getter renamed get_url_js
+    // PORT NOTE: Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
+    // above; codegen calls this exact name.
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_url_js(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         this.url.to_js(global_this)
     }
@@ -851,8 +854,7 @@ impl Response {
         }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn finalize(this: *mut Response) {
+    pub fn finalize(this: *mut Response) {
         // SAFETY: called by JSC codegen on mutator thread during lazy sweep
         unsafe {
             (*this).js_ref.finalize();
@@ -882,13 +884,13 @@ impl Response {
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
             if json_value.is_undefined() || json_value.is_symbol() || json_value.js_type() == bun_jsc::JSType::JSFunction {
-                let err = global_this.create_type_error_instance("Value is not JSON serializable");
+                let err = global_this.create_type_error_instance(format_args!("Value is not JSON serializable"));
                 return Err(global_this.throw_value(err));
             }
 
             // BigInt has a different error message to match Node.js exactly
             if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance("Do not know how to serialize a BigInt");
+                let err = global_this.create_type_error_instance(format_args!("Do not know how to serialize a BigInt"));
                 return Err(global_this.throw_value(err));
             }
 
@@ -1053,9 +1055,9 @@ impl Response {
                 let blob = unsafe { &mut *blob };
                 if blob.is_s3() {
                     if !arguments[1].is_empty_or_undefined_or_null() {
-                        return Err(global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(format_args!(
                             "new Response(s3File) do not support ResponseInit options",
-                        ));
+                        )));
                     }
                     let mut response = Response {
                         init: Init { status_code: 302, ..Default::default() },

@@ -1440,10 +1440,10 @@ impl NodeHTTPResponse {
 
     pub fn set_on_writable(
         &mut self,
+        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<bool> {
-        let this_value = self.get_this_value();
+    ) {
         if self.is_done() || value.is_undefined() {
             js::on_writable_set_cached(this_value, global_object, JSValue::UNDEFINED);
         } else {
@@ -1453,28 +1453,27 @@ impl NodeHTTPResponse {
                 value.with_async_context_if_needed(global_object),
             );
         }
-        Ok(true)
     }
 
-    pub fn get_on_writable(&self, _global: &JSGlobalObject) -> JSValue {
-        js::on_writable_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
+    pub fn get_on_writable(&mut self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        js::on_writable_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn get_on_abort(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_on_abort(&mut self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         if self.flags.contains(Flags::SOCKET_CLOSED) || self.flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
         }
-        js::on_aborted_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
+        js::on_aborted_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub fn set_on_abort(
         &mut self,
+        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<bool> {
-        let this_value = self.get_this_value();
+    ) {
         if self.flags.contains(Flags::SOCKET_CLOSED) || self.flags.contains(Flags::UPGRADED) {
-            return Ok(true);
+            return;
         }
 
         if self.is_requested_completed_or_ended() || value.is_undefined() {
@@ -1486,25 +1485,22 @@ impl NodeHTTPResponse {
                 value.with_async_context_if_needed(global_object),
             );
         }
-        Ok(true)
     }
 
-    pub fn get_on_data(&self, _global: &JSGlobalObject) -> JSValue {
-        js::on_data_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
+    pub fn get_on_data(&mut self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        js::on_data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn get_has_custom_on_data(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_has_custom_on_data(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::HAS_CUSTOM_ON_DATA))
     }
 
-    pub fn get_upgraded(&self, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_upgraded(&mut self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::UPGRADED))
     }
 
-    pub fn set_has_custom_on_data(&mut self, _global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-        self.flags
-            .set(Flags::HAS_CUSTOM_ON_DATA, value.to_boolean());
-        Ok(true)
+    pub fn set_has_custom_on_data(&mut self, _global: &JSGlobalObject, value: JSValue) {
+        self.flags.set(Flags::HAS_CUSTOM_ON_DATA, value.to_boolean());
     }
 
     fn clear_on_data_callback(&mut self, this_value: JSValue, global_object: &JSGlobalObject) {
@@ -1527,10 +1523,10 @@ impl NodeHTTPResponse {
 
     pub fn set_on_data(
         &mut self,
+        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<bool> {
-        let this_value = self.get_this_value();
+    ) {
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.

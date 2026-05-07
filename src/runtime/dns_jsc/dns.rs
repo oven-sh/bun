@@ -13,7 +13,6 @@ use bun_jsc::{
 };
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::event_loop::EventLoop;
 use bun_aio::{self as Async, FilePoll, KeepAlive};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};

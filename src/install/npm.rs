@@ -14,7 +14,7 @@ use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverS
 use bun_str::{strings, MutableString};
 use bun_sys::{self, Fd, File};
 use bun_threading::ThreadPool;
-use bun_url::URL;
+use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
@@ -43,18 +43,17 @@ impl From<AllocError> for WhoamiError {
     }
 }
 
-// TODO(b2): body gated — bun_http::AsyncHTTP::init_sync / Redirect / ci surface drift
-
 pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let registry = &manager.options.scope;
+    let registry_url = registry.url.url();
 
     if !registry.user.is_empty() {
         let sep = strings::index_of_char(&registry.user, b':').unwrap();
         return Ok(registry.user[..sep as usize].to_vec());
     }
 
-    if !registry.url.username.is_empty() {
-        return Ok(registry.url.username.to_vec());
+    if !registry_url.username.is_empty() {
+        return Ok(registry_url.username.to_vec());
     }
 
     if registry.token.is_empty() {

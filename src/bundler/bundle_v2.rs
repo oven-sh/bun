@@ -26,8 +26,8 @@ pub use bv2_impl::{
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 pub use bv2_impl::{
-    BundleV2Result, CompletionStruct, CrossChunkImport, DependenciesScanner,
-    DependenciesScannerResult,
+    singleton, BuildResult, BundleV2Result, CompletionStruct, CrossChunkImport,
+    DependenciesScanner, DependenciesScannerResult,
 };
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;

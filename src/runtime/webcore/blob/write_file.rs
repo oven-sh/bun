@@ -188,7 +188,7 @@ impl WriteFile {
     pub fn on_io_error(&mut self, err: sys::Error) {
         bloblog!("WriteFile.onIOError()");
         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-        self.system_error = Some(err.to_system_error());
+        self.system_error = Some(jsc::SysErrorJsc::to_system_error(&err));
         self.task = ThreadPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
         WorkPool::schedule(&mut self.task);
     }
@@ -316,7 +316,7 @@ impl WriteFile {
                         return false;
                     } else {
                         self.errno = Some(bun_core::errno_to_zig_err(err.get_errno() as i32));
-                        self.system_error = Some(err.to_system_error());
+                        self.system_error = Some(jsc::SysErrorJsc::to_system_error(err));
                         return false;
                     }
                 }

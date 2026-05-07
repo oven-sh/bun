@@ -351,7 +351,6 @@ impl JestPrettyFormat {
 // For detecting circular references
 pub mod visited {
     use super::*;
-    use bun_collections::pool::ObjectPool;
 
     // PORT NOTE: JSValue keys live on heap; safe because every visited value is also
     // on the stack frame during format() — conservative scan still sees them. Mirrors Zig 1:1.
@@ -391,8 +390,11 @@ pub mod visited {
         }
     }
 
-    // TODO(port): ObjectPool with init fn, threadsafe=true, capacity=16.
-    pub type Pool = ObjectPool<Map, true, 16>;
+    // Mirrors Zig's `ObjectPool(Map, Map.init, true, 16)` — thread-local free
+    // list, capped at 16 nodes. `object_pool!` wires the per-monomorphization
+    // storage; without it `ObjectPool<Map, true, 16>` defaults to
+    // `UnwiredStorage` which panics on first `get_node()`.
+    bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
     pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
 }
 

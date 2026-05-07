@@ -41,7 +41,7 @@ pub struct SourceLocation {
 pub struct TopExceptionScope {
     bytes: [u8; SIZE],
     /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
-    #[cfg(feature = "ci_assert")]
+    #[cfg(any(debug_assertions, feature = "asan"))]
     location: *const u8,
 }
 
@@ -91,7 +91,7 @@ impl TopExceptionScope {
         // `init_in_place` sees a valid `&mut Self` at its final address.
         let this = storage.write(Self {
             bytes: [0u8; SIZE],
-            #[cfg(feature = "ci_assert")]
+            #[cfg(any(debug_assertions, feature = "asan"))]
             location: core::ptr::null(),
         });
         this.init_in_place(
@@ -125,7 +125,7 @@ impl TopExceptionScope {
             );
         }
 
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         {
             self.location = core::ptr::from_ref::<u8>(&self.bytes[0]);
         }
@@ -137,7 +137,7 @@ impl TopExceptionScope {
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { TopExceptionScope__assertNoException(&raw mut self.bytes) };
@@ -151,14 +151,14 @@ impl TopExceptionScope {
     /// Get the thrown exception if it exists (like scope.exception() in C++)
     // TODO(port): JSC heap cell — NonNull instead of &Exception to avoid implying a Rust borrow lifetime.
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { NonNull::new(TopExceptionScope__pureException(&raw mut self.bytes)) }
     }
 
     pub fn clear_exception(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { TopExceptionScope__clearException(&raw mut self.bytes) }
@@ -167,7 +167,7 @@ impl TopExceptionScope {
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     // TODO(port): JSC heap cell — NonNull instead of &Exception to avoid implying a Rust borrow lifetime.
     pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { NonNull::new(TopExceptionScope__exceptionIncludingTraps(&raw mut self.bytes)) }
@@ -184,14 +184,14 @@ impl TopExceptionScope {
 
     /// Asserts there has not been any exception thrown.
     pub fn assert_no_exception(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         {
             if let Some(e) = self.exception() {
                 // TerminationException can be raised at any safepoint (worker
                 // terminate(), worker process.exit()) regardless of what the host
                 // function returned, so it's never a return-value/exception
                 // mismatch — let the caller's safepoint observe it.
-                if JSValue::from_cell(e).is_termination_exception() {
+                if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
                     return;
                 }
                 self.assertion_failure(e);
@@ -203,7 +203,7 @@ impl TopExceptionScope {
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
     pub fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         {
             if should_have_exception {
                 debug_assert!(self.has_exception(), "Expected an exception to be thrown");
@@ -211,7 +211,7 @@ impl TopExceptionScope {
                 self.assert_no_exception();
             }
         }
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         let _ = should_have_exception;
     }
 
@@ -224,7 +224,7 @@ impl TopExceptionScope {
             if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
                 return Err(JsError::Terminated);
             }
-            #[cfg(feature = "ci_assert")]
+            #[cfg(any(debug_assertions, feature = "asan"))]
             self.assertion_failure(e);
             // Unconditionally panicking here is worse for our users.
             let _ = e;
@@ -241,7 +241,7 @@ impl TopExceptionScope {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract.
         let this = unsafe { &mut *this };
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
@@ -251,7 +251,11 @@ impl TopExceptionScope {
 
 /// Limited subset of TopExceptionScope functionality, for when you have a different way to detect
 /// exceptions and you only need a TopExceptionScope to prove that you are checking exceptions correctly.
-/// Gated by `cfg(feature = "ci_assert")`.
+/// Gated by `cfg(any(debug_assertions, feature = "asan"))` — Zig's `Environment.ci_assert` is
+/// `isDebug || isTest || enable_asan || (ReleaseSafe && is_canary)`; the bun_jsc crate has no
+/// `ci_assert` Cargo feature, so gate on the same predicate this file already uses for `SIZE`.
+/// Without this, debug builds left the scope as a no-op while `debug_assert!` callers (e.g.
+/// `bun_string_jsc::from_js`) still fired, panicking on every legitimate stringify exception.
 ///
 /// ```ignore
 /// // these do nothing when ci_assert is off
@@ -266,9 +270,9 @@ impl TopExceptionScope {
 /// return if value.is_empty() { Err(JsError::Thrown) } else { Ok(value) };
 /// ```
 pub struct ExceptionValidationScope {
-    #[cfg(feature = "ci_assert")]
+    #[cfg(any(debug_assertions, feature = "asan"))]
     scope: TopExceptionScope,
-    #[cfg(not(feature = "ci_assert"))]
+    #[cfg(not(any(debug_assertions, feature = "asan")))]
     scope: (),
 }
 
@@ -297,7 +301,7 @@ impl ExceptionValidationScope {
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> &'a mut Self {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         {
             // Reinterpret the outer storage as storage for the inner
             // `TopExceptionScope` — the wrapper has no other fields under
@@ -317,7 +321,7 @@ impl ExceptionValidationScope {
             // SAFETY: `init` fully initialized the sole field.
             unsafe { storage.assume_init_mut() }
         }
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         {
             let _ = global;
             storage.write(Self { scope: () })
@@ -325,15 +329,15 @@ impl ExceptionValidationScope {
     }
 
     pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         self.scope.init_in_place(global, src);
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         let _ = (global, src);
     }
 
     /// Asserts there has not been any exception thrown.
     pub fn assert_no_exception(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         self.scope.assert_no_exception();
     }
 
@@ -341,9 +345,9 @@ impl ExceptionValidationScope {
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
     pub fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         self.scope.assert_exception_presence_matches(should_have_exception);
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         let _ = should_have_exception;
     }
 
@@ -352,26 +356,26 @@ impl ExceptionValidationScope {
     /// If non-termination exception, assertion failure.
     // TODO(port): narrow error set — Zig is `bun.JSTerminated!void`.
     pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         return self.scope.assert_no_exception_except_termination();
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         Ok(())
     }
 
     /// Inconveniently named on purpose; this is only needed for some weird edge cases
     pub fn has_exception_or_false_when_assertions_are_disabled(&mut self) -> bool {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         return self.scope.has_exception();
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         false
     }
 
     /// # Safety
     /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
     pub unsafe fn destroy(this: *mut Self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(any(debug_assertions, feature = "asan"))]
         unsafe { TopExceptionScope::destroy(&mut (*this).scope) };
-        #[cfg(not(feature = "ci_assert"))]
+        #[cfg(not(any(debug_assertions, feature = "asan")))]
         let _ = this;
     }
 }

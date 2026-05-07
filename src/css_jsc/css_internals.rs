@@ -117,10 +117,15 @@ pub fn testing_impl(
     let browser_options_arg = arguments.next_eat();
 
     let mut log = Log::init();
+    // SAFETY: `ParserOptions<'static>` stores the log as `NonNull<Log>` and only
+    // writes through it during parsing; `log` outlives the parsed stylesheet and
+    // is not aliased for the duration. Erasing to `'static` matches the
+    // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
+    let log_ref: &'static mut Log = unsafe { &mut *(&mut log as *mut Log) };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
-        let mut opts = ParserOptions::default(Some(&mut log));
+        let mut opts = ParserOptions::default(Some(log_ref));
         // if (test_kind == .prefix) break :parser_options opts;
 
         match test_category {

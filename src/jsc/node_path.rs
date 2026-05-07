@@ -130,15 +130,13 @@ impl PathLike {
     /// `ArgumentsSlice::protect_eat`. Leaves `self` in the default state so
     /// the subsequent `Drop` is a no-op.
     pub fn deinit_and_unprotect(&mut self) {
-        match core::mem::take(self) {
-            Self::String(_) => {}
-            Self::Buffer(b) => b.buffer.value.unprotect(),
-            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.deinit(),
-            Self::EncodedSlice(_s) => {
-                // `ZigStringSlice` releases in its own Drop when `_s` goes out
-                // of scope.
-            }
+        if let Self::Buffer(b) = self {
+            b.buffer.value.unprotect();
         }
+        // Reassigning runs `Drop` on the old value, which releases
+        // `SliceWithUnderlyingString` / `ThreadsafeString` / `EncodedSlice`
+        // exactly as Zig's `deinitAndUnprotect` does for those arms.
+        *self = Self::default();
     }
 }
 

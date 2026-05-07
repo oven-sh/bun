@@ -318,12 +318,6 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-// ─── gated: cwd helpers (bun_fs::FileSystem not yet a crate) ──────────────
-// TODO(b2-blocked): un-gate once bun_fs::FileSystem + strings::convert_utf8_to_utf16_in_buffer land.
-
-mod _cwd {
-use super::*;
-
 pub fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     let cwd = match get_cwd_t(buf) {
         Ok(r) => r,
@@ -420,9 +414,6 @@ pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
 // Alias for naming consistency.
 pub use get_cwd_u8 as get_cwd;
-} // mod _cwd
-#[allow(unused_imports)]
-pub use _cwd::{get_cwd, get_cwd_t, get_cwd_u8, get_cwd_u16, posix_cwd_t};
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309

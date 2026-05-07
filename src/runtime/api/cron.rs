@@ -330,8 +330,10 @@ impl CronRegisterJob {
         }
     }
 
-    fn finish(this: *mut Self) {
-        // SAFETY: caller holds the unique Box<Self>; we consume it at the end.
+    /// Consumes and frees `this` (`Box::from_raw`).
+    unsafe fn finish(this: *mut Self) {
+        // SAFETY: caller holds the unique Box<Self>; consumed below. Local
+        // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
         this_ref.state = if this_ref.err_msg.is_some() {
             RegisterState::Failed
@@ -342,7 +344,6 @@ impl CronRegisterJob {
         // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
         let ev = unsafe { &mut *vm_mut().event_loop() };
         ev.enter();
-        // TODO(port): RAII guard for ev.exit() on early return
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 this_ref.global,
@@ -353,25 +354,22 @@ impl CronRegisterJob {
         } else {
             let _ = this_ref.promise.resolve(this_ref.global, JSValue::UNDEFINED);
         }
-        ev.exit();
-        // deinit: drop the Box (fields drop via Drop)
+        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
+        // INSIDE the enter/exit scope so Process detach/deref and reader
+        // teardown observe the entered event-loop state.
         // SAFETY: `this` was created via Box::into_raw in cron_register.
         unsafe { drop(Box::from_raw(this)) };
+        ev.exit();
     }
 
-    // Note: `&mut self` methods that call `finish()` actually pass `self as *mut Self`.
-    // PORT NOTE: reshaped — Zig's `finish()` destroys self; in Rust we route through
-    // a raw-ptr `finish` and never touch `self` afterward. Callers below treat
-    // `self.finish()` as terminal.
-    // TODO(port): consider a state-machine refactor in Phase B.
-
-    fn spawn_cmd(
-        &mut self,
+    /// May free `this` (via spawn → synchronous exit → finish, or error path).
+    unsafe fn spawn_cmd(
+        this: *mut Self,
         argv: &mut [*const c_char],
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
-        spawn_cmd_generic(self, argv, stdin_opt, stdout_opt);
+        unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
     // -- Linux --

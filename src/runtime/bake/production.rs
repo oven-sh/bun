@@ -670,9 +670,7 @@ pub fn build_with_vm(
                 client_transpiler: unsafe { NonNull::new_unchecked(client_ptr) },
                 // SAFETY: stack-owned; see above.
                 ssr_transpiler: unsafe { NonNull::new_unchecked(ssr_ptr) },
-                // `jsc::Plugin` is `c_void`; bundler's `JSBundlerPlugin` is an
-                // opaque `#[repr(C)]` ZST — both name the same C++ BunPlugin*.
-                plugins: options.bundler_options.plugin.map(|p| p.cast()),
+                plugins: options.bundler_options.plugin,
             },
             &options.arena,
             Some(NonNull::from(&mut any_loop)),

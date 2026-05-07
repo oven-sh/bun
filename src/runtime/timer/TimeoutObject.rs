@@ -192,9 +192,12 @@ impl TimeoutObject {
         js_value
     }
 
-    /// Called by `IntrusiveRc` when the refcount reaches zero.
+    /// Called via [`RefCounted::destructor`] when the refcount reaches zero.
     /// Not `impl Drop`: this fn frees the backing `Box` itself (Zig: `bun.destroy(self)`).
-    fn deinit(this: *mut Self) {
+    ///
+    /// # Safety
+    /// `this` must be the unique owner (refcount == 0) of a `Box::into_raw`'d `Self`.
+    unsafe fn deinit(this: *mut Self) {
         // SAFETY: `this` was allocated via `Box::into_raw` in `init` and the refcount
         // has reached zero, so we hold the unique reference.
         unsafe {

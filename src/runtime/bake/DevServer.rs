@@ -6081,7 +6081,7 @@ impl DevServer {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> Result<(), bun_core::Error> {
-        self.bundler_options.plugin = plugins.and_then(|p| ::core::ptr::NonNull::new(p as *mut _));
+        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())

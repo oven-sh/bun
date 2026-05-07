@@ -1189,7 +1189,7 @@ pub struct SpawnArgs<'a> {
 }
 
 pub struct EnvMapIter<'a> {
-    pub map: &'a DotEnvMap,
+    pub map: &'a bun_dotenv::Map,
     pub iter: core::iter::Zip<
         core::slice::Iter<'a, Box<[u8]>>,
         core::slice::Iter<'a, bun_dotenv::HashTableValue>,
@@ -1232,7 +1232,7 @@ impl core::fmt::Display for EnvMapIterValue {
 }
 
 impl<'a> EnvMapIter<'a> {
-    pub fn init(map: &'a DotEnvMap) -> EnvMapIter<'a> {
+    pub fn init(map: &'a bun_dotenv::Map) -> EnvMapIter<'a> {
         EnvMapIter {
             map,
             iter: map.iter(),

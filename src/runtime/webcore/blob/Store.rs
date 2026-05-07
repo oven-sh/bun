@@ -560,9 +560,9 @@ impl BytesExt for Bytes {
     fn init_mmap(slice: &'static mut [u8]) -> Bytes {
         // Stateless allocator vtable whose `free` munmap's. Same pattern as
         // `LinuxMemFdAllocator` but without the stateful fd. `alloc` returns
-        // `None`: blob stores never grow.
-        unsafe fn alloc(_: *mut core::ffi::c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> Option<core::ptr::NonNull<u8>> {
-            None
+        // null: blob stores never grow.
+        unsafe fn alloc(_: *mut core::ffi::c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> *mut u8 {
+            core::ptr::null_mut()
         }
         unsafe fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
@@ -571,8 +571,8 @@ impl BytesExt for Bytes {
         }
         static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
             alloc,
-            resize: bun_alloc::no_resize,
-            remap: bun_alloc::no_remap,
+            resize: bun_alloc::AllocatorVTable::NO_RESIZE,
+            remap: bun_alloc::AllocatorVTable::NO_REMAP,
             free,
         };
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a

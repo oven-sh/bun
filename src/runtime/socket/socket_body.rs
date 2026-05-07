@@ -511,6 +511,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // borrow held across the body) and derefs with write provenance on Drop.
         // SAFETY: `self` is this fn's `&mut self`; live until guard drop.
         let _guard = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
+        // Stash the raw `*mut Self` for the uSockets ext slot before any
+        // field borrow (NLL drops the `&mut` reborrow at the `;`).
+        let self_ptr: *mut Self = self;
 
         // SAFETY: short-lived read; see `get_handlers` contract.
         let vm = unsafe { (*self.get_handlers()).vm };

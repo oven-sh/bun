@@ -163,7 +163,8 @@ pub mod time {
     // `std.time.{nanoTimestamp,milliTimestamp,timestamp}` — full impls live in
     // `util::time`; re-export here so `bun_core::time::*` resolves uniformly.
     pub use crate::util::time::{
-        nano_timestamp, milli_timestamp, timestamp, MS_PER_DAY, NS_PER_US, S_PER_DAY, US_PER_MS,
+        nano_timestamp, milli_timestamp, timestamp, MS_PER_DAY, MS_PER_S, NS_PER_S, NS_PER_US,
+        S_PER_DAY, US_PER_MS, US_PER_S,
     };
 
     #[derive(Clone, Copy)]

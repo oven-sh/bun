@@ -2506,7 +2506,7 @@ pub mod IPCHandlers {
             // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
             // held across the decode loop or send_queue borrows below.
             unsafe { (*loop_).enter() };
-            // TODO(port): errdefer — scopeguard for loop.exit()
+            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
 
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(_) => {
@@ -2543,7 +2543,6 @@ pub mod IPCHandlers {
                             Ok(r) => r,
                             Err(IPCDecodeError::NotEnoughBytes) => {
                                 log!("hit NotEnoughBytes3");
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(
@@ -2552,13 +2551,11 @@ pub mod IPCHandlers {
                                 | IPCDecodeError::JSTerminated,
                             ) => {
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
                                 Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                         };
@@ -2615,7 +2612,6 @@ pub mod IPCHandlers {
                                 debug_assert!(slice_len <= u32::MAX as usize);
                                 adv_buf.len = u32::try_from(slice_len).unwrap();
                                 log!("hit NotEnoughBytes3");
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(
@@ -2624,13 +2620,11 @@ pub mod IPCHandlers {
                                 | IPCDecodeError::JSTerminated,
                             ) => {
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
                                 Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                unsafe { (*loop_).exit() };
                                 return;
                             }
                         };
@@ -2647,14 +2641,11 @@ pub mod IPCHandlers {
                                 unreachable!()
                             };
                             adv_buf.len = 0;
-                            unsafe { (*loop_).exit() };
                             return;
                         }
                     }
                 }
             }
-            #[allow(unreachable_code)]
-            unsafe { (*loop_).exit() };
         }
 
         pub fn on_close(send_queue: &mut SendQueue) {

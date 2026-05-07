@@ -1,8 +1,6 @@
 //! This is just a wrapper around `bun.AllocationScope` that ensures that it is
 //! zero-cost in release builds.
 
-// `bun_alloc::AllocationScope` is a CYCLEBREAK unit stub; the real implementation was
-// hoisted into this crate at `crate::allocators::allocation_scope`. Import that one.
 use crate::allocators::allocation_scope::AllocationScope;
 use bun_alloc::StdAllocator;
 

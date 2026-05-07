@@ -2728,10 +2728,10 @@ impl<'a> BundleV2<'a> {
         // starts depending on it.
         if this.transpiler.options.output_format == options::Format::InternalBakeDev {
             this.transpiler.options.tree_shaking = false;
-            // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
+            this.transpiler.resolver.opts.tree_shaking = false;
         } else {
             this.transpiler.options.tree_shaking = true;
-            // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
+            this.transpiler.resolver.opts.tree_shaking = true;
         }
 
         // BACKREF: `LinkerContext<'a>.resolver` is `*mut Resolver<'a>`; the
@@ -3861,17 +3861,36 @@ impl<'a> BundleV2<'a> {
                     this.graph.estimated_file_loader_count += 1;
                 }
                 this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] = code.loader;
-                // PERF(port): Zig aliased the same `source_code` slice three ways.
-                // Own the buffer in `free_list` (append-only until deinit) and
-                // hand out a stable borrow — `Box<[u8]>` heap address never moves.
-                this.free_list.push(code.source_code);
-                // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
-                // (after all ParseTasks complete); the boxed slice is heap-stable.
-                let source_code: &'static [u8] = unsafe {
+                // Ownership of `code.source_code` diverges on
+                // `should_copy_for_bundling` (spec bundle_v2.zig:1970):
+                // copy-for-bundling buffers are owned by the input-file slot
+                // (Zig: `InputFile.allocator` column → `ExternalFreeFunctionAllocator`)
+                // so they outlive `free_list` teardown for
+                // `dev.put_or_overwrite_asset`. The Rust port dropped that
+                // column, so own them in `source.contents` as `Cow::Owned`
+                // (same lifetime as the Zig per-slot allocator). Non-copy
+                // buffers go to `free_list`.
+                let source_code: &'static [u8] = if should_copy_for_bundling {
+                    let contents = &mut this.graph.input_files.items_source_mut()
+                        [load.source_index.get() as usize]
+                        .contents;
+                    *contents = std::borrow::Cow::Owned(code.source_code.into());
+                    // SAFETY: `Cow::Owned` heap data is address-stable across
+                    // SoA column moves; `input_files` outlives all ParseTasks.
+                    unsafe { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) }
+                } else {
+                    this.free_list.push(code.source_code);
+                    // SAFETY: `free_list` is append-only until
+                    // `deinit_without_freeing_arena` (after all ParseTasks
+                    // complete); the boxed slice is heap-stable.
                     let last = this.free_list.last().unwrap();
-                    core::slice::from_raw_parts(last.as_ptr(), last.len())
+                    let s: &'static [u8] =
+                        unsafe { core::slice::from_raw_parts(last.as_ptr(), last.len()) };
+                    this.graph.input_files.items_source_mut()
+                        [load.source_index.get() as usize]
+                        .contents = std::borrow::Cow::Borrowed(s);
+                    s
                 };
-                this.graph.input_files.items_source_mut()[load.source_index.get() as usize].contents = std::borrow::Cow::Borrowed(source_code);
                 this.graph.input_files.items_flags_mut()[load.source_index.get() as usize].insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                 // SAFETY: `parse_task` was set in `Load::init` and is live for the load.
                 let parse_task = unsafe { &mut *load.parse_task };
@@ -5861,8 +5880,7 @@ impl<'a> BundleV2<'a> {
         let mut process_log = true;
 
         if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
-            // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization` —
-            // body is gated (reads `Graph::ast` SoA columns not yet exposed).
+            barrel_imports::apply_barrel_optimization(this, parse_result);
             resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
             if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                 process_log = false;
@@ -6560,9 +6578,13 @@ impl CrossChunkImport {
             }
             import_items.slice_mut().sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
 
+            // Zig value-copies the BabyList header so both `result[_]` and the
+            // map slot share the backing buffer; `rename_symbols_in_chunk`
+            // re-reads `imports_from_other_chunks.values()` afterwards. Taking
+            // would leave the map slot empty and break that consumer.
             list.push(CrossChunkImport {
                 chunk_index,
-                sorted_import_items: core::mem::take(import_items),
+                sorted_import_items: import_items.shallow_copy(),
             });
         }
 

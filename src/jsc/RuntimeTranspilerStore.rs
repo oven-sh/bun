@@ -611,7 +611,7 @@ impl TranspilerJob {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = logger::Log::init();
-                    let _ = (*src).clone_to_with_recycled(&mut *dst, true);
+                    bun_core::handle_oom((*src).clone_to_with_recycled(&mut *dst, true));
                 }
             },
         );

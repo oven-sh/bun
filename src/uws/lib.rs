@@ -1720,15 +1720,19 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
     /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
+    ///
+    /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
+    /// `bun_uws` sits below `bun_sys` in the dep graph; callers extract
+    /// `.native()` at the boundary.
     #[cfg(not(windows))]
-    pub fn write_fd(&self, data: &[u8], file_descriptor: bun_sys::Fd) -> i32 {
+    pub fn write_fd(&self, data: &[u8], file_descriptor: core::ffi::c_int) -> i32 {
         match self.socket {
             InternalSocket::Connected(s) => {
                 let len = core::cmp::min(data.len(), i32::MAX as usize) as i32;
                 // SAFETY: `s` is a live us_socket_t handle; `data` is a valid
-                // slice for the call; `file_descriptor.native()` is a raw fd
-                // copied into the cmsg buffer by usockets.
-                unsafe { sock_c::us_socket_ipc_write_fd(s, data.as_ptr(), len, file_descriptor.native()) }
+                // slice for the call; `file_descriptor` is a raw fd copied
+                // into the cmsg buffer by usockets.
+                unsafe { sock_c::us_socket_ipc_write_fd(s, data.as_ptr(), len, file_descriptor) }
             }
             // Mirror Zig `socket.writeFd`: duplex/pipe fall back to a plain
             // write (the fd is silently dropped).

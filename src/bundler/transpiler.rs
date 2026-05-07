@@ -1109,6 +1109,7 @@ pub(crate) fn resolver_bundle_options_subset(
         public_path: src.public_path.clone(),
         compile: src.compile,
         supports_multiple_outputs: src.supports_multiple_outputs,
+        tree_shaking: src.tree_shaking,
     }
 }
 

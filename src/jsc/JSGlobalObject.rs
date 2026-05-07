@@ -513,14 +513,16 @@ impl JSGlobalObject {
         self.throw_value(self.create_not_enough_arguments(name_, expected, got))
     }
 
-    pub fn reload(&self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async();
+        // C++ `JSC__JSGlobalObject__reload` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
+        // wrapper (`bun.cpp.JSC__JSGlobalObject__reload`) returns `error{JSError}!void` by
+        // checking for a pending exception after the raw call. Mirror that contract here so
+        // any JS exception thrown during module reload is surfaced to the caller instead of
+        // left pending.
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSC__JSGlobalObject__reload(self) };
-        // TODO(port): bun.cpp.JSC__JSGlobalObject__reload was `try` — verify it can fail.
-        Ok(())
+        crate::from_js_host_call_generic(self, || unsafe { JSC__JSGlobalObject__reload(self) })
     }
 
     pub fn run_on_load_plugins(

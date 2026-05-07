@@ -329,7 +329,8 @@ use bun_collections::BabyList;
 
 /// Tag bits of `Ref` (Zig: anonymous `enum(u2)` field).
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum RefTag {
     Invalid = 0,
     AllocatedName = 1,
@@ -354,6 +355,14 @@ impl Ref {
 
     /// Represents a null state without using an extra bit.
     pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
+
+    /// General constructor exposing all three packed fields. Prefer `init` for
+    /// the common source-contents/allocated-name case; this exists for callers
+    /// that need to set `tag` explicitly (e.g. `RefTag::Symbol`).
+    #[inline]
+    pub const fn new(inner_index: RefInt, source_index: RefInt, tag: RefTag) -> Ref {
+        Self::pack(inner_index, tag, source_index)
+    }
 
     #[inline]
     const fn pack(inner: u32, tag: RefTag, src: u32) -> Ref {
@@ -425,12 +434,8 @@ impl Ref {
     }
     #[inline]
     pub fn hash64(self) -> u64 {
-        // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` (wyhash of the 8 bytes).
-        // TODO(port): route through bun_wyhash once that crate exposes a public
-        // `hash(seed, &[u8])`. The packed u64 is already collision-free per
-        // (source, inner, tag), so identity is acceptable for Phase A HashMap use;
-        // only on-disk hash stability needs the wyhash mixing.
-        self.0
+        // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` — wyhash of the 8 bytes.
+        bun_wyhash::hash(&self.0.to_ne_bytes())
     }
     #[inline]
     pub fn hash(self) -> u32 {
@@ -453,15 +458,21 @@ impl Default for Ref {
     }
 }
 
-impl fmt::Debug for Ref {
+impl fmt::Display for Ref {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Ref[inner={}, src={}, .{:?}]",
+            "Ref[inner={}, src={}, .{}]",
             self.inner_index(),
             self.source_index(),
-            self.tag()
+            <&'static str>::from(self.tag()),
         )
+    }
+}
+
+impl fmt::Debug for Ref {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 

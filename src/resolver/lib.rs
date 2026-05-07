@@ -3284,6 +3284,7 @@ pub mod options {
         pub public_path: Box<[u8]>,
         pub compile: bool,
         pub supports_multiple_outputs: bool,
+        pub tree_shaking: bool,
     }
 
     impl Default for BundleOptions {
@@ -3321,6 +3322,7 @@ pub mod options {
                 public_path: Box::default(),
                 compile: false,
                 supports_multiple_outputs: true,
+                tree_shaking: false,
                 production: false,
                 force_node_env: ForceNodeEnv::default(),
             }

@@ -1228,15 +1228,20 @@ impl DirTask {
     ///
     /// # Safety
     /// `this` is a live DirTask (root or heap child); the calling worker
-    /// thread has exclusive access to it.
+    /// thread has exclusive access to its non-atomic fields.
     unsafe fn run_from_thread_pool_impl(this: *mut DirTask) {
+        // Stay on the raw pointer throughout: `remove_entry` re-derives
+        // `&mut *this` internally (via `verbose_deleted` / `remove_entry_dir`)
+        // and schedules child DirTasks that concurrently touch our atomics, so
+        // holding a long-lived `&mut *this` across that call would alias under
+        // Stacked Borrows.
         // SAFETY: caller contract.
-        let me = unsafe { &mut *this };
-        let tm_ptr: *mut ShellRmTask = me.task_manager;
+        let tm_ptr: *mut ShellRmTask = unsafe { (*this).task_manager };
 
         // Root, get cwd path on Windows.
         #[cfg(windows)]
-        if me.parent_task.is_null() {
+        // SAFETY: caller contract.
+        if unsafe { (*this).parent_task }.is_null() {
             let mut buf = bun_paths::PathBuffer::uninit();
             // SAFETY: `tm_ptr` is live until pending_main_callbacks hits 0.
             let cwd = unsafe { (*tm_ptr).cwd };
@@ -1263,12 +1268,17 @@ impl DirTask {
         // cannot pop this borrow's tag under Stacked Borrows.
         let tm = unsafe { &*tm_ptr };
 
-        me.is_absolute = Platform::AUTO.is_absolute(me.path.as_bytes());
-        if let Err(err) = tm.remove_entry(this, me.is_absolute) {
+        // SAFETY: caller contract; exclusive access to `path` / `is_absolute`.
+        let is_absolute = Platform::AUTO.is_absolute(unsafe { (*this).path.as_bytes() });
+        // SAFETY: as above.
+        unsafe { (*this).is_absolute = is_absolute };
+        if let Err(err) = tm.remove_entry(this, is_absolute) {
             tm.handle_err(err);
         }
 
-        if !me.deleting_after_waiting_for_children.load(Ordering::SeqCst) {
+        // SAFETY: caller contract; atomic load is fine even if children are
+        // already running.
+        if !unsafe { (*this).deleting_after_waiting_for_children.load(Ordering::SeqCst) } {
             // SAFETY: caller contract.
             unsafe { Self::post_run(this) };
         }

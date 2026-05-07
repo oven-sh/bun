@@ -226,6 +226,69 @@ impl BuiltinIO {
         }
     }
 
+    /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
+    /// performed by the caller. Exists so builtins whose payload lives in
+    /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
+    /// slice without an intermediate heap clone.
+    ///
+    /// Spec: Builtin.zig `writeNoIO` (match arm body).
+    ///
+    /// # Safety
+    /// `shell` must point to the live `ShellExecEnv` owning this builtin
+    /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
+    /// arm.
+    pub unsafe fn write_no_io_to(
+        &mut self,
+        shell: *mut crate::shell::interpreter::ShellExecEnv,
+        io_kind: IoKind,
+        buf: &[u8],
+    ) -> bun_sys::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        match self {
+            BuiltinIO::Fd(_) => panic!(
+                "write_no_io called on fd output; caller must check needs_io()"
+            ),
+            BuiltinIO::Buf => {
+                // PORT NOTE: Zig appended to a local `io.buf` and flushed in
+                // `done()`. The NodeId port writes straight to the shell env's
+                // captured buffer (same observable result; one less copy).
+                // SAFETY: caller contract — shell env outlives the Cmd node;
+                // single-threaded.
+                let captured = unsafe {
+                    match io_kind {
+                        IoKind::Stdout => (*shell).buffered_stdout(),
+                        _ => (*shell).buffered_stderr(),
+                    }
+                };
+                // SAFETY: `captured` points into a live `ShellExecEnv` Bufio.
+                bun_core::handle_oom(unsafe { (*captured).append_slice(buf) });
+                Ok(buf.len())
+            }
+            BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
+                // Spec: Builtin.zig writeNoIO .arraybuf — `len = buf.len` stays
+                // usize so `i + len > byte_len` is computed at usize width and
+                // cannot overflow. Mirror that here; only the stored cursor is u32.
+                let idx = *i as usize;
+                let total = arraybuf.array_buffer.byte_len as usize;
+                if idx >= total {
+                    return Err(bun_sys::Error::from_code(
+                        bun_sys::E::ENOSPC,
+                        bun_sys::Tag::write,
+                    ));
+                }
+                let len = buf.len();
+                let write_len = if idx + len > total { total - idx } else { len };
+                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                dst.copy_from_slice(&buf[..write_len]);
+                *i = i.saturating_add(write_len as u32);
+                Ok(write_len)
+            }
+            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
+        }
+    }
+
     /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
     /// `on_io_writer_chunk` to fire when the chunk completes. Spec: Builtin.zig
     /// `BuiltinIO.Output.enqueue` — delegates to `fd.writer.enqueue` passing
@@ -844,8 +907,7 @@ impl Builtin {
                         bun_sys::Tag::write,
                     ));
                 }
-                let len = buf.len();
-                let write_len = if idx + len > total { total - idx } else { len };
+                let write_len = (total - idx).min(buf.len());
                 let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
                 dst.copy_from_slice(&buf[..write_len]);
                 *i = i.saturating_add(write_len as u32);

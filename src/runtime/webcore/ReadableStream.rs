@@ -924,8 +924,8 @@ impl<C: SourceContext> NewSource<C> {
 
     /// `bun.TrivialDeinit(@This())` — drops the heap allocation. Called from
     /// context `deinit` (e.g. `ByteStream::finalize` → `parent().deinit()`).
-    /// SAFETY: `self` must have been produced by [`Self::new`] (i.e. `Box::new`)
-    /// and must not be used after this call.
+    /// SAFETY: `self` must have been produced by [`Self::new`] (i.e.
+    /// `Box::into_raw(Box::new(..))`) and must not be used after this call.
     pub unsafe fn deinit(&mut self) {
         // SAFETY: see fn-level doc — caller guarantees Box provenance.
         drop(unsafe { Box::from_raw(self as *mut Self) });

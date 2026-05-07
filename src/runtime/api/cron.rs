@@ -211,7 +211,7 @@ impl CronJobBase for CronRegisterJob {
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
     fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
     fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
-    fn maybe_finished(&mut self) { CronRegisterJob::maybe_finished(self) }
+    unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRegisterJob::maybe_finished(this) } }
 }
 
 impl CronRegisterJob {

@@ -395,7 +395,7 @@ impl ErrorReportRequest {
 
         StaticRoute::send_blob_then_deinit(
             r,
-            &crate::webcore::blob::Any::from_array_list(out),
+            crate::webcore::blob::Any::from_array_list(out),
             InitFromBytesOptions {
                 mime_type: Some(&bun_http_types::MimeType::OTHER),
                 server: dev.server,

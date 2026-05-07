@@ -3112,6 +3112,9 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             #[cfg(windows)]
             {
                 let mut u16_buf = WPathBuffer::uninit();
+                // Storage for the `=X:` fast-path key. Hoisted so the pointer
+                // returned from the `'brk:` block stays live across `getenv_w`.
+                let mut arr: [u16; 4] = [0; 4];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -3123,11 +3126,12 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 let key_w: *const u16 = 'brk: {
                     if resolved_device_len == 2 && tmp_buf[1] == T::from_u8(CHAR_COLON) {
                         // Fast path for device roots
-                        // TODO(port): static [u16; 4] with NUL; needs T->u16 widening
-                        let arr: [u16; 4] =
-                            [b'=' as u16, u16::try_from(tmp_buf[0].as_u32()).unwrap(), CHAR_COLON as u16, 0];
-                        // SAFETY: arr is on stack; getenvW copies before arr drops in Zig.
-                        // TODO(port): lifetime — store arr in outer scope.
+                        arr = [
+                            b'=' as u16,
+                            u16::try_from(tmp_buf[0].as_u32()).unwrap(),
+                            CHAR_COLON as u16,
+                            0,
+                        ];
                         break 'brk arr.as_ptr();
                     }
                     buf_size = 1;
@@ -3137,7 +3141,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                     buf_size += resolved_device_len;
                     memmove(&mut buf2[buf_offset..buf_size], &tmp_buf[0..resolved_device_len]);
                     if T::IS_U16 {
-                        // TODO(port): cast buf2[..buf_size] as *const u16
+                        // SAFETY: T == u16 when IS_U16; buf2: &mut [T] has the same
+                        // element layout as &mut [u16].
                         break 'brk buf2.as_ptr() as *const u16;
                     } else {
                         buf_size = bun_str::strings::wtf8_to_wtf16_le(

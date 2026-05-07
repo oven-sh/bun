@@ -1130,7 +1130,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             // PORT NOTE: vtable boundary erased the `AnyBlob` to its byte slice;
             // re-wrap as an owned blob (Zig spec transferred ownership of the bytes).
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            dev.put_or_overwrite_asset(path, &blob, content_hash)
+            dev.put_or_overwrite_asset(path, blob, content_hash)
         },
         track_resolution_failure: |p, import_source, specifier, renderer, loader| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.

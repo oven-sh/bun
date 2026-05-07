@@ -1769,29 +1769,36 @@ pub use encoding::Encoding as NodeEncoding;
 pub use immutable as strings;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `lexer` — identifier predicates (ASCII fast path + hook for Unicode).
+// `lexer` — identifier predicates. Thin `u32`-taking wrapper over the
+// [`identifier`] two-stage Unicode tables (moved down from `bun_js_parser`).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod lexer {
-    use core::sync::atomic::{AtomicPtr, Ordering};
-    pub static ID_START_ESNEXT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-    pub static ID_CONTINUE_ESNEXT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-    #[inline] pub fn is_identifier_start(c: u32) -> bool {
-        (c as u8 as u32 == c) && ((c as u8).is_ascii_alphabetic() || c == b'_' as u32 || c == b'$' as u32)
-        // TODO(b2): non-ASCII via ID_START_ESNEXT_HOOK
+    #[inline]
+    pub fn is_identifier_start(c: u32) -> bool {
+        crate::identifier::is_identifier_start(c as i32)
     }
-    #[inline] pub fn is_identifier_continue(c: u32) -> bool {
-        is_identifier_start(c) || (c as u8 as u32 == c && (c as u8).is_ascii_digit())
+    #[inline]
+    pub fn is_identifier_continue(c: u32) -> bool {
+        crate::identifier::is_identifier_part(c as i32)
     }
-    #[inline] pub fn is_identifier_part(c: u32) -> bool { is_identifier_continue(c) }
-    /// Whole-string check. Port of `js_lexer.isIdentifier`. ASCII-only fast path;
-    /// non-ASCII via hook (ES_NEXT tables installed by bun_js_parser at startup).
+    #[inline]
+    pub fn is_identifier_part(c: u32) -> bool {
+        is_identifier_continue(c)
+    }
+    /// Whole-string check. Port of `js_lexer.isIdentifier`.
     pub fn is_identifier(s: &[u8]) -> bool {
-        if s.is_empty() { return false; }
-        let mut iter = crate::strings::CodepointIterator::init(s);
+        if s.is_empty() {
+            return false;
+        }
+        let iter = crate::strings::CodepointIterator::init(s);
         let mut cur = crate::strings::Cursor::default();
-        if !iter.next(&mut cur) || !is_identifier_start(cur.c as u32) { return false; }
+        if !iter.next(&mut cur) || !is_identifier_start(cur.c as u32) {
+            return false;
+        }
         while iter.next(&mut cur) {
-            if !is_identifier_continue(cur.c as u32) { return false; }
+            if !is_identifier_continue(cur.c as u32) {
+                return false;
+            }
         }
         true
     }

@@ -2419,7 +2419,20 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:1225 normalizeEntryPointPath`.
     fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
-        let entry = self.normalize_entry_point_path_windows_weird(_entry);
+        // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem::instance`
+        // singleton wired in `Transpiler::init`.
+        let fs = unsafe { &*self.fs };
+        let entry = fs.abs(&[_entry]);
+
+        // Spec: `std.fs.accessAbsolute(entry, .{}) catch return _entry` — if the
+        // absolutized path does not exist on disk, return the original input
+        // unchanged so bare specifiers (`react`) and URLs are left alone.
+        if !bun_sys::exists(entry) {
+            return crate::linker::dupe(_entry);
+        }
+
+        let entry = fs.relative_to(entry);
+
         if !strings::starts_with(entry, b"./") {
             // Entry point paths without a leading "./" are interpreted as package
             // paths. This happens because they go through general path resolution
@@ -2439,17 +2452,6 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(&__entry);
         }
         crate::linker::dupe(entry)
-    }
-
-    #[cfg(windows)]
-    fn normalize_entry_point_path_windows_weird<'b>(&self, entry: &'b [u8]) -> &'b [u8] {
-        // TODO(port): bun.resolver.isDotSlash + windows path-normalize-if-exists
-        entry
-    }
-    #[cfg(not(windows))]
-    #[inline]
-    fn normalize_entry_point_path_windows_weird<'b>(&self, entry: &'b [u8]) -> &'b [u8] {
-        entry
     }
 
     /// Port of `transpiler.zig:1254 enqueueEntryPoints`.

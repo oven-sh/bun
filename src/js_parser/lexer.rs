@@ -405,6 +405,19 @@ lexer_impl_header! {
         guess_indentation: GUESS_INDENTATION,
     };
 
+    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
+    /// other `self.*` fields as arguments without a borrow-checker conflict;
+    /// callers must not hold two results of `log()` (or a result alongside the
+    /// parser's `P::log()`) live at once.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log(&self) -> &mut Log {
+        // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
+        // `'a` (and therefore `self`). Only one `&mut Log` is materialized at a
+        // time — every call site is `self.log().method(...)` with no overlap.
+        unsafe { &mut *self.log.as_ptr() }
+    }
+
     #[inline]
     pub fn loc(&self) -> Loc {
         logger::usize2loc(self.start)
@@ -414,7 +427,7 @@ lexer_impl_header! {
     pub fn syntax_error(&mut self) -> Result<(), Error> {
         // Only add this if there is not already an error.
         // It is possible that there is a more descriptive error already emitted.
-        if !self.log.has_errors() {
+        if !self.log().has_errors() {
             self.add_error(self.start, format_args!("Syntax Error"), true);
         }
         Err(Error::SyntaxError)
@@ -442,7 +455,7 @@ lexer_impl_header! {
             return;
         }
 
-        self.log
+        self.log()
             .add_error_fmt(Some(self.source), __loc, args)
             .expect("unreachable");
         self.prev_error_loc = __loc;
@@ -463,7 +476,7 @@ lexer_impl_header! {
         }
 
         // TODO(port): allocator routing — Zig uses `std.fmt.allocPrint(self.allocator, ..)`.
-        self.log.add_range_error_fmt(Some(self.source), r, args)?;
+        self.log().add_range_error_fmt(Some(self.source), r, args)?;
         self.prev_error_loc = r.loc;
 
         // if (panic) {
@@ -488,7 +501,7 @@ lexer_impl_header! {
 
         // TODO(port): Zig dupes `notes` with `self.log.msgs.allocator`.
         let notes_owned: Box<[logger::Data]> = notes.to_vec().into_boxed_slice();
-        self.log
+        self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args)?;
         self.prev_error_loc = r.loc;
 
@@ -1935,7 +1948,7 @@ lexer_impl_header! {
 
                             if self.code_point == 0x3E && self.has_newline_before {
                                 self.step();
-                                self.log
+                                self.log()
                                     .add_range_warning(
                                         Some(self.source),
                                         self.range(),

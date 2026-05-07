@@ -1907,16 +1907,28 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             if (error_instance == .zero) {
                 // errno comes from the bind/listen syscall, plumbed up through
-                // the uSockets listen callback. On platforms where the syscall
-                // succeeded but uSockets still reported failure (e.g. getaddrinfo
-                // path) errno may be 0 — fall back to EADDRINUSE for parity with
-                // the historical message.
-                const e: bun.sys.E = if (errno != 0) @enumFromInt(errno) else .SUCCESS;
+                // the uSockets listen callback. On Windows it's a Winsock code
+                // (WSAEADDRINUSE=10048, …) which isn't a tag of the exhaustive
+                // `bun.sys.E` enum, so go through `SystemErrno.init` which
+                // translates WSA → POSIX. On POSIX it's a straight pass-through.
+                // errno may be 0 when uSockets failed without a syscall (e.g.
+                // getaddrinfo) — keep the historical EADDRINUSE message for that.
+                // `SystemErrno.init` translates WSA codes on Windows and is a
+                // pass-through on POSIX. The integer values of `SystemErrno` and
+                // `E` are 1:1 on both platforms (see Listener.zig for prior art).
+                const e: bun.sys.E = if (errno != 0) blk: {
+                    const se = bun.sys.SystemErrno.init(errno) orelse bun.sys.SystemErrno.EINVAL;
+                    break :blk @enumFromInt(@intFromEnum(se));
+                } else .SUCCESS;
+                // Match Node.js / libuv convention: `errno` on the JS error is
+                // the negated POSIX errno (e.g. EACCES=13 → errno:-13).
+                const js_errno: c_int = -@as(c_int, @intCast(@intFromEnum(e)));
                 switch (this.config.address) {
                     .tcp => |tcp| {
                         switch (e) {
                             .SUCCESS, .ADDRINUSE => {
                                 error_instance = (jsc.SystemError{
+                                    .errno = if (e == .ADDRINUSE) js_errno else 0,
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
                                     .code = bun.String.static("EADDRINUSE"),
                                     .syscall = bun.String.static("listen"),
@@ -1924,6 +1936,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             },
                             .ACCES => {
                                 error_instance = (jsc.SystemError{
+                                    .errno = js_errno,
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
                                     .code = bun.String.static("EACCES"),
                                     .syscall = bun.String.static("listen"),

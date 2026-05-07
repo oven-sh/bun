@@ -1589,28 +1589,31 @@ it("should support promise returned from error", async () => {
 
 // #7187: EACCES must be reported correctly when binding to a privileged port
 // as a non-root user. Linux and macOS both return EACCES for unprivileged
-// binds to ports < 1024 (on Linux this depends on ip_unprivileged_port_start),
-// so we only run this when the process is unprivileged and the sysctl doesn't
-// make low ports unprivileged.
-const canReproducePrivilegedBindEACCES: boolean = (() => {
-  if (process.platform === "win32") return false;
+// binds below ip_unprivileged_port_start (default 1024). Pick the highest
+// privileged port we're allowed to compute — start - 1 — rather than a
+// well-known one like 80/443 which may legitimately be in use on the host
+// and would mask the bug with a real EADDRINUSE.
+const privilegedBindEACCES: { port: number } | null = (() => {
+  if (process.platform === "win32") return null;
   // @ts-ignore geteuid exists on posix at runtime
   const isRoot = typeof process.geteuid === "function" && process.geteuid() === 0;
-  if (isRoot) return false;
+  if (isRoot) return null;
+  let unprivilegedStart = 1024;
   if (process.platform === "linux") {
     try {
       const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
-      if (!Number.isFinite(start) || start <= 80) return false;
+      if (Number.isFinite(start)) unprivilegedStart = start;
     } catch {}
   }
-  return true;
+  if (unprivilegedStart <= 1) return null;
+  return { port: unprivilegedStart - 1 };
 })();
 
-it.if(canReproducePrivilegedBindEACCES)("reports EACCES (not EADDRINUSE) for privileged bind (#7187, #30363)", () => {
+it.if(privilegedBindEACCES !== null)("reports EACCES (not EADDRINUSE) for privileged bind (#7187, #30363)", () => {
   try {
     using server = Bun.serve({
       hostname: "127.0.0.1",
-      port: 80,
+      port: privilegedBindEACCES!.port,
       fetch() {
         return new Response("ok");
       },
@@ -1619,16 +1622,17 @@ it.if(canReproducePrivilegedBindEACCES)("reports EACCES (not EADDRINUSE) for pri
   } catch (e: any) {
     expect(e.code).toBe("EACCES");
     expect(e.syscall).toBe("listen");
+    expect(e.errno).toBe(-13); // matches Node
   }
 });
 
-// #27410, #30363: errno from the bind/listen syscall must be plumbed through
-// so Bun.serve reports the real code (EADDRNOTAVAIL, EACCES, etc.) instead of
-// always falling back to EADDRINUSE. Works on macOS and Linux with no special
-// privileges — 192.0.2.0/24 is TEST-NET-1 (RFC 5737) and bind() returns
-// EADDRNOTAVAIL there on both platforms.
+// #27410, #30363, #10318: errno from the bind/listen syscall must be plumbed
+// through so Bun.serve reports the real code (EADDRNOTAVAIL, EACCES, etc.)
+// instead of always falling back to EADDRINUSE. Works on macOS and Linux with
+// no special privileges — 192.0.2.0/24 is TEST-NET-1 (RFC 5737) and bind()
+// returns EADDRNOTAVAIL there on both platforms.
 it.skipIf(process.platform === "win32")(
-  "reports EADDRNOTAVAIL (not EADDRINUSE) for bind to a non-local address (#30363)",
+  "reports EADDRNOTAVAIL (not EADDRINUSE) for bind to a non-local address (#30363, #10318)",
   () => {
     try {
       using server = Bun.serve({
@@ -1642,9 +1646,38 @@ it.skipIf(process.platform === "win32")(
     } catch (e: any) {
       expect(e.code).toBe("EADDRNOTAVAIL");
       expect(e.syscall).toBe("listen");
+      expect(typeof e.errno).toBe("number");
+      expect(e.errno).not.toBe(0);
     }
   },
 );
+
+// #30363, #25765: when a listen actually fails with EADDRINUSE (the common
+// case) the returned error must still carry a non-zero errno — previously
+// `errno` was always 0 on this path because the SystemError literal omitted
+// the field. Node sets it to -48 on macOS, -98 on Linux, -4091 via libuv.
+it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno (#25765)", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("ok");
+    },
+  });
+  try {
+    Bun.serve({
+      port: server.port,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    throw new Error("should have thrown");
+  } catch (e: any) {
+    expect(e.code).toBe("EADDRINUSE");
+    expect(e.syscall).toBe("listen");
+    expect(typeof e.errno).toBe("number");
+    expect(e.errno).not.toBe(0);
+  }
+});
 
 describe.concurrent("should error with invalid options", async () => {
   it("requestCert", () => {

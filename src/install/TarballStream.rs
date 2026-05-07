@@ -982,7 +982,9 @@ impl TarballStream {
         // owned by this drain; union field `extract` is the active variant
         // for streaming tarballs (set by `enqueueExtractNPMPackage`).
         unsafe {
-        let tarball = &(*task).request.extract.tarball;
+        // Explicit `&` (no implicit autoref through the raw-ptr deref) for
+        // the `ManuallyDrop` → `ExtractRequest` deref.
+        let tarball = &(&(*task).request.extract).tarball;
         (*task).data = TaskData { extract: ManuallyDrop::new(Default::default()) };
 
         if let Some(err) = self.fail {

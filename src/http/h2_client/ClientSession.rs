@@ -118,6 +118,22 @@ pub struct ClientSession {
     pub registry_index: Cell<u32>,
 }
 
+/// RAII owner for a scoped [`ClientSession`] refcount bump. Constructed via
+/// [`ClientSession::ref_scope`]; releases the ref on Drop. The guard runs last
+/// among locals declared after it, so no access follows the final deref.
+#[must_use = "dropping immediately releases the scoped ref"]
+struct SessionRefGuard(*const ClientSession);
+
+impl Drop for SessionRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `ref_scope` took a ref on a live heap-allocated ClientSession,
+        // so `self.0` is still live here. Pointer was derived from `&mut self`
+        // (write provenance) and the guard drops after all later locals.
+        unsafe { ClientSession::deref(self.0) };
+    }
+}
+
 // Intrusive refcount (single-thread). `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
 // → manual ref()/deref() pair; the last deref drops the Box.
 impl ClientSession {
@@ -149,6 +165,20 @@ impl ClientSession {
             // ownership and runs Drop — avoids the &T → *mut T provenance UB.
             unsafe { drop(Box::from_raw(this as *mut Self)) };
         }
+    }
+
+    /// Bump the refcount and return a guard that releases it on Drop, so
+    /// reentrant callbacks (delivering bodies, failing clients) cannot free
+    /// `*self` mid-call. Zig: `this.ref(); defer this.deref();`.
+    ///
+    /// Captures a raw pointer (not a borrow) so the guard does not borrow the
+    /// session — the guarded scope may freely take fresh `&mut self`, and the
+    /// pointer (derived from `&mut self`) carries write provenance for the
+    /// final `Box::from_raw` in `deref`.
+    #[inline]
+    fn ref_scope(&mut self) -> SessionRefGuard {
+        self.r#ref();
+        SessionRefGuard(self as *const Self)
     }
 
     #[inline]

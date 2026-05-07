@@ -1,4 +1,4 @@
-use bun_collections::{StringHashMap, ArrayHashMap};
+use bun_collections::{StringHashMap, StringArrayHashMap};
 use bun_core::{err, zstr, Error, Global, Output};
 use bun_logger as logger;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
@@ -784,7 +784,14 @@ pub fn migrate_npm_lockfile<'a>(
     let resolutions_base: *mut PackageID = this.buffers.resolutions.as_mut_ptr();
     let mut deps_cursor: usize = 0;
     let mut res_cursor: usize = 0;
-    // TODO(port): verify aliasing — `string_buf`/`this` are borrowed concurrently with raw ptrs into buffers
+    // TODO(port/phase-b): Stacked-Borrows audit — these raw ptrs into
+    // `buffers.{dependencies,resolutions}` and the `packages` columns below are
+    // held across `&mut self` calls to `string_buf()` / `get_or_put_id()`. The
+    // fields actually touched are disjoint (string_bytes/string_pool resp.
+    // package_index + read of resolutions), so this is sound under Tree
+    // Borrows and matches the Zig spec, but SB retags through `Unique<T>`.
+    // Fix by split-borrowing the disjoint fields (see the `bin` path above) or
+    // by setting Vec lengths up-front and indexing safely.
 
     // pre-initialize the dependencies and resolutions to `unset_package_id`
     #[cfg(debug_assertions)]
@@ -883,7 +890,7 @@ pub fn migrate_npm_lockfile<'a>(
         }
 
         // a feature no one has heard about: https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bundledependencies
-        let bundled_dependencies: Option<ArrayHashMap<Box<[u8]>, ()>> =
+        let bundled_dependencies: Option<StringArrayHashMap<()>> =
             if let Some(expr) = pkg.get(b"bundleDependencies").or_else(|| pkg.get(b"bundledDependencies")) {
                 'deps: {
                     if let ExprData::EBoolean(b) = expr.data {
@@ -896,11 +903,10 @@ pub fn migrate_npm_lockfile<'a>(
                     let ExprData::EArray(arr) = &expr.data else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
-                    let mut map = ArrayHashMap::<Box<[u8]>, ()>::default();
-                    map.reserve(arr.items.len as usize);
+                    let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len as usize);
                     for item in arr.items.slice() {
                         let s = item.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
-                        map.insert(Box::from(s), ());
+                        map.insert(s, ());
                         // PERF(port): was assume_capacity
                     }
                     break 'deps Some(map);
@@ -963,7 +969,7 @@ pub fn migrate_npm_lockfile<'a>(
                 'dep_loop: for prop in deps_obj.properties.slice() {
                     let name_bytes = prop.key.as_ref().unwrap().as_string(&arena).unwrap();
                     if let Some(bd) = &bundled_dependencies {
-                        if bd.get(&Box::<[u8]>::from(name_bytes)).is_some() {
+                        if bd.contains_key(name_bytes) {
                             continue 'dep_loop;
                         }
                     }

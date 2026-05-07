@@ -876,7 +876,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 logger::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    bstr::BStr::new(this.lockfile.str(&version.value.folder)),
+                                                    // SAFETY: `version.tag == Folder` checked above.
+                                                    bstr::BStr::new(this.lockfile.str(unsafe { &version.value.folder })),
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                 ),
                                             )

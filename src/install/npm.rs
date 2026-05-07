@@ -12,7 +12,7 @@ use bun_picohttp as picohttp;
 use crate::bun_schema::api;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_str::{strings, MutableString};
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, CloseOnDrop, Fd, File};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -1464,19 +1464,17 @@ pub mod package_manifest {
             };
 
             {
-                // errdefer file.close() — handled by scopeguard
-                // PORT NOTE: capture the `Copy` `Fd` so the closure doesn't move `file`.
-                let fd = file.handle;
-                let guard = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
+                // errdefer file.close()
+                let guard = CloseOnDrop::file(&file);
                 file.write_all(&buffer)?;
-                scopeguard::ScopeGuard::into_inner(guard);
+                let _ = guard.into_inner();
             }
 
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                let mut did_close = false;
-                let guard = scopeguard::guard((), |_| if !did_close { file.close() });
+                // errdefer if (!did_close) file.close() — disarmed once we close explicitly below.
+                let guard = CloseOnDrop::file(&file);
 
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs = bun_paths::join_abs_string_buf_z(
@@ -1485,17 +1483,15 @@ pub mod package_manifest {
                     &[cache_dir_abs, outpath.as_bytes()],
                     bun_paths::Style::Auto,
                 );
+                let _ = guard.into_inner();
                 file.close();
-                did_close = true;
                 bun_sys::renameat(Fd::cwd(), path_to_use_for_opening_file, Fd::cwd(), cache_path_abs).unwrap()?;
-                scopeguard::ScopeGuard::into_inner(guard);
                 return Ok(());
             }
 
             #[cfg(target_os = "linux")]
             if is_using_o_tmpfile {
-                let fd = file.handle;
-                let _close = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
+                let _close = CloseOnDrop::file(&file);
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.

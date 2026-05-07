@@ -763,7 +763,7 @@ impl LinuxKernel {
             Result::Ok(fd) => fd,
             Result::Err(_) => return LinuxKernel::Linux,
         };
-        let _close = scopeguard::guard((), |_| fd.close());
+        let _close = crate::CloseOnDrop::new(fd);
         let n = match read(fd, &mut buf) {
             Result::Ok(n) => n,
             Result::Err(_) => return LinuxKernel::Linux,
@@ -1915,14 +1915,15 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
     let adjusted_len = MAX_COUNT.min(bytes.len());
     let debug_timer = bun_core::Output::DebugTimer::start();
 
-    // TODO(port): defer block checking debug_timer > 1ms — moved to scopeguard.
-    let _guard = scopeguard::guard((), |_| {
+    // Zig: `defer { if (debug_timer > 1ms) log }` — one-off diagnostic side
+    // effect with no natural RAII owner, so use the macro form (PORTING.md).
+    scopeguard::defer! {
         if cfg!(debug_assertions) {
             if debug_timer.read_ns() > 1_000_000 {
                 log!("write({}, {}) blocked for {}", fd, bytes.len(), debug_timer);
             }
         }
-    });
+    };
 
     #[cfg(target_os = "macos")]
     {
@@ -3171,7 +3172,7 @@ pub fn mmap_file(path: &ZStr, flags: libc::c_int, wanted_size: Option<usize>, of
         Result::Ok(fd) => fd,
         Result::Err(err) => return Result::Err(err),
     };
-    let _close = scopeguard::guard((), |_| fd.close());
+    let _close = crate::CloseOnDrop::new(fd);
 
     let stat_size = match fstat(fd) {
         Result::Ok(result) => usize::try_from(result.size).unwrap(),
@@ -3515,7 +3516,7 @@ pub fn get_max_pipe_size_on_linux() -> usize {
                 return default_out_size;
             }
         };
-        let _close = scopeguard::guard((), |_| pipe_max_size_fd.close());
+        let _close = crate::CloseOnDrop::new(pipe_max_size_fd);
         let mut max_pipe_size_buf = [0u8; 128];
         let max_pipe_size = match read(pipe_max_size_fd, &mut max_pipe_size_buf[..]) {
             Result::Ok(bytes_read) => {
@@ -4508,7 +4509,7 @@ pub fn move_file_z_slow_maybe(from_dir: Fd, filename: &ZStr, to_dir: Fd, destina
         Result::Ok(f) => f,
         Result::Err(e) => return Result::Err(e),
     };
-    let _close = scopeguard::guard((), |_| in_handle.close());
+    let _close = crate::CloseOnDrop::new(in_handle);
     let _ = from_dir.unlinkat(filename);
     copy_file_z_slow_with_handle(in_handle, to_dir, destination)
 }
@@ -4554,7 +4555,7 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
             Result::Ok(fd) => fd,
             Result::Err(e) => return Result::Err(e),
         };
-        let _close = scopeguard::guard((), |_| out_handle.close());
+        let _close = crate::CloseOnDrop::new(out_handle);
 
         #[cfg(target_os = "linux")]
         {

@@ -258,33 +258,51 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 //   • nativeCalls (type "zig")  → `${sym}_workaround(global) -> JSValue`
 //   • wrapperCalls (type "zig") → `${sym}(global, callframe) -> JSValue`
 //
-// Each thunk dispatches through a single `Js2NativeImpl` trait whose default
-// bodies are `unimplemented!()`, matching the generated_classes.rs pattern:
-// porting a function = overriding the corresponding trait method on
-// `struct Js2Native` (or, more idiomatically, having the override forward to
-// the real `crate::…::snake_case` impl).
+// Each thunk calls the hand-ported Rust function directly at
+// `crate::<derived-from-zig-path>::<snake_case(symbol)>` — no trait, no
+// `unimplemented!()`. A missing function is a compile error.
 // ──────────────────────────────────────────────────────────────────────────
 export function getJS2NativeRust() {
-  // Method names on the trait must be unique across files; the exported C
-  // symbol already encodes the file path, so derive the trait method id from
-  // the full symbol (minus the `JS2Zig__` prefix / `_workaround` suffix).
-  const methodId = (sym: string) =>
-    sym
-      .replace(/^JS2Zig__/, "")
-      .replace(/_workaround$/, "")
-      .replace(/^_+/, "")
-      .replace(/[^A-Za-z0-9_]/g, "_");
-
   // Symbols already hand-exported in src/ (via `export_host_fn!` or
   // `#[unsafe(export_name = "JS2Zig__…")]`) — skip emitting a thunk for these
-  // so the linker doesn't see two definitions. The trait default still lands
-  // (harmless dead code) so the method id stays reserved.
+  // so the linker doesn't see two definitions.
   const handExported = new Set<string>([
     "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_newResolver",
   ]);
 
-  const traitDecls: string[] = [];
+  const srcRoot = path.resolve(import.meta.dir, "..");
+  const snake = (s: string) =>
+    s
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+      .replace(/[.\-]/g, "_")
+      .toLowerCase();
+
+  // `src/runtime/node/node_util_binding.zig` + `parseEnv`
+  //   → `crate::node::node_util_binding::parse_env`
+  // `src/ini/ini.zig` + `IniTestingAPIs.parse` (outside bun_runtime)
+  //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
+  //   landing pad the port-agents fill in; still a compile error if missing).
+  const rustTarget = (filename: string, sym: string) => {
+    const rel = path.relative(srcRoot, filename).replace(/\.zig$/, "");
+    const segs = rel.split(path.sep);
+    const fn = sym
+      .split(".")
+      .map(s => snake(s))
+      .join("::");
+    if (segs[0] === "runtime") {
+      const mod = segs
+        .slice(1)
+        .map(s => snake(s))
+        .join("::");
+      return `crate::${mod}::${fn}`;
+    }
+    // Out-of-crate call site: route through a flat dispatch module that
+    // re-exports the real impl from its owning crate.
+    return `crate::dispatch::js2native::${snake(segs.join("_"))}_${fn.replace(/::/g, "_")}`;
+  };
+
   const thunks: string[] = [];
   const seen = new Set<string>();
 
@@ -292,16 +310,13 @@ export function getJS2NativeRust() {
     const sym = `${symbol(call)}_workaround`;
     if (seen.has(sym)) continue;
     seen.add(sym);
-    const id = methodId(sym);
-    traitDecls.push(
-      `    fn ${id}(global: &JSGlobalObject) -> JsResult<JSValue> { ` +
-        `let _ = global; unimplemented!(${JSON.stringify(`$zig(${path.basename(call.filename)}, ${call.symbol}) not yet ported to Rust`)}) }`,
-    );
+    const target = rustTarget(call.filename, call.symbol);
     thunks.push(
+      `// $zig(${path.basename(call.filename)}, ${call.symbol})`,
       `#[unsafe(no_mangle)]`,
       `pub unsafe extern "C" fn ${sym}(global: *mut JSGlobalObject) -> JSValue {`,
       `    let global = unsafe { &*global };`,
-      `    bun_jsc::host_fn::host_fn_result(global, || <Js2Native as Js2NativeImpl>::${id}(global))`,
+      `    bun_jsc::host_fn::host_fn_result(global, || ${target}(global))`,
       `}`,
       ``,
     );
@@ -311,21 +326,18 @@ export function getJS2NativeRust() {
     const sym = symbol({ type: "zig", symbol: x.symbol_target, filename: x.filename });
     if (seen.has(sym)) continue;
     seen.add(sym);
-    const id = methodId(sym);
-    traitDecls.push(
-      `    fn ${id}(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> { ` +
-        `let _ = (global, callframe); unimplemented!(${JSON.stringify(`$zig(${path.basename(x.filename)}, ${x.symbol_target}) not yet ported to Rust`)}) }`,
-    );
     if (handExported.has(sym)) {
       thunks.push(`// ${sym}: hand-exported in src/ — thunk omitted to avoid duplicate symbol`, ``);
       continue;
     }
+    const target = rustTarget(x.filename, x.symbol_target);
     thunks.push(
+      `// $zig(${path.basename(x.filename)}, ${x.symbol_target})`,
       `#[unsafe(no_mangle)]`,
       `pub unsafe extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {`,
       `    let global = unsafe { &*global };`,
       `    let callframe = unsafe { &*callframe };`,
-      `    bun_jsc::host_fn::host_fn_result(global, || <Js2Native as Js2NativeImpl>::${id}(global, callframe))`,
+      `    bun_jsc::host_fn::host_fn_result(global, || ${target}(global, callframe))`,
       `}`,
       ``,
     );
@@ -336,24 +348,13 @@ export function getJS2NativeRust() {
     `//`,
     `// \`#[unsafe(no_mangle)] extern "C"\` thunks satisfying the JS2Zig__* externs`,
     `// declared by GeneratedJS2Native.h (the JS-module → native dispatch table).`,
-    `// Each thunk dispatches through \`Js2NativeImpl\`; porting a $zig() call site`,
-    `// means overriding the matching trait method on \`Js2Native\`.`,
+    `// Each thunk calls the hand-ported Rust function directly; a missing`,
+    `// function is a compile error in \`cargo check -p bun_runtime\`.`,
     `//`,
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
     `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
     ``,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
-    ``,
-    `/// Zero-sized dispatch target for the JS2Native trait. Override methods via`,
-    `/// \`impl Js2NativeImpl for Js2Native { fn …() { real_impl() } }\` in the`,
-    `/// owning module (or leave the default to panic until ported).`,
-    `pub struct Js2Native;`,
-    ``,
-    `#[allow(non_snake_case, unused_variables)]`,
-    `pub trait Js2NativeImpl {`,
-    ...traitDecls,
-    `}`,
-    `impl Js2NativeImpl for Js2Native {}`,
     ``,
     ...thunks,
     `// exported symbols: ${seen.size}`,

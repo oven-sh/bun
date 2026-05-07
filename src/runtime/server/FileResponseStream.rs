@@ -547,6 +547,21 @@ impl FileResponseStream {
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+
+    /// RAII pair for `r#ref()` / `deref()`: bumps the intrusive refcount now and
+    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
+    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
+    /// reference is live across the potential free in `deref()`.
+    ///
+    /// # Safety
+    /// `this` must satisfy the contract of [`Self::deref`] for the guard's
+    /// entire lifetime.
+    #[inline]
+    unsafe fn ref_guard(this: *mut Self) -> DerefOnDrop {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).r#ref() };
+        DerefOnDrop(this)
+    }
     /// # Safety
     /// `this` must point to a live `FileResponseStream` allocated via
     /// `Box::into_raw` in `start()`. Mirrors Zig `RefCount.deref(*Self)` —

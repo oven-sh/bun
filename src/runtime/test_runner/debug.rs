@@ -24,7 +24,7 @@ pub fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         return Ok(());
     }
     // TODO(port): std.zig.fmtString escaping — using BStr Debug-ish display for now
-    group::begin_msg(format_args!(
+    let _guard = group::begin_msg(format_args!(
         "describe \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
@@ -32,7 +32,6 @@ pub fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         describe.base.only.tag_name(),
         describe.base.has_callback,
     ));
-    let _guard = scopeguard::guard((), |_| group::end());
 
     for entry in describe.before_all.as_slice() {
         dump_test(entry, b"beforeAll")?;

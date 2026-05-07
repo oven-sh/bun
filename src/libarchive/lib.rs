@@ -531,6 +531,101 @@ pub mod lib {
         }
     }
 
+    // ── RAII owners ────────────────────────────────────────────────────────
+    //
+    // The raw `*mut Archive` / `*mut Entry` constructors above mirror the C
+    // API. These thin owners pair them with the matching `*_free` on `Drop`
+    // so callers stop hand-rolling `defer { (*archive).read_free() }`.
+
+    /// Owns a `*mut Archive` opened with [`Archive::read_new`]; calls
+    /// `archive_read_free` on drop. Derefs to `&Archive`.
+    pub struct ReadArchive(core::ptr::NonNull<Archive>);
+    impl ReadArchive {
+        #[inline]
+        pub fn new() -> Self {
+            // SAFETY: archive_read_new() never returns null on supported targets.
+            Self(unsafe { core::ptr::NonNull::new_unchecked(Archive::read_new()) })
+        }
+        #[inline]
+        pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
+    }
+    impl core::ops::Deref for ReadArchive {
+        type Target = Archive;
+        #[inline]
+        fn deref(&self) -> &Archive {
+            // SAFETY: handle is live until Drop; libarchive owns the storage.
+            unsafe { self.0.as_ref() }
+        }
+    }
+    impl Drop for ReadArchive {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: handle came from archive_read_new() and is freed exactly once.
+            let _ = unsafe { archive_read_free(self.0.as_ptr()) };
+        }
+    }
+
+    /// Owns a `*mut Archive` opened with [`Archive::write_new`]; calls
+    /// `archive_write_free` on drop. Derefs to `&Archive`.
+    pub struct WriteArchive(core::ptr::NonNull<Archive>);
+    impl WriteArchive {
+        #[inline]
+        pub fn new() -> Self {
+            // SAFETY: archive_write_new() never returns null on supported targets.
+            Self(unsafe { core::ptr::NonNull::new_unchecked(Archive::write_new()) })
+        }
+        #[inline]
+        pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
+    }
+    impl core::ops::Deref for WriteArchive {
+        type Target = Archive;
+        #[inline]
+        fn deref(&self) -> &Archive {
+            // SAFETY: handle is live until Drop; libarchive owns the storage.
+            unsafe { self.0.as_ref() }
+        }
+    }
+    impl Drop for WriteArchive {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: handle came from archive_write_new() and is freed exactly once.
+            let _ = unsafe { archive_write_free(self.0.as_ptr()) };
+        }
+    }
+
+    /// Owns a `*mut Entry` created with [`Entry::new`] / [`Entry::new2`];
+    /// calls `archive_entry_free` on drop. Derefs to `&Entry`.
+    pub struct OwnedEntry(core::ptr::NonNull<Entry>);
+    impl OwnedEntry {
+        #[inline]
+        pub fn new() -> Self {
+            // SAFETY: archive_entry_new() never returns null on supported targets.
+            Self(unsafe { core::ptr::NonNull::new_unchecked(Entry::new()) })
+        }
+        #[inline]
+        pub fn new2(archive: *mut Archive) -> Self {
+            // SAFETY: archive_entry_new2() never returns null on supported targets.
+            Self(unsafe { core::ptr::NonNull::new_unchecked(Entry::new2(archive)) })
+        }
+        #[inline]
+        pub fn as_ptr(&self) -> *mut Entry { self.0.as_ptr() }
+    }
+    impl core::ops::Deref for OwnedEntry {
+        type Target = Entry;
+        #[inline]
+        fn deref(&self) -> &Entry {
+            // SAFETY: handle is live until Drop; libarchive owns the storage.
+            unsafe { self.0.as_ref() }
+        }
+    }
+    impl Drop for OwnedEntry {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: handle came from archive_entry_new()/new2() and is freed exactly once.
+            unsafe { archive_entry_free(self.0.as_ptr()) };
+        }
+    }
+
     // ── Archive::Iterator (port of `libarchive_sys/bindings.zig` Iterator) ─
     //
     // Thin streaming reader over a tar.gz blob: `init` opens the archive in

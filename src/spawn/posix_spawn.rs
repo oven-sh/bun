@@ -932,8 +932,9 @@ pub mod posix_spawn {
     pub use crate::process as process;
     pub use process::{
         PosixSpawnResult, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
-        WindowsSpawnOptions, WindowsSpawnResult,
     };
+    #[cfg(windows)]
+    pub use process::{WindowsSpawnOptions, WindowsSpawnResult};
     pub use process::{spawn_process, sync};
 }
 

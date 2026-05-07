@@ -609,8 +609,7 @@ impl HttpThread {
     fn drain_queued_writes(&mut self) {
         loop {
             let queued_writes = {
-                self.queued_writes_lock.lock();
-                let _guard = scopeguard::guard((), |_| self.queued_writes_lock.unlock());
+                let _guard = self.queued_writes_lock.lock_guard();
                 core::mem::take(&mut self.queued_writes)
             };
             for write in &queued_writes {
@@ -682,9 +681,7 @@ impl HttpThread {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
             let queued_response_body_drains = {
-                self.queued_response_body_drains_lock.lock();
-                let _guard =
-                    scopeguard::guard((), |_| self.queued_response_body_drains_lock.unlock());
+                let _guard = self.queued_response_body_drains_lock.lock_guard();
                 core::mem::take(&mut self.queued_response_body_drains)
             };
 
@@ -830,8 +827,7 @@ impl HttpThread {
 
     pub fn schedule_response_body_drain(&mut self, async_http_id: u32) {
         {
-            self.queued_response_body_drains_lock.lock();
-            let _guard = scopeguard::guard((), |_| self.queued_response_body_drains_lock.unlock());
+            let _guard = self.queued_response_body_drains_lock.lock_guard();
             self.queued_response_body_drains
                 .push(DrainMessage { async_http_id });
         }
@@ -841,8 +837,7 @@ impl HttpThread {
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
         {
-            self.queued_shutdowns_lock.lock();
-            let _guard = scopeguard::guard((), |_| self.queued_shutdowns_lock.unlock());
+            let _guard = self.queued_shutdowns_lock.lock_guard();
             self.queued_shutdowns.push(ShutdownMessage {
                 async_http_id: http.async_http_id,
             });
@@ -852,8 +847,7 @@ impl HttpThread {
 
     pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
         {
-            self.queued_writes_lock.lock();
-            let _guard = scopeguard::guard((), |_| self.queued_writes_lock.unlock());
+            let _guard = self.queued_writes_lock.lock_guard();
             self.queued_writes.push(WriteMessage {
                 async_http_id: http.async_http_id,
                 kind,
@@ -1069,8 +1063,8 @@ pub fn init(opts: &InitOpts) {
 //   source:     src/http/HTTPThread.zig (741 lines)
 //   confidence: medium
 //   todos:      12
-//   notes:      Mutex pattern uses scopeguard placeholder; FixedBufferAllocator/
-//               StackFallback self-referential buffers need Phase B redesign;
+//   notes:      FixedBufferAllocator/StackFallback self-referential buffers
+//               need Phase B redesign;
 //               const-generic context() uses transmute; init/on_start/
 //               process_events stay gated on bun_event_loop tier boundary.
 // ──────────────────────────────────────────────────────────────────────────

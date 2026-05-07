@@ -190,9 +190,7 @@ impl Archive {
 }
 
 /// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: *mut libarchive::lib::Archive) {
-    // SAFETY: caller passes the non-null handle from `Archive::read_new()`.
-    let archive = unsafe { &*archive };
+fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
     let _ = archive.read_support_filter_gzip();
@@ -202,22 +200,16 @@ fn configure_archive_reader(archive: *mut libarchive::lib::Archive) {
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
-    let archive = lib::Archive::read_new();
-    let _guard = scopeguard::guard((), |_| {
-        // SAFETY: archive handle valid until guard runs after the loop.
-        let _ = unsafe { (*archive).read_free() };
-    });
-    configure_archive_reader(archive);
+    let archive = lib::ReadArchive::new();
+    configure_archive_reader(&archive);
 
-    // SAFETY: archive is the non-null handle from read_new(); single-threaded use here.
-    let archive_ref = unsafe { &*archive };
-    if archive_ref.read_open_memory(data) != lib::Result::Ok {
+    if archive.read_open_memory(data) != lib::Result::Ok {
         return 0;
     }
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
+    while archive.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok, so entry is valid until the next call.
         if unsafe { (*entry).filetype() } == FILETYPE_REGULAR {
             count += 1;
@@ -342,21 +334,15 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let mut growing_buffer = lib::GrowingBuffer::init();
     // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
 
-    let archive = lib::Archive::write_new();
-    let _archive_guard = scopeguard::guard((), |_| {
-        // SAFETY: archive handle valid until guard runs.
-        let _ = unsafe { (*archive).write_free() };
-    });
-
-    // SAFETY: archive is the non-null handle from write_new(); single-threaded use here.
-    let archive_ref = unsafe { &*archive };
+    let archive = lib::WriteArchive::new();
+    let archive_ref: &lib::Archive = &archive;
 
     if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
         return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveFormatError")));
     }
 
     if lib::archive_write_open2(
-        archive,
+        archive.as_ptr(),
         (&raw mut growing_buffer).cast(),
         Some(lib::GrowingBuffer::open_callback),
         Some(lib::GrowingBuffer::write_callback),
@@ -367,13 +353,8 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         return Err(global.throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
     }
 
-    let entry = lib::Entry::new();
-    let _entry_guard = scopeguard::guard((), |_| {
-        // SAFETY: entry handle valid until guard runs.
-        unsafe { (*entry).free() };
-    });
-    // SAFETY: entry is the non-null handle from Entry::new(); single-threaded use here.
-    let entry_ref = unsafe { &*entry };
+    let entry = lib::OwnedEntry::new();
+    let entry_ref: &lib::Entry = &entry;
 
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 

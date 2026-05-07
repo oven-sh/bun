@@ -134,7 +134,7 @@ pub fn do_patch_commit(
             Global::crash();
         }
     };
-    let _root_node_modules_guard = scopeguard::guard((), |_| root_node_modules.close());
+    let _root_node_modules_close = sys::CloseOnDrop::dir(root_node_modules);
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
@@ -310,7 +310,7 @@ pub fn do_patch_commit(
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard((), |_| new_folder_handle.close());
+            let _close = sys::CloseOnDrop::dir(new_folder_handle);
 
             if sys::renameat_concurrently_a(
                 new_folder_handle.fd,
@@ -353,7 +353,7 @@ pub fn do_patch_commit(
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard((), |_| new_folder_handle.close());
+            let _close = sys::CloseOnDrop::dir(new_folder_handle);
 
             if let Err(e) = sys::renameat_concurrently_a(
                 new_folder_handle.fd,

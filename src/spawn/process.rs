@@ -990,7 +990,7 @@ impl PollerPosix {
 
 #[cfg(unix)]
 pub type Poller = PollerPosix;
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub type Poller = PollerWindows;
 
 #[cfg(windows)]
@@ -1917,17 +1917,17 @@ impl PosixSpawnResult {
 
 #[cfg(unix)]
 pub type SpawnOptions = PosixSpawnOptions;
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub type SpawnOptions = WindowsSpawnOptions;
 
 #[cfg(unix)]
 pub type Stdio = PosixStdio;
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub type Stdio = WindowsStdio;
 
 #[cfg(unix)]
 pub type SpawnProcessResult = PosixSpawnResult;
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub type SpawnProcessResult = WindowsSpawnResult;
 
 // ─── spawn_process bodies + sync runner ──────────────────────────────────────

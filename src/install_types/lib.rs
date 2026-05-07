@@ -2,6 +2,15 @@
 // AUTOGEN: mod declarations only — real exports added in B-1.
 
 pub mod NodeLinker;
+pub mod resolver_hooks;
+
+pub use resolver_hooks::{
+    Architecture, AutoInstaller, Behavior, Dependency, DependencyGroup, DependencyID,
+    DependencySlice, DependencyVersion, DependencyVersionTag, EnqueueResult, ExternalSlice,
+    Features, InitAutoInstaller, Negatable, OperatingSystem, PackageID, PackageJsonView,
+    PreinstallState, Resolution, ResolutionSlice, ResolutionTag, TaskCallbackContext, WakeHandler,
+    INIT_AUTO_INSTALLER, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 RECONCILED: Phase-A drafts of ExternalString / SlicedString /

@@ -14,6 +14,9 @@ use crate::bun_bunfig::Arguments as Command;
 
 use crate::{self as install, DependencyID, ExtractData, PackageID};
 use crate::lockfile::tree;
+// Bring the `items_<field>{,_mut}()` column accessors for
+// `MultiArrayList::Slice<Package>` into scope (Zig: `slice.items(.field)`).
+use crate::lockfile::package::PackageSliceExt as _;
 use crate::bin_real as bin;
 use crate::PackageManager;
 use crate::package_manager::{self, WorkspaceFilter};

@@ -78,7 +78,6 @@ use bun_jsc::cpp_task::CppTask;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
-use bun_jsc::module_loader::AsyncModule;
 use bun_jsc::hot_reloader;
 
 use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
@@ -123,53 +122,24 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 /// `bun_install::SecurityScanSubprocess: StaticPipeWriterProcess` — the trait
 /// lives here in `bun_runtime` (where `StaticPipeWriter<P>` is defined), and
 /// `bun_install` is a lower-tier dep, so this is the only crate where the impl
-/// can legally live (orphan rule). Spec security_scanner.zig:907 `onCloseIO`.
-impl crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
-    for bun_install::SecurityScanSubprocess
+/// can legally live (orphan rule). Spec security_scanner.zig:907 `onCloseIO`:
+/// detach the writer source, drop the strong ref, clear `json_writer`, and
+/// decrement `remaining_fds`. The body is the inherent
+/// `SecurityScanSubprocess::on_close_io`; this impl just bridges the trait's
+/// `*mut Self` receiver and the runtime-tier `StdioKind` (unused per spec).
+impl<'a> crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
+    for bun_install::SecurityScanSubprocess<'a>
 {
     unsafe fn on_close_io(
-        _this: *mut Self,
+        this: *mut Self,
         _kind: crate::api::bun_subprocess::StdioKind,
     ) {
-        // Zig: `this.json_writer = null;` — the lower-tier
-        // `SecurityScanSubprocess` placeholder has no `json_writer` slot yet
-        // (the real layout lands with the `security_scanner.rs` un-gate). The
-        // writer's own `Drop` already detaches its source, so nothing to clear
-        // on the parent side here.
-        // PORT NOTE: layering — `json_writer` field belongs to the full
-        // `bun_install::PackageManager::security_scanner::SecurityScanSubprocess`
-        // once that module is wired into `bun_install`'s tree.
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local shims for upstream type-erased / gated surfaces (§Dispatch glue)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `bun_event_loop::JsResult<T>`'s error payload is an erased `*mut ()` (the
-/// low tier cannot name `bun_jsc::JsError`). Recover the real enum here.
-/// PORT NOTE: the erased pointer carries no discriminant — until the low tier
-/// threads one through, treat any non-null as `Thrown` (the only producer is
-/// `JSC::throwScope` paths). `report_error_or_terminate` only special-cases
-/// `Terminated`, which is never produced via this erased channel.
-#[inline]
-fn erased_js_error(_err: *mut ()) -> bun_jsc::JsError {
-    bun_jsc::JsError::Thrown
-}
-
-/// `bun_collections::LinearFifo` lacks `reset_head_if_empty` (Zig-only
-/// micro-opt that rewinds `head` to 0 when `count == 0`). Extension trait
-/// keeps the call site shape; body is a no-op until upstream lands it.
-trait LinearFifoExt {
-    fn reset_head_if_empty(&mut self);
-}
-impl<T, B: bun_collections::linear_fifo::LinearFifoBuffer<T>> LinearFifoExt
-    for bun_collections::LinearFifo<T, B>
-{
-    #[inline]
-    fn reset_head_if_empty(&mut self) {
-        // TODO(port): blocked_on bun_collections::LinearFifo::reset_head_if_empty
-        // (perf-only; semantically a no-op when the queue is already empty).
+        // SAFETY: `this` is the `process` BACKREF stored in the writer at
+        // `StaticPipeWriter::create`; the boxed `SecurityScanSubprocess`
+        // outlives the writer (it's only dropped after `is_done()` returns
+        // true in `sleep_until`). No `&mut` to either is held across this
+        // callback — `BufferedWriter::on_close` calls through a raw ptr.
+        unsafe { (*this).on_close_io(bun_spawn::StdioKind::Stdin) };
     }
 }
 

@@ -830,24 +830,23 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::options::Target::Browser);
     debug_assert!(dev.client_transpiler.resolver.opts.target == bundler::options::Target::Browser);
 
-    dev.framework = match dev.framework.resolve(
-        &mut dev.server_transpiler.resolver,
-        &mut dev.client_transpiler.resolver,
+    // PORT NOTE: reborrow `framework` and the two resolvers via `dev_ptr` so
+    // borrowck doesn't see three overlapping `&mut dev`.
+    // SAFETY: `dev_ptr` is the live `Box<DevServer>` heap address; the three
+    // fields are disjoint.
+    if let Err(_) = unsafe { &mut (*dev_ptr).framework }.resolve(
+        unsafe { &mut (*dev_ptr).server_transpiler.resolver },
+        unsafe { &mut (*dev_ptr).client_transpiler.resolver },
         options.arena,
     ) {
-        Ok(f) => f,
-        Err(_) => {
-            if dev.framework.is_built_in_react {
-                // TODO(port): blocked_on: bake::Framework / bake_body::Framework unification
-                // — `add_react_install_command_note` lives on `bake_body::Framework`.
-                let _ = &mut dev.log;
-            }
-            return Err(global.throw_value(
-                dev.log
-                    .to_js_aggregate_error(global, BunString::static_("Framework is missing required files!"))?,
-            ));
+        if dev.framework.is_built_in_react {
+            bake::Framework::add_react_install_command_note(&mut dev.log);
         }
-    };
+        return Err(global.throw_value(
+            dev.log
+                .to_js_aggregate_error(global, BunString::static_("Framework is missing required files!"))?,
+        ));
+    }
 
     // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
     // — handled by Drop

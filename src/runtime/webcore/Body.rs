@@ -15,6 +15,8 @@ use crate::webcore::{
 };
 // Re-export so callers can write `body::InternalBlob` (mirrors Zig nested-type access).
 pub use crate::webcore::InternalBlob;
+use crate::webcore::form_data::AsyncFormDataExt as _;
+use crate::webcore::sink::{self, ArrayBufferSink};
 use crate::jsc::HTTPHeaderName;
 use bun_jsc::StringJsc as _;
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
@@ -1048,32 +1050,32 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) /* | Value::InlineBlob(_) */ => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            promise.wrap_call(global, |g| blob.to_string_transfer(g))?;
+                            promise.wrap(global, |g| blob.to_string_transfer(g))?;
                         }
                         _ => {
                             let mut blob = new.use_();
-                            promise.wrap_call(global, |g| blob.to_string_transfer(g))?;
+                            promise.wrap(global, |g| blob.to_string_transfer(g))?;
                         }
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap_call(global, |g| blob.to_json_share(g));
+                        let result = promise.wrap(global, |g| blob.to_json_share(g));
                         blob.detach();
                         result?;
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap_call(global, |g| blob.to_array_buffer_transfer(g))?;
+                        promise.wrap(global, |g| blob.to_array_buffer_transfer(g))?;
                     }
                     Action::GetBytes => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap_call(global, |g| blob.to_uint8_array_transfer(g))?;
+                        promise.wrap(global, |g| blob.to_uint8_array_transfer(g))?;
                     }
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
                             // Zig: `defer blob.detach()` covers the `try promise.reject(...)` error path.
-                            let r = promise.reject_value(
+                            let r = promise.reject(
                                 global,
                                 ZigString::init(b"Internal error: task for FormData must not be null")
                                     .to_error_instance(global),
@@ -1082,14 +1084,9 @@ impl Value {
                             r?;
                             break 'inner;
                         };
-                        // PORT NOTE: `Action` carries the JSC-free `bun_core::form_data::AsyncFormData`
-                        // (so the enum is constructible from lower tiers). `to_js` lives on the
-                        // sibling `webcore::form_data::AsyncFormData`; both wrap the same
-                        // `bun_core::form_data::Encoding`, so re-wrap and dispatch.
-                        let result = webcore::form_data::AsyncFormData {
-                            encoding: async_form_data.encoding,
-                        }
-                        .to_js(global, blob.slice(), promise);
+                        // `webcore::form_data::AsyncFormData` re-exports `bun_core::form_data::AsyncFormData`;
+                        // `to_js` is provided via the `AsyncFormDataExt` extension trait.
+                        let result = async_form_data.to_js(global, blob.slice(), promise);
                         blob.detach();
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
                         result?;
@@ -1098,13 +1095,10 @@ impl Value {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(fetch_headers) = headers {
-                            // SAFETY: `fast_get` only writes a stack out-param via FFI; the
-                            // `&FetchHeaders` is an opaque C++ ZST handle (interior-mutable),
-                            // so re-deriving `&mut` from the raw handle pointer is sound — no
-                            // Rust-side state is aliased. Zig spec takes `?*FetchHeaders`.
-                            #[allow(invalid_reference_casting)]
-                            let fetch_headers = unsafe { &mut *(fetch_headers as *const FetchHeaders as *mut FetchHeaders) };
+                        if let Some(mut fetch_headers) = headers {
+                            // SAFETY: `headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                            // `fast_get` only writes a stack out-param via FFI.
+                            let fetch_headers = unsafe { fetch_headers.as_mut() };
                             if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
@@ -1126,7 +1120,7 @@ impl Value {
                             // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
                             unsafe { (*blob.store.as_ref().unwrap().as_ptr()).mime_type = bun_http_types::MimeType::TEXT };
                         }
-                        promise.resolve_value(global, blob.to_js(global))?;
+                        promise.resolve(global, blob.to_js(global))?;
                     }
                 }
                 promise_.unprotect();
@@ -1189,8 +1183,9 @@ impl Value {
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = unsafe { &*(*VirtualMachine::get()).global };
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
-                    // TODO(port): Zig @constCast'd allocated_slice.slice() into an owned ArrayList.
-                    Blob::init(allocated_slice.slice().to_vec(), global)
+                    // Zig: `fromOwnedSlice(@constCast(allocated_slice.slice()))` — transfer
+                    // ownership of the heap-allocated UTF-8 buffer (no copy).
+                    Blob::init(allocated_slice.into_vec(), global)
                 } else {
                     Blob::init(wtf_ref.latin1_slice().to_vec(), global)
                 };
@@ -1256,11 +1251,11 @@ impl Value {
                 let wtf_ref = unsafe { &**str };
                 if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
                     // str dropped at end of scope (deref)
-                    let bytes = utf8.slice().to_vec();
                     wtf_ref.deref();
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
-                        // TODO(port): Zig used fromOwnedSlice(@constCast(utf8.slice())).
-                        bytes,
+                        // Zig: `fromOwnedSlice(@constCast(utf8.slice()))` — transfer
+                        // ownership of the heap-allocated UTF-8 buffer (no copy).
+                        bytes: utf8.into_vec(),
                         was_string: true,
                     });
                 } else {
@@ -1330,7 +1325,7 @@ impl Value {
                 });
                 if let Some(promise) = promise_value.as_any_promise() {
                     if promise.status() == jsc::js_promise::Status::Pending {
-                        promise.reject_value_with_async_stack(global, err_ref.to_js(global))?;
+                        promise.reject_with_async_stack(global, err_ref.to_js(global))?;
                     }
                 }
             }

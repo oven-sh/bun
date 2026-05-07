@@ -1393,20 +1393,40 @@ impl core::fmt::Display for EscapedNamespace<'_> {
 pub use super::{BundleV2, PendingImport, BakeOptions};
 
 impl<'a> BundleV2<'a> {
-    /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
-    pub fn js_loop_for_plugins(&mut self) -> &dispatch::JsEventLoopHandle {
-        // CYCLEBREAK GENUINE: jsc::EventLoop → vtable handle. PERF(port): was inline switch.
+    /// Zig: `jsLoopForPlugins().enqueueTaskConcurrent(task)`. The Rust port
+    /// folds the lookup + enqueue so the bundler never dereferences the
+    /// `JSBundleCompletionTask` opaque (its layout lives in `bun_runtime`).
+    /// PERF(port): was inline `switch (this.loop().*)` + direct field access.
+    pub fn enqueue_on_js_loop_for_plugins(
+        &mut self,
+        task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+    ) {
         debug_assert!(self.plugins.is_some());
         if let Some(completion) = self.completion {
-            // From Bun.build
-            // SAFETY: completion is a valid backref while bundle is running
-            return unsafe { &(*completion).jsc_event_loop };
+            // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
+            let vt = crate::DeferredBatchTask::COMPLETION_DISPATCH
+                .load(core::sync::atomic::Ordering::Acquire);
+            debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
+            // SAFETY: vtable registered by T6 at init; `completion` is a live
+            // non-null backref while the bundle is running.
+            unsafe {
+                ((*vt).enqueue_task_concurrent)(NonNull::new_unchecked(completion), task)
+            };
+            return;
         }
         // From bake where the loop running the bundle is also the loop running
-        // the plugins. PORT NOTE: `linker.r#loop` is an erased `Option<NonNull<()>>`
-        // — the Js/Mini discriminant lives in T6. Without a completion task the
-        // CLI path has no JS event loop.
-        panic!("No JavaScript event loop for transpiler plugins to run on")
+        // the plugins (Zig: `switch (this.loop().*) { .js => |l| l, .mini => @panic }`).
+        // The erased `EventLoop` here carries the JS-loop owner directly.
+        let owner = self
+            .r#loop()
+            .expect("No JavaScript event loop for transpiler plugins to run on")
+            .as_ptr();
+        let vt = bun_event_loop::any_event_loop::JS_EVENT_LOOP_VTABLE
+            .load(core::sync::atomic::Ordering::Acquire);
+        debug_assert!(!vt.is_null(), "JS_EVENT_LOOP_VTABLE not registered by T6");
+        // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`; vtable contract
+        // per `bun_event_loop::JsEventLoopVTable`.
+        unsafe { ((*vt).enqueue_task_concurrent)(owner, task) };
     }
 
     fn ensure_client_transpiler(&mut self) {
@@ -3349,10 +3369,12 @@ impl<'a> BundleV2<'a> {
         // CYCLEBREAK GENUINE: `linker.r#loop` is an erased `Option<NonNull<()>>`;
         // the Js/Mini discriminant is owned by T6. With a JS completion task we
         // can route through its event loop; otherwise (CLI/Mini) call inline.
-        if let Some(completion) = self.completion {
-            // SAFETY: completion is a valid backref while bundle is running.
-            unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(load as *mut _, on_load_from_js_loop_raw),
+        if self.completion.is_some() {
+            self.enqueue_on_js_loop_for_plugins(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                    load as *mut _,
+                    on_load_from_js_loop_raw,
+                ),
             );
         } else {
             Self::on_load(load, self);
@@ -3361,10 +3383,12 @@ impl<'a> BundleV2<'a> {
 
     pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
         // CYCLEBREAK GENUINE: see `on_load_async`.
-        if let Some(completion) = self.completion {
-            // SAFETY: completion is a valid backref while bundle is running.
-            unsafe { &(*completion).jsc_event_loop }.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(resolve as *mut _, on_resolve_from_js_loop_raw),
+        if self.completion.is_some() {
+            self.enqueue_on_js_loop_for_plugins(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                    resolve as *mut _,
+                    on_resolve_from_js_loop_raw,
+                ),
             );
         } else {
             Self::on_resolve(resolve, self);

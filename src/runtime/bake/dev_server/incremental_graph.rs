@@ -1792,7 +1792,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                 let ref_count = out.ref_count;
                 *out = source_map_store::Entry {
-                    dev_allocator: bun_alloc::AllocationScope,
                     ref_count,
                     paths: file_paths.into_boxed_slice(),
                     files: contained_maps,
@@ -1823,7 +1822,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     as u32;
 
                 *out = source_map_store::Entry {
-                    dev_allocator: bun_alloc::AllocationScope,
                     ref_count: out.ref_count,
                     paths: file_paths.into_boxed_slice(),
                     files: contained_maps,

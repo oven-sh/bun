@@ -6,11 +6,14 @@
 //! LAYERING: `jsc.zig` carries deprecated aliases `WebCore = bun.webcore`,
 //! `API = bun.api`, `Node = bun.api.node`, `Subprocess = bun.api.Subprocess`.
 //! In the Rust crate graph those targets live in `bun_runtime`, which depends
-//! on this crate — re-exporting them here would create a cycle. The Zig source
-//! already marks every one of them `Deprecated` with a "TODO: Remove" header,
-//! so the Rust port drops the aliases outright. Callers reference
-//! `bun_runtime::{webcore,api,node}` directly; lower-tier crates that touched
-//! these types (e.g. `output_file_jsc`) have been moved up into `bun_runtime`.
+//! on this crate. The Rust port hoists the **data shapes** lower-tier crates
+//! genuinely need (`Blob`, `Blob::Store`, `BuildArtifact`, `PathLike`,
+//! `PathOrFileDescriptor`) into this crate as the single nominal definition —
+//! see `webcore_types.rs` / `node_path.rs` — and `bun_runtime` re-exports them
+//! and layers behaviour on top. Everything else under those aliases
+//! (`Request`/`Response`/`Subprocess`/`Jest`/`NewSocket`/…) is referenced via
+//! `bun_runtime::{webcore,api,node}` directly; consumers that needed them
+//! (e.g. `output_file_jsc`) have been moved up into `bun_runtime`.
 
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]
@@ -150,6 +153,19 @@ pub mod schema_api {
         pub source_lines: Vec<SourceLine>,
         /// frames
         pub frames: Vec<StackFrame>,
+    }
+
+    /// schema.zig:475 — peechy `message JsException` (all fields optional).
+    /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
+    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
+    /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
+    #[derive(Clone, Default)]
+    pub struct JsException {
+        pub name: Box<[u8]>,
+        pub message: Box<[u8]>,
+        pub runtime_type: u16,
+        pub code: u16,
+        pub stack: StackTrace,
     }
 }
 #[path = "JSType.rs"] pub mod js_type;

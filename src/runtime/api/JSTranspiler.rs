@@ -765,7 +765,7 @@ impl<'a> TransformTask<'a> {
         // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
         // — re-point the linker's resolver backref into the heap-allocated copy.
         // Must happen AFTER the move into the Box so the address is stable.
-        let resolver_ptr: *mut _ = core::ptr::addr_of_mut!(transform_task.transpiler.resolver).cast();
+        let resolver_ptr: *mut _ = &mut transform_task.transpiler.resolver;
         transform_task.transpiler.linker.resolver = resolver_ptr;
         transform_task.transpiler.set_log(&mut transform_task.log);
         // `set_allocator(bun.default_allocator)` — Rust `Transpiler` carries an

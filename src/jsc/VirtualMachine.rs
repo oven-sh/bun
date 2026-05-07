@@ -266,11 +266,10 @@ pub struct VirtualMachine {
 
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
+    // PORT NOTE: Zig `if (Environment.isDebug) std.Thread.Id else void` — the
+    // release-build ZST is intentional spec parity, not a placeholder.
     #[cfg(not(debug_assertions))]
     pub debug_thread_id: (),
-
-    // TODO(b2-cycle): `body_value_hive_allocator` is `bun_runtime::webcore::Body::Value::HiveAllocator`.
-    pub body_value_hive_allocator: (),
 
     pub is_inside_deferred_task_queue: bool,
     /// When true, drainMicrotasksWithGlobal is suppressed.
@@ -1380,8 +1379,9 @@ impl VirtualMachine {
         vm_ref.origin_timestamp = get_origin_timestamp();
         vm_ref.smol = opts.smol;
         vm_ref.standalone_module_graph = NonNull::new(opts.graph);
-        vm_ref.initial_script_execution_context_identifier =
-            if opts.is_main_thread { 1 } else { i32::MAX };
+        vm_ref.initial_script_execution_context_identifier = opts
+            .context_id
+            .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
         #[cfg(debug_assertions)]
         {
             vm_ref.debug_thread_id = std::thread::current().id();

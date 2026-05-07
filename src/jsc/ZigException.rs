@@ -4,8 +4,7 @@ use core::ptr;
 
 use bun_str::String;
 use bun_url::URL as ZigURL;
-// TODO(port): verify crate path for generated schema API (`bun.schema.api`)
-use bun_schema::api;
+use crate::schema_api as api;
 
 use bun_jsc::{
     Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, VirtualMachine, ZigStackFrame,

@@ -134,9 +134,14 @@ impl StdioKind {
 // hooks are hand-expanded below for `Subprocess<'_>`.
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
-    // ManuallyDrop so finalize() can release the strong ref at the same point as Zig's
-    // `process.deref()` (before the intrusive ref_count hits zero).
-    pub process: ManuallyDrop<Arc<Process>>,
+    /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
+    /// `Box::into_raw` in `Process::init_posix`/`init_windows`; the +1 ref
+    /// from construction is released in [`Subprocess::finalize`] via
+    /// `Process::deref()`. Not `Arc` — `Process` carries its own
+    /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
+    /// boundary by raw identity, so wrapping in `Arc` would double-count and
+    /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
+    pub process: *mut Process,
     pub stdin: Writable<'a>,
     pub stdout: Readable,
     pub stderr: Readable,

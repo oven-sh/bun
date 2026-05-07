@@ -2,7 +2,7 @@ use core::ptr;
 
 use bun_str::String as BunString;
 use bun_str::Utf8Slice;
-use bun_schema::api;
+use crate::schema_api as api;
 use bun_url::URL as ZigURL;
 
 use crate::RefPtr;

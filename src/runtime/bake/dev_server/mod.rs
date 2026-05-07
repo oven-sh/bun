@@ -1128,7 +1128,7 @@ pub struct DevServer {
     pub active_websocket_connections: bun_collections::HashMap<*mut HmrSocket, ()>,
 
     #[cfg(feature = "bake_debugging_features")]
-    pub dump_dir: Option<bun_sys::Fd>,
+    pub dump_dir: Option<bun_sys::Dir>,
     pub emit_incremental_visualizer_events: u32,
     pub emit_memory_visualizer_events: u32,
     pub memory_visualizer_timer: EventLoopTimer,
@@ -1170,17 +1170,10 @@ impl DevServer {
         &mut self.route_bundles[idx.get() as usize]
     }
 
-    /// `DevServer.devAllocator()` -- DevServer.zig:273. Returns the borrowed
-    /// allocation-scope handle that `Entry`/`PackedMap` use for
-    /// allocator-tagging. `bun_alloc::AllocationScope` is currently a
-    /// unit-struct stub upstream, so this just constructs it directly.
-    // TODO(b2-blocked): forward to `self.allocation_scope.borrow()` once
-    // `bun_alloc::AllocationScope` is real.
-    #[inline]
-    pub fn dev_allocator(&self) -> crate::bake::dev_server_body::DevAllocator {
-        let _ = &self.allocation_scope;
-        bun_alloc::AllocationScope
-    }
+    // PORT NOTE: `devAllocator()` (DevServer.zig:273) is intentionally not
+    // mirrored here — Rust collections in this module use the global mimalloc,
+    // so no callsite needs the borrowed `AllocationScope` handle. The real
+    // accessor lives on the lifetime-carrying `dev_server_body::DevServer`.
 
     /// `DevServer.emitMemoryVisualizerMessageIfNeeded` -- DevServer.zig:4341.
     /// Full body lives in the gated `../DevServer.rs` draft (depends on

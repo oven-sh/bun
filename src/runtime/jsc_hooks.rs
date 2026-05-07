@@ -4693,6 +4693,7 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
 /// once from `main.rs` immediately after [`crate::dispatch::install_dispatch_hooks`]
 /// (and before the first `VirtualMachine::init`).
 pub fn install_jsc_hooks() {
+    bun_jsc::event_loop::install_js_event_loop_vtable();
     bun_jsc::virtual_machine::set_runtime_hooks(&RUNTIME_HOOKS_INSTANCE);
     bun_jsc::module_loader::set_loader_hooks(&LOADER_HOOKS_INSTANCE);
     bun_sql_jsc::jsc::set_sql_runtime_hooks(&crate::hw_exports::sql_hooks::INSTANCE);

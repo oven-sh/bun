@@ -373,9 +373,11 @@ impl<'a> Transpiler<'a> {
         self.options.load_defines(Some(env_loader))?;
 
         let mut is_development = false;
+        eprintln!("[DBG] configure_defines: self.allocator={:p}", self.allocator as *const _);
         if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
             if !node_env.is_empty() {
                 if let Some(s) = node_env[0].data.value.e_string() {
+                    eprintln!("[DBG] configure_defines: estring storeref={:p} data={:p} len={} utf16={}", s.as_ptr(), s.data.as_ptr(), s.data.len(), s.is_utf16);
                     if s.eql_comptime(b"production") {
                         is_production = true;
                     } else if s.eql_comptime(b"development") {

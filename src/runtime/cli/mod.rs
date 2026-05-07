@@ -350,23 +350,35 @@ pub mod help_command {
     }
 
     // someone will get mad at me for this
-    pub const PACKAGES_TO_REMOVE_FILLER: &[&[u8]] = &[
-        b"moment", b"underscore", b"jquery", b"backbone", b"redux", b"browserify",
-        b"webpack", b"left-pad", b"is-array", b"babel-core", b"@parcel/core",
+    pub const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
+        "moment", "underscore", "jquery", "backbone", "redux", "browserify",
+        "webpack", "left-pad", "is-array", "babel-core", "@parcel/core",
     ];
-    pub const PACKAGES_TO_ADD_FILLER: &[&[u8]] = &[
-        b"elysia", b"@shumai/shumai", b"hono", b"react", b"lyra",
-        b"@remix-run/dev", b"@evan/duckdb", b"@zarfjs/zarf", b"zod", b"tailwindcss",
+    pub const PACKAGES_TO_ADD_FILLER: &[&str] = &[
+        "elysia", "@shumai/shumai", "hono", "react", "lyra",
+        "@remix-run/dev", "@evan/duckdb", "@zarfjs/zarf", "zod", "tailwindcss",
     ];
-    pub const PACKAGES_TO_X_FILLER: &[&[u8]] = &[
-        b"bun-repl", b"next", b"vite", b"prisma", b"nuxi", b"prettier", b"eslint",
+    pub const PACKAGES_TO_X_FILLER: &[&str] = &[
+        "bun-repl", "next", "vite", "prisma", "nuxi", "prettier", "eslint",
     ];
-    pub const PACKAGES_TO_CREATE_FILLER: &[&[u8]] = &[
-        b"next-app", b"vite", b"astro", b"svelte", b"elysia",
+    pub const PACKAGES_TO_CREATE_FILLER: &[&str] = &[
+        "next-app", "vite", "astro", "svelte", "elysia",
     ];
 
-    // the spacing between commands here is intentional
-    pub const CLI_HELPTEXT_FMT: &str = "\
+    /// `cli_helptext_fmt` from cli.zig.
+    ///
+    /// PORT NOTE: emits the `pretty!`/`pretty_error!` call directly instead of
+    /// expanding to a bare literal — `pretty!` captures its template as
+    /// `$fmt:expr`, which is opaque to the `pretty_fmt!` proc-macro, so a
+    /// nested `cli_helptext_fmt!()` inside `concat!()` would never be flattened.
+    /// Taking the printer macro (and per-reason prefix line) as parameters keeps
+    /// a single source of truth for the 35-line help body across both
+    /// `Reason::Explicit` (stdout) and `Reason::InvalidCommand` (stderr).
+    /// The spacing between commands is intentional.
+    macro_rules! print_cli_helptext {
+        ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
+            $printer!(
+                concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
 
 <b>Commands:<r>
@@ -399,12 +411,12 @@ pub mod help_command {
   <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
-";
-
-    const CLI_HELPTEXT_FOOTER: &str = "
-Learn more about Bun:            <magenta>https://bun.com/docs<r>
-Join our Discord community:      <blue>https://bun.com/discord<r>
-";
+"),
+                $($extra,)*
+                $args.0, $args.1, $args.2, $args.3, $args.4, $args.5, $args.6,
+            )
+        };
+    }
 
     // PORT NOTE: Zig had `comptime reason: Reason` → const generic. Tag/Reason
     // lack `ConstParamTy` in lower-tier crates, so demoted to a runtime arg.
@@ -422,31 +434,27 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
         let package_remove_i = pick(PACKAGES_TO_REMOVE_FILLER.len());
         let package_create_i = pick(PACKAGES_TO_CREATE_FILLER.len());
 
+        // PORT NOTE: filler tables are `&str` (not `&[u8]`) so the `{:<16}`
+        // width spec actually pads — `Display for BStr` writes raw bytes and
+        // ignores formatter width/alignment.
         let args = (
-            bstr::BStr::new(PACKAGES_TO_X_FILLER[package_x_i]),
-            bstr::BStr::new(PACKAGES_TO_ADD_FILLER[package_add_i]),
-            bstr::BStr::new(PACKAGES_TO_REMOVE_FILLER[package_remove_i]),
-            bstr::BStr::new(PACKAGES_TO_ADD_FILLER[(package_add_i + 1) % PACKAGES_TO_ADD_FILLER.len()]),
-            bstr::BStr::new(PACKAGES_TO_ADD_FILLER[(package_add_i + 2) % PACKAGES_TO_ADD_FILLER.len()]),
-            bstr::BStr::new(PACKAGES_TO_ADD_FILLER[(package_add_i + 3) % PACKAGES_TO_ADD_FILLER.len()]),
-            bstr::BStr::new(PACKAGES_TO_CREATE_FILLER[package_create_i]),
+            PACKAGES_TO_X_FILLER[package_x_i],
+            PACKAGES_TO_ADD_FILLER[package_add_i],
+            PACKAGES_TO_REMOVE_FILLER[package_remove_i],
+            PACKAGES_TO_ADD_FILLER[(package_add_i + 1) % PACKAGES_TO_ADD_FILLER.len()],
+            PACKAGES_TO_ADD_FILLER[(package_add_i + 2) % PACKAGES_TO_ADD_FILLER.len()],
+            PACKAGES_TO_ADD_FILLER[(package_add_i + 3) % PACKAGES_TO_ADD_FILLER.len()],
+            PACKAGES_TO_CREATE_FILLER[package_create_i],
         );
 
         match reason {
             Reason::Explicit => {
-                // TODO(port): Output::pretty proc-macro (`<tag>` rewrite + 7-arg
-                // positional substitution into CLI_HELPTEXT_FMT). For now we
-                // print the runtime-rewritten ANSI template followed by the
-                // footer; the {:<16} fillers render as literal placeholders.
-                pretty!(
+                print_cli_helptext!(
+                    pretty,
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({})<r>\n\n",
-                    Global::package_json_version_with_revision,
+                    args,
+                    Global::package_json_version_with_revision
                 );
-                Output::pretty(format_args!(
-                    "{}",
-                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FMT)),
-                ));
-                let _ = (args, show_all_flags);
                 if show_all_flags {
                     pretty!("\n<b>Flags:<r>");
                     bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS.as_slice());
@@ -454,17 +462,17 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                         "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
                     );
                 }
-                Output::pretty(format_args!(
-                    "{}",
-                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FOOTER)),
-                ));
+                pretty!(
+                    "\nLearn more about Bun:            <magenta>https://bun.com/docs<r>\n\
+Join our Discord community:      <blue>https://bun.com/discord<r>\n"
+                );
             }
             Reason::InvalidCommand => {
-                pretty_error!("<r><red>Uh-oh<r> not sure what to do with that command.\n\n");
-                Output::pretty(format_args!(
-                    "{}",
-                    bstr::BStr::new(&Output::pretty_fmt::<true>(CLI_HELPTEXT_FMT)),
-                ));
+                print_cli_helptext!(
+                    pretty_error,
+                    "<r><red>Uh-oh<r> not sure what to do with that command.\n\n",
+                    args
+                );
             }
         }
 
@@ -1297,12 +1305,231 @@ To create a project with the official Next.js scaffolding tool, run\n\
     }
 
     pub fn tag_print_help(cmd: Tag, show_all_flags: bool) {
+        // the output of --help uses the following syntax highlighting
+        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+        // use [foo] for multiple arguments or flags for foo.
+        // use <bar> to emphasize 'bar'
+        //
+        // PORT NOTE: every help block here must pass its template as a *string
+        // literal* to `pretty!()` so the `pretty_fmt!` proc-macro can rewrite
+        // the `<tag>` markers at compile time. Passing a `const &str` through
+        // `{}` (as the Phase-A draft in cli_body.rs did) prints the raw markup.
         match cmd {
             Tag::AutoCommand | Tag::HelpCommand => {
                 HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, show_all_flags);
             }
             Tag::RunCommand | Tag::RunAsNodeCommand => {
                 run_command::RunCommand::print_help(None);
+            }
+            Tag::BunxCommand => {
+                pretty_errorln!(
+                    "<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> [flags and arguments for the package]<r>\n\
+Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.\n\
+\n\
+Flags:\n\
+  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js\n\
+  <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name\n\
+  <cyan>--no-install<r>           Skip installation if package is not already installed\n\
+  <cyan>--verbose<r>              Enable verbose output during installation\n\
+  <cyan>--silent<r>               Suppress output during installation\n\
+\n\
+Examples<d>:<r>\n\
+  <b><green>bunx<r> <blue>prisma<r> migrate<r>\n\
+  <b><green>bunx<r> <blue>prettier<r> foo.js<r>\n\
+  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app\n\
+  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::BuildCommand => {
+                pretty!(
+                    "<b>Usage<r>:\n\
+  Transpile and bundle one or more files.\n\
+  <b><green>bun build<r> <cyan>[flags]<r> <blue>\\<entrypoint\\><r>\n\n"
+                );
+                Output::flush();
+                pretty!("<b>Flags:<r>");
+                Output::flush();
+                bun_clap::simple_help(arguments::BUILD_ONLY_PARAMS.as_slice());
+                pretty!(
+                    "\n\n<b>Examples:<r>\n\
+  <d>Frontend web apps:<r>\n\
+  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>\n\
+  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>\n\
+\n\
+  <d>Bundle code to be run in Bun (reduces server startup time)<r>\n\
+  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>\n\
+\n\
+  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>\n\
+  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>\n\
+\n\
+A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::TestCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>\n\
+  Run all matching test files and print the results to stdout"
+                );
+                Output::flush();
+                pretty!("\n\n<b>Flags:<r>");
+                Output::flush();
+                bun_clap::simple_help(arguments::TEST_ONLY_PARAMS);
+                pretty!(
+                    "\n\n<b>Examples:<r>\n\
+  <d>Run all test files<r>\n\
+  <b><green>bun test<r>\n\
+\n\
+  <d>Run all test files with \"foo\" or \"bar\" in the file name<r>\n\
+  <b><green>bun test<r> <blue>foo bar<r>\n\
+\n\
+  <d>Run all test files, only including tests whose names includes \"baz\"<r>\n\
+  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::CreateCommand => {
+                pretty!(
+                    "<b>Usage<r><d>:<r>\n\
+  <b><green>bun create<r> <magenta>\\<MyReactComponent.(jsx|tsx)\\><r>\n\
+  <b><green>bun create<r> <magenta>\\<template\\><r> <cyan>[...flags]<r> <blue>dest<r>\n\
+  <b><green>bun create<r> <magenta>\\<github-org/repo\\><r> <cyan>[...flags]<r> <blue>dest<r>\n\
+\n\
+<b>Environment variables<r><d>:<r>\n\
+  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>\n\
+  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\"<r>\n\
+  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>\n\
+  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>\n\
+\n\
+<b>React Component Projects<r><d>:<r>\n\
+  • Turn an existing React component into a complete frontend dev environment\n\
+  • Automatically starts a hot-reloading dev server\n\
+  • Auto-detects & configures TailwindCSS and shadcn/ui\n\
+\n\
+  <b><magenta>bun create \\<MyReactComponent.(jsx|tsx)\\><r>\n\
+\n\
+<b>Templates<r><d>:<r>\n\
+  • NPM: Runs <b><magenta>bunx create-\\<template\\><r> with given arguments\n\
+  • GitHub: Downloads repository contents as template\n\
+  • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>\n\
+\n\
+Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::UpgradeCommand => {
+                let (latest, switch_desc, switch_flag): (&str, &str, &str) =
+                    if bun_core::Environment::IS_CANARY {
+                        ("canary", "Switch from the canary version back to the latest stable release", "stable")
+                    } else {
+                        ("stable", "Install the most recent canary version of Bun", "canary")
+                    };
+
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>\n\
+  Upgrade Bun\n\
+\n\
+<b>Examples:<r>\n\
+  <d>Install the latest {} version<r>\n\
+  <b><green>bun upgrade<r>\n\
+\n\
+  <d>{}<r>\n\
+  <b><green>bun upgrade<r> <cyan>--{}<r>\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>\n",
+                    latest,
+                    switch_desc,
+                    switch_flag,
+                );
+                Output::flush();
+            }
+            Tag::ReplCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>\n\
+  Open a Bun REPL\n"
+                );
+                Output::flush();
+            }
+            Tag::ExecCommand => {
+                pretty!(
+                    "<b>Usage: bun exec <r><cyan>\\<script\\><r>\n\
+\n\
+Execute a shell script directly from Bun.\n\
+\n\
+<b><red>Note<r>: If executing this from a shell, make sure to escape the string!\n\
+\n\
+<b>Examples<d>:<r>\n\
+  <b>bun exec \"echo hi\"<r>\n\
+  <b>bun exec \"echo \\\"hey friends\\\"!\"<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::GetCompletionsCommand => {
+                pretty!("<b>Usage<r>: <b><green>bun getcompletes<r>");
+                Output::flush();
+            }
+            Tag::PatchCommand => {
+                pm_print_help(PmSubcommand::Patch);
+            }
+            Tag::PatchCommitCommand => {
+                pm_print_help(PmSubcommand::PatchCommit);
+            }
+            Tag::OutdatedCommand => {
+                pm_print_help(PmSubcommand::Outdated);
+            }
+            Tag::UpdateInteractiveCommand => {
+                pm_print_help(PmSubcommand::Update);
+            }
+            Tag::PublishCommand => {
+                pm_print_help(PmSubcommand::Publish);
+            }
+            Tag::AuditCommand => {
+                pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::InfoCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>\n\
+  Display package metadata from the registry.\n\
+\n\
+<b>Examples:<r>\n\
+  <d>View basic information about a package<r>\n\
+  <b><green>bun info<r> <blue>react<r>\n\
+\n\
+  <d>View specific version<r>\n\
+  <b><green>bun info<r> <blue>react@18.0.0<r>\n\
+\n\
+  <d>View specific property<r>\n\
+  <b><green>bun info<r> <blue>react<r> version\n\
+  <b><green>bun info<r> <blue>react<r> dependencies\n\
+  <b><green>bun info<r> <blue>react<r> versions\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>\n"
+                );
+                Output::flush();
+            }
+            Tag::WhyCommand => {
+                pretty!(
+                    "<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>\n\
+Explain why a package is installed\n\
+\n\
+<b>Arguments:<r>\n\
+  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
+\n\
+<b>Options:<r>\n\
+  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
+  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
+\n\
+<b>Examples:<r>\n\
+  <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
+  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
+  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>\n"
+                );
+                Output::flush();
             }
             Tag::InitCommand => {
                 pretty!(
@@ -1351,10 +1578,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>\n"
                 );
                 Output::flush();
             }
-            // TODO(b2-blocked): per-subcommand help blocks — full text lives in
-            // cli_body.rs::command::tag_print_help (1.2k lines of help strings).
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }
+    }
+
+    use bun_install::package_manager_real::Subcommand as PmSubcommand;
+
+    /// Forward to `bun_install::PackageManager::CommandLineArguments::print_help`.
+    #[inline]
+    fn pm_print_help(subcommand: PmSubcommand) {
+        bun_install::package_manager_real::CommandLineArguments::print_help(subcommand);
     }
 }
 pub use command as Command;

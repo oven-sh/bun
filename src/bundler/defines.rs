@@ -435,6 +435,7 @@ impl DefineDataExt for DefineData {
         // no post-hoc deep clone is needed. Same arena, same lifetime
         // contract; one extra `value_str.len()` copy vs Zig.
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
+        eprintln!("[DBG] parse: bump={:p} arena_value={:p} len={} value_str={:?}", bump as *const _, arena_value.as_ptr(), arena_value.len(), bstr::BStr::new(value_str));
         let source = logger::Source {
             // SAFETY: `Source.contents` is typed `&'static [u8]` as a Phase-A
             // stand-in (see logger/lib.rs `Str` note). `arena_value` lives in

@@ -1166,6 +1166,180 @@ pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// JsEventLoopVTable — concrete bodies for the erased `EventLoopHandle::Js` /
+// `AnyEventLoop::Js` arm. `bun_event_loop` (lower tier) cannot name
+// `jsc::EventLoop`/`VirtualMachine`, so it dispatches through a manual vtable
+// whose static instance lives here and is registered at startup by
+// [`install_js_event_loop_vtable`] (called from `bun_runtime::install_jsc_hooks`
+// before the first `VirtualMachine::init`). Each slot casts the erased
+// `*mut ()` owner back to `*mut EventLoop` and forwards to the real method —
+// exactly what Zig's `EventLoopHandle.zig` did inline via `this.js.*`.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline(always)]
+unsafe fn el(owner: *mut ()) -> *mut EventLoop {
+    owner.cast::<EventLoop>()
+}
+
+unsafe fn vt_iteration_number(owner: *mut ()) -> u64 {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `usockets_loop()` returns the
+    // live VM-owned uws loop.
+    unsafe { (*(*el(owner)).usockets_loop()).iteration_number() }
+}
+
+unsafe fn vt_file_polls(owner: *mut ()) -> *mut Async::file_poll::Store {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
+    // Return raw to avoid asserting uniqueness — multiple handles may name the
+    // same VM (see `EventLoopHandle::file_polls` doc).
+    let vm = unsafe { (*el(owner)).vm() };
+    unsafe {
+        (*vm)
+            .rare_data()
+            .file_polls_
+            .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
+            .as_mut() as *mut _
+    }
+}
+
+unsafe fn vt_put_file_poll(owner: *mut (), poll: *mut Async::FilePoll, was_ever_registered: bool) {
+    // Zig: `vm.rareData().filePolls(vm).put(poll, vm, was_ever_registered)`.
+    // `Store::put` only needs the VM as an opaque `EventLoopCtx` (for
+    // `after_event_loop_callback` recovery) — reach it via the JS-ctx hook so
+    // we don't form a competing `&mut VirtualMachine` while holding the store.
+    let store = unsafe { vt_file_polls(owner) };
+    let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
+    // SAFETY: `store` is the live per-VM FilePoll store (see `vt_file_polls`).
+    unsafe { (*store).put(poll, ctx, was_ever_registered) };
+}
+
+unsafe fn vt_uws_loop(owner: *mut ()) -> *mut uws::Loop {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).usockets_loop() }
+}
+
+unsafe fn vt_pipe_read_buffer(owner: *mut ()) -> *mut [u8] {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `pipe_read_buffer` reaches
+    // VM-owned scratch. Return a raw fat ptr — see method SAFETY doc re aliasing.
+    unsafe { (*el(owner)).pipe_read_buffer() as *mut [u8] }
+}
+
+unsafe fn vt_tick(owner: *mut ()) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).tick() };
+}
+
+unsafe fn vt_auto_tick(owner: *mut ()) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).auto_tick() };
+}
+
+unsafe fn vt_auto_tick_active(owner: *mut ()) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).auto_tick_active() };
+}
+
+unsafe fn vt_global_object(owner: *mut ()) -> *mut () {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).global }.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+}
+
+unsafe fn vt_bun_vm(owner: *mut ()) -> *mut () {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).virtual_machine }.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+}
+
+unsafe fn vt_stdout(owner: *mut ()) -> *mut () {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
+    unsafe { (*(*el(owner)).vm()).rare_data().stdout().cast() }
+}
+
+unsafe fn vt_stderr(owner: *mut ()) -> *mut () {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
+    unsafe { (*(*el(owner)).vm()).rare_data().stderr().cast() }
+}
+
+unsafe fn vt_enter(owner: *mut ()) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).enter() };
+}
+
+unsafe fn vt_exit(owner: *mut ()) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).exit() };
+}
+
+unsafe fn vt_enqueue_task(owner: *mut (), task: Task) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).enqueue_task(task) };
+}
+
+unsafe fn vt_enqueue_task_concurrent(owner: *mut (), task: *mut ConcurrentTaskItem) {
+    // SAFETY: `owner` is a live `*mut EventLoop`.
+    unsafe { (*el(owner)).enqueue_task_concurrent(task) };
+}
+
+unsafe fn vt_env(owner: *mut ()) -> *mut bun_dotenv::Loader<'static> {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
+    unsafe { (*(*el(owner)).vm()).transpiler.env }
+}
+
+unsafe fn vt_top_level_dir(owner: *mut ()) -> *const [u8] {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM. The
+    // `fs.top_level_dir` slice is borrowed for the VM lifetime.
+    unsafe { (*(*(*el(owner)).vm()).transpiler.fs).top_level_dir as *const [u8] }
+}
+
+unsafe fn vt_create_null_delimited_env_map(
+    owner: *mut (),
+) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
+    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
+    unsafe { (*(*(*el(owner)).vm()).transpiler.env).map.create_null_delimited_env_map() }
+}
+
+unsafe fn vt_current() -> *mut () {
+    // SAFETY: `VirtualMachine::get()` panics if no VM on this thread;
+    // `event_loop()` returns the live `*mut EventLoop` self-pointer.
+    unsafe { (*VirtualMachine::get()).event_loop().cast() }
+}
+
+static JS_EVENT_LOOP_VTABLE_INSTANCE: bun_event_loop::JsEventLoopVTable =
+    bun_event_loop::JsEventLoopVTable {
+        iteration_number: vt_iteration_number,
+        file_polls: vt_file_polls,
+        put_file_poll: vt_put_file_poll,
+        uws_loop: vt_uws_loop,
+        pipe_read_buffer: vt_pipe_read_buffer,
+        tick: vt_tick,
+        auto_tick: vt_auto_tick,
+        auto_tick_active: vt_auto_tick_active,
+        global_object: vt_global_object,
+        bun_vm: vt_bun_vm,
+        stdout: vt_stdout,
+        stderr: vt_stderr,
+        enter: vt_enter,
+        exit: vt_exit,
+        enqueue_task: vt_enqueue_task,
+        enqueue_task_concurrent: vt_enqueue_task_concurrent,
+        env: vt_env,
+        top_level_dir: vt_top_level_dir,
+        create_null_delimited_env_map: vt_create_null_delimited_env_map,
+    };
+
+/// Register the [`JsEventLoopVTable`] instance and the `JS_EVENT_LOOP_CURRENT`
+/// hook into `bun_event_loop`. Called once from
+/// `bun_runtime::jsc_hooks::install_jsc_hooks()` before the first
+/// `VirtualMachine::init` so every `EventLoopHandle::Js` / `AnyEventLoop::Js`
+/// constructed thereafter sees a non-null vtable.
+pub fn install_js_event_loop_vtable() {
+    use bun_event_loop::any_event_loop::{JS_EVENT_LOOP_CURRENT, JS_EVENT_LOOP_VTABLE};
+    JS_EVENT_LOOP_VTABLE.store(
+        &JS_EVENT_LOOP_VTABLE_INSTANCE as *const _ as *mut _,
+        Ordering::Release,
+    );
+    JS_EVENT_LOOP_CURRENT.store(vt_current as unsafe fn() -> *mut () as *mut (), Ordering::Release);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/event_loop.zig (748 lines)
 //   confidence: high

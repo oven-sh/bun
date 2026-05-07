@@ -121,15 +121,25 @@ pub struct RunCommand;
 impl RunCommand {
     /// `bun run --help` body.
     pub fn print_help(package_json: Option<&PackageJSON>) {
-        const INTRO_TEXT: &str =
-            "<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>";
-
-        const EXAMPLES_TEXT: &str = "<b>Examples:<r>\n  <d>Run a JavaScript or TypeScript file<r>\n  <b><green>bun run<r> <blue>./index.js<r>\n  <b><green>bun run<r> <blue>./index.tsx<r>\n\n  <d>Run a package.json script<r>\n  <b><green>bun run<r> <blue>dev<r>\n  <b><green>bun run<r> <blue>lint<r>\n\nFull documentation is available at <magenta>https://bun.com/docs/cli/run<r>\n";
-
-        pretty!("{}\n\n", INTRO_TEXT);
+        // PORT NOTE: templates are passed as *string literals* so the
+        // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
+        // time. Routing them through a `const &str` + `{}` (as the original
+        // Phase-A draft did) prints the raw `<b>`/`<r>` tags verbatim.
+        pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
-        pretty!("\n\n{}", EXAMPLES_TEXT);
+        pretty!(
+            "\n\n<b>Examples:<r>\n\
+  <d>Run a JavaScript or TypeScript file<r>\n\
+  <b><green>bun run<r> <blue>./index.js<r>\n\
+  <b><green>bun run<r> <blue>./index.tsx<r>\n\
+\n\
+  <d>Run a package.json script<r>\n\
+  <b><green>bun run<r> <blue>dev<r>\n\
+  <b><green>bun run<r> <blue>lint<r>\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>\n"
+        );
 
         if let Some(pkg) = package_json {
             if let Some(scripts) = pkg.scripts.as_deref() {

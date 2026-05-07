@@ -1028,19 +1028,33 @@ pub mod call_frame {
         pub fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
             Self { remaining: slice, _vm: core::ptr::null() }
         }
-        #[allow(dead_code)]
-        pub fn next(&mut self) -> Option<JSValue> {
+        /// Zig `len` (CallFrame.zig) — remaining argument count.
+        #[inline]
+        pub fn len(&self) -> u16 {
+            self.remaining.len() as u16
+        }
+        /// Zig `eat` (CallFrame.zig) — advance past the head without returning it.
+        #[inline]
+        pub fn eat(&mut self) {
+            if let Some((_, rest)) = self.remaining.split_first() {
+                self.remaining = rest;
+            }
+        }
+        /// Zig `next` (CallFrame.zig) — **peek** the head without advancing.
+        ///
+        /// NOTE: an earlier port gave this eat-semantics; callers wanting the
+        /// Zig `nextEat` behaviour must call [`Self::next_eat`] (the
+        /// `JSMySQLQuery` callsite was updated alongside this fix).
+        #[inline]
+        pub fn next(&self) -> Option<JSValue> {
+            self.remaining.first().copied()
+        }
+        /// Zig `nextEat` (CallFrame.zig) — return the head **and** advance.
+        #[inline]
+        pub fn next_eat(&mut self) -> Option<JSValue> {
             let (first, rest) = self.remaining.split_first()?;
             self.remaining = rest;
             Some(*first)
-        }
-        /// Zig `Node.ArgumentsSlice.nextEat` (CallFrame.zig) — returns the head
-        /// and advances the cursor. The local `next` above already has eat
-        /// semantics (it splits `remaining`), so this is an alias kept for
-        /// callers ported verbatim from Zig.
-        #[inline]
-        pub fn next_eat(&mut self) -> Option<JSValue> {
-            self.next()
         }
     }
 }

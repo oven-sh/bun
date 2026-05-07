@@ -408,6 +408,61 @@ pub mod deferred_request {
     pub struct List {
         pub first: Option<core::ptr::NonNull<Node>>,
     }
+    impl List {
+        /// `std.SinglyLinkedList.popFirst` — detach and return the head node.
+        pub fn pop_first(&mut self) -> Option<core::ptr::NonNull<Node>> {
+            let n = self.first?;
+            // SAFETY: nodes are owned by `dev.deferred_request_pool` and remain
+            // valid until `put()`; the list is single-threaded.
+            self.first = unsafe { (*n.as_ptr()).next.take() };
+            Some(n)
+        }
+    }
+
+    impl DeferredRequest {
+        /// `DeferredRequest.abort` — DevServer.zig:1841. Aborts the connection
+        /// associated with this deferred request and marks it `Aborted`.
+        pub fn abort(&mut self) {
+            bun_core::scoped_log!(super::DevServer, "DeferredRequest({:p}) abort", self as *mut _);
+            let handler = core::mem::replace(&mut self.handler, Handler::Aborted);
+            match handler {
+                Handler::ServerHandler(mut saved) => {
+                    saved.ctx.set_signal_aborted(crate::server::jsc::CommonAbortReason::ConnectionClosed);
+                    saved.js_request.deinit();
+                }
+                Handler::BundledHtmlPage(r) => {
+                    r.resp.end_without_body(true);
+                }
+                Handler::Aborted => {}
+            }
+        }
+
+        /// `DeferredRequest.deref` — DevServer.zig:1758. Only callable from
+        /// DevServer (the sole strong-ref holder).
+        ///
+        /// SAFETY: `self` must be the `data` field of a `Node` allocated from
+        /// `(*self.dev).deferred_request_pool`. After this returns the storage
+        /// may have been recycled; do not touch `self`.
+        pub unsafe fn deref_(&mut self) {
+            self.referenced_by_devserver = false;
+            let should_free = !self.weakly_referenced_by_requestcontext;
+            // __deinit
+            bun_core::scoped_log!(super::DevServer, "DeferredRequest({:p}) deinitImpl", self as *mut _);
+            if let Handler::ServerHandler(saved) = &mut self.handler {
+                saved.deinit();
+            }
+            if should_free {
+                // __free: `dev.deferred_request_pool.put(@fieldParentPtr("data", this))`
+                // SAFETY: `self` is the `data` field of a `Node`; recover the parent.
+                let node = (self as *mut Self)
+                    .cast::<u8>()
+                    .sub(core::mem::offset_of!(Node, data))
+                    .cast::<Node>();
+                // SAFETY: `dev` is a BACKREF to the owning DevServer (LIFETIMES.tsv).
+                (*(self.dev as *mut DevServer)).deferred_request_pool.put(node);
+            }
+        }
+    }
 }
 pub use deferred_request::DeferredRequest;
 

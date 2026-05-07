@@ -760,15 +760,20 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Dir::cwd();
         }
         ResolutionTag::LocalTarball => {
-            cache_dir_subpath = cached_tarball_folder_name(manager, resolution.value.local_tarball, patch_hash);
+            // SAFETY: tag == LocalTarball guarantees `value.local_tarball` is the active union arm.
+            let tarball = unsafe { resolution.value.local_tarball };
+            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = cache_directory;
         }
         ResolutionTag::RemoteTarball => {
-            cache_dir_subpath = cached_tarball_folder_name(manager, resolution.value.remote_tarball, patch_hash);
+            // SAFETY: tag == RemoteTarball guarantees `value.remote_tarball` is the active union arm.
+            let tarball = unsafe { resolution.value.remote_tarball };
+            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = cache_directory;
         }
         ResolutionTag::Workspace => {
-            let folder = resolution.value.workspace.slice(buf);
+            // SAFETY: tag == Workspace guarantees `value.workspace` is the active union arm.
+            let folder = unsafe { resolution.value.workspace }.slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
@@ -784,7 +789,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // PORT NOTE: borrowck — `global_link_dir{,_path}` reborrow `manager`
             // mutably, so copy the symlink target out of the lockfile string
             // buffer first.
-            let folder = resolution.value.symlink.slice(buf).to_vec();
+            // SAFETY: tag == Symlink guarantees `value.symlink` is the active union arm.
+            let folder = unsafe { resolution.value.symlink }.slice(buf).to_vec();
             let directory = global_link_dir(manager);
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {

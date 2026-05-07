@@ -5226,12 +5226,18 @@ impl DevServer {
                 debug_assert!(value.ref_count > 0);
                 payload.extend_from_slice(&key.get().to_ne_bytes());
                 payload.extend_from_slice(&value.ref_count.to_le_bytes());
-                // TODO(b2-blocked): `SourceMapStore::locate_weak_ref` + `Entry.overlapping_memory_cost`
-                // live in the gated `source_map_store_body`; emit zero placeholders so wire stays in sync.
-                let _ = value;
-                payload.extend_from_slice(&0u32.to_le_bytes());
-                payload.extend_from_slice(&0u32.to_le_bytes());
-                payload.extend_from_slice(&0u32.to_le_bytes());
+                match self.source_maps.locate_weak_ref(*key) {
+                    Some(e) => {
+                        payload.extend_from_slice(&e.r#ref.count.to_le_bytes());
+                        // floats are easier to decode in JS
+                        payload.extend_from_slice(&(e.r#ref.expire as f64).to_ne_bytes());
+                    }
+                    None => {
+                        payload.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                }
+                payload.extend_from_slice(&(value.files.len() as u32).to_le_bytes());
+                payload.extend_from_slice(&value.overlapping_memory_cost.to_le_bytes());
             }
         }
         Ok(())

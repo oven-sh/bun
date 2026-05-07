@@ -2894,48 +2894,17 @@ mod bun_paths {
         ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
 }
-// bun_string::strings shim — adds path-flavored helpers the resolver uses that
-// `immutable.rs` hasn't exported yet.
+// bun_string::strings shim — re-export the canonical `immutable/paths` helpers
+// (`without_trailing_slash_windows_path` / `path_contains_node_modules_folder` /
+// `without_leading_path_separator` / `char_is_any_slash`) instead of locally
+// re-implementing them. The previous local copies diverged from the spec
+// (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
     pub use bun_string::strings::*;
-    #[inline]
-    pub fn without_trailing_slash_windows_path(p: &[u8]) -> &[u8] {
-        // POSIX/loose: keep "/" and "C:\" as-is, strip one trailing separator otherwise.
-        if p.len() > 1
-            && super::bun_paths::is_sep_any(p[p.len() - 1])
-            && !(p.len() == 3 && p[1] == b':')
-        {
-            &p[..p.len() - 1]
-        } else {
-            p
-        }
-    }
-    #[inline]
-    pub fn path_contains_node_modules_folder(p: &[u8]) -> bool {
-        // Spec: src/string/immutable/paths.zig:340-342 — separator-bounded
-        // segment match (`SEP_STR ++ "node_modules" ++ SEP_STR`), not a bare
-        // substring. Avoids false positives on `my_node_modules/` etc.
-        index_of(
-            p,
-            const_format::concatcp!(
-                super::bun_paths::SEP_STR,
-                "node_modules",
-                super::bun_paths::SEP_STR
-            )
-            .as_bytes(),
-        )
-        .is_some()
-    }
-    #[inline]
-    pub fn without_leading_path_separator(p: &[u8]) -> &[u8] {
-        if !p.is_empty() && super::bun_paths::is_sep_any(p[0]) { &p[1..] } else { p }
-    }
-    #[inline]
-    pub fn char_is_any_slash(c: u8) -> bool { c == b'/' || c == b'\\' }
-    #[inline]
-    pub fn eql_long(a: &[u8], b: &[u8], check_len: bool) -> bool {
-        bun_string::strings::eql_long(a, b, check_len)
-    }
+    pub use bun_string::strings::paths::{
+        char_is_any_slash, path_contains_node_modules_folder,
+        without_leading_path_separator, without_trailing_slash_windows_path,
+    };
     #[inline]
     pub fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
         bun_string::strings::index_of_any(slice, chars).map(|v| v as usize)

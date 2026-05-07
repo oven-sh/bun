@@ -1567,12 +1567,15 @@ pub fn init(
                             continue;
                         }
                     };
+                    // Zig: `defer if (!found) json_file.close()`. The only path
+                    // that sets `found = true` immediately hands the file out
+                    // via `break :root_package_json_file`, so model it as an
+                    // unconditional close-on-drop guard that the success path
+                    // defuses with `ScopeGuard::into_inner` — avoids the
+                    // `&mut found` capture that borrowck rejects.
                     let json_file_guard = scopeguard::guard(json_file, |f| {
-                        if !found {
-                            f.close();
-                        }
+                        f.close();
                     });
-                    // TODO(port): errdefer — `defer if (!found) json_file.close()` captures &mut found
                     let json_stat_size = json_file_guard.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file_guard.pread_all(&mut json_buf, 0)?;

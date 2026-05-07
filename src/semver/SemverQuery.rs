@@ -266,15 +266,6 @@ impl Default for Group {
     }
 }
 
-// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `Group`; `input` is a borrowed slice into a parser-owned buffer that
-// outlives the `Group` (Zig: `string` field, never freed). Neither aliases
-// thread-local state. Zig sends `Group` (via `Dependency`) across the install
-// thread pool; matching that requires the manual impl since `*const [u8]` /
-// `NonNull<List>` are auto-`!Send`.
-unsafe impl Send for Group {}
-unsafe impl Sync for Group {}
-
 pub struct GroupFormatter<'a> {
     group: &'a Group,
     buf: &'a [u8],

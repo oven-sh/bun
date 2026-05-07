@@ -178,10 +178,9 @@ impl JSValueSqlExt for JSValue {
 pub trait JSGlobalObjectSqlExt {
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a>;
     fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue>;
-    /// `globalObject.bunVM()` returning the **local** [`VirtualMachine`] view
-    /// (whose `rare_data()` exposes the SQL `mysql_context` / `postgresql_context`).
-    /// `bun_jsc::JSGlobalObject::bun_vm()` returns `bun_jsc`'s own
-    /// `VirtualMachine`; SQL callsites need this one instead.
+    /// `globalObject.bunVM()` — `bun_jsc::JSGlobalObject::bun_vm()` returns
+    /// `&mut VirtualMachine`; this `&`-receiver form is for SQL callsites that
+    /// only need shared access.
     fn sql_vm(&self) -> &VirtualMachine;
     fn sql_vm_ptr(&self) -> *mut VirtualMachine;
 

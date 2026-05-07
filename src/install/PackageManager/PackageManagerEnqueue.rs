@@ -2377,11 +2377,13 @@ fn get_or_put_resolved_package(
             let scope: *const crate::npm::registry::Scope =
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
             let needs_ext = this.options.minimum_release_age_ms.is_some();
-            // SAFETY: `manifests` projected from `this_ptr`; `pm` routed raw
-            // and only dereferenced for disjoint fields (see fn safety doc).
+            // SAFETY: `cache_ctx` snapshots the disk-fallback scalars before
+            // `&mut manifests` is taken, so the lookup holds only that
+            // disjoint field borrow.
+            let cache_ctx = unsafe { &mut *this_ptr }.manifest_disk_cache_ctx();
             let Some(manifest) = (unsafe {
                 (*this_ptr).manifests.by_name_hash(
-                    this_ptr,
+                    cache_ctx,
                     &*scope,
                     name_hash,
                     ManifestLoad::LoadFromMemoryFallbackToDisk,

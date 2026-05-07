@@ -104,7 +104,7 @@ impl Mv {
                     let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                     let p = Builtin::of(interp, cmd).args_slice()[target_idx];
                     // SAFETY: argv entries are NUL-terminated.
-                    let target = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                    let target = ZBox::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes());
                     let evtloop = Builtin::event_loop(interp, cmd);
                     let mut task = Box::new(ShellMvCheckTargetTask {
                         cmd,
@@ -141,7 +141,7 @@ impl Mv {
                             // one source. Any other errno (EACCES, ELOOP, …)
                             // is reported and fails regardless of source count.
                             let target = match &Self::state_mut(interp, cmd).state {
-                                MvState::CheckTarget(t) => t.target.clone(),
+                                MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
                                 _ => unreachable!(),
                             };
                             if e.get_errno() == bun_sys::E::ENOENT {

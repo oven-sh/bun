@@ -893,15 +893,22 @@ impl BufferOutputSink {
         is_async: bool,
     ) {
         let _g = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
+        // PORT NOTE: do not materialise `&mut *sink` here — the lol-html
+        // write/end FFI calls below re-enter `<BufferOutputSink as
+        // OutputSink>::write/done` through the userdata pointer, which forms
+        // its own `&mut *sink`. Holding an outer `&mut` across that re-entry
+        // is aliased-&mut UB. Access fields via raw-pointer place expressions
+        // instead (mirroring `init()`).
+        //
         // SAFETY: sink was ref'd in init() before scheduling this callback;
         // refcount > 0 so the allocation is live.
-        let sink = unsafe { &mut *sink };
+        let global = unsafe { (*sink).global };
 
         if let Some(err) = js_err {
-            // SAFETY: sink.response is the heap Response allocated in init() and
-            // kept alive by sink.response_value (Strong root).
-            let sink_body_value = unsafe { (*sink.response).get_body_value() };
-            let sink_ptr_usize = sink as *mut _ as usize;
+            // SAFETY: (*sink).response is the heap Response allocated in init()
+            // and kept alive by (*sink).response_value (Strong root).
+            let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
+            let sink_ptr_usize = sink as usize;
             if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
@@ -920,38 +927,49 @@ impl BufferOutputSink {
                 }
             }
             if is_async {
-                let _ = sink_body_value.to_error_instance(err.dupe(sink.global), sink.global);
+                let _ = sink_body_value.to_error_instance(err.dupe(global), global);
                 // TODO: properly propagate exception upwards
             } else {
-                let ret_err = create_lolhtml_error(sink.global);
+                let ret_err = create_lolhtml_error(global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
-                // SAFETY: tmp_sync_error points at sink_error stack local in init();
-                // is_async == false ⇒ init() is still on the stack.
-                unsafe { *sink.tmp_sync_error.unwrap().as_ptr() = ret_err };
+                // SAFETY: tmp_sync_error points at sink_error stack local in
+                // init(); is_async == false ⇒ init() is still on the stack.
+                unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = ret_err };
             }
-            // SAFETY: rewriter set by init().
-            let _ = unsafe { lolhtml::HTMLRewriter::end(sink.rewriter) };
+            // SAFETY: rewriter set by init(). Read into a local before the
+            // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
+            let rewriter = unsafe { (*sink).rewriter };
+            let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
             return;
         }
 
-        if let Some(ret_err) = sink.run_output_sink(bytes, is_async) {
+        if let Some(ret_err) = Self::run_output_sink(sink, bytes, is_async) {
             ret_err.ensure_still_alive();
             ret_err.protect();
             // SAFETY: see above.
-            unsafe { *sink.tmp_sync_error.unwrap().as_ptr() = ret_err };
+            unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = ret_err };
         }
     }
 
-    pub fn run_output_sink(&mut self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
-        self.bytes.grow_by(bytes.len());
-        let global = self.global;
-        let response = self.response;
+    /// PORT NOTE: takes `*mut Self` (not `&mut self`) because
+    /// `lolhtml::HTMLRewriter::write/end` re-enter
+    /// `<BufferOutputSink as OutputSink>::write/done(&mut self)` through the
+    /// userdata pointer registered at build time. A `&mut self` receiver here
+    /// would alias that inner `&mut` (Stacked Borrows UB).
+    pub fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
+        // SAFETY: sink is a live heap allocation (refcount > 0, caller
+        // invariant). Read fields into locals before the FFI calls so no
+        // borrow of `*sink` is live across the re-entrant callback.
+        unsafe { (*sink).bytes.grow_by(bytes.len()) };
+        let global = unsafe { (*sink).global };
+        let response = unsafe { (*sink).response };
+        let rewriter = unsafe { (*sink).rewriter };
 
         // SAFETY: rewriter set by init().
-        if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
+        if unsafe { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
             if is_async {
-                // SAFETY: response == self.response, kept alive by response_value Strong.
+                // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
                     .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards
@@ -962,9 +980,9 @@ impl BufferOutputSink {
         }
 
         // SAFETY: rewriter set by init() and not yet freed.
-        if unsafe { lolhtml::HTMLRewriter::end(self.rewriter) }.is_err() {
+        if unsafe { lolhtml::HTMLRewriter::end(rewriter) }.is_err() {
             if is_async {
-                // SAFETY: response == self.response, kept alive by response_value Strong.
+                // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }
                     .to_error_instance(webcore::body::ValueError::Message(create_lolhtml_string_error()), global);
                 // TODO: properly propagate exception upwards

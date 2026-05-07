@@ -712,6 +712,15 @@ macro_rules! js_class_module {
                 unsafe { __create(global.as_ptr(), ptr) }
             }
 
+            /// Zig-compat alias for [`to_js`] with `(global, ptr)` argument
+            /// order — matches `jsc.Codegen.JS${T}.toJSUnchecked` so ported
+            /// `Response::to_js` / `Request::to_js` call sites resolve without
+            /// reordering.
+            #[inline]
+            pub fn to_js_unchecked(global: &JSGlobalObject, ptr: *mut Payload) -> JSValue {
+                to_js(ptr, global)
+            }
+
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {

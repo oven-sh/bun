@@ -78,7 +78,6 @@ const _: () = {
             // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
             // `to_js` hands it to the C++ wrapper which takes ownership (freed
             // via `RequestClass__finalize`). Same pattern as `do_clone`.
-            let _ = __create; // keep the linked symbol referenced for codegen parity
             unsafe { Request::to_js(&mut *ptr, global) }
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {

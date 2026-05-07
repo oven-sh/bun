@@ -4,11 +4,10 @@ use core::ptr::NonNull;
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc,
+    JsResult,
 };
 use bun_str::{OwnedString, String as BunString, ZigString, ZigStringSlice};
 use bun_core::Output;
-use bun_http_types::MimeType::MimeType;
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue};

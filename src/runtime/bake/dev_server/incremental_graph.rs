@@ -725,7 +725,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                     if self.bundled_files.values()[file_index.get() as usize].failed {
                         self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
-                        let owner = serialized_failure::OwnerPacked::new(Side::Server, FileIndex(file_index.get()));
+                        let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
                         // SAFETY: sibling-field access via `owner()`.
                         let kv = unsafe { (*dev).bundling_failures.fetch_swap_remove(&owner) };
                         let kv = kv.unwrap_or_else(|| {
@@ -843,7 +843,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     fn process_chunk_import_records(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        quick_lookup: &mut ArrayHashMap<FileIndex, TempLookup>,
+        quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         index: bun_js_parser::ast::Index,
@@ -871,7 +871,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     fn process_css_chunk_import_records(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        quick_lookup: &mut ArrayHashMap<FileIndex, TempLookup>,
+        quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         bundler_index: bun_js_parser::ast::Index,
@@ -908,7 +908,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     fn process_edge_attachment(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
-        quick_lookup: &mut ArrayHashMap<FileIndex, TempLookup>,
+        quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         ir_flags: bun_options_types::ImportRecordFlags,
@@ -1772,26 +1772,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 };
             }
             Side::Server => {
-                let mut file_paths: Vec<&'static [u8]> =
+                let mut file_paths: Vec<Box<[u8]>> =
                     Vec::with_capacity(self.current_chunk_source_maps.len());
                 let mut contained_maps: Vec<packed_map::Shared> =
                     Vec::with_capacity(self.current_chunk_source_maps.len());
                 let mut overlapping_memory_cost: u32 = 0;
 
                 for item in &self.current_chunk_source_maps {
-                    // SAFETY: see Client arm.
-                    let p: &'static [u8] = unsafe {
-                        core::mem::transmute::<&[u8], &'static [u8]>(
-                            &*paths[item.file_index.get() as usize],
-                        )
-                    };
-                    file_paths.push(p);
+                    file_paths.push(Box::<[u8]>::from(&*paths[item.file_index.get() as usize]));
                     contained_maps.push(item.source_map.clone());
                     overlapping_memory_cost += item.source_map.memory_cost() as u32;
                 }
                 overlapping_memory_cost += (contained_maps.capacity()
                     * core::mem::size_of::<packed_map::Shared>()
-                    + file_paths.len() * core::mem::size_of::<&[u8]>())
+                    + file_paths.len() * core::mem::size_of::<Box<[u8]>>())
                     as u32;
 
                 *out = source_map_store::Entry {

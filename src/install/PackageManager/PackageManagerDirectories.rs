@@ -1007,9 +1007,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             successfully_installed: None,
             updates: &this.update_requests,
         };
-        let mut buffered_writer = bun_io::Writer::new(file);
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buffered_writer)?;
-        buffered_writer.flush()?;
+        let mut file_buffer = [0u8; 4096];
+        let mut writer = bun_io::BufWriter::with_buffer(&mut file_buffer, file.writer());
+        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut writer)?;
+        writer.flush()?;
     }
     {
         #[cfg(unix)]

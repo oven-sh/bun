@@ -69,28 +69,6 @@ unsafe extern "C" {
     fn X509_free(x: *mut boringssl::c::X509);
 }
 
-// ─── local FFI shims: bun_jsc::AbortSignal is a stub_ty! at the crate root
-// (the real impl in `bun_jsc::abort_signal` back-depends on bun_runtime).
-// Declare the C ABI directly and wrap. ────────────────────────────────────
-unsafe extern "C" {
-    fn WebCore__AbortSignal__aborted(arg0: *mut AbortSignal) -> bool;
-    fn WebCore__AbortSignal__addListener(
-        arg0: *mut AbortSignal,
-        arg1: *mut c_void,
-        arg2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
-    ) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__cleanNativeBindings(arg0: *mut AbortSignal, arg1: *mut c_void);
-    fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
-    fn WebCore__AbortSignal__incrementPendingActivity(arg0: *mut AbortSignal);
-    fn WebCore__AbortSignal__decrementPendingActivity(arg0: *mut AbortSignal);
-}
-
-#[inline]
-fn signal_aborted(s: *mut AbortSignal) -> bool {
-    unsafe { WebCore__AbortSignal__aborted(s) }
-}
-
 /// Local `EventLoopCtx` accessor for `KeepAlive::ref_/unref` (mirrors
 /// `node_zlib_binding::vm_ctx`). Zig passed `*VirtualMachine` directly via
 /// anytype dispatch; the Rust split routes through the aio hook registered
@@ -153,9 +131,9 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub url_proxy_buffer: Box<[u8]>,
 
-    // PORT NOTE: WebCore::AbortSignal is C++-refcounted; was `Option<Arc<_>>`
-    // but Arc<stub_ty> can't auto-deref to the FFI methods. Model as raw ptr
-    // like Zig's `?*AbortSignal`; ref/unref via local FFI shims.
+    // PORT NOTE: WebCore::AbortSignal is C++-refcounted (intrusive). Model as
+    // raw ptr like Zig's `?*AbortSignal`; ref/unref via `bun_jsc::AbortSignal`
+    // methods (see clear_abort_signal / queue).
     pub signal: Option<*mut AbortSignal>,
     pub signals: Signals,
     pub signal_store: http::signals::Store,
@@ -452,7 +430,8 @@ impl FetchTasklet {
         };
         if let Some(stream) = stream_ref.get(self.global_this) {
             if let Some(signal) = self.signal {
-                if signal_aborted(signal) {
+                // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+                if unsafe { (*signal).aborted() } {
                     stream.abort(self.global_this);
                     return;
                 }
@@ -981,11 +960,13 @@ impl FetchTasklet {
         let Some(signal) = self.signal.take() else {
             return;
         };
-        // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+        // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref
+        // (taken in `fetch.zig` before populating FetchOptions). Order matches Zig
+        // `clearAbortSignal`: cleanNativeBindings first, then defer{unref+pendingUnref}.
         unsafe {
-            WebCore__AbortSignal__cleanNativeBindings(signal, self as *mut _ as *mut c_void);
-            WebCore__AbortSignal__decrementPendingActivity(signal);
-            WebCore__AbortSignal__unref(signal);
+            (*signal).clean_native_bindings(self as *mut _ as *mut c_void);
+            (*signal).pending_activity_unref();
+            (*signal).unref();
         }
     }
 
@@ -1515,14 +1496,16 @@ impl FetchTasklet {
         }
 
         if let Some(signal) = fetch_tasklet.signal {
-            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*.
+            // SAFETY: signal is a live C++-owned WebCore::AbortSignal* (already
+            // ref'd by the caller before populating `fetch_options.signal`).
+            // Zig: `signal.pendingActivityRef(); fetch_tasklet.signal = signal.listen(...)`.
+            // `add_listener` returns `self`, so the field already holds the right ptr.
             unsafe {
-                WebCore__AbortSignal__incrementPendingActivity(signal);
+                (*signal).pending_activity_ref();
                 unsafe extern "C" fn cb(ptr: *mut c_void, reason: JSValue) {
                     FetchTasklet::abort_listener(ptr as *mut FetchTasklet, reason);
                 }
-                let s = WebCore__AbortSignal__addListener(signal, fetch_tasklet_ptr as *mut c_void, Some(cb));
-                fetch_tasklet.signal = Some(WebCore__AbortSignal__ref(s));
+                (*signal).add_listener(fetch_tasklet_ptr as *mut c_void, cb);
             }
         }
         Ok(fetch_tasklet_ptr)
@@ -1581,7 +1564,8 @@ impl FetchTasklet {
         let result = (|| {
             if let Some(sink) = this_ref.sink {
                 if let Some(signal) = this_ref.signal {
-                    if signal_aborted(signal) {
+                    // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+                    if unsafe { (*signal).aborted() } {
                         // already aborted; nothing to drain
                         return;
                     }

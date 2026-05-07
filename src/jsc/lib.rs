@@ -2330,11 +2330,37 @@ impl StringJsc for bun_string::String {
 }
 
 /// Extension trait providing JSC-aware methods on `bun_string::ZigString`.
-/// Mirrors `ZigString.toErrorInstance` / `ZigString.toTypeErrorInstance`
-/// (src/string/ZigString.zig) which are used directly at call sites in Zig.
-pub trait ZigStringJsc {
+///
+/// `bun_string::ZigString` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
+/// JSC-side conversions (`toJS`, `toExternalValue`, `external`,
+/// `toJSONObject`, `toErrorInstance`, …) live as inherent methods on the
+/// `bun_jsc::zig_string::ZigString` twin. Higher-tier crates that import
+/// `bun_str::ZigString` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
+/// inherent methods cross-crate, so this trait re-surfaces them on the
+/// canonical type.
+pub trait ZigStringJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
+    /// external value if globally allocated).
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toExternalValue` — transfers ownership of a globally-allocated
+    /// buffer to JSC's external-string finalizer.
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
+    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.external` — like `to_external_value` but with a caller-supplied
+    /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
+    fn external(
+        &self,
+        global: &JSGlobalObject,
+        ctx: *mut core::ffi::c_void,
+        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
+    ) -> JSValue;
+    /// `ZigString.withEncoding` — returns `self` tagged UTF-8 if its bytes
+    /// contain non-ASCII (mirrors `setOutputEncoding`'s effect for the value
+    /// case).
+    fn with_encoding(self) -> Self;
 }
 impl ZigStringJsc for bun_string::ZigString {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
@@ -2345,6 +2371,48 @@ impl ZigStringJsc for bun_string::ZigString {
         // SAFETY: `self` is borrowed for the call; `global` is live.
         unsafe { ZigString__toTypeErrorInstance(self, global) }
     }
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        if self.is_globally_allocated() {
+            return self.to_external_value(global);
+        }
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toValueGC(self, global) }
+    }
+    #[inline]
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` points to globally-allocated bytes; ownership transferred to JSC.
+        unsafe { ZigString__toExternalValue(self, global) }
+    }
+    #[inline]
+    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toJSONObject(self, global) }
+    }
+    #[inline]
+    fn external(
+        &self,
+        global: &JSGlobalObject,
+        ctx: *mut core::ffi::c_void,
+        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
+    ) -> JSValue {
+        // SAFETY: ownership of the buffer + `ctx` transfers to JSC's finalizer.
+        unsafe { ZigString__external(self, global, ctx, callback) }
+    }
+    #[inline]
+    fn with_encoding(mut self) -> Self {
+        if !bun_string::strings::is_all_ascii(self.byte_slice()) {
+            self.mark_utf8();
+        }
+        self
+    }
+}
+
+/// Free-function form of `ZigString.toExternalU16` for callers that import
+/// `bun_str::ZigString`. Forwards to the canonical impl in [`zig_string`].
+#[inline]
+pub fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+    crate::zig_string::to_external_u16(ptr, len, global)
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).

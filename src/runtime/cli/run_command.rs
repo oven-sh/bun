@@ -16,7 +16,7 @@ use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::{ExitHandler, InitOptions as VmInitOptions, VirtualMachine};
+use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
@@ -820,11 +820,8 @@ impl RunCommand {
         }
     }
 
-    /// Port of `bun_js.Run.boot` — `VirtualMachine::init`, hand off CLI
-    /// state, then enter `Run::start` under the JSC API lock. The full
-    /// transpiler option mapping (`install`/`global_cache`/`minify`/macros/
-    /// `serve_plugins` — `Run.boot` in src/bun.js.rs lines 110-170) stays
-    /// gated on `vm.transpiler` being populated by `init_runtime_state`.
+    /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,
+    /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,

@@ -26,6 +26,27 @@ macro_rules! debug {
     ($($args:tt)*) => { bun_core::scoped_log!(Blob, $($args)*); };
 }
 
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust crate split routes
+/// through the aio hook registered by `bun_runtime::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
+/// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
+/// `href` slice to a `&mut Loader` borrow that we cannot keep open across the
+/// S3 request setup.
+#[inline]
+fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
+    // `transpiler.env` is the process-singleton dotenv loader, initialised
+    // before any JS runs.
+    unsafe { (*(*global.bun_vm()).transpiler.env).get_http_proxy(true, None, None) }
+        .map(|p| p.href.to_vec())
+}
+
 #[path = "blob/Store.rs"]
 pub mod store;
 pub use store::{Store, StoreRef};
@@ -974,17 +995,17 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let name_len = reader.read_int_le::<u32>()?;
                 let name = read_slice(reader, name_len as usize)?;
 
-                let mut name_consumed = false;
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = &(*guard).store {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
-                        bytes_store.stored_name = bun_str::PathString::init(&name);
-                        name_consumed = true;
+                        // `PathString::init` only borrows ptr+len; the local
+                        // `name: Vec<u8>` would drop at the end of this block
+                        // and leave `stored_name` dangling. Transfer ownership
+                        // into the packed pointer; freed by `Bytes::Drop`.
+                        bytes_store.stored_name = bun_str::PathString::init_owned(name);
                     }
                 }
-                if !name_consumed {
-                    drop(name);
-                }
+                // else: `name` drops here (Zig: `if (!consumed) free(name)`).
 
                 if version == 2 { break 'versions; }
             }
@@ -1145,8 +1166,11 @@ impl Blob {
         // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
         unsafe {
             (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
+                // Zig: `MimeType.Compact.from(.@"application/x-www-form-urlencoded")` —
+                // the bare tag, *without* `;charset=UTF-8` (charset promotion is
+                // Compact::to_mime_type's job, applied when read).
                 bun_http_types::MimeType::Table::from_mime_literal(
-                    "application/x-www-form-urlencoded;charset=UTF-8",
+                    "application/x-www-form-urlencoded",
                 ),
             )
             .to_mime_type();
@@ -1171,7 +1195,13 @@ impl Blob {
             let random = unsafe { (*global_this.bun_vm()).rare_data() }.next_uuid().bytes;
             use std::io::Write;
             let mut cursor = &mut hex_buf[..];
-            write!(&mut cursor, "----WebKitFormBoundary{:x?}", &random).expect("unreachable");
+            // Zig `{x}` on `[16]u8` emits 32 contiguous lowercase-hex chars.
+            // Rust's `{:x?}` on `[u8;16]` is Debug formatting (`[a1, b2, …]`),
+            // so write the prefix then encode bytes one at a time.
+            cursor.write_all(b"----WebKitFormBoundary").unwrap();
+            for b in random {
+                write!(&mut cursor, "{b:02x}").unwrap();
+            }
             let written = 70 - cursor.len();
             &hex_buf[..written]
         };
@@ -1300,8 +1330,9 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     if let Some(store) = &this.store {
         if let store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.is_empty() {
-                let utf8 = path_str.to_utf8();
-                bytes.stored_name = bun_str::PathString::init(utf8.slice());
+                // Zig: `path_str.toUTF8Bytes(allocator)` → owned heap slice
+                // adopted by PathString and freed by `Bytes.deinit`.
+                bytes.stored_name = bun_str::PathString::init_owned(path_str.to_owned_slice());
             }
         }
     }

@@ -20,6 +20,7 @@ use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
 use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
+use crate::lockfile_real::{Printer, printer as LockfilePrinter};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::PackageManager;
 use crate::package_manager::{Options, WorkspaceFilter};
@@ -117,7 +118,10 @@ pub fn install_with_manager(
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                    manager
+                        .log_mut()
+                        .print(Output::error_writer() as *mut _)
+                        .map_err(|_| bun_core::err!("WriteFailed"))?;
                     manager.log_mut().reset();
                 }
                 Output::flush();
@@ -211,14 +215,20 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                            manager
+                                .log_mut()
+                                .print(Output::error_writer() as *mut _)
+                                .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                            manager
+                                .log_mut()
+                                .print(Output::error_writer() as *mut _)
+                                .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);

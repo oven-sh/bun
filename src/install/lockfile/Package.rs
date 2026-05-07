@@ -1569,12 +1569,12 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        // Zig threaded `lockfile.allocator`; the JSON parser keeps its arena
-        // alive for the lifetime of the returned `Expr` tree, so leak a `Bump`
-        // here (matching Zig's allocator semantics until reconciler-6 threads
-        // the lockfile arena through).
-        let bump: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
-        let json = match crate::bun_json::parse_package_json_utf8(source, log, bump) {
+        // Zig threaded `lockfile.allocator` for the JSON arena. The returned
+        // `Expr` tree only needs to live until `parse_with_json` finishes, so
+        // a function-local arena is sufficient (matches Scripts.rs / lockfile.rs
+        // call sites) and avoids leaking.
+        let bump = bun_alloc::Arena::new();
+        let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
             Err(err) => {
                 let _ = log.print(Output::error_writer());
@@ -1988,7 +1988,7 @@ impl Package<u64> {
 
             // name is not validated by npm, so fallback to creating a new from the version literal
             if R::IS_GIT_RESOLVER {
-                let resolution: &Resolution<SemverIntType> = resolver.resolution();
+                let resolution: &Resolution<u64> = resolver.resolution();
                 let repo = match resolution.tag {
                     // SAFETY: tag selects the active union member.
                     ResolutionTag::Git => unsafe { resolution.value.git },
@@ -2388,10 +2388,10 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if !R::IS_VOID {
-                self.resolution = resolver.resolve::<SemverIntType>(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve::<u64>(&mut string_builder, &json)?;
             }
         } else {
-            self.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
+            self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {

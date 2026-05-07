@@ -86,4 +86,39 @@ describe.concurrent("throwPretty color handling", () => {
     expect(out).toContain(expectedBody);
     expect(exitCode).toBe(1);
   });
+
+  test("NO_COLOR strips ANSI SGR sequences that arrive via runtime args", async () => {
+    // A custom expect() label is interpolated into the throwPretty format
+    // string via `{f}`. When the user has NO_COLOR set they should not see
+    // colour escapes in the resulting error.message — including ones they
+    // put in the label themselves. The old two-template path spliced the
+    // label bytes through verbatim; the single-template + strip path removes
+    // them along with the template's own markup.
+    using dir = tempDir("throw-pretty-label", {
+      "t.test.ts": `
+        import { test, expect } from "bun:test";
+        test("t", () => {
+          try {
+            expect(1, "PRE_\\x1b[31mRED\\x1b[0m_POST").toBeNull();
+          } catch (e) {
+            process.stdout.write(JSON.stringify({ msg: e.message }));
+          }
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "t.test.ts"],
+      env: { ...bunEnv, NO_COLOR: "1", FORCE_COLOR: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(l => l.startsWith(`{"msg"`));
+    expect(line).toBeDefined();
+    const { msg } = JSON.parse(line!) as { msg: string };
+    expect(msg).toStartWith("PRE_RED_POST\n\nReceived: ");
+    expect(msg.includes(ESC)).toBe(false);
+    expect(exitCode).toBe(0);
+  });
 });

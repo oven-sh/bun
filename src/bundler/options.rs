@@ -2031,6 +2031,7 @@ impl<'a> BundleOptions<'a> {
     // opaque).
     pub fn load_defines(
         &mut self,
+        allocator: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: spec `loadDefines(..., env: ?*const options.Env)` had its
@@ -2039,6 +2040,11 @@ impl<'a> BundleOptions<'a> {
         // raw-pointer dance under Stacked Borrows. Dropped the param and read
         // `&self.env` here instead — disjoint from the `self.define` /
         // `self.defines_loaded` writes below, so borrowck splits it cleanly.
+        //
+        // The `allocator` param is kept (spec passes `this.allocator`, i.e.
+        // `bun.default_allocator`) because `DefineData::from_input` JSON-parses
+        // each define value into `EString` nodes whose `.data` slices borrow
+        // the arena — they must outlive `self.define`, not just this call.
         if self.defines_loaded {
             return Ok(());
         }
@@ -2073,10 +2079,7 @@ impl<'a> BundleOptions<'a> {
             // TODO(port): &self.drop is Box<[Box<[u8]>]>, callee wants &[&[u8]]
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
-            // PORT NOTE: per-load_defines arena. Zig threads `bun.default_allocator`;
-            // here `from_input` only uses it for transient JSON-parse scratch.
-            // PERF(port): was bun.default_allocator
-            &bun_alloc::Arena::new(),
+            allocator,
         )?;
         self.defines_loaded = true;
         Ok(())

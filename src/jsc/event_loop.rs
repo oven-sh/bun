@@ -170,6 +170,38 @@ impl Debug {
     pub fn exit(&mut self) {}
 }
 
+/// RAII pairing for [`Debug::enter`] / [`Debug::exit`] — the Rust spelling of
+/// Zig's `loop.debug.enter(); defer loop.debug.exit();`. Holds the raw pointer
+/// (not `&mut`) so re-entrant JS callbacks that touch the same loop while the
+/// guard is live don't alias a long-lived mutable borrow.
+#[must_use = "dropping immediately exits the debug scope"]
+pub struct DebugEnterGuard {
+    debug: *mut Debug,
+}
+
+impl Drop for DebugEnterGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `debug` was live at `enter_scope` and is owned by the
+        // process-lifetime `EventLoop`.
+        unsafe { (*self.debug).exit() };
+    }
+}
+
+impl Debug {
+    /// `enter()` now, `exit()` on drop.
+    ///
+    /// # Safety
+    /// `debug` must point to a live `Debug` (the `event_loop.debug` field) and
+    /// remain valid for the guard's lifetime.
+    #[inline]
+    pub unsafe fn enter_scope(debug: *mut Debug) -> DebugEnterGuard {
+        // SAFETY: caller contract — `debug` is live; short-lived `&mut` only.
+        unsafe { (*debug).enter() };
+        DebugEnterGuard { debug }
+    }
+}
+
 #[repr(u8)]
 enum DrainMicrotasksResult {
     Success = 0,

@@ -105,7 +105,10 @@ impl Expansion {
                         .is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde));
                     let start = if leading_tilde { 1 } else { 0 };
                     for s in &c.atoms[start..] {
-                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, false);
+                        // Spec line 377 passes expand_tilde=true here (a Tilde
+                        // mid-compound is impossible by grammar, so this only
+                        // matters for fidelity).
+                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, true);
                     }
                     if leading_tilde {
                         match me.out.buf.first() {

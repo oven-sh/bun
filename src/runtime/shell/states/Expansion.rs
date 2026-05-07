@@ -72,17 +72,103 @@ impl Expansion {
     }
 
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
-        // The full body (~700 lines) walks ast::Atom (Simple/Compound), and
-        // for each part: appends literals, looks up env vars, spawns a Script
-        // for `$(...)` capturing its stdout into `out.buf`, runs brace
-        // expansion, and runs glob walk via bun_glob.
+        // Spec: Expansion.zig `next()` + `expandVarAndCmdSubst()` +
+        // `expandSimpleNoIO()`. Walks the atom and writes the expanded text
+        // into `out.buf`.
         //
-        // Gated until: ast::Atom/SimpleAtom/CompoundAtom, bun_glob::GlobWalker,
-        // ShellExecEnv::dupe_for_subshell (for $(...)).
-        //
-        // blocked_on: ast::Atom, bun_glob::GlobWalker, ShellExecEnv::dupe_for_subshell
+        // PORT NOTE: this is a synchronous first cut covering the no-IO atom
+        // kinds (Text/QuotedEmpty/Var/glob-chars/brace-chars/Tilde). The
+        // async paths (CmdSubst → Script spawn, glob → ShellGlobTask, brace
+        // expansion) are still gated and fall through with a TODO marker.
+        // blocked_on: bun_glob::GlobWalker, ShellExecEnv::dupe_for_subshell
+        let me = interp.as_expansion_mut(this);
+        if matches!(me.state, ExpansionState::Idle) {
+            me.state = ExpansionState::Walking { idx: 0 };
+            // SAFETY: `node` points into the AST arena (`ShellArgs::__arena`)
+            // which the interpreter holds for its entire lifetime.
+            let atom = unsafe { &*me.node };
+            // SAFETY: `base.shell` is set at init and outlives this node.
+            let shell = unsafe { &*me.base.shell };
+            match atom {
+                ast::Atom::Simple(s) => {
+                    Self::expand_simple_no_io(shell, s, &mut me.out.buf, true);
+                }
+                ast::Atom::Compound(c) => {
+                    let expand_tilde = c
+                        .atoms
+                        .first()
+                        .is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde));
+                    for (i, s) in c.atoms.iter().enumerate() {
+                        // Spec (Expansion.zig expandVarAndCmdSubst): only the
+                        // leading tilde expands; subsequent `~` are literal.
+                        let do_tilde = expand_tilde && i == 0;
+                        Self::expand_simple_no_io(shell, s, &mut me.out.buf, do_tilde);
+                    }
+                }
+            }
+            me.state = ExpansionState::Done;
+        }
         let parent = interp.as_expansion(this).base.parent;
         interp.child_done(parent, this, 0)
+    }
+
+    /// Spec: Expansion.zig `expandSimpleNoIO`. Appends the no-IO expansion of
+    /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` (the
+    /// caller in the spec then spawns a Script; here that path is still
+    /// gated so the return value is currently unused).
+    fn expand_simple_no_io(
+        shell: &ShellExecEnv,
+        atom: &ast::SimpleAtom,
+        out: &mut Vec<u8>,
+        expand_tilde: bool,
+    ) -> bool {
+        use crate::shell::env_str::EnvStr;
+        match atom {
+            ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
+            ast::SimpleAtom::QuotedEmpty => {
+                // Spec: sets `has_quoted_empty = true` so an empty word is
+                // still pushed as an arg. The NodeId port's parent already
+                // pushes `out.buf` unconditionally (see Cmd::child_done /
+                // CondExpr::child_done), so the empty buffer is preserved
+                // without a separate flag.
+            }
+            ast::SimpleAtom::Var(label) => {
+                // Spec `expandVar`: shell_env first, then export_env, else "".
+                let key = EnvStr::init_slice(label);
+                if let Some(v) = shell.shell_env.get(key) {
+                    out.extend_from_slice(v.slice());
+                    v.deref();
+                } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
+                    out.extend_from_slice(v.slice());
+                    v.deref();
+                }
+            }
+            ast::SimpleAtom::VarArgv(_) => {
+                // TODO(port): Expansion.zig `expandVarArgv` reaches into
+                // `vm.main`/`vm.argv`/`worker.argv`. Empty until the
+                // VirtualMachine accessors are wired.
+            }
+            ast::SimpleAtom::Asterisk => out.push(b'*'),
+            ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),
+            ast::SimpleAtom::BraceBegin => out.push(b'{'),
+            ast::SimpleAtom::BraceEnd => out.push(b'}'),
+            ast::SimpleAtom::Comma => out.push(b','),
+            ast::SimpleAtom::Tilde => {
+                if expand_tilde {
+                    let home = shell.get_homedir();
+                    out.extend_from_slice(home.slice());
+                    home.deref();
+                } else {
+                    out.push(b'~');
+                }
+            }
+            ast::SimpleAtom::CmdSubst(_) => {
+                // TODO(port): spawn Script with stdout captured into `out`.
+                // blocked_on: ShellExecEnv::dupe_for_subshell
+                return true;
+            }
+        }
+        false
     }
 
     pub fn child_done(

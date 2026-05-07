@@ -144,7 +144,7 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let scripts = if pm.options.do_.run_scripts {
+        let scripts = if pm.options.do_.run_scripts() {
             json.as_property(b"scripts")
         } else {
             None
@@ -164,7 +164,7 @@ impl PmVersionCommand {
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"preversion") {
-                if let Some(script_command) = script.as_utf8_string_literal() {
+                if let Some(script_command) = script.as_string(&json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,
@@ -261,7 +261,7 @@ impl PmVersionCommand {
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"version") {
-                if let Some(script_command) = script.as_utf8_string_literal() {
+                if let Some(script_command) = script.as_string(&json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,
@@ -286,7 +286,7 @@ impl PmVersionCommand {
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"postversion") {
-                if let Some(script_command) = script.as_utf8_string_literal() {
+                if let Some(script_command) = script.as_string(&json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,

@@ -319,7 +319,11 @@ pub mod lib_c {
 
         let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
         get_addr_info_request::Task::schedule(io);
-        this.request_sent(this.vm());
+        // PORT NOTE: reshaped for borrowck — `vm()` derives from a raw-pointer
+        // backref, so split the immutable borrow out before the `&mut self` call.
+        let vm = this.vm;
+        // SAFETY: `vm` is the live BACKREF held by Resolver for its lifetime.
+        this.request_sent(unsafe { &*vm });
 
         promise_value
     }
@@ -2648,7 +2652,7 @@ pub mod internal {
         if hostname_or_url.is_string() {
             hostname_slice = hostname_or_url.to_slice(global_this)?;
         } else {
-            return Err(global_this.throw_invalid_arguments("hostname must be a string"));
+            return Err(global_this.throw_invalid_arguments(format_args!("hostname must be a string")));
         }
 
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
@@ -3401,18 +3405,22 @@ impl Resolver {
         // `{ sec: i64, nsec: i64 }` layout — convert by field, not transmute.
         let now = bun::timespec { sec: now.sec, nsec: now.nsec };
         let uws_loop = vm.uws_loop();
+        // PORT NOTE: reshaped for borrowck — `defer!`'s closure captures by
+        // reference, so give it its own Copy of the raw pointer instead of
+        // borrowing `this` for the rest of the function.
+        let deref_this = this;
         scopeguard::defer! {
             // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
             unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
-            // SAFETY: `this` is the heap allocation from `init`. This releases the
+            // SAFETY: `deref_this` is the heap allocation from `init`. This releases the
             // ref taken by `add_timer` (no local `ref_()` pairing). The timer is
             // only ACTIVE while at least one pending request also holds an
             // `IntrusiveRc<Resolver>`, so this `deref` cannot drop the last ref
             // and `*this` stays live for the rest of the function body.
-            unsafe { Self::deref(this) };
+            unsafe { Self::deref(deref_this) };
         }
 
         // SAFETY: `this` is live (see guard comment); short-lived `&mut` borrows
@@ -4637,8 +4645,8 @@ impl Resolver {
         }
 
         match first_af {
-            x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments("Cannot specify two IPv4 addresses.")),
-            x if x == c_ares::AF::INET6 => Err(global_this.throw_invalid_arguments("Cannot specify two IPv6 addresses.")),
+            x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
+            x if x == c_ares::AF::INET6 => Err(global_this.throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
             _ => unreachable!(),
         }
     }
@@ -4724,7 +4732,7 @@ impl Resolver {
             let port = triple.get_index(global_this, 2)?.coerce_to_i32(global_this)?;
 
             if family != 4 && family != 6 {
-                return Err(global_this.throw_invalid_arguments("Invalid address family"));
+                return Err(global_this.throw_invalid_arguments(format_args!("Invalid address family")));
             }
 
             let address_string = triple.get_index(global_this, 1)?.to_bun_string(global_this)?;

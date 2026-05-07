@@ -373,10 +373,13 @@ impl JSGlobalObject {
     }
 
     /// "The {argname} argument must be of type {typename}. Received {value}"
+    ///
+    /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename` — Zig call
+    /// sites pass `[]const u8` literals, so the Rust port takes `AsRef<[u8]>`.
     pub fn throw_invalid_argument_type_value(
         &self,
-        argname: &[u8],
-        typename: &[u8],
+        argname: impl AsRef<[u8]>,
+        typename: impl AsRef<[u8]>,
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -387,8 +390,8 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" argument must be of type {}. Received {}",
-                bstr::BStr::new(argname),
-                bstr::BStr::new(typename),
+                bstr::BStr::new(argname.as_ref()),
+                bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
         )
@@ -397,8 +400,8 @@ impl JSGlobalObject {
 
     pub fn throw_invalid_argument_type_value2(
         &self,
-        argname: &[u8],
-        typename: &[u8],
+        argname: impl AsRef<[u8]>,
+        typename: impl AsRef<[u8]>,
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -409,8 +412,8 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" argument must be {}. Received {}",
-                bstr::BStr::new(argname),
-                bstr::BStr::new(typename),
+                bstr::BStr::new(argname.as_ref()),
+                bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
         )
@@ -420,8 +423,8 @@ impl JSGlobalObject {
     /// "The <argname> argument must be one of type <typename>. Received <value>"
     pub fn throw_invalid_argument_type_value_one_of(
         &self,
-        argname: &[u8],
-        typename: &[u8],
+        argname: impl AsRef<[u8]>,
+        typename: impl AsRef<[u8]>,
         value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -432,8 +435,8 @@ impl JSGlobalObject {
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" argument must be one of type {}. Received {}",
-                bstr::BStr::new(argname),
-                bstr::BStr::new(typename),
+                bstr::BStr::new(argname.as_ref()),
+                bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
         )

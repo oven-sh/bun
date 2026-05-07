@@ -35,15 +35,10 @@ fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
     Some(usize::from_le_bytes(arr))
 }
 
-// ─── gated: JsClass payload + host fns ────────────────────────────────────
+// ─── JsClass payload + host fns ───────────────────────────────────────────
 // `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
 // is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
-// `Rule`/`_compare` further depend on `socket_address::sockaddr` which lives
-// in `crate::socket` (not yet wired as a sibling of this module).
-// TODO(b2-blocked): un-gate once bun_jsc JsClass derive + crate::socket::SocketAddress are reachable.
 
-mod _impl {
-use super::*;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -56,17 +51,6 @@ use crate::node::util::validators;
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
-
-// ─── local shims for upstream-gated APIs ──────────────────────────────────
-// `JSGlobalObject.rs` module; bind the FFI symbol locally.
-#[inline]
-fn clear_exception(global: &JSGlobalObject) {
-    unsafe extern "C" {
-        fn JSGlobalObject__clearException(global: *const JSGlobalObject);
-    }
-    // SAFETY: FFI — `global` is a valid JSGlobalObject*; C++ side has no extra preconditions.
-    unsafe { JSGlobalObject__clearException(global) }
-}
 
 /// `&ZStr` → `&str` for `format_args!`. IP presentation strings and AF family
 /// names are ASCII by construction (`inet_ntop` output / static literals).

@@ -1893,8 +1893,8 @@ where
             if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
         }
 
-        // Only reload these handlers when the new config actually specifies
-        // one. `Option<Strong>` drops the old handle (= JSValue.unprotect()).
+        // Only reload `on_request` / `on_error` when the new config actually
+        // specifies one. `Option<Strong>` drops the old handle (= JSValue.unprotect()).
         if new_config
             .on_request
             .as_ref()
@@ -1902,9 +1902,12 @@ where
         {
             self.config.on_request = new_config.on_request.take();
         }
-        if new_config.on_node_http_request.is_some() {
-            self.config.on_node_http_request = new_config.on_node_http_request.take();
-        }
+        // Zig server.zig:1108: `if (this.config.onNodeHTTPRequest != new_config.onNodeHTTPRequest)`
+        // — swaps unconditionally (including clearing to .zero when the reload
+        // config omits the handler) so subsequent `on_web_socket_upgrade` /
+        // `set_routes` stop routing through the node:http path. `take()` yields
+        // `None` when the new config omitted it; assignment drops the old Strong.
+        self.config.on_node_http_request = new_config.on_node_http_request.take();
         if new_config
             .on_error
             .as_ref()

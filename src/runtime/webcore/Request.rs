@@ -19,8 +19,7 @@ use crate::webcore::jsc::{
 };
 use bun_ptr::weak_ptr::WeakPtrData;
 use crate::api::AnyRequestContext;
-use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value as BodyValue, ValueRef as BodyValueRef};
-use core::ptr::NonNull;
+use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value as BodyValue};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_jsc::AbortSignalRef;
 use super::response::HeadersRef;
@@ -1761,7 +1760,10 @@ impl Request {
             url: BunString::empty(),
             headers: None,
             signal: None,
-            body: BodyValueRef::null(),
+            // `clone_into` `ptr::write`s the whole struct without dropping the
+            // sentinel; seed with a non-deref'd dangling so no hive slot is
+            // allocated for the throwaway.
+            body: NonNull::dangling(),
             js_ref: JsRef::empty(),
             method: Method::GET,
             flags: Flags::default(),

@@ -18,14 +18,35 @@ use bun_webcore::ScriptExecutionContext;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
+//
+// `UnsafeCell` opts the (zero) bytes out of the noalias/readonly guarantee so
+// `&JSGlobalObject → *mut JSGlobalObject` (and any C++ write behind it) is
+// sound under Stacked Borrows. Rust never reads or writes these bytes
+// directly; all access is via FFI.
 // ──────────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 pub struct JSGlobalObject {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl JSGlobalObject {
+    /// Raw `*mut JSGlobalObject` for FFI. Sound for callees that mutate: the
+    /// `UnsafeCell` field gives `&self` interior-mutable provenance, so the
+    /// returned pointer carries write permission without laundering a
+    /// read-only borrow.
+    #[inline(always)]
+    pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
+        self._p.get() as *mut JSGlobalObject
+    }
+
+    /// Alias of [`as_mut_ptr`] kept for call-site readability where mutation
+    /// is not the intent (Zig passes `*JSGlobalObject` everywhere).
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *mut JSGlobalObject {
+        self.as_mut_ptr()
+    }
+
     // TODO(port): `allocator()` returned `std.mem.Allocator` (this.bunVM().allocator).
     // Allocator params are deleted in Rust (global mimalloc); keep as no-op accessor
     // only if a caller still needs the VM's allocator handle.

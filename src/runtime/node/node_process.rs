@@ -228,9 +228,11 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         let graph = unsafe { graph.cast::<bun_standalone_graph::Graph>().as_ref() };
         let bun_options_argc = bun_core::bun_options_argc();
         if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
-            let mut args: Vec<BunString> = Vec::new();
-            let _guard = scopeguard::guard((), |()| {
-                // `defer for args |*a| a.deref()` — BunString has no Drop.
+            // `defer args.deinit()` + `defer for args |*a| a.deref()`
+            let mut args = scopeguard::guard(Vec::<BunString>::new(), |v| {
+                for a in &v {
+                    a.deref();
+                }
             });
 
             // Process BUN_OPTIONS first using append_options_env for proper quote handling.
@@ -253,22 +255,21 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
                 }
             }
 
-            let array = JSValue::create_empty_array(global_object, args.len())?;
-            for idx in 0..args.len() {
-                array.put_index(
-                    global_object,
-                    u32::try_from(idx).unwrap(),
-                    args[idx].to_js(global_object)?,
-                )?;
-            }
-            return Ok(array);
+            return bun_string_to_js_array(global_object, &args);
         }
         return JSValue::create_empty_array(global_object, 0);
     }
 
     let argv = bun_core::argv();
-    let mut args: Vec<BunString> = Vec::with_capacity(argv.len().saturating_sub(1));
-    // `defer args.deinit()` + `defer for args |*a| a.deref()` → Drop on Vec<BunString>
+    // `defer args.deinit()` + `defer for args |*a| a.deref()`
+    let mut args = scopeguard::guard(
+        Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
+        |v| {
+            for a in &v {
+                a.deref();
+            }
+        },
+    );
 
     let mut seen_run = false;
     let mut prev: Option<&[u8]> = None;
@@ -346,9 +347,14 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
 
     // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
 
-    let args_count: usize = vm.argv.len();
-    // TODO(port): worker.argv is private on bun_jsc::WebWorker — no accessor yet.
-    // The worker-override count adjustment is skipped until that lands.
+    // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker` to
+    // the live `WebWorker` for this VM; valid while the VM is.
+    let worker: Option<&WebWorker> = vm.worker.map(|w| unsafe { &*(w as *const WebWorker) });
+
+    let args_count: usize = match worker {
+        Some(w) => w.argv().len(),
+        None => vm.argv.len(),
+    };
 
     // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
     // argv also omits the script name
@@ -375,10 +381,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
         && !strings::ends_with(vm.main, EVAL_SUFFIX)
         && !strings::ends_with(vm.main, STDIN_SUFFIX)
     {
-        // TODO(port): WebWorker.eval_mode is a private field on bun_jsc::WebWorker.
-        // Until an accessor lands, treat eval_mode as false and emit `vm.main`.
-        let worker_eval_mode = false;
-        if vm.worker.is_some() && worker_eval_mode {
+        if worker.is_some_and(|w| w.eval_mode()) {
             args_list.push(BunString::static_(b"[worker eval]"));
             // PERF(port): was assume_capacity
         } else {
@@ -387,9 +390,11 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
         }
     }
 
-    if let Some(_worker) = vm.worker {
-        // TODO(port): WebWorker.argv is private on bun_jsc::WebWorker — no accessor yet.
-        todo!("blocked_on: bun_jsc::WebWorker::argv");
+    if let Some(worker) = worker {
+        for &arg in worker.argv() {
+            args_list.push(BunString::init(arg));
+            // PERF(port): was assume_capacity
+        }
     } else {
         for arg in &vm.argv {
             let str_ = BunString::borrow_utf8(arg);

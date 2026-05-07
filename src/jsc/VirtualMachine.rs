@@ -4124,11 +4124,6 @@ impl VirtualMachine {
         // miss. The cache is purely a perf optimization (most stacks repeat
         // the same source); port the straightforward per-frame resolve and
         // leave the cache as `// PERF(port)`.
-        //
-        // TODO(port): per-frame `.position` / `.remapped` / `.source_url`
-        // remap — body not yet ported (matches Zig :2808).
-        let _ = (frames, frames_count, &mut table_locked);
-        {
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
         let frames = unsafe { core::slice::from_raw_parts_mut(frames, frames_count) };
         for frame in frames {
@@ -4156,15 +4151,16 @@ impl VirtualMachine {
                     frame.source_url.deref();
                     frame.source_url = source_url;
                 }
-                frame.position.line = lookup.mapping.original.lines;
-                frame.position.column = lookup.mapping.original.columns;
+                frame.position.line =
+                    bun_core::Ordinal::from_zero_based(lookup.mapping.original.lines.zero_based());
+                frame.position.column =
+                    bun_core::Ordinal::from_zero_based(lookup.mapping.original.columns.zero_based());
                 frame.remapped = true;
             } else {
                 frame.remapped = true;
             }
             self.source_mappings.lock();
             table_locked = true;
-        }
         }
 
         if table_locked {

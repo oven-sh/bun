@@ -3533,10 +3533,7 @@ pub mod args {
     }
 
     pub type UnwatchFile = ();
-    // Watcher / StatWatcher are local stand-in modules until `node.rs` wires
-    // the real `node_fs_watcher` / `node_fs_stat_watcher` siblings; see the
-    // module docs at the top of this file.
-    pub type Watch = super::Watcher::Arguments;
+    pub type Watch<'a> = super::Watcher::Arguments<'a>;
     pub type WatchFile = super::StatWatcher::Arguments;
 
     pub struct Fsync { pub fd: FD }
@@ -3697,13 +3694,31 @@ pub mod ret {
                     Ok(array)
                 }
                 Readdir::Buffers(items) => {
-                    let _ = (&global_object, &items);
-                    todo!("blocked_on: bun_jsc::JSValue::from_any")
+                    // `JSValue.fromAny(_, []Buffer, _)` — generic-slice arm:
+                    // build an empty array, push `item.toJS(globalObject)` for
+                    // each. Ownership of every `Buffer`'s bytes transfers to
+                    // JSC via `MarkedArrayBuffer::to_js`; the boxed slice
+                    // itself is freed when `items` drops (Zig: `defer
+                    // bun.default_allocator.free(this.buffers)`).
+                    let array = JSValue::create_empty_array(global_object, items.len())?;
+                    for (i, item) in items.iter().enumerate() {
+                        let res = item.to_js(global_object)?;
+                        if res == JSValue::ZERO { return Ok(JSValue::ZERO); }
+                        array.put_index(global_object, i as u32, res)?;
+                    }
+                    Ok(array)
                 }
                 Readdir::Files(items) => {
-                    // automatically freed
-                    let _ = (&global_object, &items);
-                    todo!("blocked_on: bun_jsc::JSValue::from_any")
+                    // `JSValue.fromAny(_, []const bun.String, _)` — dedicated
+                    // arm: `bun.String.toJSArray` then deref every element +
+                    // free the slice. `Box<[BunString]>` drop covers the slice
+                    // free; explicit `deref()` because `BunString` is not
+                    // `Drop`.
+                    let result = bun_jsc::bun_string_jsc::to_js_array(global_object, &items);
+                    for out in items.iter() {
+                        out.deref();
+                    }
+                    result
                 }
             }
         }
@@ -6032,30 +6047,31 @@ impl NodeFS {
             .unwrap_or(Maybe::Ok(()))
     }
 
-    // TODO(b2-blocked): args::WatchFile = StatWatcher::Arguments — module gated.
-    
-    pub fn watch_file(&mut self, args: &args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
+    pub fn watch_file(&mut self, args: args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
         debug_assert!(flavor == Flavor::Sync);
-        let watcher = match args.create_stat_watcher() {
-            Ok(w) => w,
+        // `create_stat_watcher` consumes `args` (the `PathLike` is moved into
+        // the new `StatWatcher`); capture what the error path needs first.
+        let global_this = args.global_this;
+        let path: Vec<u8> = args.path.slice().to_vec();
+        match args.create_stat_watcher() {
+            Ok(watcher) => Maybe::Ok(watcher),
             Err(err) => {
                 let mut buf = Vec::new();
                 use std::io::Write as _;
-                let _ = write!(&mut buf, "Failed to watch file {}", bun_core::fmt::QuotedFormatter { text: args.path.slice() });
-                let _ = args.global_this.throw_value(bun_jsc::SystemError {
+                let _ = write!(&mut buf, "Failed to watch file {}", bun_core::fmt::QuotedFormatter { text: &path });
+                let _ = global_this.throw_value(bun_jsc::SystemError {
                     errno: 0,
                     message: BunString::init(&buf[..]),
                     code: BunString::init(err.name()),
-                    path: BunString::init(args.path.slice()),
+                    path: BunString::init(&path),
                     syscall: BunString::default(),
                     hostname: BunString::default(),
                     fd: -1,
                     dest: BunString::default(),
-                }.to_error_instance(args.global_this));
-                return Maybe::Ok(JSValue::UNDEFINED);
+                }.to_error_instance(global_this));
+                Maybe::Ok(JSValue::UNDEFINED)
             }
-        };
-        Maybe::Ok(watcher)
+        }
     }
 
     pub fn unwatch_file(&mut self, _: &args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {

@@ -1609,11 +1609,10 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
-                                // Zig: `fs.top_level_dir = allocator.dupeZ(u8, parent)`.
-                                // The opaque `bun_sys::fs::FileSystem` exposes no setter;
-                                // route through the chdir below + `bun_paths::fs` re-init.
-                                // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
-                                let _ = parent;
+                                // Zig: `fs.top_level_dir = try allocator.dupeZ(u8, parent)`.
+                                // Intern via the resolver's DirnameStore so the slice is
+                                // process-lifetime (`set_top_level_dir` requires `'static`).
+                                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 found = true;
                                 let _ = child_json.close();
                                 #[cfg(windows)]
@@ -1635,9 +1634,9 @@ pub fn init(
             }
         }
 
-        // Zig: `fs.top_level_dir = allocator.dupeZ(u8, child_cwd)`.
-        // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
-        let _ = child_cwd;
+        // Zig: `fs.top_level_dir = try allocator.dupeZ(u8, child_cwd)`.
+        // Intern via DirnameStore so the slice is process-lifetime.
+        fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
         break 'root_package_json_file child_json;
     };
 

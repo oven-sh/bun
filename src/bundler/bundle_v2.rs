@@ -805,17 +805,26 @@ pub mod api {
             /// storage.
             pub fn resolve(
                 &self,
-                arena: &'static bun_alloc::Arena,
+                arena: &bun_alloc::Arena,
                 source_file: &[u8],
                 specifier: &[u8],
             ) -> Option<bun_resolver::Result> {
                 if self.map.is_empty() { return None; }
 
+                // SAFETY: ARENA — `arena` is the build-pass bump allocator
+                // (never freed before the `Result` is consumed); detaching the
+                // borrow lifetime matches the established `Path<'static>`
+                // convention used throughout `bun_resolver` (PORTING.md
+                // §Lifetimes: ARENA → `&'bump T`).
+                let dupe = |key: &[u8]| -> &'static [u8] {
+                    unsafe { &*(arena.alloc_slice_copy(key) as *const [u8]) }
+                };
+
                 // Direct key match (must use `getKey` to return the map-owned
                 // key, not the parameter).
                 #[cfg(not(windows))]
                 if let Some((key, _)) = self.map.get_key_value(specifier) {
-                    return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
+                    return Some(Self::result_for_key(dupe(key.as_ref())));
                 }
                 #[cfg(windows)]
                 {
@@ -823,7 +832,7 @@ pub mod api {
                     let normalized =
                         bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                     if let Some((key, _)) = self.map.get_key_value(normalized) {
-                        return Some(Self::result_for_key(arena.alloc_slice_copy(key.as_ref())));
+                        return Some(Self::result_for_key(dupe(key.as_ref())));
                     }
                 }
 

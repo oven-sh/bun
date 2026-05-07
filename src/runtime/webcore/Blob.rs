@@ -5527,10 +5527,11 @@ pub fn construct_bun_file(
                                 break 'inner;
                             }
                             blob.content_type_was_set = true;
-                            // PORT NOTE: `vm.mime_type()` lookup skipped — it
-                            // requires `&mut VirtualMachine` (RareData cache).
-                            // Always heap-dupe the lowercased type; revisit when
-                            // the mime cache is wired through here.
+                            // SAFETY: bun_vm() never returns null for a Bun-owned global.
+                            if let Some(mime) = unsafe { (*vm).mime_type(slice) } {
+                                blob.content_type = mime.value.as_ref() as *const [u8];
+                                break 'inner;
+                            }
                             let mut content_type_buf = vec![0u8; slice.len()];
                             strings::copy_lowercase(slice, &mut content_type_buf);
                             blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
@@ -5547,14 +5548,7 @@ pub fn construct_bun_file(
         let ptr = Blob::new(blob);
         // SAFETY: ptr was just produced by Box::into_raw in Blob::new. Explicit
         // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-        return Ok(unsafe { (&mut *ptr).to_js(global_object) });
-    }
-    #[allow(unreachable_code)]
-    {
-        let _ = (vm, &mut args, arguments_slice);
-        unreachable!(
-            "construct_bun_file: blocked on webcore::node_types ↔ crate::node::types unification"
-        );
+        Ok(unsafe { (&mut *ptr).to_js(global_object) })
     }
 }
 

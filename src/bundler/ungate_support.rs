@@ -417,12 +417,12 @@ impl Default for CompileResult {
 }
 
 /// `bundle_v2.zig:genericPathWithPrettyInitialized` — public copy of the body
-/// in `bundle_v2::__phase_a_draft` (private module). This assigns a concise,
-/// predictable, and unique `.pretty` attribute to a Path. DevServer relies on
-/// pretty paths for identifying modules, so they must be unique.
+/// in `bundle_v2.rs` (gated draft module). This assigns a concise, predictable,
+/// and unique `.pretty` attribute to a Path. DevServer relies on pretty paths
+/// for identifying modules, so they must be unique.
 ///
 /// PORT NOTE: duplicated here so `LinkerContext::path_with_pretty_initialized`
-/// resolves; collapses to a re-export once `__phase_a_draft` un-gates.
+/// resolves; collapses to a re-export once `bundle_v2.rs` un-gates.
 ///
 /// PORT NOTE: signature uses `bun_logger::fs::Path` (the type stored on
 /// `Logger::Source.path`, which is what every caller passes) rather than
@@ -627,13 +627,11 @@ pub mod bun_renamer {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                // PORT NOTE: `Renamer::MinifyRenamer` now owns `Box<MinifyRenamer>`
-                // (renamer.rs), but `ChunkRenamer` is a long-lived owner that
-                // must hand out a *borrowed* view per print call. Can't move
-                // the Box out of `&mut self`.
-                ChunkRenamer::Minify(_r) => {
-                    todo!("blocked_on: Renamer::MinifyRenamer takes Box (owned), need borrowed view")
-                }
+                // PORT NOTE: `Renamer<'r,'src>` borrows the concrete renamer
+                // (`&'r mut MinifyRenamer`); `ChunkRenamer` owns the `Box`, so
+                // the deref-coerced `&mut **r` yields a per-call borrowed view
+                // exactly like the Zig tag+ptr union.
+                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }
     }
@@ -742,7 +740,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
-// Real value-type defs extracted from the gated `bundle_v2::__phase_a_draft`
+// Real value-type defs extracted from the gated `bundle_v2.rs` draft body
 // (JSMeta, EntryPoint, ImportData, ExportData, …) so the freshly un-gated
 // modules can name them at `crate::*`. Once `bundle_v2.rs` un-gates its draft
 // body these collapse to re-exports.
@@ -847,8 +845,8 @@ pub mod entry_point {
     }
 }
 
-/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see gated
-/// `bundle_v2::__phase_a_draft` for full doc-comments.
+/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
+/// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
     use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
     use bun_js_parser::{Dependency, Ref};

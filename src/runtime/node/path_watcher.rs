@@ -1026,6 +1026,9 @@ impl Darwin {
     /// takes `manager.mutex`). Keeping this call outside `manager.mutex` makes the
     /// lock order one-way: fsevents_loop.mutex → manager.mutex.
     fn add_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
+        // PORT NOTE: reshaped for borrowck — capture the raw ctx pointer before the
+        // shared borrow of `watcher.path` so the two don't overlap at the call site.
+        let ctx = watcher as *mut PathWatcher as *mut c_void;
         match fsevents::watch(
             // `FSEventsWatcher` borrows this slice for its whole lifetime; the
             // backing `ZBox` is NUL-terminated for CF's C-string consumer.
@@ -1033,7 +1036,7 @@ impl Darwin {
             watcher.recursive,
             Darwin::on_fs_event,
             Darwin::on_fs_event_flush,
-            watcher as *mut PathWatcher as *mut c_void,
+            ctx,
         ) {
             Ok(fse) => {
                 watcher.platform.fsevents = Some(Box::into_raw(fse));

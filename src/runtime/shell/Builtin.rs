@@ -540,7 +540,9 @@ impl Builtin {
                 let global = interp.global_this;
                 if global.is_null() || idx >= interp.jsobjs.len() {
                     interp.throw(crate::shell::ShellErr::Custom(
-                        b"Invalid JS object reference in shell".to_vec(),
+                        b"Invalid JS object reference in shell"
+                            .to_vec()
+                            .into_boxed_slice(),
                     ));
                     return Some(Yield::failed());
                 }
@@ -566,9 +568,11 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
-                } else if let Some(body) = jsval.as_::<crate::webcore::body::Value>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Value`.
+                } else if let Some(body) = Self::js_body_value(jsval) {
+                    // SAFETY: `as_` (inside `js_body_value`) returned a live
+                    // JSC-owned `*mut Value` borrowed from a Response/Request.
                     let body = unsafe { &mut *body };
+                    // Spec: `body.* == .Blob and !body.Blob.needsToReadFile()`.
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
@@ -634,6 +638,22 @@ impl Builtin {
             None => {}
         }
 
+        None
+    }
+
+    /// Spec: Zig `jsval.as(jsc.WebCore.Body.Value)`. In the Rust port
+    /// `body::Value` is the *payload* of `Response`/`Request`, not itself a
+    /// `JsClass`; resolve via the wrapper types (matches the lookup
+    /// `JSValue.as(Body.Value)` performs internally in Zig).
+    fn js_body_value(jsval: crate::jsc::JSValue) -> Option<*mut crate::webcore::body::Value> {
+        if let Some(response) = jsval.as_::<crate::webcore::Response>() {
+            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
+            return Some(unsafe { &mut (*response).body.value });
+        }
+        if let Some(request) = jsval.as_::<crate::webcore::Request>() {
+            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
+            return Some(unsafe { &mut *request }.get_body_value());
+        }
         None
     }
 
@@ -826,7 +846,7 @@ impl Builtin {
                 let total = arraybuf.array_buffer.byte_len as u32;
                 if *i >= total {
                     return Err(bun_sys::Error::from_code(
-                        bun_sys::E::NOSPC,
+                        bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }

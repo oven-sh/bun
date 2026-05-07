@@ -498,3 +498,4 @@ pub extern "C" fn Bun__RareData__mysqlGroup(vm: *mut c_void, ssl: bool) -> *mut 
 //   confidence: high
 //   todos:      0
 // ──────────────────────────────────────────────────────────────────────────
+fn __probe() { let x: u32 = "str"; }

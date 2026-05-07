@@ -1012,7 +1012,7 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir =
-                    unsafe { ZStr::from_raw(self.destination_dir_subpath_buf.as_ptr(), slash) };
+                    ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
                 let _ = sys::mkdirat(destination_dir.fd(), subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
@@ -1692,7 +1692,7 @@ impl<'a> PackageInstall<'a> {
                             head2[target_len] = 0;
                             // SAFETY: NUL written above.
                             let target =
-                                unsafe { ZStr::from_raw(head2.as_ptr(), target_len) };
+                                ZStr::from_buf(&head2, target_len);
 
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)
@@ -1852,7 +1852,7 @@ impl<'a> PackageInstall<'a> {
             let written = 48 - cursor.len();
             rand_path_buf[written] = 0;
             // SAFETY: NUL written at [written].
-            unsafe { ZStr::from_raw(rand_path_buf.as_ptr(), written) }
+            ZStr::from_buf(&rand_path_buf, written)
         };
 
         match sys::renameat(
@@ -2067,12 +2067,12 @@ impl<'a> PackageInstall<'a> {
             dest_buf[offset] = 0;
 
             // SAFETY: NUL written at [offset].
-            let dest_z = unsafe { ZStr::from_raw(dest_buf.as_ptr(), offset) };
+            let dest_z = ZStr::from_buf(&dest_buf, offset);
 
             let to_len = to_path.len();
             to_buf[to_len] = 0;
             // SAFETY: NUL written at [to_len].
-            let target_z = unsafe { ZStr::from_raw(to_buf.as_ptr(), to_len) };
+            let target_z = ZStr::from_buf(&to_buf, to_len);
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
@@ -2127,11 +2127,11 @@ impl<'a> PackageInstall<'a> {
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
             // SAFETY: NUL written above.
-            let target_z = unsafe { ZStr::from_raw(target_buf.as_ptr(), target.len()) };
+            let target_z = ZStr::from_buf(&target_buf, target.len());
             let mut dest_name_buf = [0u8; 512];
             dest_name_buf[..dest.len()].copy_from_slice(dest);
             // SAFETY: zero-initialized; NUL at [dest.len()].
-            let dest_z = unsafe { ZStr::from_raw(dest_name_buf.as_ptr(), dest.len()) };
+            let dest_z = ZStr::from_buf(&dest_name_buf, dest.len());
             if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }

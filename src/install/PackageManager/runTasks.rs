@@ -1730,7 +1730,7 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
 
     // SAFETY: `VERBOSE_INSTALL` is only mutated during single-threaded options
     // parsing; reads here are race-free in practice (Zig: plain `pub var`).
-    if unsafe { super::VERBOSE_INSTALL } {
+    if PackageManager::verbose_install() {
         Output::flush();
     }
 

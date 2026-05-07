@@ -554,8 +554,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
     }
 
     buf[spanned_len + end_len] = 0;
-    // SAFETY: buf[spanned_len + end_len] == 0 written above
-    unsafe { ZStr::from_raw(buf.as_ptr(), spanned_len + end_len) }
+    ZStr::from_buf(buf, spanned_len + end_len)
 }
 
 fn cached_github_folder_name_print_guess<'a>(
@@ -1216,7 +1215,7 @@ static mut USING_FALLBACK_TEMP_DIR: bool = false;
 fn verbose_install() -> bool {
     // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
     // (PackageManagerOptions.load) and only read on the main thread.
-    unsafe { super::VERBOSE_INSTALL }
+    PackageManager::verbose_install()
 }
 
 /// Thread-local cached folder-name buffer accessor. Zig used a plain
@@ -1250,8 +1249,7 @@ fn buf_print_z<'a>(buf: &'a mut [u8], args: fmt::Arguments<'_>) -> Result<&'a ZS
         return Err(fmt::Error);
     }
     buf[written] = 0;
-    // SAFETY: buf[written] == 0 written above; bytes [0..written] initialized by write_fmt
-    Ok(unsafe { ZStr::from_raw(buf.as_ptr(), written) })
+    Ok(ZStr::from_buf(buf, written))
 }
 
 /// Equivalent of `std.fmt.bufPrint` — returns the number of bytes written.

@@ -47,7 +47,7 @@ use crate::package_manager_task as Task;
 #[inline]
 fn verbose_install() -> bool {
     // SAFETY: set once during single-threaded CLI startup; only read here.
-    unsafe { crate::package_manager_real::VERBOSE_INSTALL }
+    PackageManager::verbose_install()
 }
 
 // PORT NOTE: `PatchTask.callback` discriminant — routed to the real

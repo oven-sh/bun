@@ -1314,7 +1314,7 @@ impl<'a> PackageInstaller<'a> {
                     self.folder_path_buf[folder.len()] = 0;
                     // SAFETY: buf[folder.len()] == 0 written above
                     installer.cache_dir_subpath =
-                        unsafe { ZStr::from_raw(self.folder_path_buf.as_ptr(), folder.len()) };
+                        ZStr::from_buf(&self.folder_path_buf, folder.len());
 
                     // cache_dir might not be created yet (if it's in node_modules)
                     installer.cache_dir = bun_sys::cwd();
@@ -1350,7 +1350,7 @@ impl<'a> PackageInstaller<'a> {
                     self.folder_path_buf[folder.len()] = 0;
                     // SAFETY: buf[folder.len()] == 0 written above
                     installer.cache_dir_subpath =
-                        unsafe { ZStr::from_raw(self.folder_path_buf.as_ptr(), folder.len()) };
+                        ZStr::from_buf(&self.folder_path_buf, folder.len());
                 }
                 installer.cache_dir = bun_sys::cwd();
             }
@@ -1383,7 +1383,7 @@ impl<'a> PackageInstaller<'a> {
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath =
-                        unsafe { ZStr::from_raw(self.folder_path_buf.as_ptr(), len) };
+                        ZStr::from_buf(&self.folder_path_buf, len);
                     installer.cache_dir = directory;
                 }
             }

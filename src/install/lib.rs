@@ -730,17 +730,17 @@ impl RunCommand {
             const NODE_LINK: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
-                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+                ZStr::from_static(B)
             };
             const BUN_LINK: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
-                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+                ZStr::from_static(B)
             };
             const DIR_Z: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
-                unsafe { ZStr::from_raw(B.as_ptr(), B.len() - 1) }
+                ZStr::from_static(B)
             };
 
             for dest in [NODE_LINK, BUN_LINK] {

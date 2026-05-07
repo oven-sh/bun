@@ -660,16 +660,24 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
 
-pub static mut VERBOSE_INSTALL: bool = false;
+/// Port of Zig `pub var verbose_install: bool`. Set once during
+/// single-threaded CLI startup (`PackageManagerOptions::load`) and read on
+/// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
+/// `Relaxed` is sufficient (no ordering against other state; the write
+/// happens-before any worker spawn).
+pub static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
     /// Port of Zig `pub var verbose_install: bool` (PackageManager.zig) — read
     /// as `PackageManager.verbose_install` throughout the install pipeline.
     #[inline]
     pub fn verbose_install() -> bool {
-        // SAFETY: set once during single-threaded CLI startup
-        // (PackageManagerOptions.load); only read afterwards.
-        unsafe { VERBOSE_INSTALL }
+        VERBOSE_INSTALL.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    #[inline]
+    pub fn set_verbose_install(v: bool) {
+        VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Reborrow the externally-owned [`logger::Log`].
@@ -1868,10 +1876,7 @@ pub fn init(
     };
 
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
-        // SAFETY: main-thread init
-        unsafe {
-            VERBOSE_INSTALL = true;
-        }
+        PackageManager::set_verbose_install(true);
     }
 
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
@@ -1883,7 +1888,7 @@ pub fn init(
     }
 
     // SAFETY: main-thread init
-    if unsafe { VERBOSE_INSTALL } {
+    if PackageManager::verbose_install() {
         Output::pretty_errorln(format_args!(
             "Cache Dir: {}",
             bstr::BStr::new(&options.cache_directory),
@@ -2215,10 +2220,7 @@ pub fn init_with_runtime_once(
     env: &mut dot_env::Loader<'static>,
 ) {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
-        // SAFETY: main-thread init
-        unsafe {
-            VERBOSE_INSTALL = true;
-        }
+        PackageManager::set_verbose_install(true);
     }
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

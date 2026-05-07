@@ -755,20 +755,20 @@ impl Options {
                     LogLevel::Verbose
                 };
                 // SAFETY: main-thread CLI option load — single writer (Zig: `verbose_install = true`).
-                unsafe { super::VERBOSE_INSTALL = true; }
+                super::PackageManager::set_verbose_install(true);
             } else if cli.silent {
                 self.log_level = LogLevel::Silent;
-                unsafe { super::VERBOSE_INSTALL = false; }
+                super::PackageManager::set_verbose_install(false);
             } else if cli.quiet {
                 self.log_level = LogLevel::Quiet;
-                unsafe { super::VERBOSE_INSTALL = false; }
+                super::PackageManager::set_verbose_install(false);
             } else {
                 self.log_level = if disable_progress_bar {
                     LogLevel::DefaultNoProgress
                 } else {
                     LogLevel::Default
                 };
-                unsafe { super::VERBOSE_INSTALL = false; }
+                super::PackageManager::set_verbose_install(false);
             }
 
             if cli.no_verify {
@@ -870,7 +870,7 @@ impl Options {
                 LogLevel::Default
             };
             // SAFETY: main-thread CLI option load — single writer.
-            unsafe { super::VERBOSE_INSTALL = false; }
+            super::PackageManager::set_verbose_install(false);
         }
 
         // If the lockfile is frozen, don't save it to disk.

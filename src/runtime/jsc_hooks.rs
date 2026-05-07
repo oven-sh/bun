@@ -3122,11 +3122,8 @@ unsafe fn transpile_file(
     };
 
     // Spec :1083 — `defer jsc_vm.module_loader.resetArena(jsc_vm)`.
-    let _reset_arena = scopeguard::guard((), |_| {
-        // SAFETY: `jsc_vm` is the live per-thread VM (closure runs on the same
-        // thread, before this hook returns).
-        ModuleLoader::reset_arena(unsafe { &mut *jsc_vm });
-    });
+    // SAFETY: `jsc_vm` is the live per-thread VM and outlives this guard.
+    let _reset_arena = ModuleLoader::arena_scope(jsc_vm);
 
     // Spec :1085 + VirtualMachine.zig:489-494 — lazy-init the per-thread
     // shared printer. PORT NOTE: in Zig `loadExtraEnvAndSourceCodePrinter`

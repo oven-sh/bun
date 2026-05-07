@@ -2400,6 +2400,9 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
+    // Declared before the truncate guard so it drops *after* it (close runs last).
+    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+
     // PORT NOTE: Zig used `defer` which can read locals at unwind time.
     // Rust scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
@@ -2407,14 +2410,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
     let written = core::cell::Cell::new(0usize);
 
+    // we only truncate if it's a path
+    // if it's a file descriptor, we assume they want manual control over that behavior
     scopeguard::defer! {
-        // we only truncate if it's a path
-        // if it's a file descriptor, we assume they want manual control over that behavior
         if truncate.get() {
             let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).unwrap());
-        }
-        if NEEDS_OPEN {
-            let _ = bun_sys::close(fd);
         }
     }
 

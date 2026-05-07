@@ -333,8 +333,10 @@ pub fn migrate_pnpm_lockfile<'a>(
 
     let (pkg_map, importer_dep_res_versions, workspace_pkgs_off, workspace_pkgs_end) = 'build: {
         if let Some(mut catalogs_expr) = root.get_object(b"catalogs") {
+            // Borrowck: split `lockfile` into disjoint fields — `catalogs`
+            // vs. the `string_bytes`/`string_pool` pair that `sbuf!` borrows.
             crate::lockfile_real::CatalogMap::from_pnpm_lockfile(
-                lockfile,
+                &mut lockfile.catalogs,
                 log,
                 e_object_mut(&mut catalogs_expr),
                 &mut sbuf!(lockfile),

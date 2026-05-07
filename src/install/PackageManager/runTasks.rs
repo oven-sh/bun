@@ -1390,18 +1390,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    manager.task_batch.push(ThreadPoolBatch::from(
-                        enqueue::enqueue_git_checkout(
-                            manager,
-                            checkout_id,
-                            repo_fd,
-                            dep_id,
-                            dep_name,
-                            clone.res,
-                            &resolved,
-                            None,
-                        ),
-                    ));
+                    // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
+                    let queued = enqueue::enqueue_git_checkout(
+                        manager,
+                        checkout_id,
+                        repo_fd,
+                        dep_id,
+                        dep_name,
+                        clone.res,
+                        &resolved,
+                        None,
+                    );
+                    manager.task_batch.push(ThreadPoolBatch::from(queued));
                 } else {
                     // Resolving!
                     let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();

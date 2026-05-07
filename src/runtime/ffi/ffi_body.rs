@@ -1306,7 +1306,9 @@ impl FFI {
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
         for function in compile_c.symbols.map.values_mut() {
-            let function_name = function.base_name.as_ref().unwrap();
+            let function_name =
+                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -3247,10 +3249,13 @@ pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     FFI::bun_ffi_cc(global, callframe)
 }
 
-fn make_napi_env_if_needed<'a>(
+fn make_napi_env_if_needed<'a, 'g>(
     functions: impl IntoIterator<Item = &'a Function>,
-    global_this: &JSGlobalObject,
-) -> Option<&'a napi::NapiEnv> {
+    global_this: &'g JSGlobalObject,
+) -> Option<&'g napi::NapiEnv> {
+    // The returned NapiEnv is heap-allocated by the VM via `global_this`; its lifetime is
+    // tied to the global, not to the borrowed `functions` iterator. Decoupling the two
+    // lifetimes lets callers take `values_mut()` on the symbol map after this call.
     for function in functions {
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM

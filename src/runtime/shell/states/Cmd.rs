@@ -12,6 +12,7 @@ use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
@@ -411,19 +412,152 @@ impl Cmd {
             return Builtin::start(interp, this);
         }
 
-        // TODO(b2-blocked): subprocess path — `which()` lookup +
-        // `subproc::ShellSubprocess::spawn`. Until bun_spawn is wired, fail
-        // with the spec's "command not found" exit code.
-        // Spec (Cmd.zig initSubproc lines 489-494): writeFailingError(
-        // "bun: command not found: {s}\n") → `.waiting_write_err` →
-        // onIOWriterChunk (Cmd.zig:360-362) → `parent.childDone(this, 1)`.
-        // IOWriter not yet wired, so finish synchronously with the spec's
-        // exit code (1, NOT 127).
-        log!("Cmd {} exec: command not found: {:?}", this, first_arg);
-        let me = interp.as_cmd_mut(this);
-        me.exit_code = Some(1);
-        me.state = CmdState::Done;
-        Yield::Next(this)
+        // ── Subprocess path (Spec: Cmd.zig `initSubproc` lines 487-546) ────
+        // PORT NOTE: reshaped for borrowck — `SpawnArgs`/`ShellSubprocess`
+        // both retain a `*mut Cmd` backref into the node arena, so this block
+        // works in raw pointers. After the last use of `interp` below the
+        // `&mut Interpreter` borrow is dead by NLL; subsequent access goes
+        // through `interp_ptr` so callbacks fired during `spawn_async`
+        // (`on_process_exit` → `Yield::run`) do not alias a live `&mut`.
+        let event_loop = interp.event_loop;
+        let interp_ptr: *mut Interpreter = interp;
+        let cmd_ptr: *mut Cmd = interp.as_cmd_mut(this);
+        // SAFETY: `cmd_ptr` is the unique handle to the live `Cmd` slot for
+        // `this`; `shell` lives in the heap-allocated `ShellExecEnv` owned by
+        // the interpreter and outlives this command.
+        let shell_ptr: *mut ShellExecEnv = unsafe { (*cmd_ptr).base.shell };
+
+        let mut arena = bun_alloc::Arena::new();
+        let mut spawn_args = SpawnArgs::default::<false>(
+            &mut arena,
+            cmd_ptr,
+            interp_ptr,
+            event_loop,
+        );
+        // SAFETY: see above — `__cwd` borrowed for the spawn-args lifetime.
+        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
+
+        // Resolve argv[0] via PATH (`bun_which::which`). Spec lines 487-498.
+        let resolved: Option<Vec<u8>> = {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+                Some(z) => Some(z.as_bytes().to_vec()),
+                None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
+                    bun_core::self_exe_path().ok().map(|z| z.as_bytes().to_vec())
+                }
+                None => None,
+            }
+        };
+        let Some(mut resolved) = resolved else {
+            // Spec (Cmd.zig:493): writeFailingError("bun: command not found:
+            // {s}\n") → `.waiting_write_err` → onIOWriterChunk →
+            // `parent.childDone(this, 1)`.
+            drop(spawn_args);
+            // SAFETY: `interp_ptr` was derived from `interp` above; original
+            // borrow is dead by NLL.
+            return Builtin::cmd_write_failing_error(
+                unsafe { &mut *interp_ptr },
+                this,
+                format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
+            );
+        };
+        // Replace argv[0] with the resolved absolute path (NUL-terminated for
+        // `execve`).
+        resolved.push(0);
+        // SAFETY: `cmd_ptr` is the unique handle; `args[0]` exists (checked
+        // above).
+        unsafe { (*cmd_ptr).args[0] = resolved };
+
+        // Fill env from export_env + cmd_local_env. Spec lines 502-506.
+        // SAFETY: `shell_ptr` and `cmd_ptr` point to disjoint allocations
+        // (`ShellExecEnv` is heap-allocated separately from `interp.nodes`).
+        {
+            let env = unsafe { &mut *shell_ptr };
+            let mut iter = env.export_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+            let mut iter = env.cmd_local_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+        }
+
+        // Convert shell IO → subprocess stdio. Spec lines 509-511.
+        let mut shellio = ShellIO::default();
+        // SAFETY: `cmd_ptr.io` read-only; no other borrow of the slot is live.
+        unsafe { &(*cmd_ptr).io }.to_subproc_stdio(&mut spawn_args.stdio, &mut shellio);
+
+        // TODO(port): `initRedirections` — file/JS-object redirects on the
+        // subprocess path. Builtin redirects are handled in `Builtin::init`;
+        // the subprocess case is deferred until `IOWriter` redirect handling
+        // lands (see PORT STATUS).
+
+        // Stage the exec slot *before* spawning so PipeReader / process-exit
+        // callbacks (which deref `cmd_parent.exec`) see a populated `Subproc`
+        // with the correct `child` once `spawn_async` writes through
+        // `out_subproc`.
+        let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
+        // SAFETY: unique mutation of the slot via `cmd_ptr`.
+        unsafe {
+            (*cmd_ptr).exec = Exec::Subproc(Box::new(SubprocExec {
+                child: core::ptr::null_mut(),
+                buffered_closed,
+                interp: interp_ptr,
+                this_id: this,
+            }));
+        }
+        // SAFETY: just-installed `Exec::Subproc`; address of the boxed
+        // `SubprocExec.child` is stable for the lifetime of the Cmd (the Box
+        // is only dropped in `deinit`).
+        let child_out: *mut *mut ShellSubprocess = match unsafe { &mut (*cmd_ptr).exec } {
+            Exec::Subproc(sub) => core::ptr::addr_of_mut!(sub.child),
+            _ => unreachable!(),
+        };
+
+        let mut did_exit_immediately = false;
+        // SAFETY: `child_out` is the unique handle to the slot; `spawn_async`
+        // touches `cmd_ptr` only via the disjoint `args` field (see
+        // `SpawnArgs::cmd_parent` doc).
+        let spawn_result = ShellSubprocess::spawn_async(
+            event_loop,
+            &mut shellio,
+            spawn_args,
+            unsafe { &mut *child_out },
+            &mut did_exit_immediately,
+        );
+        drop(shellio);
+        drop(arena);
+
+        if let Err(e) = spawn_result {
+            // SAFETY: unique mutation; revert exec so `deinit` doesn't free a
+            // null `child`.
+            unsafe { (*cmd_ptr).exec = Exec::None };
+            // SAFETY: see above — `interp` borrow is dead.
+            return Builtin::cmd_write_failing_error(
+                unsafe { &mut *interp_ptr },
+                this,
+                format_args!("{}\n", e),
+            );
+        }
+
+        // SAFETY: `spawn_async` Ok ⇒ wrote a live `Box::into_raw` subprocess
+        // pointer into `*child_out`.
+        let subproc = unsafe { &mut **child_out };
+        subproc.r#ref();
+        // SAFETY: unique mutation via `cmd_ptr`.
+        unsafe { (*cmd_ptr).spawn_arena_freed = true };
+
+        if did_exit_immediately {
+            // Spec lines 535-544. `watch()` failed → process already gone.
+            // SAFETY: `process` was set by `spawn_async` (`to_process` →
+            // `Box::into_raw`); valid until `Cmd::deinit` reclaims the box.
+            let process = unsafe { &mut *subproc.process };
+            if process.has_exited() {
+                let status = process.status.clone();
+                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
+            } else {
+                process.wait(false);
+            }
+        }
+
+        Yield::suspended()
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
@@ -648,7 +782,8 @@ impl Cmd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Cmd.zig (1018 lines)
-//   confidence: medium (state-machine + expansion + builtin Exec wired)
-//   blocked_on: subproc::ShellSubprocess (which() + spawn),
-//               IOWriter redirect handling, writeFailingError
+//   confidence: medium (state-machine + expansion + builtin + subprocess
+//               spawn wired)
+//   blocked_on: initRedirections (file/JS-object redirects on the subprocess
+//               path), IOWriter redirect handling
 // ──────────────────────────────────────────────────────────────────────────

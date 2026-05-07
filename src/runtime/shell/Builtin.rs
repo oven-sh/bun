@@ -723,8 +723,9 @@ impl Builtin {
     /// Spec: Cmd.zig `writeFailingError` — sets the owning Cmd's state to
     /// `WaitingWriteErr` and writes to the *Cmd's* `io.stderr` (not the
     /// builtin's, which may already have been redirected). Hoisted here
-    /// because `init_redirections` is the only caller.
-    fn cmd_write_failing_error(
+    /// because `init_redirections` and `Cmd::transition_to_exec` (the
+    /// "command not found" / spawn-error paths) are the only callers.
+    pub(crate) fn cmd_write_failing_error(
         interp: &mut Interpreter,
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,

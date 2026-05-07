@@ -1945,16 +1945,16 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
 // TestingAPIs
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: `pub const X = @import("../install_jsc/...")` aliases deleted —
-// `js_parse_url` / `js_from_url` live in `bun_install_jsc` as extension methods.
-pub mod testing_apis {
-    // TODO(port): move to *_jsc — these were re-exports of jsc-layer fns.
-}
+// PORT NOTE (layering): `pub const X = @import("../install_jsc/...")` aliases deleted —
+// `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher tier). Re-exporting
+// them here would re-introduce the install ↔ jsc cycle. Module kept as a marker so
+// Zig grep for `TestingAPIs` still lands here.
+pub mod testing_apis {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/hosted_git_info.zig (1652 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Self-referential slices reshaped to Range<usize> into owned buffer; UrlProtocol/UrlProtocolPair carry <'a> (BORROW_PARAM); StringBuilder/PercentEncoding/JscUrl APIs assumed — verify shapes in Phase B; nested `StringPair` struct inside impl is invalid Rust, hoist in Phase B.
+//   confidence: high
+//   todos:      0
+//   notes:      Self-referential slices reshaped to Range<usize> into owned buffer; UrlProtocol/UrlProtocolPair carry <'a> (BORROW_PARAM); StringBuilder/PercentEncoding/JscUrl API shapes verified against bun_core/bun_url.
 // ──────────────────────────────────────────────────────────────────────────

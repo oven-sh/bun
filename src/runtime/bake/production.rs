@@ -125,10 +125,14 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
     // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
-    scopeguard::defer! {
-        // SAFETY: vm_ptr is the unique live VM on this thread.
-        unsafe { (*vm_ptr).destroy() };
-    }
+    // PORT NOTE: pass `vm_ptr` by value into the guard so the drop closure does
+    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
+    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
+    // re-borrows on the JSError path).
+    let _vm_guard = scopeguard::guard(vm_ptr, |p| {
+        // SAFETY: p is the unique live VM on this thread.
+        unsafe { (*p).destroy() };
+    });
 
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
@@ -634,38 +638,13 @@ pub fn build_with_vm(
     )?;
 
     // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `is_built_in_react` via its
-    // lower-tier `bake_types::Framework` view. Project once here. (Full
-    // unification requires moving `FileSystemRouterType`/`ReactFastRefresh` to
-    // bun_bundler — tracked separately.)
+    // `built_in_modules` / `server_components` / `react_fast_refresh` /
+    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
+    // Project once here via the shared helper so the field-shape (e.g.
+    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
     // TODO(port): collapse `bake_body::Framework` into `bun_bundler::bake_types::Framework`
     // once `FileSystemRouterType`/`framework_router::Style` move down to bun_bundler.
-    let bundler_framework = bun_bundler::bake_types::Framework::new(
-        core::mem::take(&mut framework.built_in_modules),
-        framework
-            .server_components
-            .as_ref()
-            .map(|sc| bun_bundler::bake_types::ServerComponents {
-                separate_ssr_graph: sc.separate_ssr_graph,
-                server_runtime_import: Box::from(sc.server_runtime_import.as_ref()),
-                server_register_client_reference: Box::from(
-                    sc.server_register_client_reference.as_ref(),
-                ),
-                server_register_server_reference: Box::from(
-                    sc.server_register_server_reference.as_ref(),
-                ),
-                client_register_server_reference: Box::from(
-                    sc.client_register_server_reference.as_ref(),
-                ),
-            }),
-        framework
-            .react_fast_refresh
-            .as_ref()
-            .map(|rfr| bun_bundler::bake_types::ReactFastRefresh {
-                import_source: Box::from(rfr.import_source.as_ref()),
-            }),
-        framework.is_built_in_react,
-    );
+    let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
         // Transpiler pointers — reborrow via raw to sidestep the
@@ -1037,9 +1016,9 @@ pub fn build_with_vm(
                 params_buf.push(name);
             }
             framework_router::Part::CatchAllOptional(_) => {
-                return Err(js_err(global.throw(
+                return Err(js_err(global.throw(format_args!(
                     "catch-all routes are not supported in static site generation",
-                )));
+                ))));
             }
             _ => {}
         }
@@ -1067,9 +1046,9 @@ pub fn build_with_vm(
                     params_buf.push(name);
                 }
                 framework_router::Part::CatchAllOptional(_) => {
-                    return Err(js_err(global.throw(
+                    return Err(js_err(global.throw(format_args!(
                         "catch-all routes are not supported in static site generation",
-                    )));
+                    ))));
                 }
                 _ => {}
             }

@@ -349,35 +349,33 @@ impl core::fmt::Display for StringOrBytesToDecode {
 }
 
 impl FSWatchTaskWindows {
-    fn ctx(&self) -> &mut FSWatcher {
-        // SAFETY: BACKREF — set from `this` (FSWatcher) at construction; FSWatcher outlives task.
-        unsafe { &mut *self.ctx }
-    }
-
     pub fn append_abort(&mut self) {
-        let ctx = self.ctx();
+        let ctx = self.ctx;
         // Balance the `ctx.unrefTask()` at the end of `run()` (matches
         // `onPathUpdateWindows` and the posix `enqueue()` path).
-        if !ctx.ref_task() {
+        // SAFETY: BACKREF — `ctx` is the live owning FSWatcher set at
+        // construction; FSWatcher outlives every task it enqueues.
+        if !unsafe { &mut *ctx }.ref_task() {
             return;
         }
         let task = Box::into_raw(Box::new(FSWatchTaskWindows {
-            ctx: self.ctx,
+            ctx,
             event: Event::Abort,
             count: 0,
         }));
 
-        // SAFETY: event_loop() is the live JS-thread loop; ownership of `task`
-        // transfers to the queue (drained on the same thread).
-        unsafe { (*ctx.event_loop()).enqueue_task(Task::init(task)) };
+        // SAFETY: event_loop() is the live JS-thread loop (BACKREF via `ctx`);
+        // ownership of `task` transfers to the queue (drained on the same thread).
+        unsafe { (*(*ctx).event_loop()).enqueue_task(Task::init(task)) };
     }
 
     /// this runs on JS Context Thread
     pub fn run(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `self.ctx()` ties the returned
-        // `&mut FSWatcher` to `&self` via lifetime elision, which then
-        // conflicts with `&mut self.event` below. Copy the raw backref and
-        // deref it directly so no borrow of `self` is held across the match.
+        // PORT NOTE: reshaped for borrowck — a `fn ctx(&self) -> &mut FSWatcher`
+        // helper would tie the returned `&mut` to `&self` via lifetime elision,
+        // which then conflicts with `&mut self.event` below (and is unsound on
+        // its own: two calls would alias the same `&mut`). Copy the raw backref
+        // and deref it directly so no borrow of `*self` is held across the match.
         let ctx_ptr = self.ctx;
         // SAFETY: BACKREF — set from `this` (FSWatcher) at construction;
         // FSWatcher outlives every task it enqueues.

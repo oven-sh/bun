@@ -1,4 +1,5 @@
 use core::fmt;
+use core::ptr::NonNull;
 use std::cell::{Cell, UnsafeCell};
 use std::rc::{Rc, Weak};
 

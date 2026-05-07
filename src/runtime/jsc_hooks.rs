@@ -1267,7 +1267,9 @@ unsafe fn apply_standalone_runtime_flags(
     graph: &'static dyn bun_resolver::StandaloneModuleGraph,
 ) {
     // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
-    // the concrete `Graph`. Same downcast pattern as `load_standalone_sourcemap`.
+    // the concrete `Graph`. Read-only downcast (`&*`, not `&mut *` — the
+    // shared-ref provenance carries no write permission); the body only reads
+    // `graph.runtime_flags`.
     let graph = unsafe {
         &*(graph as *const dyn bun_resolver::StandaloneModuleGraph
             as *const bun_standalone_graph::Graph)
@@ -3135,27 +3137,24 @@ unsafe fn fetch_builtin_module(
     // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
     // map itself is keyed by `i32` hash of the specifier.
     if spec.starts_with(b"macro:") {
-        
-        // TODO(b2-cycle): `MacroEntryPoint::generate_id_from_specifier` +
-        // `(*entry).source.contents` — `MacroEntryPoint` is gated and the
-        // VM field stores `*mut c_void`.
-        {
-            use bun_bundler::entry_points::MacroEntryPoint;
-            let id = MacroEntryPoint::generate_id_from_specifier(spec);
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            if let Some(&entry) = unsafe { (*jsc_vm).macro_entry_points.get(&id) } {
-                let entry = entry.cast::<MacroEntryPoint>();
-                unsafe {
-                    *out = ErrorableResolvedSource::ok(ResolvedSource {
-                        allocator: core::ptr::null_mut(),
-                        source_code: bun_string::String::clone_utf8(&(*entry).source.contents),
-                        specifier: *specifier,
-                        source_url: specifier.dupe_ref(),
-                        ..ResolvedSource::default()
-                    });
-                }
-                return FetchBuiltinResult::Found;
+        use bun_bundler::entry_points::MacroEntryPoint;
+        let id = MacroEntryPoint::generate_id_from_specifier(spec);
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        if let Some(&entry) = unsafe { (*jsc_vm).macro_entry_points.get(&id) } {
+            let entry = entry.cast::<MacroEntryPoint>();
+            // SAFETY: `entry` is the `Box::into_raw`d `MacroEntryPoint`
+            // inserted by `js_run_macro_entry_point`; map ownership keeps it
+            // alive for the VM lifetime.
+            unsafe {
+                *out = ErrorableResolvedSource::ok(ResolvedSource {
+                    allocator: core::ptr::null_mut(),
+                    source_code: bun_string::String::clone_utf8(&(*entry).source.contents),
+                    specifier: *specifier,
+                    source_url: specifier.dupe_ref(),
+                    ..ResolvedSource::default()
+                });
             }
+            return FetchBuiltinResult::Found;
         }
         return FetchBuiltinResult::NotFound;
     }
@@ -3179,7 +3178,11 @@ unsafe fn fetch_builtin_module(
             use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
             if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
-                const SQLITE_MODULE_SOURCE: &[u8] = b"\
+                // Spec ModuleLoader.zig:1193-1202 — distinct from
+                // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
+                // the embedded blob via `readFileSync(import.meta.path)`
+                // (resolved through the `/$bunfs/` virtual root).
+                const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
@@ -3192,7 +3195,7 @@ export default db;
                 unsafe {
                     *out = ErrorableResolvedSource::ok(ResolvedSource {
                         allocator: core::ptr::null_mut(),
-                        source_code: bun_string::String::static_(SQLITE_MODULE_SOURCE),
+                        source_code: bun_string::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                         specifier: *specifier,
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,

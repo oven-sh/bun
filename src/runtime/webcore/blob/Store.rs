@@ -99,6 +99,18 @@ pub trait BytesExt {
     fn to_internal_blob(&mut self) -> super::Internal;
 }
 
+/// Shared mime-sniffing fallback for the `init_*` constructors below: derive a
+/// `MimeType` from the path's extension, returning `None` for empty paths or
+/// unknown extensions (Zig's `brk:` block in `initS3*`/`initFile`).
+#[inline]
+fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
+    if sliced.is_empty() {
+        return None;
+    }
+    let ext = strings::trim(bun_paths::extension(sliced), b".");
+    bun_http_types::MimeType::by_extension_no_default(ext)
+}
+
 impl StoreExt for Store {
 
     /// Caller is responsible for derefing the Store.
@@ -121,30 +133,18 @@ impl StoreExt for Store {
         // this actually protects/refs the pathlike
         path.to_thread_safe();
 
-        let store = Store::new(Store {
-            data: Data::S3(S3::init_with_referenced_credentials(
-                path.clone(),
-                mime_type.or_else(|| 'brk: {
-                    let sliced = path.slice();
-                    if !sliced.is_empty() {
-                        let mut extname = bun_paths::extension(sliced);
-                        extname = strings::trim(extname, b".");
-                        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
-                            break 'brk Some(mime);
-                        }
-                    }
-                    break 'brk None;
-                }),
-                credentials,
-            )),
+        // Compute the extension-derived fallback before moving `path` into the
+        // Store so we don't need to clone the owned PathLike.
+        let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
+
+        Ok(Store::new(Store {
+            data: Data::S3(S3::init_with_referenced_credentials(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
-        });
-        Ok(store)
+        }))
     }
 
-    
     fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -154,56 +154,35 @@ impl StoreExt for Store {
         // this actually protects/refs the pathlike
         path.to_thread_safe();
 
-        let store = Store::new(Store {
-            data: Data::S3(S3::init(
-                path.clone(),
-                mime_type.or_else(|| 'brk: {
-                    let sliced = path.slice();
-                    if !sliced.is_empty() {
-                        let mut extname = bun_paths::extension(sliced);
-                        extname = strings::trim(extname, b".");
-                        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
-                            break 'brk Some(mime);
-                        }
-                    }
-                    break 'brk None;
-                }),
-                credentials,
-            )),
+        // Compute the extension-derived fallback before moving `path` into the
+        // Store so we don't need to clone the owned PathLike.
+        let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
+
+        Ok(Store::new(Store {
+            data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
-        });
-        Ok(store)
+        }))
     }
 
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, bun_core::Error> {
-        let store = Store::new(Store {
-            data: Data::File(File::init(
-                pathlike.clone(),
-                mime_type.or_else(|| 'brk: {
-                    if let PathOrFileDescriptor::Path(path) = &pathlike {
-                        let sliced = path.slice();
-                        if !sliced.is_empty() {
-                            let mut extname = bun_paths::extension(sliced);
-                            extname = strings::trim(extname, b".");
-                            if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(extname) {
-                                break 'brk Some(mime);
-                            }
-                        }
-                    }
+        // Compute the extension-derived fallback before moving `pathlike` into
+        // the Store so we don't need to clone the owned PathOrFileDescriptor.
+        let mime_type = mime_type.or_else(|| match &pathlike {
+            PathOrFileDescriptor::Path(path) => mime_from_path_ext(path.slice()),
+            PathOrFileDescriptor::Fd(_) => None,
+        });
 
-                    break 'brk None;
-                }),
-            )),
+        Ok(Store::new(Store {
+            data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: AtomicU32::new(1),
             is_all_ascii: None,
-        });
-        Ok(store)
+        }))
     }
 
 
@@ -442,9 +421,9 @@ impl S3Ext for S3 {
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
-            return Err(global_this.throw_invalid_arguments(
-                "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument",
-            ));
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
+            )));
         }
 
         struct Wrapper {

@@ -144,8 +144,8 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
         if data.is_empty() {
             return Err(global_this.throw_invalid_argument_type_value(
-                "data",
-                "string or an instance of Buffer, TypedArray, or DataView",
+                b"data",
+                b"string or an instance of Buffer, TypedArray, or DataView",
                 JSValue::UNDEFINED,
             ));
         }
@@ -177,7 +177,7 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             break 'blk 0;
         }
         if !value.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value("value", "number", value));
+            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
         }
         let valuef = value.as_number();
         let min: u32 = 0;

@@ -2725,7 +2725,7 @@ impl TestCommand {
                 // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
                 // local `buntest_strong` survives for the post-run drain loop and
                 // the explicit `drop` below (Zig's `defer buntest_strong.deinit()`).
-                bun_test::BunTest::run(buntest_strong.clone(), vm.global()).map_err(|_| bun_core::err!(JSError))?;
+                bun_test::BunTest::run(buntest_strong.clone(), vm.global())?;
 
                 // Process event loop while bun_test tests are running
                 // SAFETY: see above.

@@ -370,10 +370,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
     // dispatch, so these hand-roll the `if (ssl) TLSSocket__* else TCPSocket__*`
     // split and call the C++ externs directly.
-    pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue
-    where
-        Self: JsClass,
-    {
+    pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
         let ptr = self as *mut Self as *mut c_void;
         // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes
@@ -389,7 +386,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
         debug_assert!(
-            <Self as JsClass>::from_js(value) == Some(self as *mut Self),
+            // SAFETY: pure FFI downcast; null on type mismatch.
+            ptr == unsafe {
+                if SSL {
+                    socket_js::TLSSocket__fromJS(value)
+                } else {
+                    socket_js::TCPSocket__fromJS(value)
+                }
+            },
             "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
         );
         value
@@ -3103,6 +3107,8 @@ mod socket_js {
             unsafe extern $abi {
                 pub(super) fn TCPSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
                 pub(super) fn TLSSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+                pub(super) fn TCPSocket__fromJS(value: JSValue) -> *mut c_void;
+                pub(super) fn TLSSocket__fromJS(value: JSValue) -> *mut c_void;
                 pub(super) fn TCPSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
                 pub(super) fn TLSSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
                 pub(super) fn TCPSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;

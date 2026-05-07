@@ -19,6 +19,7 @@ use core::sync::atomic::Ordering;
 use core::ptr::NonNull;
 
 use bun_collections::{bit_set::DynamicBitSet, HashMap, StringArrayHashMap};
+use bun_sys::FdExt as _;
 
 use super::framework_router::{self, OpaqueFileId};
 use super::jsc;

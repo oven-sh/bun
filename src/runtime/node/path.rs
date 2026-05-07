@@ -3750,7 +3750,7 @@ macro_rules! export_path_host_fn {
                 let global = unsafe { &*global };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
-                    $target(global, is_windows, args_ptr, args_len),
+                    || $target(global, is_windows, args_ptr, args_len),
                 )
             }
         };

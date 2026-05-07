@@ -808,7 +808,10 @@ impl<C: SourceContext> NewSource<C> {
             return;
         }
         if let Some(close) = self.close_handler.take() {
-            if close as usize == Self::on_js_close as *const () as usize {
+            // Zig: `if (close == &JSReadableStreamSource.onClose)` — identity check
+            // against the *exact* fn pointer stored by `set_on_close_from_js`, so the
+            // JS path receives `self` (not `close_ctx`, which is unset on that path).
+            if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
                 Self::on_js_close(Some(self as *mut _ as *mut c_void));
             } else {
                 close(self.close_ctx.map(|p| p.as_ptr()));
@@ -817,9 +820,9 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Factored out of
-    /// `js_readable_stream_source` so the fn-pointer identity check above
-    /// resolves without that mod being compiled.
+    /// JS side registered an `onclose` callback. Stored *directly* in
+    /// `close_handler` by [`js_readable_stream_source::set_on_close_from_js`] so
+    /// the fn-pointer identity check above matches.
     fn on_js_close(ptr: Option<*mut c_void>) {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };

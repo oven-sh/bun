@@ -259,10 +259,10 @@ impl HotReloadEvent {
         let dev: &mut DevServer = unsafe { &mut *(first.owner as *mut DevServer) };
         debug_assert!(dev.magic == Magic::Valid);
         bun_output::scoped_log!(DevServer, "HMR Task start");
-        // PORT NOTE: `defer debug.log("HMR Task end")` — use scopeguard for the trailing log.
-        let _end_log = scopeguard::guard((), |_| {
+        // PORT NOTE: `defer debug.log("HMR Task end")` — one-off scoped log on exit.
+        scopeguard::defer! {
             bun_output::scoped_log!(DevServer, "HMR Task end");
-        });
+        }
 
         #[cfg(debug_assertions)]
         {

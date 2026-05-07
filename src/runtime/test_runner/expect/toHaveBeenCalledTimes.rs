@@ -12,9 +12,9 @@ pub fn to_have_been_called_times(
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only tracing; dropped in port.
 
-    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
-    // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    // `defer this.postMatch(globalThis)` — RAII guard owns the `&mut Expect` borrow and
+    // runs post_match on drop for every exit path.
+    let mut this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -87,5 +87,5 @@ pub fn to_have_been_called_times(
 //   source:     src/test_runner/expect/toHaveBeenCalledTimes.zig (49 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      defer post_match needs borrowck reshape; Expect.throw fmt-args shape TBD
+//   notes:      Expect.throw fmt-args shape TBD
 // ──────────────────────────────────────────────────────────────────────────

@@ -1661,17 +1661,20 @@ pub mod formatter {
     impl Drop for Formatter<'_> {
         fn drop(&mut self) {
             if let Some(mut node) = self.map_node.take() {
-                let mut map = core::mem::take(&mut self.map);
-                if map.capacity() > 512 {
-                    map.deinit();
+                // Move the working map back into the pooled node, shrink if it
+                // ballooned, then return the node to the thread-local pool.
+                // Mirrors `Formatter.deinit` (ConsoleObject.zig:1016-1024).
+                let map = core::mem::take(&mut self.map);
+                // SAFETY: `node` came from `visited::Pool::get_node()` and is
+                // exclusively owned here; `data` is initialized (INIT = Some).
+                unsafe { node.as_mut().data = core::mem::MaybeUninit::new(map) };
+                let data = unsafe { node.as_mut().data.assume_init_mut() };
+                if data.capacity() > 512 {
+                    data.clear_and_free();
                 } else {
-                    map.clear();
+                    data.clear();
                 }
-                node.data = core::mem::MaybeUninit::new(map);
-                // TODO(phase-c): `Node::release()` is a pool method gated on
-                // `ObjectPool` storage wiring; until `visited::Pool` un-gates,
-                // just drop the boxed node here.
-                let _ = node;
+                visited::Pool::release(node.as_ptr());
             }
         }
     }

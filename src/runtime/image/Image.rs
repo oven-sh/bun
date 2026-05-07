@@ -1759,10 +1759,10 @@ impl<'a> PipelineTask<'a> {
                 }
                 tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                     // PERF(port): was comptime tag dispatch — profile in Phase B.
-                    let _guard = scopeguard::guard((), |_| {
-                        // SAFETY: explicit free in lieu of suppressed `Drop`.
-                        unsafe { (out.free)(out.bytes.as_ptr() as *mut _, core::ptr::null_mut()) };
-                    });
+                    // This arm copies the bytes out — re-arm `Encoded::drop` so
+                    // the codec allocation is freed at scope exit (RAII), not by
+                    // a JS finalizer.
+                    let _out = mem::ManuallyDrop::into_inner(out);
                     // `data:` and `;base64,` are both ASCII so the prefix
                     // length is exact; one buffer holds prefix+payload.
                     let mut pre_buf = [0u8; 40];

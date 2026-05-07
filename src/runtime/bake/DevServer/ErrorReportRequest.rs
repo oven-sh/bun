@@ -325,7 +325,7 @@ impl ErrorReportRequest {
 
         {
             let stderr = Output::error_writer_buffered();
-            let _flush = scopeguard::guard((), |_| Output::flush());
+            let _flush = Output::flush_guard();
             // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
             // takes runtime `allow_ansi_color`, so no `inline else` split needed.
             let ansi_colors = Output::enable_ansi_colors_stderr();

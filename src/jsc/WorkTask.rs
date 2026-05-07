@@ -120,8 +120,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
         // SAFETY: `global_this` outlives the WorkTask (BACKREF, captured at create).
         let global_this = unsafe { &*global_this };
-        tracker.will_dispatch(global_this);
-        let _guard = scopeguard::guard((), |_| tracker.did_dispatch(global_this));
+        let _dispatch = tracker.dispatch(global_this);
         Context::then(ctx, global_this)
     }
 

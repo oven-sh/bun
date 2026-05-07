@@ -3,7 +3,8 @@ use bun_paths::PathBuffer;
 use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
-use crate::{invalid_package_id, Dependency, DependencyID, Npm, Origin, PackageID, Repository};
+use crate::{invalid_package_id, Dependency, DependencyID, Npm, Origin, PackageID};
+use crate::repository::Repository;
 use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
 use crate::dependency::Tag as DependencyVersionTag;
 use crate::bin::Tag as BinTag;

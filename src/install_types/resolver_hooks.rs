@@ -789,6 +789,130 @@ impl NegatableEnum for Architecture {
     fn from_raw(n: u16) -> Self { Self(n) }
 }
 
+// ─── Repository (data) ────────────────────────────────────────────────────
+// MOVE_DOWN of the data struct + buffer-relative methods from
+// `install/repository.zig` so `bun_install::resolution::Value` and
+// `bun_install::dependency::Version::Value` can name a real (non-opaque) type
+// without introducing an upward dep edge. Install-tier behaviour (parsing,
+// formatting, git CLI exec, download/checkout) stays in
+// `bun_install::repository::RepositoryExt`.
+
+#[repr(C)]
+#[derive(Copy, Default, Debug)]
+pub struct Repository {
+    pub owner: SemverString,
+    pub repo: SemverString,
+    pub committish: SemverString,
+    pub resolved: SemverString,
+    pub package_name: SemverString,
+}
+
+// Manual `Clone` so the inherent buffer-relative `clone(&self, buf, builder)`
+// below does not collide with a derived `clone(&self)` at method-resolution
+// time for the 2-arg call sites in `bun_install::resolution`.
+impl Clone for Repository {
+    #[inline]
+    fn clone(&self) -> Self { *self }
+}
+
+impl Repository {
+    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> core::cmp::Ordering {
+        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        if owner_order != core::cmp::Ordering::Equal { return owner_order; }
+        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        if repo_order != core::cmp::Ordering::Equal { return repo_order; }
+        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+    }
+
+    pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+        builder.count(self.owner.slice(buf));
+        builder.count(self.repo.slice(buf));
+        builder.count(self.committish.slice(buf));
+        builder.count(self.resolved.slice(buf));
+        builder.count(self.package_name.slice(buf));
+    }
+
+    /// Zig `Repository.clone(buf, Builder, builder)` — re-interns each field
+    /// into `builder`. Inherent method named `clone` so existing
+    /// `repo.clone(buf, builder)` call sites resolve; bitwise copy goes through
+    /// `Copy`/`*repo`.
+    pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
+        Repository {
+            owner: builder.append::<SemverString>(self.owner.slice(buf)),
+            repo: builder.append::<SemverString>(self.repo.slice(buf)),
+            committish: builder.append::<SemverString>(self.committish.slice(buf)),
+            resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
+            package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
+        }
+    }
+
+    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) { return false; }
+        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) { return false; }
+        if self.resolved.is_empty() || rhs.resolved.is_empty() {
+            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+        }
+        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
+    }
+}
+
+// ─── VersionedURL ─────────────────────────────────────────────────────────
+// MOVE_DOWN of `install/versioned_url.zig` so `bun_install::resolution::Value`
+// can name the `npm` arm's payload without an upward edge.
+
+pub type VersionedURL = VersionedURLType<u64>;
+pub type OldV2VersionedURL = VersionedURLType<u32>;
+
+#[repr(C)]
+#[derive(Copy, Debug)]
+pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
+    pub url: SemverString,
+    pub version: bun_semver::VersionType<SemverInt>,
+}
+
+impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
+    #[inline]
+    fn clone(&self) -> Self { *self }
+}
+impl<SemverInt: bun_semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
+    #[inline]
+    fn default() -> Self {
+        Self { url: SemverString::default(), version: bun_semver::VersionType::default() }
+    }
+}
+
+impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
+    #[inline]
+    pub fn eql(&self, other: &Self) -> bool {
+        self.version.eql(other.version)
+    }
+
+    #[inline]
+    pub fn order(&self, other: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> core::cmp::Ordering {
+        self.version.order(other.version, lhs_buf, rhs_buf)
+    }
+
+    pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+        self.version.count(buf, builder);
+        builder.count(self.url.slice(buf));
+    }
+
+    /// Zig `VersionedURLType.clone(buf, Builder, builder)`.
+    pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
+        Self {
+            version: self.version.append(buf, builder),
+            url: builder.append::<SemverString>(self.url.slice(buf)),
+        }
+    }
+}
+
+impl VersionedURLType<u32> {
+    #[inline]
+    pub fn migrate(self) -> VersionedURLType<u64> {
+        VersionedURLType { url: self.url, version: self.version.migrate() }
+    }
+}
+
 // ─── Resolution ───────────────────────────────────────────────────────────
 
 /// Port of `install/resolution.zig` `Resolution.Tag`.

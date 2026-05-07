@@ -267,6 +267,10 @@ pub mod E {
         pub fn is_blank(&self) -> bool {
             self.len() == 0
         }
+        #[inline]
+        pub fn is_present(&self) -> bool {
+            self.len() > 0
+        }
         /// Shallow field-copy (Zig copies the struct bytes; `EString` is not
         /// `Clone` because the rope `next` ptr would alias).
         #[inline]

@@ -1559,7 +1559,7 @@ impl Expect {
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the matcher function for a custom matcher!",
-                format_args!(""),
+                (),
             ));
         }
         matcher_fn.ensure_still_alive();
@@ -1663,10 +1663,10 @@ impl Expect {
 
         if !expected.is_number() {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw2(
-                "Expected value must be a non-negative integer: {f}",
-                format_args!("{}", expected.to_fmt(&mut fmt)),
-            ));
+            return Err(global_this.throw(format_args!(
+                "Expected value must be a non-negative integer: {}",
+                expected.to_fmt(&mut fmt),
+            )));
         }
 
         let expected_assertions: f64 = expected.to_number(global_this)?;
@@ -1677,10 +1677,10 @@ impl Expect {
             || expected_assertions > u32::MAX as f64
         {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw2(
-                "Expected value must be a non-negative integer: {f}",
-                format_args!("{}", expected.to_fmt(&mut fmt)),
-            ));
+            return Err(global_this.throw(format_args!(
+                "Expected value must be a non-negative integer: {}",
+                expected.to_fmt(&mut fmt),
+            )));
         }
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
@@ -1886,10 +1886,11 @@ impl ExpectStatic {
             Promise::Rejects => "rejectsTo",
             _ => unreachable!(),
         };
-        global_this.throw2(
-                "expect.{s}: already called expect.{s} on this chain",
-                format_args!("{} {}", bstr::BStr::new(name), str),
-        )
+        global_this.throw(format_args!(
+            "expect.{}: already called expect.{} on this chain",
+            bstr::BStr::new(name),
+            str,
+        ))
     }
 
     fn create_asymmetric_matcher_with_flags<T: AsymmetricMatcherClass + 'static>(
@@ -2275,7 +2276,7 @@ impl ExpectAny {
         if arguments.is_empty() {
             return Err(global_this.throw2(
                 "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
-                format_args!(""),
+                (),
             ));
         }
 
@@ -2400,14 +2401,14 @@ impl ExpectCustomAsymmetricMatcher {
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!",
-                format_args!(""),
+                (),
             ));
         };
         matcher_fn.ensure_still_alive();
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
                 "Internal consistency error: the ExpectCustomMatcher(matcherFn) is not a function!",
-                format_args!(""),
+                (),
             ));
         }
 
@@ -2417,10 +2418,10 @@ impl ExpectCustomAsymmetricMatcher {
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
         let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else {
-            return Err(global_this.throw2(
-                "expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments",
-                format_args!("{}", matcher_name),
-            ));
+            return Err(global_this.throw(format_args!(
+                "expect.{} misused, it needs to be instantiated by calling it with 0 or more arguments",
+                matcher_name,
+            )));
         };
         captured_args.ensure_still_alive();
 
@@ -2579,7 +2580,7 @@ impl ExpectMatcherContext {
         if arguments.len < 2 {
             return Err(global_this.throw2(
                 "expect.extends matcher: this.util.equals expects at least 2 arguments",
-                format_args!(""),
+                (),
             ));
         }
         let args = arguments.slice();
@@ -2680,7 +2681,7 @@ impl ExpectMatcherUtils {
         if arguments.is_empty() || !arguments[0].is_string() {
             return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
-                format_args!(""),
+                (),
             ));
         }
         // .zig:1907 `defer matcher_name.deref();` — `to_bun_string` returns +1;
@@ -2703,8 +2704,8 @@ impl ExpectMatcherUtils {
         if !options.is_undefined_or_null() {
             if !options.is_object() {
                 return Err(global_this.throw2(
-                "matcherHint: options must be an object (or undefined)",
-                format_args!(""),
+                    "matcherHint: options must be an object (or undefined)",
+                    (),
                 ));
             }
             if let Some(val) = options.get(global_this, "isNot")? {

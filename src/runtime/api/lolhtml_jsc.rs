@@ -2,17 +2,48 @@
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_lolhtml_sys::HTMLString;
+use bun_string::{strings, String as BunString};
+
+/// `HTMLString.toString` — port of `lol_html.zig:HTMLString.toString`.
+///
+/// Lives here (not in `bun_lolhtml_sys`) because the `*_sys` crate is a leaf
+/// FFI crate with no `bun_string` dependency; pulling one in would invert the
+/// layering. This module is the higher-tier wrapper that owns the
+/// `HTMLString` → `bun.String` bridge.
+///
+/// Zero-copies all-ASCII payloads as a Latin-1 external string (ownership of
+/// the lol-html buffer transfers to WTF and is freed by
+/// [`HTMLString::deinit_external`]); otherwise clones as UTF-8 and frees the
+/// original.
+pub fn html_string_to_string(this: HTMLString) -> BunString {
+    let bytes = this.slice();
+    if !bytes.is_empty() && strings::is_all_ascii(bytes) {
+        // SAFETY: `bytes` aliases `this.ptr[..this.len]`, which lol-html keeps
+        // valid until `lol_html_str_free`. Ownership moves to the external
+        // string; `deinit_external` reconstructs the `HTMLString` from
+        // (ctx=ptr, len) and frees it when WTF drops the impl.
+        return BunString::create_external::<*mut u8>(
+            bytes,
+            true,
+            this.ptr as *mut u8,
+            HTMLString::deinit_external,
+        );
+    }
+    let s = BunString::clone_utf8(bytes);
+    this.deinit();
+    s
+}
 
 pub fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    let str = this.to_string();
-    // `defer str.deref()` — handled by `impl Drop for bun_str::String`.
+    let str = html_string_to_string(this);
+    // `defer str.deref()` — handled by `impl Drop for bun_string::String`.
     str.to_js(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/lolhtml_jsc.zig (10 lines)
+//               + src/lolhtml_sys/lol_html.zig:HTMLString.toString
 //   confidence: high
 //   todos:      0
-//   notes:      Phase B may prefer an `HtmlStringJsc` extension trait over a free fn.
 // ──────────────────────────────────────────────────────────────────────────

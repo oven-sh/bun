@@ -1245,15 +1245,18 @@ impl BlobExt for Blob {
             };
             let proxy_url = proxy.map(|p| p.href);
 
-            // PORT NOTE: Zig passed `aws_options.credentials.dupe()` (a fresh
-            // heap `*S3Credentials`) when extra options were supplied, else the
-            // store's existing intrusive-rc'd pointer. Rust's `store::S3` holds
-            // an `Arc`, not an `IntrusiveRc`, so the else-arm pointer isn't
-            // shape-compatible. Always heap-dupe; `upload_stream` adopts the
-            // ref by value (no extra bump) and the MultiPartUpload derefs on
-            // completion.
+            // Zig: `(if (extra_options != null) aws_options.credentials.dupe()
+            // else s3.getCredentials())` — when no JS overrides were supplied,
+            // hand the store's *base* credentials to the upload (Zig passes the
+            // shared pointer; Rust's `upload_stream` consumes an `IntrusiveRc`
+            // by value, so the else-arm heap-dupes from the store's `Arc`
+            // instead of from the `aws_options` clone).
             return crate::webcore::__s3_client::upload_stream(
-                aws_options.credentials.dupe(),
+                if extra_options.is_some() {
+                    aws_options.credentials.dupe()
+                } else {
+                    s3.get_credentials().dupe()
+                },
                 path,
                 readable_stream,
                 global_this,
@@ -4247,7 +4250,11 @@ pub fn write_file_with_source_destination(
                         ctx,
                     )? {
                         return Ok(s3_client::upload_stream(
-                            aws_options.credentials.dupe(),
+                            if options.extra_options.is_some() {
+                                aws_options.credentials.dupe()
+                            } else {
+                                s3.get_credentials().dupe()
+                            },
                             s3.path(),
                             stream,
                             ctx,
@@ -4330,7 +4337,11 @@ pub fn write_file_with_source_destination(
                     ctx,
                 )? {
                     return Ok(s3_client::upload_stream(
-                        aws_options.credentials.dupe(),
+                        if options.extra_options.is_some() {
+                            aws_options.credentials.dupe()
+                        } else {
+                            s3.get_credentials().dupe()
+                        },
                         s3.path(),
                         stream,
                         ctx,

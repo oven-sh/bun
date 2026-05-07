@@ -564,9 +564,9 @@ impl HotReloadEvent {
         self.extra_files.clear();
     }
 
-    /// `HotReloadEvent.appendFile` — full body in gated draft.
+    /// `HotReloadEvent.appendFile` — HotReloadEvent.zig:55.
     pub fn append_file(&mut self, file_path: &[u8]) {
-        let _ = self.files.get_or_put(file_path);
+        bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
     /// `HotReloadEvent.appendDir` — HotReloadEvent.zig:58.
@@ -574,7 +574,7 @@ impl HotReloadEvent {
         if dir_path.is_empty() {
             return;
         }
-        let _ = self.dirs.get_or_put(dir_path);
+        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
 
         let Some(sub_path) = maybe_sub_path else { return };
         if sub_path.is_empty() {

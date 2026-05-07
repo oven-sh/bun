@@ -198,34 +198,39 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Intrusive thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
-    /// Operates directly on the embedded `AtomicU32` to avoid the
-    /// `bun_ptr::ThreadSafeRefCounted` field-type coupling until that wiring
-    /// lands (see TODO on `ref_count`). `deref` reaching 0 reconstitutes and
-    /// drops the `Box` allocated by callers (e.g. `SavedSourceMap::get_with_content`).
+    /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    ///
+    /// PORT NOTE: Zig uses an *intrusive* count (`bun.new` + embedded
+    /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
+    /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
+    /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
+    /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
+    /// header *before* the data pointer. Reconstituting that pointer with
+    /// `Box::from_raw` would free an interior offset and trips
+    /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
+    /// `Arc::{increment,decrement}_strong_count` instead — same observable
+    /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that
+    /// actually owns the bytes. The embedded `ref_count` field is kept for
+    /// layout/ABI parity but is NOT the live counter.
     ///
     /// # Safety
-    /// `this` must point to a live, `Box`-allocated `ParsedSourceMap`.
+    /// `this` must come from `Arc::<Self>::into_raw` (or a value the table
+    /// stored that way) and must still have at least one strong ref.
     #[inline]
     pub unsafe fn ref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live.
-        let old = unsafe { (*this).ref_count.fetch_add(1, core::sync::atomic::Ordering::SeqCst) };
-        debug_assert!(old > 0);
+        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
+        unsafe { std::sync::Arc::increment_strong_count(this.cast_const()) };
     }
 
     /// See [`ref_`].
     ///
     /// # Safety
-    /// `this` must point to a live, `Box`-allocated `ParsedSourceMap`.
+    /// `this` must come from `Arc::<Self>::into_raw` and must still have at
+    /// least one strong ref. Drops the allocation when the count reaches 0.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live.
-        let old = unsafe { (*this).ref_count.fetch_sub(1, core::sync::atomic::Ordering::SeqCst) };
-        debug_assert!(old > 0);
-        if old == 1 {
-            // SAFETY: last ref dropped; allocation came from `Box::into_raw`.
-            drop(unsafe { Box::from_raw(this) });
-        }
+        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
+        unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
     }
 
     /// Construct a `ParsedSourceMap` whose mappings are backed by an

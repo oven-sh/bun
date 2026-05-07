@@ -2806,31 +2806,38 @@ pub mod mock {
     use bun_jsc::ComptimeStringMapExt as _;
 
     // TODO(port): move to <area>_sys
+    // C++: `JSC::EncodedJSValue JSMockFunction__get{Calls,Returns}(
+    //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[ZIG_EXPORT(zero_is_throw)]]`.
+    // The leading `globalThis` parameter is load-bearing: the body opens a
+    // `DECLARE_THROW_SCOPE(globalThis->vm())`, so omitting it shifts `value`
+    // into the pointer slot and dereferences a garbage `JSGlobalObject*`
+    // (UBSan: null `VM&` bind in JSGlobalObject.h).
     unsafe extern "C" {
         #[link_name = "JSMockFunction__getCalls"]
-        fn JSMockFunction__getCalls_raw(value: JSValue) -> JSValue;
+        fn JSMockFunction__getCalls_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
         #[link_name = "JSMockFunction__getReturns"]
-        fn JSMockFunction__getReturns_raw(value: JSValue) -> JSValue;
+        fn JSMockFunction__getReturns_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
     }
 
     /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a
-    /// JSMockFunction, or `JSValue::zero` if `value` is not a mock. Safe wrapper
+    /// JSMockFunction, or `undefined` if `value` is not a mock. Safe wrapper
     /// over the C++ shim so matchers don't carry their own `extern` blocks.
+    /// `zero_is_throw`: a `.zero` return means the throw scope is set.
     #[allow(non_snake_case)]
     #[inline]
     pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        let _ = global; // C++ side does not throw; kept for signature parity with matcher drafts.
-        // SAFETY: JSValue is repr(transparent) i64, fn never throws.
-        Ok(unsafe { JSMockFunction__getCalls_raw(value) })
+        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
+        let ret = unsafe { JSMockFunction__getCalls_raw(global.as_ptr(), value) };
+        if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
     }
 
     /// `bun.cpp.JSMockFunction__getReturns` — see `JSMockFunction__getCalls`.
     #[allow(non_snake_case)]
     #[inline]
     pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        let _ = global;
-        // SAFETY: JSValue is repr(transparent) i64, fn never throws.
-        Ok(unsafe { JSMockFunction__getReturns_raw(value) })
+        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
+        let ret = unsafe { JSMockFunction__getReturns_raw(global.as_ptr(), value) };
+        if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
     }
 
     pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator<'_>> {

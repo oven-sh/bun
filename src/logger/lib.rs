@@ -1179,7 +1179,6 @@ pub trait JsonWriter {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
 pub struct Location {
     // Field ordering optimized to reduce padding:
     // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
@@ -1211,6 +1210,28 @@ pub struct Location {
     // original docs: 0-based, in bytes.
     // but there is a place where this is emitted in output, implying one based character offset
     pub column: i32,
+}
+
+// PORT NOTE: NOT `#[derive(Clone)]`. `file` / `line_text` are
+// `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
+// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
+// `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
+// could outlive the source buffer and read poisoned memory. Mirror the Zig
+// `Location.clone` (`allocator.dupe`, logger.zig:113) for the trait impl too —
+// every `Clone` of a `Location` deep-dupes its borrowed bytes.
+impl Clone for Location {
+    fn clone(&self) -> Self {
+        Location {
+            file: Cow::Owned(self.file.to_vec()),
+            namespace: self.namespace,
+            line: self.line,
+            column: self.column,
+            length: self.length,
+            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
+            offset: self.offset,
+        }
+    }
 }
 
 impl Default for Location {
@@ -1249,18 +1270,10 @@ impl Location {
     pub fn clone(&self) -> Result<Location, AllocError> {
         // Zig (logger.zig:113): `allocator.dupe(u8, this.file)` /
         // `allocator.dupe(u8, this.line_text.?)` — the duped bytes outlive the
-        // original `Source.contents`. Model that with `Cow::Owned` so a
-        // `BuildMessage` that escapes the parse pass doesn't read poisoned
-        // memory when later inspected.
-        Ok(Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
-            line: self.line,
-            column: self.column,
-            length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
-            offset: self.offset,
-        })
+        // original `Source.contents`. The trait `Clone` impl above does the
+        // deep-dupe; this inherent shim keeps the fallible signature so
+        // existing `?`-threaded callers don't change.
+        Ok(<Self as Clone>::clone(self))
     }
 
     pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
@@ -1415,8 +1428,11 @@ impl Data {
     pub fn clone(&self) -> Result<Data, AllocError> {
         Ok(Data {
             text: if !self.text.is_empty() {
-                // Zig dupes here; `Cow::clone` deep-copies the `Owned` arm.
-                self.text.clone()
+                // Zig (logger.zig:231): `try allocator.dupe(u8, this.text)`.
+                // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
+                // so a `Borrowed` `text` (rare today, but the type permits it)
+                // can't alias recycled storage in the cloned `Msg`.
+                Cow::Owned(self.text.to_vec())
             } else {
                 Cow::Borrowed(b"")
             },
@@ -1430,10 +1446,14 @@ impl Data {
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                // TODO(b1): StringBuilder is a stub — once the real arena append
-                // lands this routes through it. For now clone (matches Zig
-                // `builder.append(text)` ownership: callee owns the returned bytes).
-                self.text.clone()
+                // Zig: `builder.append(this.text)` copies into the destination
+                // `Log`'s arena (StringBuilder.zig). The local `StringBuilder`
+                // is a no-op stub (returns its input), so a bare `Cow::clone`
+                // would leave a `Borrowed` arm aliasing `self`'s storage and
+                // dangle after `self.msgs.clear()` in
+                // `append_to_with_recycled`. Deep-copy — same end-state as the
+                // real builder, just without the single-buffer packing.
+                Cow::Owned(self.text.to_vec())
             } else {
                 Cow::Borrowed(b"")
             },

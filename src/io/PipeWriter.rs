@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::VecExt;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -1681,9 +1681,13 @@ impl StreamBuffer {
     }
 
     pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        // PORT NOTE: see `write_latin1` — call the underlying append on `Vec<u8>`
-        // directly instead of round-tripping through `Vec<u8>`.
-        bun_core::strings::convert_utf16_to_utf8_append(&mut self.list, buffer);
+        // Zig (PipeWriter.zig:1213): `byte_list.writeUTF16(allocator, buffer)` —
+        // `ByteList.writeUTF16` (baby_list.zig:419) sizes the spare capacity via
+        // `simdutf.length.utf8.from.utf16.le` *before* the simdutf write. The
+        // `ByteVecExt::write_utf16` impl mirrors that contract; calling
+        // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
+        // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
+        ByteVecExt::write_utf16(&mut self.list, buffer)?;
         Ok(())
     }
 

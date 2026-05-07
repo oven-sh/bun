@@ -361,6 +361,7 @@ pub mod s3 {
     pub use super::__s3_multipart as multipart;
     pub use multipart::MultiPartUpload;
     pub use super::__s3_client as client;
+    pub use super::__s3_credentials_jsc as credentials_jsc;
 }
 
 #[path = "webcore/streams.rs"]

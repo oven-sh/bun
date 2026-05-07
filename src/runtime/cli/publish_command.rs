@@ -605,7 +605,7 @@ impl PublishCommand {
         ));
 
         // SAFETY: `manager_ptr` is the same process-lifetime singleton.
-        if unsafe { &*manager_ptr }.options.do_.run_scripts {
+        if unsafe { &*manager_ptr }.options.do_.contains(install::PackageManagerDoStub::RUN_SCRIPTS) {
             let abs_workspace_path: Box<[u8]> = strings::without_trailing_slash(
                 strings::without_suffix_comptime(
                     // SAFETY: `manager_ptr` is the same process-lifetime singleton.

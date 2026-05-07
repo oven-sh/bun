@@ -687,8 +687,8 @@ pub use self::js_global_object::JSGlobalObject;
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// Mirrors Zig's `IntegerRange` (comptime min/max collapsed to i128 so every
 /// signed/unsigned primitive's bounds + MIN/MAX_SAFE_INTEGER fit without
-/// narrowing). Defined here because `JSGlobalObject.rs` is still cfg-gated and
-/// callers across `bun_runtime` need a stable name.
+/// narrowing). Defined at crate root so `bun_runtime` callers and
+/// `JSGlobalObject.rs` (which re-exports it) share one type.
 #[derive(Clone, Copy)]
 pub struct IntegerRange {
     pub min: i128,

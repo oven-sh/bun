@@ -19,7 +19,7 @@ use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::{self as bun, Global, Output};
+use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
 use bun_jsc::{self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult, StringJsc as _};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
@@ -278,8 +278,7 @@ pub fn write_sourcemap_to_disk(
 
     // TODO: should we just write the sourcemaps to disk?
     let source_map_index = file.source_map_index;
-    let source_map_file: &OutputFile = &bundled_outputs[source_map_index as usize];
-    debug_assert!(source_map_file.output_kind == OutputKind::Sourcemap);
+    debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
     let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
         || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))

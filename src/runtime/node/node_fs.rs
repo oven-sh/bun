@@ -4677,6 +4677,7 @@ impl NodeFS {
         Maybe::Ok(FD::from_uv(rc as _))
     }
 
+    #[cfg(windows)]
     pub fn uv_statfs(&mut self, args: &args::StatFS, req: &mut uv::fs_t, rc: i64) -> Maybe<ret::StatFS> {
         if rc < 0 {
             return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), #[cfg(windows)] from_libuv: true, ..Default::default() });

@@ -1214,8 +1214,8 @@ impl JSGlobalObject {
                 f64_val,
                 bun_fmt::OutOfRangeOptions {
                     field_name,
-                    min: Some(min),
-                    max: Some(max),
+                    min,
+                    max,
                     ..Default::default()
                 },
             ));

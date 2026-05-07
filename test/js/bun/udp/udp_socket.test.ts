@@ -1,7 +1,7 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -43,6 +43,40 @@ describe("udpSocket()", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // `isString()` is `isStringLike()` and accepts boxed `new String(...)` /
+  // `class extends String`, but `asString()` is a raw `static_cast<JSString*>`
+  // that debug-asserts (and release type-confuses) on a StringObject cell.
+  // Both send() and sendMany() must resolve via `toJSString()` instead.
+  test("send/sendMany accept boxed String payloads without crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const server = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        class Derived extends String {}
+        client.send(new String("a"), server.port, "127.0.0.1");
+        client.send(new Derived("b"), server.port, "127.0.0.1");
+        client.sendMany([new String("c"), server.port, "127.0.0.1", new Derived("d"), server.port, "127.0.0.1"]);
+        client.close(); server.close();
+        console.log("OK");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>
@@ -329,6 +363,51 @@ describe("udpSocket()", () => {
       });
     }
   }
+
+  // send()/sendMany() capture a pointer into the payload's backing store and
+  // then run user JS (port `valueOf()`, address `toString()`, and for
+  // sendMany also array index getters on later iterations). That JS can
+  // detach the ArrayBuffer via `transfer(n)` and free the bytes before the
+  // native send path reads them. sendMany roots each payload JSValue in a
+  // MarkedArgumentBuffer and defers borrowing byte slices until after all
+  // user JS has run; send resolves the destination before capturing the
+  // payload.
+  describe("detaching an ArrayBuffer during port/address coercion does not use-after-free", () => {
+    for (const mode of ["sendMany", "sendMany-stringobj", "send"] as const) {
+      test(
+        mode,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(import.meta.dir, "sendMany-payload-uaf-fixture.ts"), mode],
+            env: {
+              ...bunEnv,
+              // Route bmalloc through the system heap so ASAN can observe the
+              // ArrayBuffer backing-store free in sanitizer-enabled builds. On
+              // Windows bmalloc's SystemHeap is unimplemented and would
+              // RELEASE_BASSERT, so leave bmalloc in place there — Windows has
+              // no ASAN lane anyway, and the fixture still checks correctness.
+              ...(isWindows ? {} : { Malloc: "1" }),
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, rawStderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const stderr = rawStderr
+            .split("\n")
+            .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+            .join("\n");
+          expect(stderr).toBe("");
+          expect(stdout).toBe("OK\n");
+          expect(exitCode).toBe(0);
+        },
+        30_000,
+      );
+    }
+  });
 
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can

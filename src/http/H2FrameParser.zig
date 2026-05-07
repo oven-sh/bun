@@ -1,6 +1,6 @@
 //! HTTP/2 wire-format types for the fetch() HTTP/2 client. Kept free of JSC
 //! and socket dependencies so the node:http2 JS bindings (which currently
-//! carry their own copies in src/bun.js/api/bun/h2_frame_parser.zig) can later
+//! carry their own copies in src/runtime/api/bun/h2_frame_parser.zig) can later
 //! share them.
 
 pub const client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";

@@ -1360,24 +1360,9 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 
 pub const TestCommand = struct {
     pub const name = "test";
-    pub const CodeCoverageOptions = struct {
-        skip_test_files: bool = !Environment.allow_assert,
-        reporters: Reporters = .{ .text = true, .lcov = false },
-        reports_directory: string = "coverage",
-        fractions: bun.SourceMap.coverage.Fraction = .{},
-        ignore_sourcemap: bool = false,
-        enabled: bool = false,
-        fail_on_low_coverage: bool = false,
-        ignore_patterns: []const string = &.{},
-    };
-    pub const Reporter = enum {
-        text,
-        lcov,
-    };
-    const Reporters = struct {
-        text: bool,
-        lcov: bool,
-    };
+    pub const CodeCoverageOptions = @import("../options_types/CodeCoverageOptions.zig").CodeCoverageOptions;
+    pub const Reporter = @import("../options_types/CodeCoverageOptions.zig").Reporter;
+    const Reporters = @import("../options_types/CodeCoverageOptions.zig").Reporters;
 
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
@@ -1445,7 +1430,7 @@ pub const TestCommand = struct {
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
                 .max_concurrency = ctx.test_options.max_concurrency,
-                .filter_regex = ctx.test_options.test_filter_regex,
+                .filter_regex = ctx.test_options.testFilterRegex(),
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -2258,16 +2243,16 @@ pub fn @"export"() void {
 const string = []const u8;
 
 const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const ParallelRunner = @import("./test/ParallelRunner.zig");
 const Scanner = @import("./test/Scanner.zig");
-const bun_test = @import("../bun.js/test/bun_test.zig");
-const options = @import("../options.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const bun_test = @import("../test_runner/bun_test.zig");
+const options = @import("../bundler/options.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
-const FileSystem = @import("../fs.zig").FileSystem;
-const which = @import("../which.zig").which;
+const Command = @import("./cli.zig").Command;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -4689,7 +4689,7 @@ pub const TestingAPIs = struct {
 
 pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
-const Syscall = @import("../sys.zig");
+const Syscall = @import("../sys/sys.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

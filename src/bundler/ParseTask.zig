@@ -284,8 +284,6 @@ pub fn getRuntimeSource(target: options.Target) RuntimeSource {
     };
 }
 
-threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
-
 fn getEmptyCSSAST(
     log: *Logger.Log,
     transpiler: *Transpiler,
@@ -1444,23 +1442,23 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const linker = @import("../linker.zig");
-const runtime = @import("../runtime.zig");
+const Fs = @import("../resolver/fs.zig");
+const HTMLScanner = @import("./HTMLScanner.zig");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
+const linker = @import("./linker.zig");
+const runtime = @import("../js_parser/runtime.zig");
 const std = @import("std");
-const URL = @import("../url.zig").URL;
-const CacheEntry = @import("../cache.zig").Fs.Entry;
+const URL = @import("../url/url.zig").URL;
+const CacheEntry = @import("./cache.zig").Fs.Entry;
 
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const Loc = Logger.Loc;
-
-const options = @import("../options.zig");
-const Loader = options.Loader;
 
 const _resolver = @import("../resolver/resolver.zig");
 const Resolver = _resolver.Resolver;
+
+const options = @import("./options.zig");
+const Loader = options.Loader;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1,7 +1,7 @@
 /**
  * SQLite — embedded SQL database. Backs bun:sqlite and node:sqlite.
  *
- * Source lives IN THE BUN REPO at src/bun.js/bindings/sqlite/ — it's the
+ * Source lives IN THE BUN REPO at src/jsc/bindings/sqlite/ — it's the
  * sqlite3 amalgamation (single .c file). No fetch step; tracked in git.
  *
  * Always built: node:sqlite uses the bundled copy unconditionally (matching
@@ -20,7 +20,7 @@ export const sqlite: Dependency = {
 
   source: () => ({
     kind: "in-tree",
-    path: "src/bun.js/bindings/sqlite",
+    path: "src/jsc/bindings/sqlite",
   }),
 
   build: cfg => ({

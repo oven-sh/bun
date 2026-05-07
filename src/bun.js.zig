@@ -1,7 +1,7 @@
-pub const jsc = @import("./bun.js/jsc.zig");
-pub const webcore = @import("./bun.js/webcore.zig");
-pub const api = @import("./bun.js/api.zig");
-pub const bindgen = @import("./bun.js/bindgen.zig");
+pub const jsc = @import("./jsc/jsc.zig");
+pub const webcore = @import("./runtime/webcore.zig");
+pub const api = @import("./runtime/api.zig");
+pub const bindgen = @import("./jsc/bindgen.zig");
 
 pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
     b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
@@ -146,7 +146,7 @@ pub const Run = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("./jsc/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
         try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
@@ -555,7 +555,7 @@ pub const Run = struct {
         bun.api.napi.fixDeadCodeElimination();
         bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
-        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
+        @import("./jsc/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -636,12 +636,12 @@ fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u
     return result.toOwnedSlice();
 }
 
-const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
-const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
-const options = @import("./options.zig");
+const CPUProfiler = @import("./jsc/BunCPUProfiler.zig");
+const HeapProfiler = @import("./jsc/BunHeapProfiler.zig");
+const options = @import("./bundler/options.zig");
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const which = @import("./which.zig").which;
+const Command = @import("./cli/cli.zig").Command;
+const which = @import("./which/which.zig").which;
 
 const bun = @import("bun");
 const Global = bun.Global;

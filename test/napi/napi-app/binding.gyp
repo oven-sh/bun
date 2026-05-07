@@ -90,6 +90,16 @@
             ],
         },
         {
+            "target_name": "isolate_finalizer_addon",
+            "sources": ["isolate_finalizer_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
             "target_name": "ffi_addon_1",
             "sources": ["ffi_addon_1.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
@@ -114,6 +124,16 @@
         {
             "target_name": "constructor_order_addon",
             "sources": ["constructor_order_addon.cpp"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
+            "target_name": "reentrant_register_addon",
+            "sources": ["reentrant_register_addon.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
             "libraries": [],
             "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],

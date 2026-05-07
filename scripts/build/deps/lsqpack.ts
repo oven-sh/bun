@@ -19,6 +19,10 @@ export const lsqpack: Dependency = {
     commit: LSQPACK_COMMIT,
   }),
 
+  // QPACK uses the same RFC 7541 Huffman code as HPACK; share lshpack's
+  // .bss-backed hencs/hdecs instead of carrying a second 768 KB copy.
+  patches: ["patches/lsqpack/bss-huff-tables.patch"],
+
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a
   // non-FILE* logger context that only works with LSQPACK_*_LOGGER_HEADER
   // pointing at lsquic-internal headers. This dep just provides lsqpack.h.

@@ -397,7 +397,7 @@ const string = []const u8;
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const PackageManifest = @import("../install/npm.zig").PackageManifest;
-const URL = @import("../url.zig").URL;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const Global = bun.Global;

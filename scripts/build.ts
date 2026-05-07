@@ -77,6 +77,14 @@ async function main(): Promise<void> {
 
   const args = parseArgs(process.argv.slice(2));
 
+  // Skip on --configure-only / --config-file (ninja regen): those paths
+  // return before spawning ninja, so the NO_PROXY mutation can't reach any
+  // child and would be pure wasted wall-clock (up to 2s behind a
+  // silent-drop firewall).
+  if (!args.configureOnly) {
+    await maybeBypassProxyForCratesIo();
+  }
+
   // Resolve PartialConfig: either from --config-file (ninja's generator rule
   // replaying a previous configure) or from --profile + overrides (normal use).
   const partial: PartialConfig = args.configFile
@@ -216,6 +224,51 @@ async function main(): Promise<void> {
     }
     process.exit(child.status ?? 0);
   }
+}
+
+/**
+ * When an HTTP proxy is configured, cargo's `-Zbuild-std` (release lolhtml)
+ * must reach crates.io. Some CI/corporate proxies 403 CONNECT to package
+ * registries while direct egress is open. If a proxy is set and crates.io
+ * isn't already exempted, probe direct connectivity once: if it works, add
+ * crates.io to NO_PROXY so cargo goes direct. If the probe fails (mandatory-
+ * egress-proxy topology, firewall drops direct), leave NO_PROXY untouched so
+ * cargo keeps using the proxy. Runs once per build; propagates to all ninja
+ * children via process.env.
+ */
+async function maybeBypassProxyForCratesIo(): Promise<void> {
+  const proxySet =
+    process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+  if (!proxySet) return;
+
+  // Both case variants are honoured by different tools; merge them so we
+  // don't clobber one when writing the unified value back to both.
+  const bypass = new Set<string>();
+  for (const v of [process.env.NO_PROXY, process.env.no_proxy]) {
+    for (const entry of (v ?? "").split(",")) {
+      const t = entry.trim();
+      if (t) bypass.add(t);
+    }
+  }
+  if (bypass.has("crates.io")) return;
+
+  const { connect } = await import("node:net");
+  const directReachable = await new Promise<boolean>(resolve => {
+    const sock = connect({ host: "index.crates.io", port: 443, timeout: 2000 });
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.once("connect", () => done(true));
+    sock.once("timeout", () => done(false));
+    sock.once("error", () => done(false));
+  });
+  if (!directReachable) return;
+
+  for (const h of ["crates.io", "static.crates.io", "index.crates.io"]) bypass.add(h);
+  const merged = [...bypass].join(",");
+  process.env.NO_PROXY = merged;
+  process.env.no_proxy = merged;
 }
 
 /** Load a PartialConfig from JSON (for ninja's generator rule replay). */

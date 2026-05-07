@@ -22,6 +22,7 @@
 #include "WebSocketProtocol.h"
 #include "WebSocketData.h"
 #include "WebSocket.h"
+#include "SocketKinds.h"
 
 namespace uWS {
 
@@ -30,19 +31,49 @@ struct WebSocketContext {
     template <bool> friend struct TemplatedApp;
     template <bool, typename> friend struct WebSocketProtocol;
 private:
-    WebSocketContext() = delete;
+    /* Real heap-allocated owner; group.ext = this. Replaces the old
+     * reinterpret_cast over a us_create_child_socket_context() blob. */
+    WebSocketContext(TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) : data(topicTree) {}
 
-    us_socket_context_t *getSocketContext() {
-        return (us_socket_context_t *) this;
+    us_socket_group_t group{};
+    WebSocketContextData<SSL, USERDATA> data;
+
+    /* WebSocket::getContextData() recovers &data as
+     * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
+     * WebSocket.h. That's only sound if `group` is the first member and `data`
+     * sits immediately after it with no inserted base/field. */
+    static void layoutAssert() {
+        static_assert(offsetof(WebSocketContext, group) == 0,
+                      "WebSocket::getContextData layout assumption broken");
+        static_assert(offsetof(WebSocketContext, data) == sizeof(us_socket_group_t),
+                      "WebSocket::getContextData layout assumption broken");
+    }
+
+public:
+    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
+     * @export) so a reorder there can't silently mis-route us. */
+    static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_WS_TLS : US_SOCKET_KIND_UWS_WS; }
+
+    us_socket_group_t *getSocketGroup() {
+        return &group;
     }
 
     WebSocketContextData<SSL, USERDATA> *getExt() {
-        return (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, (us_socket_context_t *) this);
+        return &data;
     }
 
+    static WebSocketContext *fromSocket(us_socket_t *s) {
+        return (WebSocketContext *) us_socket_group_ext(us_socket_group(s));
+    }
+
+    static WebSocketContextData<SSL, USERDATA> *getExtS(us_socket_t *s) {
+        return &fromSocket(s)->data;
+    }
+
+private:
     /* If we have negotiated compression, set this frame compressed */
     static bool setCompressed(WebSocketState<isServer> */*wState*/, void *s) {
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) s);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
 
         if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::ENABLED) {
             webSocketData->compressionStatus = WebSocketData::CompressionStatus::COMPRESSED_FRAME;
@@ -53,14 +84,14 @@ private:
     }
 
     static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {
-        us_socket_close(SSL, (us_socket_t *) s, (int) reason.length(), (void *) reason.data());
+        us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
     }
 
     /* Returns true on breakage */
     static bool handleFragment(char *data, size_t length, unsigned int remainingBytes, int opCode, bool fin, WebSocketState<isServer> *webSocketState, void *s) {
         /* WebSocketData and WebSocketContextData */
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) s);
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getExtS((us_socket_t *) s);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
 
         /* Is this a non-control frame? */
         if (opCode < 3) {
@@ -71,7 +102,7 @@ private:
                 if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME) {
                         webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
-                        LoopData *loopData = (LoopData *) us_loop_ext(us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) s)));
+                        LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) s)));
                         /* Decompress using shared or dedicated decompressor */
                         std::optional<std::string_view> inflatedFrame;
                         if (webSocketData->inflationStream) {
@@ -98,7 +129,7 @@ private:
                 /* Emit message event & break if we are closed or shut down when returning */
                 if (webSocketContextData->messageHandler) {
                     webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                    if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                    if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                         return true;
                     }
                 }
@@ -125,11 +156,7 @@ private:
                             /* 9 bytes of padding for libdeflate, 4 for zlib */
                             webSocketData->fragmentBuffer.append("123456789");
 
-                            LoopData *loopData = (LoopData *) us_loop_ext(
-                                us_socket_context_loop(SSL,
-                                    us_socket_context(SSL, (us_socket_t *) s)
-                                )
-                            );
+                            LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) s)));
 
                             /* Decompress using shared or dedicated decompressor */
                             std::optional<std::string_view> inflatedFrame;
@@ -163,7 +190,7 @@ private:
                     /* Emit message and check for shutdown or close */
                     if (webSocketContextData->messageHandler) {
                         webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                        if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                        if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                             return true;
                         }
                     }
@@ -186,14 +213,14 @@ private:
                         webSocket->send(std::string_view(data, length), (OpCode) OpCode::PONG);
                         if (webSocketContextData->pingHandler) {
                             webSocketContextData->pingHandler(webSocket, {data, length});
-                            if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                            if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                 return true;
                             }
                         }
                     } else if (opCode == PONG) {
                         if (webSocketContextData->pongHandler) {
                             webSocketContextData->pongHandler(webSocket, {data, length});
-                            if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                            if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                 return true;
                             }
                         }
@@ -215,14 +242,14 @@ private:
                             webSocket->send(std::string_view(controlBuffer, webSocketData->controlTipLength), (OpCode) OpCode::PONG);
                             if (webSocketContextData->pingHandler) {
                                 webSocketContextData->pingHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
-                                if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                                if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
                         } else if (opCode == PONG) {
                             if (webSocketContextData->pongHandler) {
                                 webSocketContextData->pongHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
-                                if (us_socket_is_closed(SSL, (us_socket_t *) s) || webSocketData->isShuttingDown) {
+                                if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
                                 }
                             }
@@ -239,199 +266,193 @@ private:
     }
 
     static bool refusePayloadLength(uint64_t length, WebSocketState<isServer> */*wState*/, void *s) {
-        auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
+        auto *webSocketContextData = getExtS((us_socket_t *) s);
 
         /* Return true for refuse, false for accept */
         return webSocketContextData->maxPayloadLength < length;
     }
 
-    WebSocketContext<SSL, isServer, USERDATA> *init() {
-        /* Adopting a socket does not trigger open event.
-         * We arreive as WebSocket with timeout set and
-         * any backpressure from HTTP state kept. */
+    /* ── vtable handlers (adopted sockets only — never on_open) ──────────── */
 
-        /* Handle socket disconnections */
-        us_socket_context_on_close(SSL, getSocketContext(), [](auto *s, int code, void *reason) {
-            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+    static us_socket_t *onClose(us_socket_t *s, int code, void *reason) {
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
-            /* For whatever reason, if we already have emitted close event, do not emit it again */
-            WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));
-            if (webSocketData->socketData && webSocketData->onSocketClosed) {
-                webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
-            }
-            if (!webSocketData->isShuttingDown) {
-                /* Emit close event */
-                auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
+        /* For whatever reason, if we already have emitted close event, do not emit it again */
+        WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
+        if (webSocketData->socketData && webSocketData->onSocketClosed) {
+            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+        }
+        if (!webSocketData->isShuttingDown) {
+            /* Emit close event */
+            auto *webSocketContextData = getExtS(s);
 
-                /* At this point we iterate all currently held subscriptions and emit an event for all of them */
-                if (webSocketData->subscriber && webSocketContextData->subscriptionHandler) {
-                    for (Topic *t : webSocketData->subscriber->topics) {
-                        webSocketContextData->subscriptionHandler((WebSocket<SSL, isServer, USERDATA> *) s, t->name, (int) t->size() - 1, (int) t->size());
-                    }
-                }
-
-                /* Make sure to unsubscribe from any pub/sub node at exit */
-                webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
-                webSocketData->subscriber = nullptr;
-
-                if (webSocketContextData->closeHandler) {
-                    webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, reason != NULL && code > 0 ? std::string_view{(char *) reason, (size_t) code} : std::string_view());
+            /* At this point we iterate all currently held subscriptions and emit an event for all of them */
+            if (webSocketData->subscriber && webSocketContextData->subscriptionHandler) {
+                for (Topic *t : webSocketData->subscriber->topics) {
+                    webSocketContextData->subscriptionHandler((WebSocket<SSL, isServer, USERDATA> *) s, t->name, (int) t->size() - 1, (int) t->size());
                 }
             }
 
-            /* Destruct in-placed data struct */
-            webSocketData->~WebSocketData();
+            /* Make sure to unsubscribe from any pub/sub node at exit */
+            webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
+            webSocketData->subscriber = nullptr;
 
-            return s;
-        });
-
-        /* Handle WebSocket data streams */
-        us_socket_context_on_data(SSL, getSocketContext(), [](auto *s, char *data, int length) {
-
-            /* We need the websocket data */
-            WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));
-
-            /* When in websocket shutdown mode, we do not care for ANY message, whether responding close frame or not.
-             * We only care for the TCP FIN really, not emitting any message after closing is key */
-            if (webSocketData->isShuttingDown) {
-                return s;
+            if (webSocketContextData->closeHandler) {
+                webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, reason != NULL && code > 0 ? std::string_view{(char *) reason, (size_t) code} : std::string_view());
             }
+        }
 
-            auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-            auto *asyncSocket = (AsyncSocket<SSL> *) s;
+        /* Destruct in-placed data struct */
+        webSocketData->~WebSocketData();
 
-            /* Every time we get data and not in shutdown state we simply reset the timeout */
-            asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
-            webSocketData->hasTimedOut = false;
-
-            /* We always cork on data */
-            asyncSocket->cork();
-
-            /* This parser has virtually no overhead */
-            WebSocketProtocol<isServer, WebSocketContext<SSL, isServer, USERDATA>>::consume(data, (unsigned int) length, (WebSocketState<isServer> *) webSocketData, s);
-
-            /* Uncorking a closed socekt is fine, in fact it is needed */
-            asyncSocket->uncork();
-
-            /* If uncorking was successful and we are in shutdown state then send TCP FIN */
-            if (asyncSocket->getBufferedAmount() == 0) {
-                /* We can now be in shutdown state */
-                if (webSocketData->isShuttingDown) {
-                    /* Shutting down a closed socket is handled by uSockets and just fine */
-                    asyncSocket->shutdown();
-                }
-            }
-
-            return s;
-        });
-
-        /* Handle HTTP write out (note: SSL_read may trigger this spuriously, the app need to handle spurious calls) */
-        us_socket_context_on_writable(SSL, getSocketContext(), [](auto *s) {
-
-            /* NOTE: Are we called here corked? If so, the below write code is broken, since
-             * we will have 0 as getBufferedAmount due to writing to cork buffer, then sending TCP FIN before
-             * we actually uncorked and sent off things */
-
-            /* It makes sense to check for us_is_shut_down here and return if so, to avoid shutting down twice */
-            if (us_socket_is_shut_down(SSL, (us_socket_t *) s)) {
-                return s;
-            }
-
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            WebSocketData *webSocketData = (WebSocketData *)(us_socket_ext(SSL, s));
-
-            /* We store old backpressure since it is unclear whether write drained anything,
-             * however, in case of coming here with 0 backpressure we still need to emit drain event */
-            size_t backpressure = asyncSocket->getBufferedAmount();
-
-            /* Drain as much as possible */
-            asyncSocket->write(nullptr, 0);
-
-            /* Behavior: if we actively drain backpressure, always reset timeout (even if we are in shutdown) */
-            /* Also reset timeout if we came here with 0 backpressure */
-            if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
-                auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-                asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
-                webSocketData->hasTimedOut = false;
-            }
-
-            /* Are we in (WebSocket) shutdown mode? */
-            if (webSocketData->isShuttingDown) {
-                /* Check if we just now drained completely */
-                if (asyncSocket->getBufferedAmount() == 0) {
-                    /* Now perform the actual TCP/TLS shutdown which was postponed due to backpressure */
-                    asyncSocket->shutdown();
-                }
-            } else if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
-                /* Only call drain if we actually drained backpressure or if we came here with 0 backpressure */
-                auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-                if (webSocketContextData->drainHandler) {
-                    webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
-                }
-                /* No need to check for closed here as we leave the handler immediately*/
-            }
-
-            return s;
-        });
-
-        /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
-        us_socket_context_on_end(SSL, getSocketContext(), [](auto *s) {
-            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
-
-            /* If we get a fin, we just close I guess */
-            us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);
-
-            return s;
-        });
-
-        us_socket_context_on_long_timeout(SSL, getSocketContext(), [](auto *s) {
-            ((WebSocket<SSL, isServer, USERDATA> *) s)->end(1000, "please reconnect");
-
-            return s;
-        });
-
-        /* Handle socket timeouts, simply close them so to not confuse client with FIN */
-        us_socket_context_on_timeout(SSL, getSocketContext(), [](auto *s) {
-
-            auto *webSocketData = (WebSocketData *)(us_socket_ext(SSL, s));
-            auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-
-            if (webSocketContextData->sendPingsAutomatically && !webSocketData->isShuttingDown && !webSocketData->hasTimedOut) {
-                webSocketData->hasTimedOut = true;
-                us_socket_timeout(SSL, s, webSocketContextData->idleTimeoutComponents.second);
-                /* Send ping without being corked */
-                ((AsyncSocket<SSL> *) s)->write("\x89\x00", 2);
-                return s;
-            }
-
-            /* Timeout is very simple; we just close it */
-            /* Warning: we happen to know forceClose will not use first parameter so pass nullptr here */
-            forceClose(nullptr, s, ERR_WEBSOCKET_TIMEOUT);
-
-            return s;
-        });
-
-        return this;
+        return s;
     }
 
-    void free() {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, (us_socket_context_t *) this);
-        webSocketContextData->~WebSocketContextData();
+    static us_socket_t *onData(us_socket_t *s, char *data, int length) {
+        /* We need the websocket data */
+        WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
 
-        us_socket_context_free(SSL, (us_socket_context_t *) this);
+        /* When in websocket shutdown mode, we do not care for ANY message, whether responding close frame or not.
+         * We only care for the TCP FIN really, not emitting any message after closing is key */
+        if (webSocketData->isShuttingDown) {
+            return s;
+        }
+
+        auto *webSocketContextData = getExtS(s);
+        auto *asyncSocket = (AsyncSocket<SSL> *) s;
+
+        /* Every time we get data and not in shutdown state we simply reset the timeout */
+        asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
+        webSocketData->hasTimedOut = false;
+
+        /* We always cork on data */
+        asyncSocket->cork();
+
+        /* This parser has virtually no overhead */
+        WebSocketProtocol<isServer, WebSocketContext<SSL, isServer, USERDATA>>::consume(data, (unsigned int) length, (WebSocketState<isServer> *) webSocketData, s);
+
+        /* Uncorking a closed socekt is fine, in fact it is needed */
+        asyncSocket->uncork();
+
+        /* If uncorking was successful and we are in shutdown state then send TCP FIN */
+        if (asyncSocket->getBufferedAmount() == 0) {
+            /* We can now be in shutdown state */
+            if (webSocketData->isShuttingDown) {
+                /* Shutting down a closed socket is handled by uSockets and just fine */
+                asyncSocket->shutdown();
+            }
+        }
+
+        return s;
+    }
+
+    static us_socket_t *onWritable(us_socket_t *s) {
+        /* NOTE: Are we called here corked? If so, the below write code is broken, since
+         * we will have 0 as getBufferedAmount due to writing to cork buffer, then sending TCP FIN before
+         * we actually uncorked and sent off things */
+
+        /* It makes sense to check for us_is_shut_down here and return if so, to avoid shutting down twice */
+        if (us_socket_is_shut_down((us_socket_t *) s)) {
+            return s;
+        }
+
+        AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
+        WebSocketData *webSocketData = (WebSocketData *)(us_socket_ext(s));
+
+        /* We store old backpressure since it is unclear whether write drained anything,
+         * however, in case of coming here with 0 backpressure we still need to emit drain event */
+        size_t backpressure = asyncSocket->getBufferedAmount();
+
+        /* Drain as much as possible */
+        asyncSocket->write(nullptr, 0);
+
+        /* Behavior: if we actively drain backpressure, always reset timeout (even if we are in shutdown) */
+        /* Also reset timeout if we came here with 0 backpressure */
+        if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
+            auto *webSocketContextData = getExtS(s);
+            asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
+            webSocketData->hasTimedOut = false;
+        }
+
+        /* Are we in (WebSocket) shutdown mode? */
+        if (webSocketData->isShuttingDown) {
+            /* Check if we just now drained completely */
+            if (asyncSocket->getBufferedAmount() == 0) {
+                /* Now perform the actual TCP/TLS shutdown which was postponed due to backpressure */
+                asyncSocket->shutdown();
+            }
+        } else if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
+            /* Only call drain if we actually drained backpressure or if we came here with 0 backpressure */
+            auto *webSocketContextData = getExtS(s);
+            if (webSocketContextData->drainHandler) {
+                webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
+            }
+            /* No need to check for closed here as we leave the handler immediately*/
+        }
+
+        return s;
+    }
+
+    static us_socket_t *onEnd(us_socket_t *s) {
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+
+        /* If we get a fin, we just close I guess */
+        us_socket_close((us_socket_t *) s, 0, nullptr);
+
+        return s;
+    }
+
+    static us_socket_t *onLongTimeout(us_socket_t *s) {
+        ((WebSocket<SSL, isServer, USERDATA> *) s)->end(1000, "please reconnect");
+
+        return s;
+    }
+
+    static us_socket_t *onTimeout(us_socket_t *s) {
+        auto *webSocketData = (WebSocketData *)(us_socket_ext(s));
+        auto *webSocketContextData = getExtS(s);
+
+        if (webSocketContextData->sendPingsAutomatically && !webSocketData->isShuttingDown && !webSocketData->hasTimedOut) {
+            webSocketData->hasTimedOut = true;
+            us_socket_timeout(s, webSocketContextData->idleTimeoutComponents.second);
+            /* Send ping without being corked */
+            ((AsyncSocket<SSL> *) s)->write("\x89\x00", 2);
+            return s;
+        }
+
+        /* Timeout is very simple; we just close it */
+        /* Warning: we happen to know forceClose will not use first parameter so pass nullptr here */
+        forceClose(nullptr, s, ERR_WEBSOCKET_TIMEOUT);
+
+        return s;
+    }
+
+    static inline const us_socket_vtable_t wsVTable = {
+        /* on_open */         nullptr,
+        /* on_data */         &onData,
+        /* on_fd */           nullptr,
+        /* on_writable */     &onWritable,
+        /* on_close */        &onClose,
+        /* on_timeout */      &onTimeout,
+        /* on_long_timeout */ &onLongTimeout,
+        /* on_end */          &onEnd,
+        /* on_connect_error */nullptr,
+        /* on_connecting_error */ nullptr,
+        /* on_handshake */    nullptr,
+    };
+
+    void free() {
+        us_socket_group_deinit(&group);
+        delete this;
     }
 
 public:
-    /* WebSocket contexts are always child contexts to a HTTP context so no SSL options are needed as they are inherited */
-    static WebSocketContext *create(Loop */*loop*/, us_socket_context_t *parentSocketContext, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) {
-        WebSocketContext *webSocketContext = (WebSocketContext *) us_create_child_socket_context(SSL, parentSocketContext, sizeof(WebSocketContextData<SSL, USERDATA>));
-        if (!webSocketContext) {
-            return nullptr;
-        }
-
-        /* Init socket context data */
-        new ((WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, (us_socket_context_t *)webSocketContext)) WebSocketContextData<SSL, USERDATA>(topicTree);
-        return webSocketContext->init();
+    /* WebSocket contexts adopt sockets from a parent HTTP context's loop. No
+     * SSL_CTX needed — the socket already has its `s->ssl` from accept time. */
+    static WebSocketContext *create(Loop *loop, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) {
+        WebSocketContext *webSocketContext = new WebSocketContext(topicTree);
+        us_socket_group_init(&webSocketContext->group, (us_loop_t *) loop, &wsVTable, webSocketContext);
+        return webSocketContext;
     }
 };
 

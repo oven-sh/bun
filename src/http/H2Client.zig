@@ -40,16 +40,6 @@ pub const Stream = @import("./h2_client/Stream.zig");
 pub const ClientSession = @import("./h2_client/ClientSession.zig");
 pub const PendingConnect = @import("./h2_client/PendingConnect.zig");
 
-pub const TestingAPIs = struct {
-    pub fn liveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(live_sessions.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(live_streams.load(.monotonic)));
-        return obj;
-    }
-};
+pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;
 
 const std = @import("std");
-
-const bun = @import("bun");
-const jsc = bun.jsc;

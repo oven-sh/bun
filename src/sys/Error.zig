@@ -320,46 +320,15 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-    return this.toSystemError().toErrorInstance(ptr);
-}
-
-/// Like `toJS` but populates the error's stack trace with async frames from the
-/// given promise's await chain. Use when rejecting a promise from native code
-/// at the top of the event loop (threadpool callback) — otherwise the error
-/// will have an empty stack trace.
-pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
-    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
-}
-
-pub const TestingAPIs = struct {
-    /// Exercises Error.name() with from_libuv=true so tests can feed the
-    /// negated-UV-code errno values that node_fs.zig stores and verify the
-    /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
-    pub fn sysErrorNameFromLibuv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments();
-        if (arguments.len < 1 or !arguments[0].isNumber()) {
-            return globalThis.throw("sysErrorNameFromLibuv: expected 1 number argument", .{});
-        }
-        if (comptime !Environment.isWindows) {
-            return .js_undefined;
-        }
-        const err: Error = .{
-            .errno = @intCast(arguments[0].toInt32()),
-            .syscall = .open,
-            .from_libuv = true,
-        };
-        return bun.String.createUTF8ForJS(globalThis, err.name());
-    }
-};
+pub const toJS = @import("../sys_jsc/error_jsc.zig").toJS;
+pub const toJSWithAsyncStack = @import("../sys_jsc/error_jsc.zig").toJSWithAsyncStack;
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-
-const jsc = bun.jsc;
-const SystemError = jsc.SystemError;
+const SystemError = bun.jsc.SystemError;
 
 const sys = bun.sys;
 const E = sys.E;

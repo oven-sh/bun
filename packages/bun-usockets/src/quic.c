@@ -23,7 +23,7 @@
 #include <ws2tcpip.h>
 #endif
 
-extern SSL_CTX *create_ssl_context_from_bun_options(
+extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
@@ -669,7 +669,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     unsigned int ext_size, unsigned int idle_timeout_s)
 {
     enum create_bun_socket_error_t ssl_err = 0;
-    SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
+    SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
     us_quic_prepare_ssl_ctx(ssl);
 
@@ -729,7 +729,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options)
 {
     enum create_bun_socket_error_t ssl_err = 0;
-    SSL_CTX *ssl = create_ssl_context_from_bun_options(options, &ssl_err);
+    SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return -1;
     us_quic_prepare_ssl_ctx(ssl);
     if (ctx->sni_count == ctx->sni_cap) {

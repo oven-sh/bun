@@ -365,7 +365,11 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
             }
         },
         .compound => |cmp| {
-            const starting_offset: usize = if (this.node.hasTildeExpansion()) brk: {
+            // The tilde is always the first atom of the compound word. Skip it only on the
+            // initial pass (start_word_idx == 0); when we re-enter after a command
+            // substitution completes, `start_word_idx` already points at the next atom to
+            // process and applying the offset again would skip it.
+            const starting_offset: usize = if (start_word_idx == 0 and this.node.hasTildeExpansion()) brk: {
                 this.word_idx += 1;
                 break :brk 1;
             } else 0;

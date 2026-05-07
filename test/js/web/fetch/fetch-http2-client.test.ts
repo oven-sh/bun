@@ -1385,20 +1385,39 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       // counting against MAX_CONCURRENT_STREAMS.
       await withRawH2Server(
         (conn, id) => {
-          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
-          conn.data(id, Buffer.from("not gzip"));
+          if (id === 1) {
+            conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+            conn.data(id, Buffer.from("not gzip"));
+          } else {
+            // Barrier request — see subprocess comment below.
+            conn.headers(id, hpackStatus(204), { endStream: true });
+          }
         },
         async (url, state) => {
           await using proc = await spawnFetch(`
-            try { await (await fetch("${url}", { tls: { rejectUnauthorized: false } })).arrayBuffer(); console.log("ok"); }
+            const tls = { rejectUnauthorized: false };
+            try { await (await fetch("${url}", { tls })).arrayBuffer(); console.log("ok"); }
             catch (e) { console.log("rejected", e.code ?? e.message); }
+            // Second request on the same pooled session acts as a delivery
+            // barrier: RST_STREAM(1) is queued ahead of HEADERS(3) on the one
+            // socket, so the 204 arriving back proves the RST reached the
+            // server. Without this the subprocess can exit while the RST is
+            // still in the TLS/TCP send buffer, which Windows drops on
+            // process death (abortive close) — leaving state.rst empty.
+            console.log((await fetch("${url}", { tls })).status);
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout).toContain("rejected");
+          const out = stdout.trim().split("\n");
+          expect(out[0]).toContain("rejected");
+          expect(out[1]).toBe("204");
           expect(exitCode).toBe(0);
           await state.allClosed();
-          // 0x8 = CANCEL
-          expect(state.rst).toEqual([{ id: 1, code: 8 }]);
+          // 0x8 = CANCEL. connections=1 proves the barrier rode the same
+          // socket, so ordering actually applies.
+          expect({ rst: state.rst, connections: state.connections }).toEqual({
+            rst: [{ id: 1, code: 8 }],
+            connections: 1,
+          });
         },
       );
     });

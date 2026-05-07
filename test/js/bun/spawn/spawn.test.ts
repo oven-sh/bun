@@ -867,6 +867,34 @@ describe("close handling", () => {
       } catch {}
     }
   });
+
+  for (const [label, makeStdio] of [
+    ["undefined", () => ["ignore", "pipe", "inherit", undefined, undefined]],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
+  ] as const) {
+    it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ok");
+      expect(proc.stdio).toEqual([null, null, null, null, null]);
+      expect(exitCode).toBe(0);
+    });
+
+    it(`spawnSync stdio[N>=3] = ${label} is treated as ignore`, () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      expect(stdout.toString()).toBe("ok");
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 it("dispose keyword works", async () => {

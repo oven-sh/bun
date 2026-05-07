@@ -2334,6 +2334,54 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
         && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
 }
 
+/// Zig: `bun.exitThread()` — terminate the current OS thread without unwinding.
+/// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
+pub fn exit_thread() -> ! {
+    #[cfg(unix)]
+    // SAFETY: `pthread_exit` is always safe to call on the current thread; it
+    // never returns.
+    unsafe {
+        libc::pthread_exit(core::ptr::null_mut());
+    }
+    #[cfg(windows)]
+    // SAFETY: `ExitThread` is the documented Windows API for terminating the
+    // calling thread; it never returns.
+    unsafe {
+        extern "system" {
+            fn ExitThread(code: u32) -> !;
+        }
+        ExitThread(0);
+    }
+    #[allow(unreachable_code)]
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+/// Zig: `bun.deleteAllPoolsForThreadExit()` — release thread-local pooled
+/// buffers (PathBuffer pool, ObjectPool, …) before the thread terminates so
+/// the backing storage is returned to mimalloc rather than leaked with the
+/// TLS block.
+///
+/// LAYERING: the actual pool registries live in higher-tier crates
+/// (`bun_paths`, `bun_collections`). They register a destructor here at init
+/// via [`register_thread_exit_pool_destructor`]; this fn just walks the list.
+static THREAD_EXIT_POOL_DESTRUCTORS: parking_lot::Mutex<Vec<fn()>> =
+    parking_lot::Mutex::new(Vec::new());
+
+pub fn register_thread_exit_pool_destructor(f: fn()) {
+    THREAD_EXIT_POOL_DESTRUCTORS.lock().push(f);
+}
+
+pub fn delete_all_pools_for_thread_exit() {
+    // Snapshot under the lock so a destructor can't deadlock by
+    // re-registering.
+    let snapshot: Vec<fn()> = THREAD_EXIT_POOL_DESTRUCTORS.lock().clone();
+    for f in snapshot {
+        f();
+    }
+}
+
 /// Port of `bun.maybeHandlePanicDuringProcessReload`.
 #[inline(never)]
 pub fn maybe_handle_panic_during_process_reload() {

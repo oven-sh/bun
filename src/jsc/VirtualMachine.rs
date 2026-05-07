@@ -1292,6 +1292,29 @@ pub struct RuntimeHooks {
     /// `node_cluster_binding.child_singleton.deinit()` — spec
     /// VirtualMachine.zig:3972 (IPCInstance.handleIPCClose).
     pub ipc_child_singleton_deinit: unsafe fn(),
+    /// `Jest.runner.?.bun_test_root.onBeforePrint()` — spec
+    /// ConsoleObject.zig:170. The `bun:test` runner lives in `bun_runtime`;
+    /// `console.log` calls this so the test reporter can flush its line state
+    /// before user output interleaves with it. No-op when `bun test` isn't
+    /// running.
+    pub console_on_before_print: unsafe fn(),
+    /// `ConsoleObject.Formatter.printAs(.Object, …)` runtime-type dispatch —
+    /// spec ConsoleObject.zig `printAs` `.Object` arm: the long `if (value.as(T))`
+    /// chain over `Response`/`Request`/`Blob`/`S3Client`/`Archive`/
+    /// `BuildArtifact`/`FetchHeaders`/`Timer`/`Immediate`/`BuildMessage`/
+    /// `ResolveMessage`/Jest asymmetric matchers. All of those types live in
+    /// `bun_runtime`; the high tier owns the downcast + `write_format` calls.
+    ///
+    /// Returns `Ok(true)` when `value` was one of the runtime types and was
+    /// fully formatted into `writer`; `Ok(false)` to fall through to the
+    /// generic object printer.
+    pub console_print_runtime_object: for<'a, 'f> unsafe fn(
+        formatter: &'a mut crate::console_object::Formatter<'f>,
+        writer: &'a mut dyn bun_io::Write,
+        value: JSValue,
+        name_buf: &'a mut [u8; 512],
+        enable_ansi_colors: bool,
+    ) -> JsResult<bool>,
 }
 
 impl VirtualMachine {
@@ -1344,7 +1367,7 @@ pub fn set_runtime_hooks(hooks: &'static RuntimeHooks) {
 }
 
 #[inline]
-fn runtime_hooks() -> Option<&'static RuntimeHooks> {
+pub(crate) fn runtime_hooks() -> Option<&'static RuntimeHooks> {
     let p = RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
     // SAFETY: `p` was stored from a `&'static RuntimeHooks` (or is null).
     unsafe { p.as_ref() }

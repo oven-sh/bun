@@ -630,11 +630,11 @@ impl Queue {
     }
 }
 
-impl<'a> AsyncModule<'a> {
+impl AsyncModule {
     pub fn init(
-        opts: InitOpts<'a>,
-        global_object: &'a JSGlobalObject,
-    ) -> Result<AsyncModule<'a>, bun_alloc::AllocError> {
+        opts: InitOpts<'_>,
+        global_object: &JSGlobalObject,
+    ) -> Result<AsyncModule, bun_alloc::AllocError> {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
         // PORT NOTE: `JSInternalPromise` aliases `JSPromise` upstream
@@ -674,12 +674,12 @@ impl<'a> AsyncModule<'a> {
             referrer_len,
             specifier_len,
             fd: opts.fd,
-            package_json: opts.package_json,
+            package_json: opts.package_json.map(core::ptr::NonNull::from),
             loader: opts.loader.to_api(),
             hash: u32::MAX,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
-            global_this: global_object,
+            global_this: core::ptr::NonNull::from(global_object),
             arena: opts.arena,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),

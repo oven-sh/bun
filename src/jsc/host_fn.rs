@@ -77,9 +77,7 @@ pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>)
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
-    // Zig: `if (Environment.allow_assert and Environment.is_canary)`
-    // TODO(port): `Environment.is_canary` cfg — using debug_assertions as proxy.
-    if cfg!(debug_assertions) {
+    if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
         let value = match result {
             Ok(v) => v,
             Err(JsError::Thrown) => JSValue::ZERO,
@@ -100,29 +98,26 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
 fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func: &'static str) {
     // Zig passed `comptime func: anytype` and printed its address for `image lookup`.
     // Rust passes the fn name string (the proc-macro supplies `stringify!(fn_name)`).
-    #[cfg(debug_assertions)]
-    {
-        if !value.is_empty() {
-            if global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                Output::err(
-                    "Assertion failed",
-                    format_args!(
-                        "Native function returned a non-zero JSValue while an exception is pending\n\
-                         \n\
-                         \x20   fn: {}\n\
-                         \x20value: {}\n",
-                        func,
-                        value.to_fmt(&mut formatter),
-                    ),
-                );
-                Output::flush();
-                // `formatter` drops here (Zig: `defer formatter.deinit()`).
-            }
+    if Environment::IS_DEBUG {
+        if !value.is_empty() && global_this.has_exception() {
+            let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+            Output::err(
+                "Assertion failed",
+                "Native function returned a non-zero JSValue while an exception is pending\n\
+                 \n\
+                 \x20   fn: {s}\n\
+                 \x20value: {f}\n",
+                (
+                    func,
+                    jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value),
+                ),
+            );
+            Output::flush();
+            // `formatter` drops here (Zig: `defer formatter.deinit()`).
         }
     }
     let _ = func;
-    debug_assert_eq!(value.is_empty(), global_this.has_exception());
+    bun_core::assert_eq!(value.is_empty(), global_this.has_exception());
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {

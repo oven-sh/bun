@@ -666,8 +666,10 @@ pub mod __macro_support {
     #[inline]
     #[track_caller]
     pub fn host_fn_result(global: &JSGlobalObject, r: impl IntoHostFnResult) -> JSValue {
-        let src = ::core::panic::Location::caller();
-        super::host_fn::to_js_host_call(global, src, move || r.into_host_fn_result())
+        // PORT NOTE: Zig passed `@src()` explicitly; `to_js_host_call` is
+        // `#[track_caller]` so the caller's `Location` propagates through this
+        // `#[track_caller]` shim into `ExceptionValidationScope::init`.
+        super::host_fn::to_js_host_call(global, move || r.into_host_fn_result())
     }
 
     /// Setter result mapping: `JsResult<bool>` → `bool` (false on throw).
@@ -1515,9 +1517,9 @@ impl URL {
     }
     #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
-        // SAFETY: `global` is live; FFI may set an exception.
-        let src = core::panic::Location::caller();
-        host_fn::from_js_host_call_generic(global, src, || unsafe {
+        // SAFETY: `global` is live; FFI may set an exception. `#[track_caller]`
+        // forwards the caller's source location into the exception scope.
+        host_fn::from_js_host_call_generic(global, || unsafe {
             URL__getHrefFromJS(value, global.as_ptr())
         })
     }

@@ -1136,7 +1136,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.finish_spawn(
             &mut spawned,
             ipc_output_fds[0],
-            subprocess::stdio_result_from_fd(json_fd),
+            move || subprocess::stdio_result_from_fd(json_fd),
         )
     }
 

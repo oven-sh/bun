@@ -1306,11 +1306,9 @@ impl ZigStringSlice {
     /// for hand-off to a foreign owner (JSC external string). Any other
     /// variant returns `None` and leaves `self` untouched.
     pub fn take_owned_raw(&mut self) -> Option<(*const u8, usize)> {
-        if !matches!(self, Self::Owned(_)) {
-            return None;
-        }
-        let Self::Owned(v) = core::mem::take(self) else { unreachable!() };
-        let mut v = core::mem::ManuallyDrop::new(v);
+        let Self::Owned(v) = self else { return None };
+        let mut v = core::mem::ManuallyDrop::new(core::mem::take(v));
+        *self = Self::default();
         // Shrink so the foreign `mi_free(ptr)` releases exactly this block.
         v.shrink_to_fit();
         Some((v.as_ptr(), v.len()))

@@ -282,7 +282,7 @@ pub fn install_isolated_packages(
         let mut peer_name_idx: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
         for dep in dependencies {
             if dep.behavior.is_peer() {
-                peer_name_idx.put(dep.name_hash, ());
+                peer_name_idx.put(dep.name_hash, ())?;
             }
         }
         let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).unwrap();
@@ -1127,7 +1127,7 @@ pub fn install_isolated_packages(
                         if entry.entry_parent_id == store::entry::Id::ROOT {
                             // make sure direct dependencies are not replaced
                             let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
-                            public_hoisted.put(dep_name, ());
+                            public_hoisted.put(dep_name, ())?;
                         } else {
                             // transitive dependencies (also direct dependencies of workspaces!)
                             let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
@@ -1599,7 +1599,7 @@ pub fn install_isolated_packages(
                                         let mut ext = Wyhash::init(0);
                                         ext.update(bytes_of(&dependencies[dep.dep_id as usize].name_hash));
                                         ext.update(bytes_of(&entry_hashes[di]));
-                                        scc_ext.put(ext.final_(), ());
+                                        scc_ext.put(ext.final_(), ())?;
                                     }
                                 }
                                 member_sub.sort_unstable();
@@ -1943,11 +1943,35 @@ pub fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        let mut tasks: Box<[installer::Task]> =
-            // TODO(port): allocator.alloc → Box::new_uninit_slice; init below
-            // SAFETY: every element is fully initialized in the for-loop immediately
-            // below before any read of `tasks[..]`.
-            unsafe { Box::new_uninit_slice(store.entries.len()).assume_init() };
+        // PORT NOTE: reshaped — Zig does `allocator.alloc(Task, n)` then
+        // `task.* = .{..}` in-place, which is safe because Zig has no drop
+        // glue and no validity invariants on uninit memory. In Rust,
+        // `installer::Task` carries `result: Result` (Drop via `TaskError`
+        // payloads) and a non-nullable fn-ptr in `thread_pool::Task`, so
+        // `assume_init()` on uninit memory is instant UB and a subsequent
+        // `*task = ..` would drop garbage. Instead, fully initialize each
+        // slot via `MaybeUninit::write` with a null `installer` back-pointer
+        // placeholder, finalize the slice, move it into `Installer`, then
+        // patch the back-pointer in a second loop once `installer` exists.
+        let tasks: Box<[installer::Task]> = {
+            let mut uninit: Box<[core::mem::MaybeUninit<installer::Task>]> =
+                Box::new_uninit_slice(store.entries.len());
+            for (i, slot) in uninit.iter_mut().enumerate() {
+                slot.write(installer::Task {
+                    entry_id: store::entry::Id::from(u32::try_from(i).unwrap()),
+                    // patched below once `installer` has an address
+                    installer: core::ptr::null_mut(),
+                    result: installer::Result::None,
+                    task: bun_threading::thread_pool::Task {
+                        callback: installer::Task::callback,
+                        node: Default::default(),
+                    },
+                    next: core::ptr::null_mut(),
+                });
+            }
+            // SAFETY: every element was written in the loop above.
+            unsafe { uninit.assume_init() }
+        };
 
         let show_progress = manager.options.log_level.show_progress();
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
@@ -1988,20 +2012,8 @@ pub fn install_isolated_packages(
         // void-pointer cast — `*mut T` is invariant and won't coerce on its own.
         let installer_ptr: *mut store::Installer<'static> =
             (&mut installer as *mut store::Installer<'_>).cast::<()>().cast();
-        for (_entry_id, task) in installer.tasks.iter_mut().enumerate() {
-            let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
-            *task = installer::Task {
-                entry_id,
-                installer: installer_ptr,
-                // TODO(port): back-pointer to installer; raw ptr to avoid borrowck cycle
-                result: installer::Result::None,
-
-                task: bun_threading::thread_pool::Task {
-                    callback: installer::Task::callback,
-                    node: Default::default(),
-                },
-                next: core::ptr::null_mut(),
-            };
+        for task in installer.tasks.iter_mut() {
+            task.installer = installer_ptr;
         }
 
         // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside

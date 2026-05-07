@@ -2017,7 +2017,7 @@ mod posix_impl {
             Err(err) => return Err(err),
         };
         // close fd regardless of mmap outcome (the mapping outlives the fd).
-        let _close = scopeguard::guard((), |_| { let _ = fd.close(); });
+        let _close = CloseOnDrop::new(fd);
 
         let stat_size = match fstat(fd) {
             Ok(result) => usize::try_from(result.st_size).unwrap_or(0),

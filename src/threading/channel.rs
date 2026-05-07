@@ -98,9 +98,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     // fields automatically, so no explicit `Drop` impl is needed.
 
     pub fn close(&self) {
-        // crate::Mutex::lock() returns () (no RAII guard); pair with scopeguard.
-        self.mutex.lock();
-        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
+        let _guard = self.mutex.lock_guard();
         // SAFETY: mutex is held; we are the only accessor of `is_closed` for this region.
         let is_closed = unsafe { &mut *self.is_closed.get() };
         if *is_closed {
@@ -171,9 +169,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
 
     // TODO(port): narrow error set
     fn write_items(&self, items: &[T], should_block: bool) -> Result<usize, ChannelError> {
-        // crate::Mutex::lock() returns () (no RAII guard); pair with scopeguard.
-        self.mutex.lock();
-        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
+        let _guard = self.mutex.lock_guard();
 
         let mut pushed: usize = 0;
         while pushed < items.len() {
@@ -217,8 +213,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
 
     // TODO(port): narrow error set
     fn read_items(&self, items: &mut [T], should_block: bool) -> Result<usize, ChannelError> {
-        self.mutex.lock();
-        let _unlock = scopeguard::guard((), |()| self.mutex.unlock());
+        let _guard = self.mutex.lock_guard();
 
         let mut popped: usize = 0;
         while popped < items.len() {

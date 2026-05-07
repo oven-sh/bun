@@ -292,6 +292,21 @@ pub enum IncludeDependencies {
 
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
+impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
+    fn name(&self) -> &[u8] { &self.name }
+    fn version(&self) -> &[u8] { &self.version }
+    fn source_path(&self) -> &[u8] { self.source.path.text }
+    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
+        let buf = self.dependencies.source_buf;
+        Box::new(
+            self.dependencies
+                .map
+                .iter()
+                .map(move |(k, v)| (k.slice(buf), v)),
+        )
+    }
+}
+
 impl PackageJSON {
     // pub const new = bun.TrivialNew(@This());
     // pub const deinit = bun.TrivialDeinit(@This());

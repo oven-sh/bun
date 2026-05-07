@@ -1,4 +1,6 @@
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int};
+#[cfg(any(windows, target_os = "macos"))]
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)

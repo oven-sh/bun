@@ -106,8 +106,7 @@ impl PathWatcherManager {
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
         // lock a garbage `m.mutex`). `get()` runs once per `fs.watch()` call; the mutex is
         // uncontended after initialization.
-        DEFAULT_MANAGER_MUTEX.lock();
-        let _g = scopeguard::guard((), |_| DEFAULT_MANAGER_MUTEX.unlock());
+        let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
         // SAFETY: DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX.
         unsafe {
             if let Some(m) = DEFAULT_MANAGER {
@@ -1019,8 +1018,7 @@ impl Darwin {
         let watcher: &mut PathWatcher = unsafe { &mut *(ctx.unwrap() as *mut PathWatcher) };
         // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
-        manager.mutex.lock();
-        let _g = scopeguard::guard((), |_| manager.mutex.unlock());
+        let _g = manager.mutex.lock_guard();
         if watcher.manager.is_none() {
             return;
         }
@@ -1037,8 +1035,7 @@ impl Darwin {
         let watcher: &mut PathWatcher = unsafe { &mut *(ctx.unwrap() as *mut PathWatcher) };
         // SAFETY: see on_fs_event.
         let Some(manager) = (unsafe { DEFAULT_MANAGER }) else { return };
-        manager.mutex.lock();
-        let _g = scopeguard::guard((), |_| manager.mutex.unlock());
+        let _g = manager.mutex.lock_guard();
         if watcher.manager.is_none() {
             return;
         }

@@ -237,17 +237,19 @@ impl<'a> BrotliReaderArrayList<'a> {
 
             let next_in = &self.input[self.total_in..];
 
-            let mut in_remaining = next_in.len();
-            let mut out_remaining = unused_capacity.len();
+            let in_len = next_in.len();
+            let out_len = unused_capacity.len();
+            let mut in_remaining = in_len;
+            let mut out_remaining = out_len;
 
             let mut next_in_ptr: *const u8 = next_in.as_ptr();
             let mut next_out_ptr: *mut u8 = unused_capacity.as_mut_ptr().cast::<u8>();
+            // `next_in` / `unused_capacity` borrows end here (NLL); only the
+            // raw pointers and captured lengths survive across the FFI call.
 
             // https://github.com/google/brotli/blob/fef82ea10435abb1500b615b1b2c6175d429ec6c/go/cbrotli/reader.go#L15-L27
-            // SAFETY: self.brotli is a live decoder instance; the in/out
-            // pointers reference valid buffers of the given lengths.
             let result = BrotliDecoder::decompress_stream(
-                unsafe { &mut *self.brotli },
+                self.brotli_mut(),
                 &mut in_remaining,
                 &mut next_in_ptr,
                 &mut out_remaining,
@@ -255,8 +257,8 @@ impl<'a> BrotliReaderArrayList<'a> {
                 None,
             );
 
-            let bytes_written = unused_capacity.len().saturating_sub(out_remaining);
-            let bytes_read = next_in.len().saturating_sub(in_remaining);
+            let bytes_written = out_len.saturating_sub(out_remaining);
+            let bytes_read = in_len.saturating_sub(in_remaining);
 
             // SAFETY: brotli wrote `bytes_written` initialized bytes into the
             // spare-capacity region starting at the previous `len()`.
@@ -382,16 +384,14 @@ impl BrotliCompressionStream {
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
         // TODO(port): narrow error set
         self.total_in += input.len();
-        // NOTE: cannot route through `self.brotli_mut()` here — `result.output`
-        // borrows the encoder for the function's return lifetime, which would
-        // block the `self.state` write on the error path (NLL Problem Case #3;
-        // Polonius would accept it). Keep the field-level reborrow.
-        // SAFETY: see `brotli_mut()` — `self.brotli` is a live encoder instance.
-        let result = BrotliEncoder::compress_stream(
-            unsafe { &mut *self.brotli },
-            if last { self.finish_flush_op } else { self.flush_op },
-            input,
-        );
+        let op = if last { self.finish_flush_op } else { self.flush_op };
+        // NOTE: cannot use `self.brotli_mut()` here — `result.output` borrows
+        // the encoder for the return lifetime, and the error branch must write
+        // `self.state` while that borrow is conditionally live (NLL problem
+        // case #3). Deref the raw field directly so the encoder borrow stays
+        // disjoint from `self.state`.
+        // SAFETY: see `brotli_mut()` invariant.
+        let result = BrotliEncoder::compress_stream(unsafe { &mut *self.brotli }, op, input);
 
         if !result.success {
             self.state = CompressionState::Error;

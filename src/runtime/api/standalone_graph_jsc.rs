@@ -3,17 +3,19 @@
 //! `Blob` accessor that needs a `&JSGlobalObject` lives here.
 
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicU32;
 
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
-use bun_str::{self as bstring, strings};
+use bun_str::{self as bstring, strings, PathString};
 
 // PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
 // `File` is re-exported at the crate root.
 use bun_standalone_graph::{File, StandaloneModuleGraph};
 use crate::webcore::Blob;
-use crate::webcore::blob::Store;
+use crate::webcore::blob::SizeType;
+use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
 pub trait FileJsc {
@@ -23,47 +25,75 @@ pub trait FileJsc {
 impl FileJsc for File {
     fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob {
         if self.cached_blob.is_none() {
-            // TODO(port): Store::init in Zig takes a mutable slice via @constCast and the
-            // default allocator. Ownership model for `Store` (intrusive refcount) needs
-            // confirming in Phase B — treating `store` as `&mut Store` here.
-            let store = Store::init(&mut self.contents);
+            // Spec: `Store.init(@constCast(this.contents), bun.default_allocator)`.
+            // `contents` is a `'static` slice into the embedded executable
+            // section — borrow it directly (no copy) and hand it to a `Bytes`
+            // store with the default allocator. The leaked extra `ref_()` below
+            // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
+            // the (otherwise UB) free of a static slice is unreachable.
+            let contents = self.contents.as_bytes();
+            // SAFETY: `contents` is `'static` and never freed (see above);
+            // `@constCast` mirrors Zig — Blob consumers only read via
+            // `shared_view()`.
+            let bytes = unsafe {
+                Bytes::from_raw_parts(
+                    contents.as_ptr() as *mut u8,
+                    contents.len() as SizeType,
+                    contents.len() as SizeType,
+                    bun_alloc::basic::C_ALLOCATOR,
+                )
+            };
+            let store = StoreRef::from(Store::new(Store {
+                data: Data::Bytes(bytes),
+                ref_count: AtomicU32::new(1),
+                ..Default::default()
+            }));
             // make it never free
-            store.ref_(); // PORT NOTE: Zig `.ref()`; `ref` is a Rust keyword
+            store.ref_();
 
-            let mut b = Box::new(Blob::init_with_store(store, global));
+            // Hold the raw pointer so we can keep mutating the store after
+            // `init_with_store` consumes the `StoreRef` (Zig freely aliases the
+            // `*Store` across both). The store outlives this fn (leaked above).
+            let store_ptr = store.as_ptr();
+
+            let mut b = Blob::init_with_store(store, global);
 
             if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
-                bun_paths::extension(&self.name),
+                bun_paths::extension(self.name),
                 b'.',
             )) {
+                // SAFETY: `store_ptr` is the sole live mutable view; held ref
+                // guarantees liveness for the process lifetime.
+                let store = unsafe { &mut *store_ptr };
                 store.mime_type = mime;
-                b.content_type = mime.value;
+                b.content_type = store.mime_type.value.as_ref() as *const [u8];
                 b.content_type_was_set = true;
                 b.content_type_allocated = false;
             }
 
             // The real name goes here:
-            store.data.bytes.stored_name = bstring::PathString::init(&self.name);
-
-            // The pretty name goes here:
-            if self
-                .name
-                .starts_with(StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX)
-            {
-                b.name = bstring::String::clone_utf8(
-                    &self.name[StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.len()..],
-                );
-            } else if !self.name.is_empty() {
-                b.name = bstring::String::clone_utf8(&self.name);
+            // SAFETY: see above; `data` is `Bytes` by construction.
+            if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
+                bytes.stored_name = PathString::init(self.name);
             }
 
-            // TODO(port): lifetime — LIFETIMES.tsv classifies File.cached_blob as UNKNOWN
-            // (Option<NonNull<Blob>>); leaking the Box matches Zig's `.new()` + raw-ptr field.
-            self.cached_blob = Some(NonNull::from(Box::leak(b)));
+            // The pretty name goes here:
+            let prefix = StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+            if self.name.starts_with(prefix) {
+                b.name = bstring::String::clone_utf8(&self.name[prefix.len()..]);
+            } else if !self.name.is_empty() {
+                b.name = bstring::String::clone_utf8(self.name);
+            }
+
+            // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.
+            // The standalone graph (and thus this Blob) lives for the process.
+            // SAFETY: `Blob::new` returns a fresh non-null `Box::into_raw`.
+            self.cached_blob = Some(unsafe { NonNull::new_unchecked(Blob::new(b)) });
         }
 
-        // SAFETY: populated above; pointer originates from Box::leak and is never freed
-        // for the graph's lifetime (store is intentionally leaked via .ref()).
+        // SAFETY: populated above; pointer originates from `Blob::new` and is
+        // never freed for the graph's lifetime (store is intentionally leaked
+        // via `.ref_()`).
         unsafe { self.cached_blob.unwrap().as_mut() }
     }
 }
@@ -71,7 +101,5 @@ impl FileJsc for File {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/standalone_graph_jsc.zig (40 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      cached_blob written as Option<NonNull<Blob>> per LIFETIMES.tsv (UNKNOWN); Store intrusive-rc ownership to confirm in Phase B.
+//   confidence: high
 // ──────────────────────────────────────────────────────────────────────────

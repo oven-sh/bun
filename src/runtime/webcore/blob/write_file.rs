@@ -237,13 +237,11 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // SAFETY: just allocated; bump intrusive store refcounts to match Zig's
-        // `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()` (the Zig caller
-        // bitwise-copied the Blob, so both ends share the same +1 until this).
-        unsafe {
-            (*write_file).file_blob.store.as_ref().unwrap().ref_();
-            (*write_file).bytes_blob.store.as_ref().unwrap().ref_();
-        }
+        // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
+        // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
+        // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
+        // `dupe()`/`StoreRef::clone`) and `Box::from_raw(this)` in `then` runs
+        // `StoreRef::drop`, so the explicit ref/deref pair is folded into RAII.
         Ok(write_file)
     }
 

@@ -579,18 +579,219 @@ fn origin_name(o: Origin) -> &'static str {
     }
 }
 
-// TODO(port): placeholder trait for the `w: anytype` JSON write-stream protocol.
-// Phase B: move into bun_core (or wherever std.json.WriteStream is ported) and bound
-// `write` over a `JsonScalar` trait so bool/integer/&[u8] all dispatch through it.
+/// Port of the `w: anytype` `std.json.WriteStream` protocol used by
+/// `Lockfile.jsonStringify`. `write` is bounded over [`JsonScalar`] so the
+/// concrete [`WriteStream`] impl can encode bool / integer / byte-string
+/// uniformly (Zig's `WriteStream.write` switches on `@TypeOf` at comptime).
 pub trait JsonWriter {
     fn begin_object(&mut self) -> Result<(), bun_core::Error>;
     fn end_object(&mut self) -> Result<(), bun_core::Error>;
     fn begin_array(&mut self) -> Result<(), bun_core::Error>;
     fn end_array(&mut self) -> Result<(), bun_core::Error>;
     fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error>;
-    fn write<T>(&mut self, value: T) -> Result<(), bun_core::Error>;
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error>;
     fn write_null(&mut self) -> Result<(), bun_core::Error>;
+    /// Zig: `WriteStream.print` — emits the formatted bytes verbatim as a
+    /// complete value (caller is responsible for any quoting / escaping).
     fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error>;
+}
+
+/// Dispatch trait standing in for Zig's `@TypeOf` switch inside
+/// `std.json.WriteStream.write`. Each impl emits the JSON encoding of `self`
+/// into `out` (no leading/trailing separator — the writer handles that).
+pub trait JsonScalar {
+    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions);
+}
+
+impl JsonScalar for bool {
+    #[inline]
+    fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
+        out.extend_from_slice(if *self { b"true" } else { b"false" });
+    }
+}
+
+macro_rules! json_scalar_uint {
+    ($($t:ty),+ $(,)?) => {$(
+        impl JsonScalar for $t {
+            #[inline]
+            fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
+                use std::io::Write as _;
+                // Zig std.json: `.emit_nonportable_numbers_as_strings` quotes any
+                // integer outside ±2^53 so JS `JSON.parse` round-trips exactly.
+                let v = *self as u64;
+                if opts.emit_nonportable_numbers_as_strings && v > (1u64 << 53) {
+                    let _ = write!(out, "\"{}\"", v);
+                } else {
+                    let _ = write!(out, "{}", v);
+                }
+            }
+        }
+    )+};
+}
+json_scalar_uint!(u8, u16, u32, u64, usize);
+
+impl JsonScalar for &[u8] {
+    fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
+        encode_json_string(self, out);
+    }
+}
+impl<const N: usize> JsonScalar for &[u8; N] {
+    #[inline]
+    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
+        self.as_slice().write_json(out, opts);
+    }
+}
+
+/// Zig: `std.json.encodeJsonString` — quote + escape the minimal RFC-8259 set
+/// (`"`, `\`, U+0000..U+001F). Input is treated as already-valid UTF-8/WTF-8;
+/// the lockfile string buffer never carries lone control bytes outside that
+/// range, so the high-bit passthrough matches Zig's behaviour.
+fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push(b'"');
+    for &c in s {
+        match c {
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            0x00..=0x1F => {
+                out.extend_from_slice(b"\\u00");
+                out.push(HEX[(c >> 4) as usize]);
+                out.push(HEX[(c & 0xF) as usize]);
+            }
+            _ => out.push(c),
+        }
+    }
+    out.push(b'"');
+}
+
+/// Options mirroring `std.json.StringifyOptions`. Only the three fields the
+/// lockfile binding sets are modelled; the rest of std.json's surface is unused
+/// here.
+#[derive(Clone, Copy)]
+pub struct WriteStreamOptions {
+    /// `.whitespace = .indent_N` — number of spaces per nesting level. `0`
+    /// would be `.minified`; the binding always passes `2`.
+    pub indent: usize,
+    pub emit_nonportable_numbers_as_strings: bool,
+    // `emit_null_optional_fields` is consumed by Zig's reflection-based
+    // `stringify`, not by `WriteStream` itself; `jsonStringify` is hand-rolled
+    // and emits `write_null()` explicitly, so the flag is a no-op here. Kept
+    // for spec parity with the call site in `install_binding.zig`.
+    pub emit_null_optional_fields: bool,
+}
+
+/// Port of `std.json.WriteStream` over an in-memory `Vec<u8>`, sufficient for
+/// `std.json.fmt(lockfile, opts)` → `allocPrint` as used by
+/// `bun_install_js_bindings::jsParseLockfile` (install_binding.zig).
+pub struct WriteStream {
+    pub out: Vec<u8>,
+    opts: WriteStreamOptions,
+    depth: usize,
+    /// Per open container: have we emitted ≥1 element yet (i.e. does the next
+    /// element need a leading `,`)?
+    had_element: Vec<bool>,
+    /// Set by `object_field`; the immediately-following `write`/`print` is the
+    /// field's value and so skips the element separator (which `object_field`
+    /// already emitted).
+    after_field: bool,
+}
+
+impl WriteStream {
+    pub fn new(opts: WriteStreamOptions) -> Self {
+        Self { out: Vec::new(), opts, depth: 0, had_element: Vec::new(), after_field: false }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.out
+    }
+
+    fn newline_indent(&mut self) {
+        if self.opts.indent == 0 {
+            return;
+        }
+        self.out.push(b'\n');
+        for _ in 0..self.depth * self.opts.indent {
+            self.out.push(b' ');
+        }
+    }
+
+    /// Emit the `,` + newline + indent that precedes the next element of the
+    /// current container (or just newline + indent for the first). Object
+    /// values short-circuit: their separator was emitted by `object_field`.
+    fn value_start(&mut self) {
+        if self.after_field {
+            self.after_field = false;
+            return;
+        }
+        if let Some(had) = self.had_element.last_mut() {
+            if *had {
+                self.out.push(b',');
+            }
+            *had = true;
+            self.newline_indent();
+        }
+    }
+}
+
+impl JsonWriter for WriteStream {
+    fn begin_object(&mut self) -> Result<(), bun_core::Error> {
+        self.value_start();
+        self.out.push(b'{');
+        self.depth += 1;
+        self.had_element.push(false);
+        Ok(())
+    }
+    fn end_object(&mut self) -> Result<(), bun_core::Error> {
+        let had = self.had_element.pop().unwrap_or(false);
+        self.depth -= 1;
+        if had {
+            self.newline_indent();
+        }
+        self.out.push(b'}');
+        Ok(())
+    }
+    fn begin_array(&mut self) -> Result<(), bun_core::Error> {
+        self.value_start();
+        self.out.push(b'[');
+        self.depth += 1;
+        self.had_element.push(false);
+        Ok(())
+    }
+    fn end_array(&mut self) -> Result<(), bun_core::Error> {
+        let had = self.had_element.pop().unwrap_or(false);
+        self.depth -= 1;
+        if had {
+            self.newline_indent();
+        }
+        self.out.push(b']');
+        Ok(())
+    }
+    fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error> {
+        self.value_start();
+        encode_json_string(name, &mut self.out);
+        self.out.extend_from_slice(if self.opts.indent > 0 { b": " } else { b":" });
+        self.after_field = true;
+        Ok(())
+    }
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error> {
+        self.value_start();
+        value.write_json(&mut self.out, self.opts);
+        Ok(())
+    }
+    fn write_null(&mut self) -> Result<(), bun_core::Error> {
+        self.value_start();
+        self.out.extend_from_slice(b"null");
+        Ok(())
+    }
+    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+        use core::fmt::Write as _;
+        self.value_start();
+        let _ = self.out.write_fmt(args);
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

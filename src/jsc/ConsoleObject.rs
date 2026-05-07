@@ -600,28 +600,6 @@ impl bun_io::Write for VisibleCharacterCounter<'_> {
 }
 
 impl<'a> TablePrinter<'a> {
-    /// Phase-C stub for the gated `print_table` body below — falls through to
-    /// the value formatter so `console.table()` prints *something* and the
-    /// build links. Real impl restored once `JSValue` iteration helpers land.
-    pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut dyn bun_io::Write,
-    ) -> JsResult<()> {
-        let global = self.global_object;
-        let mut value_formatter = self.value_formatter.shallow_clone();
-        let tag = formatter::Tag::get(self.tabular_data, global)?;
-        value_formatter
-            .format::<ENABLE_ANSI_COLORS>(tag, writer, self.tabular_data, global)?;
-        let _ = writer.write_all(b"\n");
-        Ok(())
-    }
-}
-
-// TODO(phase-c): re-gated — body references unported `JSValue` iteration
-// surface (`is_iterable`, `for_each_with_context`, `to_object`, `get_own`,
-// `to_cell`) and `jsc::PropertyIteratorOptions` (~30 errs). Stub `print_table`
-// provided above; restore once the missing iterator helpers land.
-impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
         let mut width: usize = 0;
@@ -5469,9 +5447,9 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
-    // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — see
-    // the matching note in `message_with_type_and_level_`.
-    fmt.max_depth = DEFAULT_CONSOLE_LOG_DEPTH;
+    fmt.max_depth = bun_options_types::Context::try_get()
+        .and_then(|ctx| ctx.runtime_options.console_depth)
+        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.

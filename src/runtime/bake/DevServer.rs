@@ -5308,11 +5308,8 @@ impl DevServer {
     {
         debug_assert!(id == 0);
 
-        // LAYERING: `HmrSocket.dev` is typed as `*const dev_server::DevServer`
-        // (keystone). This body file's `DevServer<'_>` is the full-port
-        // replacement; bridge via `*const ()` pending the keystone collapse.
         let dw: Box<HmrSocket> = Box::new(HmrSocket {
-            dev: self as *const _ as *const () as *const crate::bake::dev_server::DevServer,
+            dev: self as *const DevServer,
             underlying: None,
             current_route: route_bundle::IndexOptional::NONE,
             subscriptions: 0,
@@ -5965,8 +5962,8 @@ impl DevServer {
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest {
     // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
-    // bound on `BodyReaderHandler` that a borrowed `&'a mut DevServer<'a>` would violate.
-    dev: *mut DevServer<'static>,
+    // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
+    dev: *mut DevServer,
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 

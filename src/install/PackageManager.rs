@@ -741,6 +741,11 @@ mod holder {
     // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
     pub static mut ENV_MAP: *mut dot_env::Map = core::ptr::null_mut();
     pub static mut ENV_LOADER: *mut dot_env::Loader<'static> = core::ptr::null_mut();
+
+    /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
+    /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
+    /// PORTING.md §Forbidden — never `Box::leak`/`transmute` to mint `&'static`.
+    pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 }
 
 static mut CWD_BUF: PathBuffer = PathBuffer::ZEROED;

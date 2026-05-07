@@ -1269,6 +1269,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // no other `&mut VirtualMachine` for this scope.
         unsafe { &mut *jsc::VirtualMachine::get() }
     }
+
+    /// `server.zig:notifyInspectorServerStopped`. Unbounded so `deinit()` (in
+    /// the unbounded `impl NewServer` in mod.rs) can call it without naming
+    /// the per-transport `RequestContext` bounds.
+    pub(super) fn notify_inspector_server_stopped(&mut self) {
+        if self.inspector_server_id.get() != 0 {
+            #[cold] fn cold() {}
+            cold();
+            if let Some(debugger) = &self.vm_mut().debugger {
+                cold();
+                if let Some(agent) = debugger.http_server_agent.agent {
+                    // SAFETY: agent is a live C++ InspectorHTTPServerAgent while
+                    // the debugger is attached.
+                    unsafe {
+                        InspectorHTTPServerAgent::notify_server_stopped(
+                            agent.as_ptr(),
+                            self.inspector_server_id,
+                            bun_core::time::milli_timestamp() as f64,
+                        );
+                    }
+                }
+            }
+            self.inspector_server_id = DebuggerId::new(0);
+        }
+    }
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>

@@ -1842,8 +1842,12 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     }
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
     let env = unsafe { &mut *vm.transpiler.env };
+    // PORT NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
+    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
+    // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(env.get_s3_credentials());
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
-        env.get_s3_credentials(),
+        &env_creds,
         Default::default(),
         None,
         None,
@@ -3125,7 +3129,7 @@ pub mod JSZstd {
 // `StoreRef`s here.
 mod stdio_stores {
     use super::*;
-    use crate::webcore::blob::{Blob, Store, StoreRef};
+    use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
     use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::node::types::PathOrFileDescriptor;
     use core::sync::atomic::AtomicU32;

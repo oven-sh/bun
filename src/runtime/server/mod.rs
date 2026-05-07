@@ -1254,13 +1254,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this_ref.notify_inspector_server_stopped();
 
         // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
-        // config / on_clienterror / h3_alt_svc / dev_server) is handled by the
-        // Box::from_raw drop below. `plugins` is intrusively-refcounted and
-        // released explicitly here (its `NonNull` field has no `Drop`).
-        if let Some(p) = this_ref.plugins.take() {
-            // SAFETY: counted ref taken in `set_routes`; pairs with init's count=1.
-            unsafe { ServePlugins::deref_(p.as_ptr()) };
-        }
+        // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
+        // handled by the Box::from_raw drop below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.

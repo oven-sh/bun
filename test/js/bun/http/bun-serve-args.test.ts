@@ -670,3 +670,26 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test("non-object bundlerOptions should throw", () => {
+    expect(() => {
+      // @ts-expect-error - Testing invalid input
+      serve({ port: 0, app: { bundlerOptions: 10n } });
+    }).toThrow("'app.bundlerOptions' must be an object");
+  });
+
+  test.each(["server", "client", "ssr"])("non-object bundlerOptions.%s should throw", key => {
+    expect(() => {
+      // @ts-expect-error - Testing invalid input
+      serve({ port: 0, app: { bundlerOptions: { [key]: 10n } } });
+    }).toThrow(`'app.bundlerOptions.${key}' must be an object`);
+  });
+
+  test("non-object non-boolean bundlerOptions.client.minify should throw", () => {
+    expect(() => {
+      // @ts-expect-error - Testing invalid input
+      serve({ port: 0, app: { bundlerOptions: { client: { minify: 10n } } } });
+    }).toThrow("'app.bundlerOptions.client.minify' must be a boolean or an object");
+  });
+});

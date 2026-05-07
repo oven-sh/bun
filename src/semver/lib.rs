@@ -240,6 +240,15 @@ pub mod semver_string {
         }
     }
 
+    impl fmt::Debug for String {
+        // Buffer-relative `String` cannot be sliced without its arena, so debug
+        // output mirrors Zig's struct dump: the raw 8-byte handle. Callers that
+        // want the resolved text use `.fmt(buf)` / `.slice(buf)` instead.
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("String").field("bytes", &self.bytes).finish()
+        }
+    }
+
     // https://en.wikipedia.org/wiki/Intel_5-level_paging
     // https://developer.arm.com/documentation/101811/0101/Address-spaces-in-AArch64#:~:text=0%2DA%2C%20the%20maximum%20size,2%2DA.
     // X64 seems to need some of the pointer bits

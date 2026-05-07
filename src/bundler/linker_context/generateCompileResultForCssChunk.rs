@@ -67,17 +67,17 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     let mut worker = scopeguard::guard(worker, |w| w.unget());
 
     #[cfg(feature = "show_crash_trace")]
-    let _prev_action_guard = {
-        let prev_action = bun_crash_handler::current_action();
-        bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
-            chunk: chunk_ptr as *const (),
-            context: c_ptr as *const (),
-            part_range: &part_range.part_range,
-        });
-        scopeguard::guard((), move |_| {
-            bun_crash_handler::set_current_action(prev_action);
-        })
-    };
+    // SAFETY: `c_ptr` / `chunk_ptr` carry valid mutable provenance (see extraction above);
+    // we materialize transient `&` refs only to hand erased `*const ()` to the crash-trace
+    // vtable — they are not retained past this expression.
+    // RAII: `ActionGuard` restores the previous `CURRENT_ACTION` on drop.
+    let _prev_action_guard = bun_crash_handler::scoped_action(
+        crate::linker_context_mod::bundle_generate_chunk_action(
+            unsafe { &*c_ptr },
+            unsafe { &*chunk_ptr },
+            &part_range.part_range,
+        ),
+    );
 
     // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance (see extraction above). In the
     // Zig source these are bare `*LinkerContext` / `*Chunk` shared across all part-range

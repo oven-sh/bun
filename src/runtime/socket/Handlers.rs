@@ -112,7 +112,7 @@ impl Handlers {
         self.mark_active();
         // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
         // single JS thread, no aliasing `&mut EventLoop` outlives this call.
-        unsafe { (*self.vm.event_loop()).enter() };
+        self.vm.event_loop_ref().enter();
         Scope { handlers: self }
     }
 
@@ -346,7 +346,7 @@ impl<'a> Scope<'a> {
     pub fn exit(&mut self) -> bool {
         // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
         // single JS thread, no aliasing `&mut EventLoop` outlives this call.
-        unsafe { (*self.handlers.vm.event_loop()).exit() };
+        self.handlers.vm.event_loop_ref().exit();
         self.handlers.mark_inactive()
     }
 }

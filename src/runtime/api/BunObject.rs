@@ -575,7 +575,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
     path_str = ZigStringSlice::from_utf8_never_free(
-        unsafe { &*vm.transpiler.env }.get(b"PATH").unwrap_or(b""),
+        vm.env_loader().get(b"PATH").unwrap_or(b""),
     );
     cwd_str = ZigStringSlice::from_utf8_never_free(
         unsafe { &*vm.transpiler.fs }.top_level_dir,
@@ -2162,8 +2162,7 @@ pub mod environment_variables {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
         let name_slice = unsafe { (*name).to_utf8() };
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let Some(val) = (unsafe { &*vm.transpiler.env }).get(name_slice.slice()) else {
+        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
             return false;
         };
         unsafe { *value = BunString::borrow_utf8(val) };
@@ -2236,8 +2235,7 @@ pub mod environment_variables {
     pub fn get_env_names(global_object: &JSGlobalObject, names: &mut [ZigString]) -> usize {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let keys = unsafe { &*vm.transpiler.env }.map.map.keys();
+        let keys = vm.env_loader().map.map.keys();
         let len = names.len().min(keys.len());
         for (key, name) in keys[..len].iter().zip(names[..len].iter_mut()) {
             *name = ZigString::init_utf8(key);
@@ -2249,8 +2247,7 @@ pub mod environment_variables {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
         let sliced = name.to_slice();
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let value = unsafe { &*vm.transpiler.env }.get(sliced.slice())?;
+        let value = vm.env_loader().get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
     }
 }

@@ -940,6 +940,13 @@ struct Handlers {
 }
 
 impl Handlers {
+    /// Safe accessor for the JSC_BORROW global. The global is set at
+    /// construction from a live `&JSGlobalObject` and outlives `self`.
+    #[inline]
+    fn global(&self) -> &'static JSGlobalObject {
+        unsafe { &*self.global_object }
+    }
+
     pub fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
@@ -948,10 +955,7 @@ impl Handlers {
         data: &[JSValue],
     ) -> bool {
         let Some(callback) = event.get(this_value) else { return false };
-        // SAFETY: global_object outlives Handlers (JSC_BORROW)
-        let global = unsafe { &*self.global_object };
-        // SAFETY: `event_loop()` returns a non-null *mut EventLoop owned by the VM.
-        unsafe { (*self.vm.event_loop()).run_callback(callback, global, context, data) };
+        self.vm.event_loop_ref().run_callback(callback, self.global(), context, data);
         true
     }
 
@@ -959,9 +963,7 @@ impl Handlers {
         if !callback.is_callable() {
             return false;
         }
-        // SAFETY: global_object is JSC_BORROW; outlives Handlers, never null
-        let global = unsafe { &*self.global_object };
-        unsafe { (*self.vm.event_loop()).run_callback(callback, global, JSValue::UNDEFINED, data) };
+        self.vm.event_loop_ref().run_callback(callback, self.global(), JSValue::UNDEFINED, data);
         true
     }
 
@@ -972,9 +974,7 @@ impl Handlers {
         data: &[JSValue],
     ) -> JSValue {
         let Some(callback) = event.get(this_value) else { return JSValue::ZERO };
-        // SAFETY: global_object is JSC_BORROW; outlives Handlers, never null
-        let global = unsafe { &*self.global_object };
-        unsafe { (*self.vm.event_loop()).run_callback_with_result(callback, global, this_value, data) }
+        self.vm.event_loop_ref().run_callback_with_result(callback, self.global(), this_value, data)
     }
 
     pub fn from_js(
@@ -1206,6 +1206,13 @@ impl bun_ptr::RefCounted for H2FrameParser {
     }
 }
 impl H2FrameParser {
+    /// Safe accessor for the JSC_BORROW global. The global is set at
+    /// construction from a live `&JSGlobalObject` and outlives `self`.
+    #[inline]
+    fn global(&self) -> &'static JSGlobalObject {
+        unsafe { &*self.global_this }
+    }
+
     pub fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
@@ -1673,7 +1680,6 @@ impl Stream {
         callback: JSValue,
         end_stream: bool,
     ) {
-        // SAFETY: global_this is JSC_BORROW (set at construction); outlives client, never null
         let global_this = unsafe { &*client.global_this };
 
         if let Some(last_frame) = self.data_frame_queue.peek_last() {
@@ -2145,13 +2151,11 @@ impl H2FrameParser {
         if !debug_data.is_empty() {
             let _ = self.write(debug_data);
         }
-        // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-        let global = unsafe { &*self.handlers.global_object };
+        let global = self.handlers.global();
         let chunk = match self.handlers.binary_type.to_js(debug_data, global) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                self.dispatch(JSH2FrameParser::Gc::onError, unsafe { &*self.global_this }.take_exception(err));
+                self.dispatch(JSH2FrameParser::Gc::onError, self.global().take_exception(err));
                 return;
             }
         };
@@ -2369,8 +2373,7 @@ impl H2FrameParser {
     pub fn _generic_write<S: NativeSocketWrite>(&mut self, mut socket: S, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
-        // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-        let global = unsafe { &*self.global_this };
+        let global = self.global();
         let buffered_len = self.write_buffer.slice()[self.write_buffer_offset..].len();
         if buffered_len > 0 {
             {
@@ -2479,8 +2482,7 @@ impl H2FrameParser {
                 self.has_nonnative_backpressure = false;
                 let bytes_len = self.write_buffer.slice().len();
                 if bytes_len > 0 {
-                    // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                    let global = unsafe { &*self.handlers.global_object };
+                    let global = self.handlers.global();
                     let output_value = self.handlers.binary_type.to_js(self.write_buffer.slice(), global).unwrap_or(JSValue::ZERO);
                     // TODO: properly propagate exception upwards
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
@@ -2520,8 +2522,7 @@ impl H2FrameParser {
                 self._generic_write(unsafe { &mut *socket }, bytes)
             }
             BunSocket::None => {
-                // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                let global = unsafe { &*self.global_this };
+                let global = self.global();
                 if self.has_nonnative_backpressure {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     let _ = self.write_buffer.write(bytes);
@@ -2530,8 +2531,7 @@ impl H2FrameParser {
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                let output_value = self.handlers.binary_type.to_js(bytes, unsafe { &*self.handlers.global_object }).unwrap_or(JSValue::ZERO);
+                let output_value = self.handlers.binary_type.to_js(bytes, self.handlers.global()).unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
                 let code = if result.is_number() { result.to_int32() } else { -1 };
@@ -2737,8 +2737,7 @@ impl H2FrameParser {
         if self.remaining_length > 0 {
             // buffer more data
             let _ = self.read_buffer.append_slice(payload);
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(payload.len());
+            self.global().vm().deprecated_report_extra_memory(payload.len());
             return None;
         } else if self.remaining_length < 0 {
             self.send_go_away(stream_identifier, ErrorCode::FRAME_SIZE_ERROR, b"Invalid frame size", self.last_stream_id, true);
@@ -2750,8 +2749,7 @@ impl H2FrameParser {
         if !self.read_buffer.list.is_empty() {
             // return buffered data
             let _ = self.read_buffer.append_slice(payload);
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(payload.len());
+            self.global().vm().deprecated_report_extra_memory(payload.len());
 
             // SAFETY contract for Payload::data: derive via Vec::as_mut_ptr() (raw-ptr method,
             // no intermediate &[u8]) so the provenance survives `read_buffer.reset()` —
@@ -2802,8 +2800,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "decodeHeaderBlock isSever: {}", self.is_server);
 
         let mut offset: usize = 0;
-        // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-        let global_object = unsafe { &*self.handlers.global_object };
+        let global_object = self.handlers.global();
         if self.handlers.vm.is_shutting_down() {
             return Ok(None);
         }
@@ -2980,8 +2977,7 @@ impl H2FrameParser {
 
             if !payload.is_empty() {
                 // no padding, just emit the data
-                // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                let global = unsafe { &*self.handlers.global_object };
+                let global = self.handlers.global();
                 let chunk = self.handlers.binary_type.to_js(payload, global).unwrap_or(JSValue::ZERO);
                 // TODO: properly propagate exception upwards
                 self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream.get_identifier(), chunk);
@@ -3033,8 +3029,7 @@ impl H2FrameParser {
             // not freed/grown before `payload` is consumed; reset() below only clears len.
             let payload = unsafe { content.data() };
             let error_code = u32_from_bytes(&payload[4..8]);
-            // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            let global = unsafe { &*self.handlers.global_object };
+            let global = self.handlers.global();
             let chunk = self.handlers.binary_type.to_js(&payload[8..], global).unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
             let end = content.end;
@@ -3046,8 +3041,7 @@ impl H2FrameParser {
     }
 
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
-        // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-        let global = unsafe { &*self.handlers.global_object };
+        let global = self.handlers.global();
         if payload.is_empty() {
             return BunString::empty().to_js(global);
         }
@@ -3073,8 +3067,7 @@ impl H2FrameParser {
             let end = content.end;
             self.read_buffer.reset();
 
-            // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            let global = unsafe { &*self.handlers.global_object };
+            let global = self.handlers.global();
             while !payload.is_empty() {
                 // TODO(port): fixedBufferStream over const slice for reading u16 BE
                 if payload.len() < 2 {
@@ -3224,8 +3217,7 @@ impl H2FrameParser {
             } else {
                 self.out_standing_pings = self.out_standing_pings.saturating_sub(1);
             }
-            // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            let global = unsafe { &*self.handlers.global_object };
+            let global = self.handlers.global();
             let buffer = self.handlers.binary_type.to_js(&payload_owned, global).unwrap_or(JSValue::ZERO);
             // TODO: properly propagate exception upwards
             self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(!is_not_ack));
@@ -3450,8 +3442,7 @@ impl H2FrameParser {
                     }
                 }
 
-                // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                let global = unsafe { &*self.handlers.global_object };
+                let global = self.handlers.global();
                 self.dispatch(JSH2FrameParser::Gc::onLocalSettings, self.local_settings.to_js(global));
             } else {
                 bun_output::scoped_log!(H2FrameParser, "empty settings has remoteSettings? {}", self.remote_settings.is_some());
@@ -3471,8 +3462,7 @@ impl H2FrameParser {
                             }
                         }
                     }
-                    // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                    let global = unsafe { &*self.handlers.global_object };
+                    let global = self.handlers.global();
                     self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(global));
                 }
                 // defer chain (reverse order)
@@ -3512,8 +3502,7 @@ impl H2FrameParser {
                     }
                 }
             }
-            // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            let global = unsafe { &*self.handlers.global_object };
+            let global = self.handlers.global();
             self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, remote_settings.to_js(global));
             // defer chain
             self.increment_window_size_if_needed();
@@ -3560,8 +3549,7 @@ impl H2FrameParser {
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else { return Some(stream) };
         let Some(callback) = JSH2FrameParser::Gc::onStreamStart.get(this_value) else { return Some(stream) };
 
-        // SAFETY: handlers.global_object is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-        let global = unsafe { &*self.handlers.global_object };
+        let global = self.handlers.global();
         if let Err(err) = callback.call(global, ctx_value, &[ctx_value, JSValue::js_number(stream_identifier as f64)]) {
             global.report_active_exception_as_unhandled(err);
         }
@@ -3609,8 +3597,7 @@ impl H2FrameParser {
             if total < FrameHeader::BYTE_SIZE {
                 // buffer more data
                 let _ = self.read_buffer.append_slice(bytes);
-                // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-                unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(bytes.len());
+                self.global().vm().deprecated_report_extra_memory(bytes.len());
                 return Ok(bytes.len());
             }
             // Zig writes the buffered prefix into the packed struct, then the
@@ -3639,8 +3626,7 @@ impl H2FrameParser {
         if bytes.len() < FrameHeader::BYTE_SIZE {
             // buffer more dheaderata
             let _ = self.read_buffer.append_slice(bytes);
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null
-            unsafe { &*self.global_this }.vm().deprecated_report_extra_memory(bytes.len());
+            self.global().vm().deprecated_report_extra_memory(bytes.len());
             return Ok(bytes.len());
         }
 
@@ -5356,7 +5342,6 @@ impl H2FrameParser {
             this.rejected_streams += 1;
             this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
             if this.rejected_streams >= this.max_rejected_streams {
-                // SAFETY: handlers.global_object is JSC_BORROW; outlives self, never null
                 let global = unsafe { &*this.handlers.global_object };
                 let chunk = this.handlers.binary_type.to_js(b"ENHANCE_YOUR_CALM", global)?;
                 this.dispatch_with_2_extra(JSH2FrameParser::Gc::onError, JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64), JSValue::js_number(this.last_stream_id as f64), chunk);
@@ -5823,7 +5808,6 @@ impl H2FrameParser {
         }
         this.detach();
         if let Some(this_value) = this.strong_this.try_get() {
-            // SAFETY: global_this is JSC_BORROW; outlives self, never null
             JSH2FrameParser::Gc::context.clear(this_value, unsafe { &*this.global_this });
             this.strong_this.set_weak(this_value);
         }

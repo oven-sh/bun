@@ -3178,8 +3178,7 @@ impl NapiFinalizerTask {
 
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
-            // SAFETY: event_loop() returns the live JS-thread loop.
-            unsafe { &*vm.event_loop() }
+            vm.event_loop_ref()
                 .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
             return;
         }
@@ -3190,8 +3189,7 @@ impl NapiFinalizerTask {
                 .rare_data()
                 .push_cleanup_hook(vm.global(), this as *mut c_void, Self::run_as_cleanup_hook);
         } else {
-            // SAFETY: event_loop() returns the live JS-thread loop; single JS thread.
-            unsafe { &mut *vm.event_loop() }.enqueue_task(Task::init(this));
+            vm.event_loop_ref().enqueue_task(Task::init(this));
         }
     }
 

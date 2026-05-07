@@ -221,8 +221,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // Set up the REPL environment (now inside API lock)
         if let Err(_) = this.setup_repl_environment() {
             // setupGlobalRequire threw a JS exception — surface it and exit
-            // SAFETY: vm.global is valid for the API-lock scope.
-            if let Some(exception) = unsafe { (*vm.global).try_take_exception() } {
+            if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);
             }
             vm.exit_handler.exit_code = 1;

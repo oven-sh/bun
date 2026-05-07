@@ -4049,8 +4049,7 @@ impl Resolver {
         // SAFETY: VirtualMachine outlives the Resolver (BACKREF). Read the raw
         // back-ptr directly so the borrow isn't tied to `&self`'s lifetime.
         let vm = unsafe { &*(*this).vm };
-        // SAFETY: vm.event_loop() returns the live *mut EventLoop owned by vm.
-        let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _exit = vm.enter_event_loop_scope();
         // SAFETY: `this` is live for the duration of this callback (caller holds it).
         let Some(channel) = (unsafe { (*this).channel }) else {
             unsafe { let _ = (*this).polls.remove(&poll.fd.native()); }

@@ -196,7 +196,7 @@ impl AutoFlusher {
         // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
         // only the *check* is debug-gated. Do not wrap the side-effecting call
         // in `debug_assert!`.
-        let removed = unsafe { &mut *vm.event_loop() }
+        let removed = vm.event_loop_ref()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -210,7 +210,7 @@ impl AutoFlusher {
     ) {
         debug_assert!(!this.auto_flusher().registered);
         this.auto_flusher().registered = true;
-        let found_existing = unsafe { &mut *vm.event_loop() }
+        let found_existing = vm.event_loop_ref()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);

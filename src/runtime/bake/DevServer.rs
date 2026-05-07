@@ -4501,9 +4501,8 @@ pub fn finalize_bundle(
         current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };
-        // SAFETY: vm.event_loop() returns a valid `*mut EventLoop` for the VM lifetime.
-        let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
-        current_bundle!().promise.strong.resolve(unsafe { &*vm.global }, JSValue::TRUE)?;
+        let _exit = vm.enter_event_loop_scope();
+        current_bundle!().promise.strong.resolve(vm.global(), JSValue::TRUE)?;
     }
 
     while let Some(node) = current_bundle!().requests.pop_first() {
@@ -5101,8 +5100,7 @@ impl DevServer {
                 );
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
-                // SAFETY: event_loop() returns *mut EventLoop owned by vm; valid for vm lifetime
-                let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+                let _exit = vm.enter_event_loop_scope();
                 r.promise.reject(global, Ok(response.to_js(global)))?;
             }
         }
@@ -6486,8 +6484,7 @@ fn bundle_new_route_js_function_impl(
 
     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
     let vm = unsafe { &*dev.vm };
-    // SAFETY: `event_loop()` returns a stable raw pointer; deref for &mut.
-    let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+    let _exit = vm.enter_event_loop_scope();
 
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {

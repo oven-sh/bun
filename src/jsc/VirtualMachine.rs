@@ -667,12 +667,40 @@ impl VirtualMachine {
         unsafe { &mut *self.event_loop }
     }
 
+    /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
+    /// `runtime-hostfn-safe` branch; both names funnel into the single audited
+    /// `unsafe` deref above.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn event_loop_ref(&self) -> &mut EventLoop {
+        self.event_loop_mut()
+    }
+
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline]
     pub fn jsc_vm(&self) -> &VM {
         // SAFETY: `jsc_vm` set in `init()`, valid for VM lifetime.
         unsafe { &*self.jsc_vm }
+    }
+
+    /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
+    /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
+    #[inline]
+    pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard {
+        // SAFETY: `self.event_loop` is the live VM-owned event-loop pointer and
+        // remains valid for the VM (and thus the guard's) lifetime.
+        unsafe { EventLoop::enter_scope(self.event_loop) }
+    }
+
+    /// Safe shared-reference accessor for the process-lifetime dotenv loader
+    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
+    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    #[inline]
+    pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
+        // SAFETY: `transpiler.env` is set during `Transpiler::init` to a
+        // process-lifetime allocation and never null while a VM is installed.
+        unsafe { &*self.transpiler.env }
     }
 
     #[inline]

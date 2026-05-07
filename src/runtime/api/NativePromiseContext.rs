@@ -191,7 +191,7 @@ impl DeferredDerefTask {
         );
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
-        unsafe { (*vm.event_loop()).enqueue_task(task) };
+        vm.event_loop_ref().enqueue_task(task);
     }
 
     pub fn run_from_js_thread(packed_ptr: usize) {

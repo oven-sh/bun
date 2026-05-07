@@ -232,8 +232,7 @@ impl Listener {
                         .into_boxed_slice(),
                 );
 
-                // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
-                unsafe { (*vm.event_loop()).ensure_waker() };
+                vm.event_loop_ref().ensure_waker();
 
                 // PORT NOTE: by-value move of Handlers — see the non-pipe arm below
                 // for rationale on `ptr::read` + `mem::forget`.
@@ -306,8 +305,7 @@ impl Listener {
             }
         }
 
-        // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
-        unsafe { (*vm.event_loop()).ensure_waker() };
+        vm.event_loop_ref().ensure_waker();
 
         // Allocate the Listener up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
@@ -937,8 +935,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
-        // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
-        unsafe { (*vm.event_loop()).ensure_waker() };
+        vm.event_loop_ref().ensure_waker();
 
         let mut connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {

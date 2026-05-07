@@ -1271,6 +1271,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { &*self.vm }
     }
 
+    /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
+    #[inline]
+    fn global(&self) -> &'static JSGlobalObject {
+        // SAFETY: `global_this` is set in `init()`; non-null and valid for the
+        // server's lifetime (LIFETIMES.tsv: STATIC).
+        unsafe { &*self.global_this }
+    }
+
+    /// `&mut` accessor for the live uws App. Only call from paths where the
+    /// server is running (`self.app` set in `listen()`).
+    #[inline]
+    fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
+        // SAFETY: `self.app` is `Some` and points to a live uws App for the
+        // lifetime of any JS-reachable `Server` (set in `listen()`, freed in
+        // `deinit()` after the JS wrapper is gone). Single-JS-thread invariant
+        // — no concurrent `&mut` to the same App.
+        unsafe { &mut *self.app.expect("server not listening") }
+    }
+
     /// Exclusive `&mut VirtualMachine` accessor. Goes through the raw
     /// `VirtualMachine::get()` pointer (not `self.vm`) so the borrow does not
     /// derive from `&self`'s read-only provenance.
@@ -1345,8 +1364,7 @@ where
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub fn get_or_load_plugins(&mut self, callback: ServePluginsCallback<'_>) -> GetOrStartLoadResult<'_> {
         if let Some(p) = self.plugins {
-            // SAFETY: globalThis outlives the server
-            let global = unsafe { &*self.global_this };
+            let global = self.global();
             // SAFETY: `plugins` holds a counted ref produced by
             // `ServePlugins::init` (Box::into_raw); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
@@ -1382,8 +1400,7 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        // SAFETY: self.app is Some and points to a live uws App for the lifetime of any JS-reachable Server
-        Ok(JSValue::js_number(f64::from(unsafe { &mut *self.app.unwrap() }.num_subscribers(topic.slice()))))
+        Ok(JSValue::js_number(f64::from(self.app_mut().num_subscribers(topic.slice()))))
     }
 
     // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
@@ -1495,8 +1512,7 @@ where
             return Ok(JSValue::NULL);
         };
         crate::socket::socket_address::SocketAddress::create_dto(
-            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW per LIFETIMES.tsv)
-            unsafe { &*self.global_this },
+            self.global(),
             &info.ip,
             u16::try_from(info.port).expect("int cast"),
             info.is_ipv6,
@@ -1519,8 +1535,7 @@ where
         }
 
         if !seconds.is_number() {
-            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-            return Err(unsafe { &*self.global_this }.throw(format_args!("timeout() requires a number")));
+            return Err(self.global().throw(format_args!("timeout() requires a number")));
         }
         let value = seconds.to_u32();
 
@@ -1531,8 +1546,7 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { &mut *response }.set_timeout((value % 255) as u8);
         } else {
-            // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-            return Err(unsafe { &*self.global_this }
+            return Err(self.global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));
         }
 
@@ -1965,7 +1979,7 @@ where
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
-        unsafe { &mut *self.app.unwrap() }.clear_routes();
+        self.app_mut().clear_routes();
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
         }
@@ -2061,7 +2075,7 @@ where
             return Ok(false);
         }
         self.config = self.config.clone_for_reloading_static_routes()?;
-        unsafe { &mut *self.app.unwrap() }.clear_routes();
+        self.app_mut().clear_routes();
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
         }
@@ -2069,7 +2083,7 @@ where
         if !route_list_value.is_empty() {
             if let Some(server_js_value) = self.js_value.try_get() {
                 if !server_js_value.is_empty() {
-                    Self::js_gc_route_list_set(server_js_value, unsafe { &*self.global_this }, route_list_value);
+                    Self::js_gc_route_list_set(server_js_value, self.global(), route_list_value);
                 }
             }
         }
@@ -2236,8 +2250,7 @@ where
         let request: *mut Request = Box::into_raw(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
-        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-        let global_this = unsafe { &*self.global_this };
+        let global_this = self.global();
         let on_request = self.config.on_request.as_ref().unwrap().get();
         // SAFETY: `request` was just allocated via `Box::into_raw`; ownership
         // transfers to the JS wrapper inside `to_js`.
@@ -2281,14 +2294,12 @@ where
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: self.app checked Some above; FFI handle alive until App::destroy in deinit()
-        unsafe { &mut *self.app.unwrap() }.close_idle_connections();
+        self.app_mut().close_idle_connections();
         Ok(JSValue::UNDEFINED)
     }
 
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
-        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-        let rc = self.get_all_closed_promise(unsafe { &*self.global_this });
+        let rc = self.get_all_closed_promise(self.global());
 
         if self.has_listener() {
             let abrupt = 'brk: {
@@ -2379,8 +2390,7 @@ where
                             return Ok(JSValue::NULL);
                         }
                     };
-                    // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-                    return addr.into_dto(unsafe { &*self.global_this });
+                    return addr.into_dto(self.global());
                 }
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
@@ -2399,8 +2409,7 @@ where
                                 return Ok(JSValue::NULL);
                             }
                         };
-                        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-                        return addr.into_dto(unsafe { &*self.global_this });
+                        return addr.into_dto(self.global());
                     }
                 }
                 let _ = port;
@@ -2802,7 +2811,7 @@ where
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.set_request_body(NonNull::new(body_ptr));
 
-        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        let signal = AbortSignal::new(self.global());
         ctx.set_signal(signal);
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
@@ -2902,8 +2911,8 @@ where
 
         Some(PreparedRequestFor {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(unsafe { &*self.global_this }),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(unsafe { &*self.global_this }) {
+                CreateJsRequest::Yes => request_object.to_js(self.global()),
+                CreateJsRequest::Bake => match request_object.to_js_for_bake(self.global()) {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(_) => return None,
@@ -3014,7 +3023,7 @@ where
         let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
-        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        let signal = AbortSignal::new(self.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
@@ -3046,7 +3055,7 @@ where
         ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-        let global = unsafe { &*self.global_this };
+        let global = self.global();
         let args = [
             request_object.to_js(global),
             self.js_value_assert_alive(),
@@ -3190,7 +3199,7 @@ where
         let Some(callback) = self.on_clienterror.get() else { return };
         {
             let is_ssl = SSL;
-            let global = unsafe { &*self.global_this };
+            let global = self.global();
             let node_socket = match jsc::from_js_host_call(global, || unsafe {
                 Bun__createNodeHTTPServerSocketForClientError(is_ssl, socket as *mut _ as *mut c_void, global)
             }) {

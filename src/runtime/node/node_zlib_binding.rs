@@ -456,8 +456,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let write_callback: JSValue = T::write_callback_get_cached(this_value).unwrap();
 
-        // SAFETY: `event_loop()` returns a non-null pointer for a live VM.
-        unsafe { &mut *vm.event_loop() }
+        vm.event_loop_ref()
             .run_callback(write_callback, global, this_value, &[]);
 
         if *this.pending_reset_mut() {
@@ -726,7 +725,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
         let vm = global_this.bun_vm();
-        unsafe { &mut *vm.event_loop() }.run_callback(
+        vm.event_loop_ref().run_callback(
             callback,
             global_this,
             this_value,

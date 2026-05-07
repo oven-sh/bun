@@ -893,7 +893,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(
             unsafe { vm.log.unwrap().as_mut() },
-            unsafe { &*vm.transpiler.env },
+            vm.env_loader(),
         );
 
         vm.load_extra_env_and_source_code_printer();
@@ -901,14 +901,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
         // Allow setting a custom timezone.
-        // SAFETY: `b.env` is non-null (see above).
-        if let Some(tz) = unsafe { &*vm.transpiler.env }.get(b"TZ") {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm.global().set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
             }
         }
-        // SAFETY: `b.env` is non-null (see above).
-        unsafe { &*vm.transpiler.env }.load_tracy();
+        vm.env_loader().load_tracy();
 
         // SAFETY: set once at startup before the HTTP thread spawns; only read
         // on that thread.
@@ -1064,7 +1062,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(
             unsafe { vm.log.unwrap().as_mut() },
-            unsafe { &*vm.transpiler.env },
+            vm.env_loader(),
         );
 
         vm.load_extra_env_and_source_code_printer();
@@ -1354,10 +1352,10 @@ impl Run {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
-                        unsafe { (*vm.event_loop()).tick() };
+                        vm.event_loop_ref().tick();
                         // SAFETY: as above — `event_loop` is a self-pointer into
                         // this VM; uniquely accessed here.
-                        unsafe { (*vm.event_loop()).tick_possibly_forever() };
+                        vm.event_loop_ref().tick_possibly_forever();
                     } else {
                         vm.exit_handler.exit_code = 1;
                         vm.on_exit();
@@ -1407,8 +1405,7 @@ impl Run {
         }
 
         // don't run the GC if we don't actually need to
-        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed.
-        if vm.is_event_loop_alive() || unsafe { (*vm.event_loop()).tick_concurrent_with_count() } > 0 {
+        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
             // PERF(port): `vm.arena.gc()` — Zig's `MimallocArena.gc()` is
             // `mi_heap_collect`; `bun_alloc::Arena = bumpalo::Bump` has no
@@ -1440,7 +1437,7 @@ impl Run {
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads (bun.js.zig `start` watcher loop).
-                unsafe { (*vm.event_loop()).tick_possibly_forever() };
+                vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
             while vm.is_event_loop_alive() {

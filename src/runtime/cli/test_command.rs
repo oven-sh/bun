@@ -1367,7 +1367,7 @@ impl CommandLineReporter {
                     continue;
                 }
             }
-            let Some(mut report) = CodeCoverageReport::generate(unsafe { &*vm.global }, entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) = CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap) else { continue; };
             // report dropped at end of iteration
             if coverage::Lcov::write_format(&report, relative_dir, writer).is_err() {
                 continue;
@@ -1560,7 +1560,7 @@ impl CommandLineReporter {
                 }
             }
 
-            let Some(mut report) = CodeCoverageReport::generate(unsafe { &*vm.global }, entry, opts.ignore_sourcemap) else { continue; };
+            let Some(mut report) = CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap) else { continue; };
 
             if REPORTERS_TEXT {
                 let mut fraction = base_fraction;
@@ -1962,8 +1962,7 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
-            unsafe { (*vm.global).vm() }.set_control_flow_profiler(true);
+            vm.global().vm().set_control_flow_profiler(true);
         }
 
         // For tests, we default to UTC time zone
@@ -1978,8 +1977,7 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
-            _ = unsafe { &*vm.global }.set_time_zone(&ZigString::init(tz_name));
+            _ = vm.global().set_time_zone(&ZigString::init(tz_name));
         }
 
         if ctx.test_options.test_worker {
@@ -2541,16 +2539,15 @@ impl TestCommand {
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        // SAFETY: `event_loop()` returns the VM-owned event loop pointer; valid while `vm` is.
-        unsafe { (*vm.event_loop()).tick_possibly_forever() };
+        vm.event_loop_ref().tick_possibly_forever();
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                unsafe { (*vm.event_loop()).auto_tick_active() };
+                vm.event_loop_ref().auto_tick_active();
             }
 
-            unsafe { (*vm.event_loop()).tick_possibly_forever() };
+            vm.event_loop_ref().tick_possibly_forever();
         }
     }
 
@@ -2602,8 +2599,7 @@ impl TestCommand {
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         // TODO(port): vm_.arena = &arena; vm_.allocator = arena.allocator(); — arena threading
         // dropped here. Phase B should reintroduce a bun_alloc::Arena and assign to vm.
-        // SAFETY: event_loop() returns the VM-owned *mut EventLoop singleton.
-        unsafe { (*vm_.event_loop()).ensure_waker() };
+        vm_.event_loop_ref().ensure_waker();
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
         let vm_ptr = vm_ as *mut VirtualMachine;
@@ -2738,8 +2734,7 @@ impl TestCommand {
                 _ => {}
             }
 
-            // SAFETY: event_loop() yields the VM-owned *mut EventLoop singleton.
-            unsafe { (*vm.event_loop()).tick() };
+            vm.event_loop_ref().tick();
 
             'blk: {
                 // Check if bun_test is available and has tests to run
@@ -2759,8 +2754,7 @@ impl TestCommand {
                 bun_test::BunTest::run(buntest_strong.clone(), vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                // SAFETY: see above.
-                unsafe { (*vm.event_loop()).tick() };
+                vm.event_loop_ref().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
@@ -2768,13 +2762,11 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    // SAFETY: event_loop() yields the VM-owned *mut EventLoop singleton.
-                    unsafe { (*vm.event_loop()).auto_tick() };
+                    vm.event_loop_ref().auto_tick();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    // SAFETY: see above.
-                    unsafe { (*vm.event_loop()).tick() };
+                    vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         vm.global().handle_rejected_promises();

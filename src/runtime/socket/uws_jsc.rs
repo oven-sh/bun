@@ -71,36 +71,10 @@ pub fn create_bun_socket_error_to_js(
     }
 }
 
-pub fn verify_error_to_js(
-    this: &us_bun_verify_error_t,
-    global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let code: &[u8] = if this.code.is_null() {
-        b""
-    } else {
-        // SAFETY: this.code is a non-null NUL-terminated C string from uSockets.
-        unsafe { CStr::from_ptr(this.code) }.to_bytes()
-    };
-    let reason: &[u8] = if this.reason.is_null() {
-        b""
-    } else {
-        // SAFETY: this.reason is a non-null NUL-terminated C string from uSockets.
-        unsafe { CStr::from_ptr(this.reason) }.to_bytes()
-    };
-
-    let fallback = SystemError {
-        errno: 0,
-        code: BunString::clone_utf8(code),
-        message: BunString::clone_utf8(reason),
-        path: BunString::empty(),
-        syscall: BunString::empty(),
-        hostname: BunString::empty(),
-        fd: core::ffi::c_int::MIN,
-        dest: BunString::empty(),
-    };
-
-    Ok(fallback.to_error_instance(global_object))
-}
+// LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
+// crate depends on) shares the single canonical impl instead of carrying a
+// verbatim copy.
+pub use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // TODO(port): move to bun_uws_sys

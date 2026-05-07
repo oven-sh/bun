@@ -1287,7 +1287,7 @@ impl Route {
                 // genuinely `'static` and `arena_slice()` is sound on Windows.
                 let normalized = bun_paths::platform_to_posix_buf(
                     abs_path_str,
-                    &mut bufs.normalized_abs_path_buf[..],
+                    &mut bufs.normalized_abs_path_buf,
                 );
                 let interned: &'static [u8] = FileSystem::instance()
                     .dirname_store()

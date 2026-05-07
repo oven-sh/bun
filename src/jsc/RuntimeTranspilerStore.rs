@@ -155,9 +155,14 @@ pub fn dump_source_string_failiable(
 
             use core::fmt::Write as _;
             let mut out = std::string::String::new();
-            let json = |s: &[u8]| {
-                bun_core::fmt::format_json_string_utf8(s, bun_core::fmt::JSONFormatterUTF8Options::default())
-            };
+            // PORT NOTE: closures can't unify input/output lifetimes for the
+            // `JSONFormatterUTF8<'_>` borrow — local fn item works.
+            fn json(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+                bun_core::fmt::format_json_string_utf8(
+                    s,
+                    bun_core::fmt::JSONFormatterUTF8Options::default(),
+                )
+            }
             // PORT NOTE: Zig used a 4 KiB buffered writer streaming to the fd;
             // building the whole document in memory then `write_all` is
             // observationally identical for this debug-only dump.
@@ -529,7 +534,13 @@ impl TranspilerJob {
     pub fn run(&mut self) {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST.
         let arena = Arena::new();
-        let allocator = &arena;
+        // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
+        // requires `&'static Arena` for `set_allocator`. The arena outlives
+        // every use of `transpiler` (it's the first local, so drops last; the
+        // `ManuallyDrop` copy never drops; every `parse_result`/`printer`
+        // borrowing it is consumed before fn return). Erase the lifetime via
+        // raw pointer round-trip — Stacked-Borrows-safe (Shared tag).
+        let allocator: &'static Arena = unsafe { &*(&arena as *const Arena) };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;

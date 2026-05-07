@@ -15,17 +15,6 @@ pub struct Strong {
 }
 
 impl Strong {
-    /// Adopt an FFI handle that already owns a strong ref (used by bindgen).
-    ///
-    /// # Safety
-    /// `handle` must have been produced by `Bun__StrongRef__new` (or
-    /// equivalent) with one outstanding ref now transferred to the returned
-    /// `Strong`; it must not be used or destroyed elsewhere.
-    #[inline]
-    pub unsafe fn from_raw_handle(handle: NonNull<Impl>) -> Strong {
-        Strong { handle }
-    }
-
     /// Hold a strong reference to a JavaScript value. Released on `Drop`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Strong {
         debug_assert!(!value.is_empty());

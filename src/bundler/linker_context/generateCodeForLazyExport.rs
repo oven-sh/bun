@@ -410,10 +410,11 @@ pub fn generate_code_for_lazy_export(
                         tail_loc: stmt.loc,
                         tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
-                    // PORT NOTE: Zig used arena-backed ArrayList; leak the boxed slice
-                    // (arena-lifetime semantics — freed when the linker arena drops).
+                    // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
+                    // into `E.Template`; mirror that by moving into the linker arena
+                    // (freed when the linker arena drops).
                     let parts_slice: *mut [E::TemplatePart] =
-                        Box::leak(template_parts.into_boxed_slice());
+                        allocator.alloc_slice_fill_iter(template_parts.into_iter());
                     value = Expr::init(
                         E::Template {
                             tag: None,

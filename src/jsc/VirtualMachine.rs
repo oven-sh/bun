@@ -1745,11 +1745,9 @@ impl VirtualMachine {
                     .ok_or_else(|| bun_core::err!("JSError"))?
             } else {
                 // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(
-                    global_ref,
-                    core::panic::Location::caller(),
-                    || unsafe { Bun__loadHTMLEntryPoint(global) },
-                )
+                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || unsafe {
+                    Bun__loadHTMLEntryPoint(global)
+                })
                 .map_err(|_| bun_core::err!("JSError"))?;
                 if p.is_null() {
                     return Err(bun_core::err!("JSError"));
@@ -2349,7 +2347,7 @@ impl VirtualMachine {
         let global = self.global;
         // SAFETY: `global` is valid for VM lifetime.
         let global_ref = unsafe { &*global };
-        let jsvalue = jsc::from_js_host_call(global_ref, core::panic::Location::caller(), || unsafe {
+        let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
             Bake__getAsyncLocalStorage(global)
         })?;
         if jsvalue.is_empty_or_undefined_or_null() {
@@ -2580,11 +2578,9 @@ impl VirtualMachine {
             let _ = unsafe { (*this.event_loop()).drain_microtasks() };
         };
         let emit_warning = |this: &mut Self| {
-            let r = jsc::from_js_host_call_generic(
-                global_object,
-                core::panic::Location::caller(),
-                || unsafe { Bun__promises__emitUnhandledRejectionWarning(global, reason, promise) },
-            );
+            let r = jsc::from_js_host_call_generic(global_object, || unsafe {
+                Bun__promises__emitUnhandledRejectionWarning(global, reason, promise)
+            });
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
                 // PORT NOTE: Zig went `exc.asException(vm)` → `reportUncaughtException`,
@@ -5051,7 +5047,7 @@ impl VirtualMachine {
 use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
-    jsc::from_js_host_call_generic(global_object, core::panic::Location::caller(), || unsafe {
+    jsc::from_js_host_call_generic(global_object, || unsafe {
         Bun__promises__isErrorLike(global_object.as_ptr(), reason)
     })
 }

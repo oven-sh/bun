@@ -231,17 +231,103 @@ pub struct Loop {
     _opaque: [u8; 0],
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
+// Per-thread libuv loop (libuv.zig:729-740). Zig stored an inline
+// `threadlocal Loop` value; Rust treats `Loop` as opaque, so the per-thread
+// instance is heap-allocated at `uv_loop_size()` bytes and `uv_loop_init`'d on
+// first `get()`. `shutdown()` closes it and clears the slot so a subsequent
+// `get()` (e.g. a fresh worker on a recycled thread) re-initialises.
+use core::cell::Cell;
+thread_local! {
+    static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(core::ptr::null_mut()) };
+}
+
 impl Loop {
-    /// `bun.windows.libuv.Loop.get()` (libuv.zig:733). Uses libuv's own
-    /// `uv_default_loop()` rather than a thread-local copy: the Zig version
-    /// kept a thread-local `Loop` value because it inlined the struct, but
-    /// Rust treats it as opaque, so the canonical singleton is correct (and
-    /// matches what `bun_aio::Loop::get()` returns on Windows).
-    #[inline]
+    /// `bun.windows.libuv.Loop.get()` (libuv.zig:733). Returns this thread's
+    /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
+    /// its own loop — the Windows event loop and the per-worker shutdown
+    /// (`WebWorker::shutdown` → [`Loop::shutdown`]) require it; sharing the
+    /// process-global `uv_default_loop()` across worker threads is unsound.
     pub fn get() -> *mut Loop {
-        // SAFETY: `uv_default_loop` is thread-safe and idempotent.
-        unsafe { uv_default_loop() }
+        THREADLOCAL_LOOP.with(|slot| {
+            let existing = slot.get();
+            if !existing.is_null() {
+                return existing;
+            }
+            // SAFETY: `uv_loop_size()` returns `sizeof(uv_loop_t)`; mimalloc
+            // alignment (16) covers the struct's alignment requirement.
+            let size = unsafe { uv_loop_size() };
+            let layout = core::alloc::Layout::from_size_align(size, 16).unwrap();
+            // SAFETY: layout is non-zero (uv_loop_t is >100 bytes on Windows).
+            let ptr = unsafe { std::alloc::alloc(layout) } as *mut Loop;
+            assert!(!ptr.is_null(), "OOM allocating uv_loop_t");
+            // SAFETY: `ptr` is a fresh `uv_loop_size()`-byte allocation.
+            if let Some(err) = unsafe { uv_loop_init(ptr) }.errno() {
+                panic!("Failed to initialize libuv loop: errno {err}");
+            }
+            slot.set(ptr);
+            ptr
+        })
     }
+
+    /// `bun.windows.libuv.Loop.shutdown()` (libuv.zig:714). Closes and frees
+    /// this thread's libuv loop. Called from `WebWorker::shutdown` between
+    /// `gc_controller.deinit()` and `vm.deinit()` so the per-thread uv loop
+    /// (and its handles) are torn down with the worker thread.
+    pub fn shutdown() {
+        THREADLOCAL_LOOP.with(|slot| {
+            let loop_ = slot.get();
+            if loop_.is_null() {
+                return;
+            }
+            // SAFETY: `loop_` is the live per-thread loop allocated in `get()`.
+            // EBUSY ⇒ handles still open: walk + close them, run once to flush
+            // close callbacks, then close again (must succeed per libuv API).
+            if unsafe { uv_loop_close(loop_) }.errno().is_some() {
+                // SAFETY: `loop_` valid; `close_walk_cb` is a valid callback.
+                unsafe { uv_walk(loop_, Some(close_walk_cb), core::ptr::null_mut()) };
+                // SAFETY: `loop_` valid; `UV_RUN_DEFAULT` runs to quiescence.
+                let _ = unsafe { uv_run(loop_, RunMode::Default) };
+                debug_assert_eq!(unsafe { uv_loop_close(loop_) }, ReturnCode::ZERO);
+            }
+            // SAFETY: matches the `alloc` in `get()`.
+            let size = unsafe { uv_loop_size() };
+            let layout = core::alloc::Layout::from_size_align(size, 16).unwrap();
+            unsafe { std::alloc::dealloc(loop_.cast(), layout) };
+            slot.set(core::ptr::null_mut());
+        });
+    }
+}
+
+/// `Loop.closeWalkCb` (libuv.zig:705) — `uv_walk` visitor that closes every
+/// not-yet-closing handle so `uv_loop_close` can succeed on retry.
+unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
+    // SAFETY: libuv passes a live handle; `uv_is_closing`/`uv_close` are the
+    // documented teardown pair.
+    if unsafe { uv_is_closing(handle) } == 0 {
+        unsafe { uv_close(handle, None) };
+    }
+}
+
+/// `RunMode` (libuv.zig:681) — `uv_run` mode argument.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum RunMode {
+    Default = 0,
+    Once = 1,
+    NoWait = 2,
+}
+pub type uv_run_mode = RunMode;
+
+unsafe extern "C" {
+    pub fn uv_loop_init(loop_: *mut uv_loop_t) -> ReturnCode;
+    pub fn uv_loop_close(loop_: *mut uv_loop_t) -> ReturnCode;
+    pub fn uv_loop_size() -> usize;
+    pub fn uv_run(loop_: *mut uv_loop_t, mode: uv_run_mode) -> c_int;
+    pub fn uv_walk(
+        loop_: *mut uv_loop_t,
+        walk_cb: Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>,
+        arg: *mut c_void,
+    );
 }
 
 /// `enum(c_int)` newtype — libuv return codes are `0` on success, `-errno`

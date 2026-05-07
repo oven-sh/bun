@@ -1018,9 +1018,7 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
 // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-    // no other live borrow in this scope. Use the SQL-local opaque [`VirtualMachine`]
-    // (via `JSGlobalObjectSqlExt::sql_vm_ptr`) so `rare_data()` resolves to the
-    // sql_jsc shim with the runtime-bool `postgres_group(vm, ssl)` signature.
+    // no other live borrow in this scope.
     let vm_ptr = global_object.sql_vm_ptr();
     let vm = unsafe { &mut *vm_ptr };
     let arguments = callframe.arguments();

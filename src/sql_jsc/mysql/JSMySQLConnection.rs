@@ -919,16 +919,12 @@ impl JSMySQLConnection {
         let queries_array = self.get_queries_array();
         queries_array.ensure_still_alive();
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
-        // PORT NOTE: `EventLoop::run_callback` is `&mut self` on the real impl
-        // but the local stub `crate::jsc::EventLoop` only exposes `enter`/`exit`
-        // (both `&self`); inline the body here to avoid an upstream edit.
-        loop_.enter();
-        if let Err(e) =
-            on_close.call(self.global_object, JSValue::UNDEFINED, &[js_error, queries_array])
-        {
-            self.global_object.report_active_exception_as_unhandled(e);
-        }
-        loop_.exit();
+        loop_.run_callback(
+            on_close,
+            self.global_object,
+            JSValue::UNDEFINED,
+            &[js_error, queries_array],
+        );
     }
 
     fn fail(&mut self, message: &[u8], err: AnyMySQLErrorT) {

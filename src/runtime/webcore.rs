@@ -249,9 +249,10 @@ pub mod headers_ref;
 // ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;
-pub use blob::{Blob, SizeType as BlobSizeType};
+pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
+pub use blob::store::StoreExt as BlobStoreExt;
 
 #[path = "webcore/Body.rs"]
 pub mod body;

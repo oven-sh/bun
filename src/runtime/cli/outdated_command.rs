@@ -154,7 +154,7 @@ impl OutdatedCommand {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.
-                        let _ = unsafe { (*log_ptr).print(Output::error_writer()) };
+                        let _ = unsafe { (*log_ptr).print(Output::error_writer() as *mut _) };
                     }
                 }
                 Global::crash();
@@ -283,11 +283,10 @@ impl OutdatedCommand {
                                 continue;
                             }
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
+                            // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
+                            let workspace_path = unsafe { res.value.workspace };
                             let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
-                                    unsafe { res.value.workspace }.slice(string_buf)
-                                }
+                                resolution::Tag::Workspace => workspace_path.slice(string_buf),
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
                             };
@@ -357,7 +356,8 @@ impl OutdatedCommand {
                 let dep = &dependencies[item.dep_id as usize];
                 let name_hash = hash(dep.name.slice(string_buf));
                 // SAFETY: `is_catalog` ⇒ `dep.version.tag == Catalog` ⇒ `value.catalog` active.
-                let catalog_name = unsafe { dep.version.value.catalog }.slice(string_buf);
+                let catalog = unsafe { dep.version.value.catalog };
+                let catalog_name = catalog.slice(string_buf);
                 let catalog_name_hash = hash(catalog_name);
                 let key = CatalogKey {
                     name_hash,
@@ -385,7 +385,8 @@ impl OutdatedCommand {
             let dep = &dependencies[item.dep_id as usize];
             let name_hash = hash(dep.name.slice(string_buf));
             // SAFETY: `is_catalog` ⇒ `value.catalog` active.
-            let catalog_name = unsafe { dep.version.value.catalog }.slice(string_buf);
+            let catalog = unsafe { dep.version.value.catalog };
+            let catalog_name = catalog.slice(string_buf);
             let catalog_name_hash = hash(catalog_name);
             let key = CatalogKey {
                 name_hash,

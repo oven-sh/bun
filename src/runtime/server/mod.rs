@@ -1043,8 +1043,91 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         server_js_create(this.cast(), global, SSL, DEBUG)
     }
 
-    // `on_reload_from_zig`, JS getter/method bodies — bodies live in
-    // `server_body.rs` (`impl NewServer { … }`); same crate, separate file.
+    /// `server.zig:onReloadFromZig` — hot-reload path used by `Bun.serve`
+    /// when called with the same `id` and by `server.reload()`.
+    pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
+        httplog!("onReload");
+
+        // SAFETY: `app` is set when reload is called (server is already listening).
+        unsafe { (*self.app.unwrap()).clear_routes() };
+        if Self::HAS_H3 {
+            if let Some(h3a) = self.h3_app {
+                // SAFETY: live H3 app handle owned by this server.
+                unsafe { (*h3a).clear_routes() };
+            }
+        }
+
+        // only reload these, but ignore if they're not specified.
+        if new_config.on_request.as_ref().map_or(false, |s| !s.get().is_undefined()) {
+            // Old Strong drops (releases) when overwritten.
+            self.config.on_request = new_config.on_request.take();
+        }
+        if new_config.on_node_http_request.is_some() {
+            self.config.on_node_http_request = new_config.on_node_http_request.take();
+        }
+        if new_config.on_error.as_ref().map_or(false, |s| !s.get().is_undefined()) {
+            self.config.on_error = new_config.on_error.take();
+        }
+
+        if let Some(mut ws) = new_config.websocket.take() {
+            ws.handler.flags.set(web_socket_server_context::HandlerFlags::SSL, SSL);
+            if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
+                if let Some(old_ws) = &self.config.websocket {
+                    old_ws.handler.unprotect();
+                }
+                ws.global_object = global as *const _;
+                // Zig assigns `ws.*` (move).
+                self.config.websocket = Some(ws);
+            } else {
+                // We don't replace the existing websocket config here, but
+                // the new one was already protected in WebSocketServerContext.onCreate.
+                // Unprotect the discarded handlers so they don't leak.
+                ws.handler.unprotect();
+            }
+        }
+
+        // These get re-applied when we set the static routes again.
+        if let Some(dev_server) = self.dev_server.as_deref_mut() {
+            // Prevent a use-after-free in the hash table keys.
+            dev_server.html_router.map.clear();
+            dev_server.html_router.fallback = None;
+        }
+
+        // PORT NOTE: StaticRouteEntry impls Drop; assigning over static_routes deinits the old ones.
+        self.config.static_routes = core::mem::take(&mut new_config.static_routes);
+
+        // Zig: per-element `allocator.free(route)` then free the slice — `Vec<Box<[u8]>>`
+        // drops both on assignment.
+        self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+
+        if new_config.had_routes_object {
+            // PORT NOTE: UserRouteBuilder drops on assignment.
+            self.config.user_routes_to_build = core::mem::take(&mut new_config.user_routes_to_build);
+            self.user_routes.clear();
+        }
+
+        let route_list_value = self.set_routes();
+        if new_config.had_routes_object {
+            if let Some(server_js_value) = self.js_value.try_get() {
+                if !server_js_value.is_empty() {
+                    Self::js_gc_route_list_set(server_js_value, global, route_list_value);
+                }
+            }
+        }
+
+        if self.inspector_server_id.get() != 0 {
+            // SAFETY: `vm` is the STATIC per-thread VM backref set in `init()`.
+            if let Some(debugger) = unsafe { &mut *(self.vm as *mut jsc::VirtualMachine) }
+                .debugger
+                .as_deref_mut()
+            {
+                bun_core::handle_oom(http_server_agent::notify_server_routes_updated(
+                    &debugger.http_server_agent,
+                    AnyServer::from(self as *const Self),
+                ));
+            }
+        }
+    }
 
     pub fn on_static_request_complete(&mut self) {
         self.pending_requests -= 1;

@@ -2617,7 +2617,7 @@ where
         // this route is debug-only and infrequent so a transient `Vec` is fine.
         fn lowercase_hash(input: &[u8]) -> [u8; 8] {
             let mut buf = vec![0u8; input.len()];
-            let lowered = bun_string::copy_lowercase(input, &mut buf);
+            let lowered = bun_string::strings::copy_lowercase(input, &mut buf);
             hash(lowered).to_ne_bytes()
         }
 

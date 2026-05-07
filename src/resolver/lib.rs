@@ -1361,8 +1361,31 @@ pub mod fs {
             self.data.contains_key(query_lower)
         }
 
-        /// Erase to the `bun_sys::fs::DirEntry` opaque seam handle. Low-tier
-        /// crates (`bun_dotenv`, `bun_router`) accept the seam type because
+        /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
+        /// `bun.invalid_fd` when the resolver did not retain it.
+        #[inline] pub fn fd(&self) -> Fd { self.fd }
+
+        /// Zig: `dir_entry.data.iterator()` (fs.zig:117). Yields the raw
+        /// `*mut Entry` value for each cached file (Zig's `EntryMap` value
+        /// type is `*Entry`). Yields `*mut Entry`, NOT `&mut Entry`, because
+        /// the map hands out raw pointers with no exclusivity guarantee;
+        /// callers reborrow at the use site under `entries_mutex`.
+        #[inline]
+        pub fn iter(&self) -> impl Iterator<Item = *mut Entry> + '_ {
+            self.data.values().copied()
+        }
+    }
+
+    impl bun_dotenv::DirEntryProbe for DirEntry {
+        #[inline]
+        fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+            DirEntry::has_comptime_query(self, query_lower)
+        }
+    }
+
+    impl DirEntry {
+        // PORT NOTE (deleted): the `as_sys_seam` / `as_sys_seam_mut` opaque
+        // ZST cast helpers and the matching `bun_sys::fs::FsVTable` provider
         /// they sit below `bun_resolver` in the crate graph; this is the
         /// **single** place the resolver→sys reinterpret happens, so high-tier
         /// callers (bun_install, bun_bundler, bun_runtime) never open-code

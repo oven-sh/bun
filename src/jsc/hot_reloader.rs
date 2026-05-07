@@ -20,17 +20,7 @@ use crate::virtual_machine::VirtualMachine;
 
 bun_core::declare_scope!(hot_reloader, visible);
 
-// TODO(port): Environment.isKqueue — verify exact target list matches Zig's `Environment.isKqueue`
-const IS_KQUEUE: bool = cfg!(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "watchos",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-));
+use bun_core::env::IS_KQUEUE;
 
 pub enum ImportWatcher {
     None,
@@ -946,9 +936,9 @@ where
                                     for (entry_id, parent_hash) in parents.iter().enumerate() {
                                         if *parent_hash == current_hash {
                                             let affected_path: &[u8] = &file_paths[entry_id];
-                                            // TODO(port): std.posix.access → bun_sys::access
-                                            // wants &ZStr; affected_path is &[u8]. Build a
-                                            // PathBuffer-backed ZStr.
+                                            // Zig: `std.posix.access(affected_path, F_OK) != 0`.
+                                            // bun_sys::access takes a &ZStr; build one on the
+                                            // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
                                                 let mut zbuf = PathBuffer::uninit();
                                                 if affected_path.len() >= zbuf.len() {

@@ -3521,9 +3521,12 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
         // errdefer pieces.deinit() — Drop handles it
-        // PERF(port): Zig used `j.done(alloc)` (worker arena); the Rust
-        // StringJoiner port uses global mimalloc, no arena param.
-        let complete_output = j.done()?;
+        // PORT NOTE: Zig used `j.done(alloc)` (worker arena), so the joined
+        // buffer outlived this function. The Rust `StringJoiner::done()`
+        // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
+        // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
+        // into the returned `OutputPieces` below.
+        let complete_output: Box<[u8]> = j.done()?;
         let mut output: &[u8] = &complete_output;
 
         let prefix = &self.unique_key_prefix;
@@ -3609,7 +3612,7 @@ impl<'a> LinkerContext<'a> {
         pieces.push(OutputPiece::init(output, crate::chunk::Query::NONE));
 
         Ok(crate::chunk::IntermediateOutput::Pieces(
-            Vec::<OutputPiece>::from_owned_slice(pieces.into_boxed_slice()),
+            crate::chunk::OutputPieces::new(pieces, complete_output),
         ))
     }
 }

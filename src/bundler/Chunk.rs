@@ -244,7 +244,7 @@ pub enum IntermediateOutput {
     /// constructed later when merging the pieces together.
     ///
     /// See OutputPiece's documentation comment for more details.
-    Pieces(Vec<OutputPiece>),
+    Pieces(OutputPieces),
 
     /// If the chunk doesn't have any references to other chunks, then
     /// `joiner` contains the contents of the chunk. This is more efficient
@@ -252,6 +252,46 @@ pub enum IntermediateOutput {
     Joiner(StringJoiner),
 
     Empty,
+}
+
+/// Owns the joined output buffer alongside the `OutputPiece` slices that
+/// point into it.
+///
+/// PORT NOTE: In Zig, `breakOutputIntoPieces` calls `j.done(alloc)` with the
+/// per-worker arena, so the joined buffer outlives the chunk by construction
+/// and `OutputPiece.data_ptr` stays valid. The Rust `StringJoiner::done()`
+/// returns a `Box<[u8]>`; if that box is dropped at the end of
+/// `break_output_into_pieces`, every piece's `data_ptr` dangles (ASAN
+/// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
+/// the pieces so their raw-pointer slices remain valid for the chunk's
+/// lifetime.
+pub struct OutputPieces {
+    pieces: Vec<OutputPiece>,
+    /// Backing storage for every `OutputPiece::data_ptr` in `pieces`.
+    /// Never read directly — only pins the allocation.
+    _buffer: Box<[u8]>,
+}
+
+impl OutputPieces {
+    #[inline]
+    pub fn new(pieces: Vec<OutputPiece>, buffer: Box<[u8]>) -> Self {
+        OutputPieces { pieces, _buffer: buffer }
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[OutputPiece] {
+        &self.pieces
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.pieces.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.pieces.is_empty()
+    }
 }
 
 impl Default for IntermediateOutput {

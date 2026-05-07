@@ -1,9 +1,7 @@
-use core::ffi::c_void;
-
 use bun_core::{err, Error, Global, Output};
 use bun_install::package_manager_real::{
-    self as pm, install_with_manager, update_package_json_and_install_with_manager,
-    CommandLineArguments, PackageManager, Subcommand, ROOT_PACKAGE_JSON_PATH,
+    install_with_manager, update_package_json_and_install_with_manager, CommandLineArguments,
+    PackageManager, Subcommand, ROOT_PACKAGE_JSON_PATH,
 };
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 

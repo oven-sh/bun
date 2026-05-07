@@ -320,12 +320,7 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
-        let mut root_dir = Dir::cwd();
-        let _close_root = scopeguard::guard(root_dir, |d| {
-            if d.fd != Fd::cwd() {
-                d.close();
-            }
-        });
+        let mut root_dir = DirGuard(Dir::cwd());
 
         // On Windows, don't change root_dir, just pass the full relative path
         // On POSIX, change root_dir to the target directory and pass basename
@@ -339,7 +334,7 @@ impl JSBundleCompletionTask {
             #[cfg(not(windows))]
             {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::default()) {
+                root_dir.0 = match root_dir.0.make_open_path(dirname, OpenDirOptions::default()) {
                     Ok(d) => d,
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
@@ -349,16 +344,11 @@ impl JSBundleCompletionTask {
                         ));
                     }
                 };
-                // Re-arm the guard with the new dir.
-                core::mem::forget(core::mem::replace(
-                    &mut *scopeguard::ScopeGuard::into_inner(_close_root),
-                    root_dir,
-                ));
             }
             #[cfg(windows)]
             {
                 // On Windows, ensure directories exist but don't change root_dir
-                if let Err(err) = sys::make_path(root_dir, dirname) {
+                if let Err(err) = sys::make_path(root_dir.0, dirname) {
                     return CompileResult::fail_fmt(format_args!(
                         "Failed to create output directory {}: {}",
                         bstr::BStr::new(dirname),

@@ -354,6 +354,31 @@ impl AsyncHTTP {
         unsafe { stream.as_ref() }.store(true, Ordering::Release);
     }
 
+    /// Copy HTTP-thread progress state into the JS-thread "real" instance.
+    ///
+    /// Port of Zig `task.http.?.* = async_http.*` — Zig bitwise-copies the
+    /// whole struct, which Rust can't do (`HTTPClient: Drop`, owned `Vec`s).
+    /// Instead, copy exactly the fields the JS side observes between progress
+    /// callbacks: the post-redirect `url`, response/timing fields written by
+    /// `on_async_http_callback`, and the `client` flags/counters used for
+    /// shutdown decisions and error formatting. Owned allocations stay with
+    /// `src` (the HTTP-thread copy keeps running while `has_more`).
+    pub fn sync_progress_from(&mut self, src: &AsyncHTTP) {
+        self.url = src.url.clone();
+        self.redirected = src.redirected;
+        self.elapsed = src.elapsed;
+        self.gzip_elapsed = src.gzip_elapsed;
+        self.err = src.err;
+        self.response = src.response;
+        self.response_encoding = src.response_encoding;
+        self.response_buffer = src.response_buffer;
+        self.state
+            .store(src.state.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.client.url = src.client.url.clone();
+        self.client.flags = src.client.flags;
+        self.client.remaining_redirect_count = src.client.remaining_redirect_count;
+    }
+
     pub fn clear_data(&mut self) {
         // PORT NOTE: `response_headers.deinit(allocator)` becomes drop-in-place via assignment.
         self.response_headers = headers::EntryList::default();

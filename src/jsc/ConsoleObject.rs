@@ -4231,8 +4231,6 @@ pub mod formatter {
             js_type: jsc::JSType,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
-            // TODO(port): each `value.as::<T>()` downcast below maps to
-            // `crate::JsClass::from_js`. The list of types is preserved.
             macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -4240,16 +4238,6 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
 
-            // TODO(port-cycle): the `bun_runtime` `JsClass` downcasts (Response,
-            // Request, BuildArtifact, Blob, S3Client, Archive, FetchHeaders,
-            // TimeoutObject, ImmediateObject, BuildMessage, ResolveMessage) and
-            // `JestPrettyFormat::print_asymmetric_matcher` form a high-tier
-            // crate cycle (`bun_jsc → bun_runtime → bun_jsc`). They are gated
-            // here as a single block; the always-live tail (DOMFormData +
-            // non-DOMWrapper fallback) is preserved below so generic objects
-            // still print. Restored once the runtime types implement a
-            // dyn-erased `WriteFormat` hook this crate can call without naming
-            // them.
             if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
                 let _ = response.write_format::<C>(self, writer_);
                 return Ok(());

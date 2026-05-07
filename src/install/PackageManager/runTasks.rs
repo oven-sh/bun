@@ -201,22 +201,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if ptask_ptr.is_null() {
             break;
         }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-        let ptask = unsafe { &mut *ptask_ptr };
+        // SAFETY: `next()` returned non-null; node is exclusively owned by this
+        // batch. PORT NOTE: queue node is typed as the `crate::PatchTask` stub
+        // (intrusive `next` carrier); cast to the real `patch_install::PatchTask`
+        // it was pushed as so the body can read the `Callback` enum.
+        let ptask_real_ptr: *mut PatchTask = ptask_ptr.cast();
+        let ptask = unsafe { &mut *ptask_real_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
         manager.decrement_pending_tasks();
         // Zig: `defer ptask.deinit();` — reclaim the Box at end of iteration.
         let _ptask_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `ptask_ptr` was produced by `Box::into_raw` in
+            // SAFETY: `ptask_real_ptr` was produced by `Box::into_raw` in
             // `PatchTask::new_*`; ownership returned exactly once here.
-            // PORT NOTE: queue node is typed as the `crate::PatchTask` stub
-            // (intrusive `next` carrier); cast back to the real
-            // `patch_install::PatchTask` it was pushed as.
-            unsafe { PatchTask::destroy(ptask_ptr.cast()) };
+            unsafe { PatchTask::destroy(ptask_real_ptr) };
         });
-        ptask.run_from_main_thread(manager, log_level)?;
+        patch_install::run_from_main_thread(ptask, manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
                 if C::HAS_ON_EXTRACT {

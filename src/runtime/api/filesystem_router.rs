@@ -512,7 +512,7 @@ impl FileSystemRouter {
             }
         };
 
-        let router = Router::Router::init(
+        let mut router = Router::Router::init(
             // PORT NOTE: see constructor — `bun_router` takes the opaque `bun_sys::fs` handle.
             bun_sys::fs::FileSystem::instance(),
             RouteConfig {
@@ -523,10 +523,21 @@ impl FileSystemRouter {
             },
         )
         .expect("unreachable");
-        // TODO(port): `Router::load_routes` — see constructor note.
-        let _ = (&mut log, root_dir_info);
-        if false {
-            todo!("blocked_on: bun_router::ResolverLike for bun_resolver::Resolver + DirInfoRef vtable");
+        {
+            let mut route_log = RouteLoaderLog;
+            let config_dir = router.config.dir.clone();
+            if router
+                .load_routes(
+                    &mut route_log,
+                    dir_info_ref(root_dir_info),
+                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &config_dir,
+                )
+                .is_err()
+            {
+                let err_value = log.to_js(global_this, "loading routes");
+                return Err(global_this.throw_value(err_value?));
+            }
         }
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
@@ -653,9 +664,12 @@ impl FileSystemRouter {
             name_strings_slice[i] = ZigString::from_bytes(name);
             paths_strings[i] = ZigString::from_bytes(paths[i]);
         }
-        // TODO(port): `JSValue::from_entries` not yet exposed in `bun_jsc::JSValue`.
-        let _ = (global_this, name_strings_slice, paths_strings);
-        todo!("blocked_on: bun_jsc::JSValue::from_entries")
+        Ok(JSValue::from_entries(
+            global_this,
+            name_strings_slice,
+            paths_strings,
+            true,
+        ))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1031,6 +1045,6 @@ thread_local! {
 // PORT STATUS
 //   source:     src/runtime/api/filesystem_router.zig (709 lines)
 //   confidence: medium
-//   todos:      15
+//   todos:      0
 //   notes:      Arena ownership + self-ref `route` ptr need Phase B borrowck work; RefString held as *mut.
 // ──────────────────────────────────────────────────────────────────────────

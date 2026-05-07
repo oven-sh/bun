@@ -1057,17 +1057,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // TODO(port): @ptrCast(argv) / @ptrCast(std.os.environ.ptr) — raw FFI argv/envp arrays.
-        let mut spawned = match spawn::spawn_process(
+        // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
+        let mut spawned = spawn::spawn_process(
             &spawn_options,
             argv.as_mut_ptr().cast(),
             bun_sys::environ_ptr(),
-        )? {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err_generic("Failed to spawn security scanner subprocess: {}", (e,));
-                return Err(err!("SpawnProcessFailed"));
-            }
-        };
+        )?
+        .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1126,12 +1122,19 @@ impl<'a> SecurityScanSubprocess<'a> {
         );
 
         // SAFETY: all-zero is a valid uv.Pipe (matches Zig std.mem.zeroes).
-        let pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
-        let pipe = Box::into_raw(pipe);
-        // TODO(port): errdefer pipe.closeAndDestroy() — needs scopeguard that owns the raw Box ptr.
-        // SAFETY: pipe was just Box::into_raw'd above and is non-null.
-        unsafe { (*pipe).init(self.loop_(), false) }.unwrap()?;
-        unsafe { (*pipe).open(fds.1.unwrap()) }.unwrap()?;
+        let pipe = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+        // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
+        // close callback frees the heap allocation, so do NOT re-box on the
+        // cleanup path (would double-free). Disarmed only after finish_spawn
+        // succeeds, matching the Zig errdefer scope.
+        let pipe = scopeguard::guard(pipe, |p| {
+            // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
+            // schedules uv_close + frees the allocation.
+            unsafe { (*p).close_and_destroy() };
+        });
+        // SAFETY: *pipe was just Box::into_raw'd above and is non-null.
+        unsafe { (**pipe).init(self.loop_(), false) }.unwrap()?;
+        unsafe { (**pipe).open(fds.1.unwrap()) }.unwrap()?;
         fds.1 = None; // pipe owns it now
 
         let extra_fds = vec![

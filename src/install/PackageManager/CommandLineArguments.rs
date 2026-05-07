@@ -230,6 +230,11 @@ static WHY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SH
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
 // per PORTING.md (no `deinit`, never `allocator.free`d). Phase B may want to thread an explicit
 // lifetime if `clap::Args` ever becomes scoped.
+//
+// `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
+// passes `cli` by value into `PackageManager.init` while retaining its own
+// copy.
+#[derive(Clone)]
 pub struct CommandLineArguments {
     pub cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
@@ -427,16 +432,12 @@ impl AuditLevel {
     }
 }
 
+#[derive(Copy, Clone, Default)]
 pub enum PatchOpts {
+    #[default]
     Nothing,
     Patch,
     Commit { patches_dir: &'static [u8] },
-}
-
-impl Default for PatchOpts {
-    fn default() -> Self {
-        PatchOpts::Nothing
-    }
 }
 
 #[derive(Default, Copy, Clone)]

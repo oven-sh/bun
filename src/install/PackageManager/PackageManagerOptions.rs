@@ -169,7 +169,7 @@ pub enum PatchFeatures {
     Commit { patches_dir: &'static [u8] },
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct PublishConfig {
     pub access: Option<Access>,
     pub tag: &'static [u8],

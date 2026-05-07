@@ -970,12 +970,6 @@ impl FsReturn for StatOrNotFound {
         self.to_js_newly_created(global)
     }
 }
-impl FsReturn for JSValue {
-    // `ret::Watch` / `ret::WatchFile` are already `JSValue`; Zig's
-    // `globalObject.toJS(res)` is the identity for `JSValue`.
-    #[inline]
-    fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(*self) }
-}
 
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
 /// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to

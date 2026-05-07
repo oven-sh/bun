@@ -62,8 +62,20 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     pub fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
         Self { context, promise: JSPromiseStrong::default(), global_this, _f: PhantomData }
     }
+}
 
-    pub fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
+/// Models Zig's `comptime callback: fn(ctx: Context, bytes: ReadFileResultType) bun.JSTerminated!void`
+/// (and `comptime Handler: type` for `ReadFileUV.start`). Monomorphized per
+/// call-site type so the erased shim calls `C::run` directly and
+/// `on_complete_ctx` carries the **raw** `*mut C` — no heap wrapper, matching
+/// the Zig spec where any code introspecting `onCompleteCtx` sees the original
+/// context pointer.
+pub trait ReadFileCompletion {
+    fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+}
+
+impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
+    fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was Box::into_raw'd by doReadFile(); we take ownership here.
         let mut handler = unsafe { Box::from_raw(handler) };
         let promise = handler.promise.swap();

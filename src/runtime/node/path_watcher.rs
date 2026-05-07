@@ -879,12 +879,26 @@ impl Linux {
                         // borrow that `add_one` will invalidate.
                         (o.watcher, &*(o.subpath.as_bytes() as *const [u8]))
                     };
-                    // SAFETY: owner_watcher live under manager.mutex.
+                    // SAFETY: owner_watcher live under manager.mutex. Read the scalar
+                    // fields and the path bytes via the raw pointer *before* forming
+                    // `&mut *owner_watcher` so `rel` (which may borrow them) is
+                    // decoupled from the exclusive borrow `emit()` needs — a named
+                    // shared borrow of `watcher.path` cannot coexist with the
+                    // `&mut self` receiver. `path` is a `ZBox`; its heap bytes are a
+                    // separate allocation, so this mirrors the `owner_subpath`
+                    // raw-ptr laundering above.
+                    let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
+                        (
+                            (*owner_watcher).is_file,
+                            (*owner_watcher).recursive,
+                            &*((*owner_watcher).path.as_bytes() as *const [u8]),
+                        )
+                    };
                     let watcher = unsafe { &mut *owner_watcher };
 
                     // Build the path relative to this owner's root.
-                    let rel: &[u8] = if watcher.is_file {
-                        path::basename(watcher.path.as_bytes())
+                    let rel: &[u8] = if watcher_is_file {
+                        path::basename(watcher_path)
                     } else if owner_subpath.is_empty() {
                         name
                     } else if name.is_empty() {
@@ -901,7 +915,7 @@ impl Linux {
                         rel,
                         !is_dir_child
                             && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
-                                && !watcher.is_file),
+                                && !watcher_is_file),
                     );
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
@@ -909,7 +923,7 @@ impl Linux {
                     // start watching it so future events inside it are delivered.
                     // This is what makes `{recursive: true}` track structure changes
                     // after the initial crawl (#15939/#15085).
-                    if watcher.recursive
+                    if watcher_recursive
                         && is_dir_child
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()
@@ -917,7 +931,7 @@ impl Linux {
                         let mut abs_buf = path::path_buffer_pool::get();
                         let child_abs = join_z_buf::<platform::Posix>(
                             abs_buf.as_mut_slice(),
-                            &[watcher.path.as_bytes(), owner_subpath, name],
+                            &[watcher_path, owner_subpath, name],
                         );
                         // PORT NOTE: reshaped for borrowck — `rel` may borrow `path_buf`,
                         // which `walk_and_add` also borrows. Own it for the call.

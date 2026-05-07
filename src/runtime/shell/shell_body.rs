@@ -1266,7 +1266,7 @@ pub mod testing_apis {
         bun_str.to_js(global)
     }
 
-    pub const SHELL_PARSE: jsc::JSHostFn = marked_arg_buffer_wrap(shell_parse_impl);
+    pub const SHELL_PARSE: jsc::JSHostFn = bun_jsc::marked_argument_buffer_wrap!(shell_parse_impl);
 
     fn shell_parse_impl(
         global: &JSGlobalObject,

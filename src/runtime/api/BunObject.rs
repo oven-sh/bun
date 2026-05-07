@@ -335,24 +335,12 @@ pub mod bun_object {
         BunObject_callback_zstdCompress => JSZstd::compress,
         BunObject_callback_zstdDecompress => JSZstd::decompress,
     }
-    // `createParsedShellScript` / `createShellInterpreter` are pre-wrapped
-    // `JSHostFn` constants (MarkedArgumentBuffer-shimmed), so re-export the
-    // raw extern symbol directly instead of re-wrapping.
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_callback_createParsedShellScript(
-        g: *mut JSGlobalObject,
-        f: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC always passes valid pointers here.
-        unsafe { (crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT)(g, f) }
-    }
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_callback_createShellInterpreter(
-        g: *mut JSGlobalObject,
-        f: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC always passes valid pointers here.
-        bun_jsc::to_js_host_fn(crate::shell::interpreter::Interpreter::create_shell_interpreter)(g, f)
+    // `createParsedShellScript` / `createShellInterpreter` go through the same
+    // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
+    // are already `JSHostFnZig`-shaped).
+    export_callbacks! {
+        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
+        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
     }
     // --- Callbacks ---
 

@@ -651,21 +651,25 @@ impl ReadFile {
         // so we should check specifically that its a regular file before trusting the size.
         if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
             self.buffer = Vec::new();
-            self.byte_store = ByteStore::init(self.buffer.as_slice());
+            // PORT NOTE: Zig wrote `byte_store = ByteStore.init(buffer.items, …)`
+            // (a non-owning view); Rust `Bytes` owns its allocation, so leave it
+            // default — `then()` reads `self.buffer` directly.
+            self.byte_store = ByteStore::default();
 
             self.on_finish();
             return;
         }
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        if !self.could_block || (self.size > 0 && self.size != Blob::MAX_SIZE) {
+        if !self.could_block || (self.size > 0 && self.size != MAX_SIZE) {
             let want = (self.size as usize).saturating_add(16);
             let mut v = Vec::<u8>::new();
             if v.try_reserve_exact(want).is_err() {
                 self.errno = Some(bun_core::err!("OutOfMemory"));
-                self.system_error =
-                    Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::Read)
-                        .to_system_error());
+                self.system_error = Some(
+                    bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
+                        .to_system_error(),
+                );
                 self.on_finish();
                 return;
             }
@@ -685,7 +689,7 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
-            if bun_core::is_readable(fd) == bun_core::PollFlag::not_ready {
+            if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
                 self.wait_for_readable();
                 return;
             }

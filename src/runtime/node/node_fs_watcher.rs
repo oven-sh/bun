@@ -6,11 +6,12 @@ use bun_aio::KeepAlive;
 use bun_core::Output;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
+use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortListener, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame,
-    CommonAbortReason, JSGlobalObject, JSValue, JsResult, SysErrorJsc, VirtualMachine, ZigString,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
+    JSGlobalObject, JSValue, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine, ZigString,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_str::strings;

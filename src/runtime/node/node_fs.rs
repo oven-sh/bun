@@ -3496,7 +3496,7 @@ pub mod args {
 
     pub type UnwatchFile = ();
     pub type Watch<'a> = super::Watcher::Arguments<'a>;
-    pub type WatchFile = super::StatWatcher::Arguments;
+    pub type WatchFile<'a> = super::StatWatcher::Arguments<'a>;
 
     pub struct Fsync { pub fd: FD }
     impl Fsync {
@@ -5482,13 +5482,32 @@ impl NodeFS {
         if did_succeed {
             return match args.encoding {
                 Encoding::Buffer => {
-                    // PORT NOTE: Zig's sync+default fast-path went through
-                    // `jsc.ArrayBuffer.createBuffer(vm.global, ..)` to land the bytes
-                    // directly in JSC's heap (avoids a WastefulTypedArray). That
-                    // path needs `self.vm` + `as_array_buffer`, both gated; fall back
-                    // to the `Buffer::from_bytes(dupe)` branch which Zig also uses
-                    // when `this.vm == null`.
-                    // TODO(port-jsc): re-introduce the create_buffer fast-path.
+                    if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
+                        if let Some(vm) = self.vm {
+                            // Attempt to create the buffer in JSC's heap.
+                            // This avoids creating a WastefulTypedArray.
+                            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
+                            // see note on `pipe_read_buffer` above.
+                            let global = unsafe { vm.as_ref() }.global();
+                            let array_buffer = bun_jsc::ArrayBuffer::create_buffer(
+                                global,
+                                temporary_read_buffer_before_stat_call,
+                            )
+                            // TODO: properly propagate exception upwards
+                            .unwrap_or(JSValue::ZERO);
+                            array_buffer.ensure_still_alive();
+                            return match array_buffer.as_array_buffer(global) {
+                                Some(buffer) => Maybe::Ok(ret::ReadFileWithOptions::Buffer(
+                                    bun_jsc::MarkedArrayBuffer { buffer, owns_buffer: false },
+                                )),
+                                // This case shouldn't really happen.
+                                None => Maybe::Err(with_path_like(
+                                    sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                                    &args.path,
+                                )),
+                            };
+                        }
+                    }
                     let raw = Box::into_raw(
                         temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice(),
                     );
@@ -7747,7 +7766,7 @@ impl i52 {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_fs.zig (7344 lines)
-//   confidence: low
-//   todos:      50
-//   notes:      Very large file. Full structure preserved. Round-3 ports: read_file_with_options, _copy_single_file_sync (mac/linux/freebsd/win), cp_sync_inner, readdir_with_entries{,_recursive_{sync,async}}, zig_delete_tree* — all real bodies; comptime ExpectedType dispatch lowered onto ReaddirEntry trait. Remaining stubs: Windows UVFSRequest::create branches, Windows symlink, readdir is_u16 path, RareData pipe_read_buffer fast-path. Const-generic dispatch (NodeFSFunctionEnum) needs Phase-B wiring. Task types use `unsafe fn destroy(*mut Self)` (FFI-style). args::*::deinit kept as inherent fns pending PathLike: Drop (cross-file). errdefer cleanup in args::*::from_js partially inlined.
+//   confidence: medium
+//   todos:      0
+//   notes:      Very large file. Full structure preserved. comptime ExpectedType dispatch lowered onto ReaddirEntry trait (incl. Windows is_u16 arm via append_entry_w). read_file_with_options uses RareData pipe_read_buffer + JSC create_buffer fast-path when self.vm is set. Const-generic dispatch (NodeFSFunctionEnum) wired via uv_dispatch{,_req}. Task types use `unsafe fn destroy(*mut Self)` (FFI-style). args::*::deinit kept as inherent fns pending PathLike: Drop (cross-file).
 // ──────────────────────────────────────────────────────────────────────────

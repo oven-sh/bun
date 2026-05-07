@@ -498,34 +498,29 @@ fn send_audit_request(
         BStr::new(strings::without_trailing_slash(pm.options.scope.url.href()))
     )
     .expect("unreachable");
-    // PORT NOTE: leak to satisfy `URL<'static>` (Zig had no lifetimes).
-    let url_str: &'static [u8] = Box::leak(url_str.into_boxed_slice());
-    let url = URL::parse(url_str);
+    let url = URL::parse(&url_str);
 
-    // SAFETY: env_loader's backing storage is process-static (env block /
-    // leaked map); the URL borrows are valid for 'static. Zig had no lifetime
-    // here.
-    let http_proxy: Option<URL<'static>> = unsafe {
-        core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(pm.http_proxy(&url))
-    };
+    let http_proxy = pm.http_proxy(&url);
 
     // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     // SAFETY: `allocate()` succeeded above so `ptr` is non-null when `len > 0`;
-    // the buffer outlives the synchronous request.
-    let headers_buf: &'static [u8] = match headers.content.ptr {
+    // the buffer is kept alive on this stack frame for the synchronous request.
+    let headers_buf: &[u8] = match headers.content.ptr {
         Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
         None => &[],
     };
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
-    let response_buf: &mut MutableString = Box::leak(Box::new(MutableString::init(1024)?));
+    let mut response_buf = MutableString::init(1024)?;
+    // `init_sync` erases lifetimes internally (port-erased raw pointers); all
+    // borrowed inputs live on this stack frame past `send_sync()`.
     let mut req = http::AsyncHTTP::init_sync(
         http::Method::POST,
         url,
         headers.entries,
         headers_buf,
-        response_buf as *mut MutableString,
-        final_compressed_body,
+        &mut response_buf,
+        &final_compressed_body,
         http_proxy,
         None,
         http::FetchRedirect::Follow,

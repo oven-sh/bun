@@ -2196,11 +2196,14 @@ pub mod environment_variables {
 
         let value_slice = unsafe { (*value).to_utf8() };
         let new_val = bun_jsc::rare_data::RefCountedEnvValue::create(value_slice.slice());
-        // slot.key is a static-lifetime string literal (the struct field
-        // name); value bytes live in the ref-counted wrapper. map.put
-        // dupes the value into its own storage.
-        bun_core::handle_oom(env_map.put(slot.key, &new_val.bytes));
-        *slot.ptr = Some(new_val);
+        let stored = slot.ptr.insert(new_val);
+        // slot.key is a static-lifetime string literal (the struct field name).
+        // PORT NOTE: Zig's `map.put` stored the slice header without duping,
+        // so the slot write had to precede `put` for the map to borrow live
+        // bytes. Rust's `Map::put` boxes its own copy — the Arc wrapper now
+        // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
+        // kept for spec parity.
+        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
     pub fn get_env_names(global_object: &JSGlobalObject, names: &mut [ZigString]) -> usize {
@@ -2261,32 +2264,16 @@ pub mod JSZlib {
         unsafe { core::slice::from_raw_parts_mut(list.as_mut_ptr(), list.capacity()) }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn reader_deallocator(_: *mut c_void, ctx: *mut c_void) {
-        // SAFETY: ctx was created from Box<ZlibReaderArrayList>::into_raw.
-        // PORT NOTE: Zig held an owned `ArrayListUnmanaged` in `.list`; the
-        // Rust port stores a borrowed `&mut Vec<u8>` in `.list_ptr` instead,
-        // so freeing the boxed reader (and zlib state via Drop) is sufficient.
-        let reader: *mut zlib::ZlibReaderArrayList = ctx as *mut zlib::ZlibReaderArrayList;
-        unsafe {
-            drop(core::mem::take((*reader).list_ptr));
-            drop(Box::from_raw(reader));
-        }
-    }
+    // PORT NOTE: Zig exported `reader_deallocator` / `compressor_deallocator`
+    // to free a heap-allocated reader/compressor (and its owned `ArrayList`)
+    // from the ArrayBuffer finalizer. The Rust port keeps the reader on-stack
+    // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
+    // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
+    // and the per-type callbacks are gone.
     #[unsafe(no_mangle)]
     pub extern "C" fn global_deallocator(_: *mut c_void, ctx: *mut c_void) {
         // SAFETY: ctx is a mimalloc-allocated pointer.
         unsafe { bun_alloc::basic::free_without_size(ctx) };
-    }
-    #[unsafe(no_mangle)]
-    pub extern "C" fn compressor_deallocator(_: *mut c_void, ctx: *mut c_void) {
-        // SAFETY: ctx was created from Box<ZlibCompressorArrayList>::into_raw.
-        // See `reader_deallocator` for the `.list` → `.list_ptr` port note.
-        let compressor: *mut zlib::ZlibCompressorArrayList = ctx as *mut zlib::ZlibCompressorArrayList;
-        unsafe {
-            drop(core::mem::take((*compressor).list_ptr));
-            drop(Box::from_raw(compressor));
-        }
     }
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
@@ -2462,8 +2449,8 @@ pub mod JSZlib {
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
-                // PORT NOTE: Zig moved `list` into the reader and freed via
-                // `reader_deallocator`. In Rust the reader *borrows* `list_ptr`,
+                // PORT NOTE: Zig moved `list` into the reader and freed via a
+                // dedicated finalizer. In Rust the reader *borrows* `list_ptr`,
                 // so drop the reader to release the borrow, then leak the owned
                 // `list` directly into the ArrayBuffer (freed by
                 // `global_deallocator`).

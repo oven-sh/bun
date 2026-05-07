@@ -2877,31 +2877,8 @@ impl HasAutoFlusher for H2FrameParser {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shims for upstream methods missing on `bun_jsc` types.
-// PORT NOTE: `JSValue::push` and `VM::deprecated_report_extra_memory` exist in
-// the Zig spec but the Rust `bun_jsc::JSValue` / `bun_jsc::VM` impls have not
-// landed them yet. Shim via FFI here (orphan-safe: traits are local).
-// ──────────────────────────────────────────────────────────────────────────
-trait JsValueArrayPush {
-    fn push(self, global: &JSGlobalObject, item: JSValue) -> JsResult<()>;
-}
-impl JsValueArrayPush for JSValue {
-    fn push(self, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
-        unsafe extern "C" {
-            fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
-        }
-        // SAFETY: `self` is a JSArray (caller-created via create_empty_array); `global` is live.
-        unsafe { JSC__JSValue__push(self, global, item) };
-        if global.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-        Ok(())
-    }
-}
-
-// (`VmReportExtraMemory` shim removed — duplicate of `H2VMExt` above; both
-// provided `deprecated_report_extra_memory` and rustc rejected the ambiguity.)
+// (`JsValueArrayPush` shim removed — `bun_jsc::JSValue::push` is the inherent
+// method now; `VmReportExtraMemory` shim removed — duplicate of `H2VMExt`.)
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — frame handlers

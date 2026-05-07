@@ -76,11 +76,10 @@ impl BunStringSpawnExt for BunString {
     }
 }
 
-/// `SignalCode.fromJS` — `bun_sys_jsc` is not a dependency of `bun_runtime`;
-/// route through the crate-local port in `bun_subprocess`.
+/// `SignalCode.fromJS` (bun_sys_jsc bridge).
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    Subprocess::signal_code_from_js(val, global)
+    bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.

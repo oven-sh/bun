@@ -5191,17 +5191,15 @@ impl DevServer {
             system_used: u32,
             system_total: u32,
         }
-        let _cost = self.memory_cost_detailed();
+        let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
-        // TODO(b2-blocked): `memory_cost_detailed` returns `()` placeholder until
-        // `dev_server::memory_cost_body` is un-gated. Emit zeros so the wire shape stays.
         let fields = Fields {
-            incremental_graph_client: 0,
-            incremental_graph_server: 0,
-            js_code: 0,
-            source_maps: 0,
-            assets: 0,
-            other: 0,
+            incremental_graph_client: cost.incremental_graph_client as u32,
+            incremental_graph_server: cost.incremental_graph_server as u32,
+            js_code: cost.js_code as u32,
+            source_maps: cost.source_maps as u32,
+            assets: cost.assets as u32,
+            other: cost.other as u32,
             devserver_tracked: if ALLOCATION_SCOPE_ENABLED {
                 self.allocation_scope.stats().total_memory_allocated as u32
             } else {

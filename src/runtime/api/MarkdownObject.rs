@@ -18,15 +18,10 @@ fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue>
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
 }
 
-/// `JSValue.push` (JSValue.zig:404) — not yet exposed on `bun_jsc::JSValue`.
+/// `JSValue.push` (JSValue.zig:404).
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
-    unsafe extern "C" {
-        fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
-    }
-    // SAFETY: `global` is live; FFI may set an exception (checked below).
-    unsafe { JSC__JSValue__push(arr, global, item) };
-    if global.has_exception() { Err(bun_jsc::JsError::Thrown) } else { Ok(()) }
+    arr.push(global, item)
 }
 
 /// Map a host-fn `JsError` back into the parser's error enum so it can

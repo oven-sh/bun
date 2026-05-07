@@ -1775,7 +1775,10 @@ fn update_package_json_after_migration(
         }
     }
 
-    let mut workspace_paths: Option<Vec<Box<[u8]>>> = None;
+    // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
+    // (see `data_store_dupe_str` below) so it shares the lifetime of the
+    // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
+    let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
     let mut catalog_obj: Option<Expr> = None;
     let mut catalogs_obj: Option<Expr> = None;
     let mut workspace_overrides_obj: Option<Expr> = None;
@@ -1783,8 +1786,19 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
+            // Zig: `readFrom(..., allocator)` heap-allocates with the long-
+            // lived default allocator and never frees, so YAML scalar
+            // `EString.data` slices that borrow from these source bytes stay
+            // valid for the rest of the program. The Rust `Vec<u8>` would drop
+            // at the end of this arm while the `Expr`s it backs (catalog/
+            // catalogs/overrides/patchedDependencies below) escape into `json`
+            // and the `workspace_package_json_cache`. Intern the bytes into
+            // the same thread-local `DATA_STORE` that owns the surrounding
+            // `Expr` nodes — arena ownership, not a leak (bulk-freed on
+            // `Expr::data_store_reset`).
+            let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source =
-                logger::Source::init_path_string(b"pnpm-workspace.yaml", contents.as_slice());
+                logger::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let arena = bun_alloc::Arena::new();
             let Ok(ws_root) = bun_interchange::yaml::YAML::parse(&yaml_source, log, &arena) else {
                 break 'read_pnpm_workspace_yaml;
@@ -1792,10 +1806,16 @@ fn update_package_json_after_migration(
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
                 if let Some(packages) = packages_expr.as_array() {
-                    let mut paths: Vec<Box<[u8]>> = Vec::new();
+                    let mut paths: Vec<&'static [u8]> = Vec::new();
                     for package_path in packages.array.items.slice() {
                         if let Some(package_path_str) = as_string(package_path) {
-                            paths.push(Box::from(package_path_str));
+                            // Intern (vs. the prior `Box<[u8]>`) so the
+                            // `EString` nodes built from these paths below do
+                            // not dangle once this function returns and the
+                            // boxes drop — they are stored into
+                            // `root_pkg_json.root` which is cached in
+                            // `manager.workspace_package_json_cache`.
+                            paths.push(js_ast::data_store_dupe_str(package_path_str));
                         }
                     }
                     workspace_paths = Some(paths);

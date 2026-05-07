@@ -157,9 +157,10 @@ pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunStrin
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
 #[unsafe(export_name = "Bun__Process__setTitle")]
 pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
-    // SAFETY: newvalue is a valid pointer from C++; we consume one ref before returning
-    let newvalue = unsafe { &mut *newvalue };
-    let _deref = scopeguard::guard((), |()| newvalue.deref());
+    // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
+    // returning. `String` is `Copy`, so read it out by value and let
+    // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
+    let newvalue = bun_str::OwnedString::new(unsafe { *newvalue });
     let mut owned = PROCESS_TITLE.lock();
 
     // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so

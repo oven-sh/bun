@@ -1077,21 +1077,25 @@ macro_rules! js_sink {
             pub fn flush(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
-                // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *get_this(global, frame)? };
+                let this_ptr: *mut ThisSink = get_this(global, frame)?;
 
-                if let Some(err) = this.sink.get_pending_error() {
+                // SAFETY: get_this returns a live ThisSink* on Ok.
+                if let Some(err) = unsafe { (*this_ptr).sink.get_pending_error() } {
                     return global.throw_value(err);
                 }
 
-                let _guard = ::scopeguard::guard((), |_| {
+                ::scopeguard::defer! {
+                    // SAFETY: this_ptr remains live for the duration of this fn; the
+                    // defer runs at scope exit after all body borrows have ended.
+                    // Raw-ptr capture avoids overlapping &mut with the body below.
+                    let this = unsafe { &mut *this_ptr };
                     if <$SinkType as JsSinkType>::HAS_DONE && this.sink.done() {
                         unprotect(this);
                     }
-                });
-                // PORT NOTE: reshaped for borrowck — `defer` capturing `this` while body
-                // also uses `this`; scopeguard closure may need raw-ptr capture in Phase B.
-                // TODO(port): errdefer — overlapping &mut borrow of `this` in guard + body.
+                }
+
+                // SAFETY: get_this returns a live ThisSink* on Ok.
+                let this = unsafe { &mut *this_ptr };
 
                 if <$SinkType as JsSinkType>::HAS_FLUSH_FROM_JS {
                     let wait = frame.arguments_count() > 0

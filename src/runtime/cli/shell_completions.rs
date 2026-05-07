@@ -71,7 +71,7 @@ impl Default for ShellCompletions {
 
 impl ShellCompletions {
     pub fn print(&self) {
-        let _flush = scopeguard::guard((), |_| Output::flush());
+        let _flush = Output::flush_guard();
         // SAFETY: Output::writer() returns a process-lifetime *mut io::Writer
         // (thread-local Source storage); the deref lives for this fn body only.
         let writer = unsafe { &mut *Output::writer() };

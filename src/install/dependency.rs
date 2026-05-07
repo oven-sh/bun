@@ -64,6 +64,10 @@ pub enum URITag {
 // Dependency
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `#[repr(C)]` so this is layout-compatible with the resolver-side projection
+/// `bun_install_types::resolver_hooks::Dependency` (same field order; `Version`
+/// ↔ `DependencyVersion` overlay is asserted in `crate::auto_installer`).
+#[repr(C)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: String,

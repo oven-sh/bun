@@ -425,10 +425,14 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn run_from_js(this: *mut Self) {
         // SAFETY: `this` was boxed in `init`; we are on the JS thread.
         let this_ref = unsafe { &mut *this };
-        let _guard = scopeguard::guard((), |_| {
+        // RAII: `this` is a `Box::into_raw` pointer threaded through C callbacks as
+        // `*mut c_void`, so it cannot live as a `Box` for its whole lifetime. A `Drop`
+        // impl on `CryptoJob<Ctx>` would force a `Ctx: CryptoJobCtx` bound onto the
+        // struct (see PORT NOTE on the struct def), so defer the one-shot free here.
+        scopeguard::defer! {
             // SAFETY: only call site; runs once.
             unsafe { Self::deinit(this) };
-        });
+        }
         let vm = this_ref.vm;
 
         // SAFETY: `vm` is the singleton JS VM, live for process lifetime.

@@ -27,9 +27,10 @@ use crate::dependency::Behavior;
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
+use crate::lockfile::package::PackageListExt as _;
 
 use super::{PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList};
-use super::{directories, enqueue, set_preinstall_state};
+use super::{directories, enqueue};
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
@@ -217,7 +218,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             // `PatchTask::new_*`; ownership returned exactly once here.
             unsafe { PatchTask::destroy(ptask_real_ptr) };
         });
-        patch_install::run_from_main_thread(ptask, manager, log_level)?;
+        ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
                 if C::HAS_ON_EXTRACT {

@@ -1,25 +1,49 @@
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::ArrayHashMap;
-use bun_js_parser::{self as js_ast, Expr, E};
+use bun_collections::StringArrayHashMap;
 
-// Zig `bun.StringArrayHashMap(V)` → `bun_collections::ArrayHashMap<K,V>` per PORTING.md.
-// TODO(port): confirm key type — Zig stores borrowed `[]const u8` keys; using owned Box<[u8]>
-// here since allocator params were dropped and lifetimes are not threaded in Phase A.
-type StringArrayHashMap<V> = ArrayHashMap<Box<[u8]>, V>;
+use bun_js_parser::{self as js_ast, Expr, ExprData, E, G};
 use bun_logger as logger;
-use bun_semver::{self as semver, ExternalString, String};
-use bun_str::strings;
+use bun_semver as semver;
+use bun_semver::{ExternalString, String};
+use bun_string::strings;
 use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;
 use crate::dependency::{self, Dependency};
+use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
-use crate::lockfile::{self, LoadResult, Lockfile};
+use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self, Negatable};
-use crate::resolution::Resolution;
-use crate::{DependencyID, ExtractTarball, PackageID, PackageManager, INVALID_PACKAGE_ID};
+use crate::resolution::{self, Resolution, TaggedValue};
+use crate::{DependencyID, PackageID, PackageManager, INVALID_PACKAGE_ID};
+
+// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+// lockfile.stringBuf()` for the whole function, but in Rust that locks out
+// every other `lockfile.*` access. Construct a fresh `Buf` per append so the
+// mutable borrow ends immediately.
+macro_rules! sbuf {
+    ($lockfile:expr) => {
+        semver::string::Buf {
+            bytes: &mut $lockfile.buffers.string_bytes,
+            pool: &mut $lockfile.string_pool,
+        }
+    };
+}
+
+// Detached read-only view of `lockfile.buffers.string_bytes` to bypass borrowck
+// when a `&mut lockfile` method also needs to read the same buffer it owns
+// (Zig has no borrow checker; the buffer is never reallocated mid-call).
+macro_rules! string_bytes {
+    ($lockfile:expr) => {{
+        let v: &Vec<u8> = &$lockfile.buffers.string_bytes;
+        // SAFETY: `string_bytes` is not mutated for the duration of the slice
+        // use (callers only push to `packages`/`dependencies`, never to the
+        // string buffer while this view is live).
+        unsafe { core::slice::from_raw_parts(v.as_ptr(), v.len()) }
+    }};
+}
 
 /// returns (peers_index, patch_hash_index)
 /// https://github.com/pnpm/pnpm/blob/102d5a01ddabda1184b88119adccfbe956d30579/packages/dependency-path/src/index.ts#L9-L31
@@ -121,9 +145,66 @@ impl From<AllocError> for MigratePnpmLockfileError {
     }
 }
 
+impl From<bun_core::Error> for MigratePnpmLockfileError {
+    fn from(_: bun_core::Error) -> Self {
+        Self::InvalidPnpmLockfile
+    }
+}
+
+impl From<resolution::FromPnpmLockfileError> for MigratePnpmLockfileError {
+    fn from(e: resolution::FromPnpmLockfileError) -> Self {
+        match e {
+            resolution::FromPnpmLockfileError::OutOfMemory => Self::OutOfMemory,
+            resolution::FromPnpmLockfileError::InvalidPnpmLockfile => Self::InvalidPnpmLockfile,
+        }
+    }
+}
+
+impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigratePnpmLockfileError {
+    fn from(e: crate::lockfile_real::catalog_map::FromPnpmLockfileError) -> Self {
+        use crate::lockfile_real::catalog_map::FromPnpmLockfileError as E;
+        match e {
+            E::OutOfMemory => Self::OutOfMemory,
+            E::InvalidPnpmLockfile => Self::InvalidPnpmLockfile,
+        }
+    }
+}
+
 impl From<MigratePnpmLockfileError> for bun_core::Error {
     fn from(e: MigratePnpmLockfileError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(&e))
+    }
+}
+
+#[inline]
+fn expr_tag_name(data: &ExprData) -> &'static str {
+    js_ast::ast::expr::Tag::from(data).into()
+}
+
+#[inline]
+fn as_string(expr: &Expr) -> Option<&'static [u8]> {
+    // YAML / package.json parse always produces UTF-8 EStrings.
+    expr.as_utf8_string_literal()
+        .map(|s| unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) })
+}
+
+#[inline]
+fn get_string(expr: &Expr, name: &[u8]) -> Option<(&'static [u8], logger::Loc)> {
+    let q = expr.as_property(name)?;
+    Some((as_string(&q.expr)?, q.expr.loc))
+}
+
+fn e_object(expr: &Expr) -> &E::Object {
+    match &expr.data {
+        ExprData::EObject(o) => unsafe { &*o.as_ptr() },
+        _ => unreachable!("e_object called on non-object"),
+    }
+}
+
+fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
+    match &mut expr.data {
+        ExprData::EObject(o) => &mut **o,
+        _ => unreachable!("e_object_mut called on non-object"),
     }
 }
 
@@ -134,31 +215,28 @@ pub fn migrate_pnpm_lockfile<'a>(
     data: &[u8],
     dir: Fd,
 ) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
-    let mut buf: Vec<u8> = Vec::new();
-    let _ = &buf; // TODO(port): `buf` appears unused in the Zig source
-
     lockfile.init_empty();
     crate::initialize_store();
-    bun_analytics::features::pnpm_migration.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // PERF(port): was arena bulk-free for YAML parsing
-    let yaml_arena = bun_alloc::Arena::new();
-
+    // PORT NOTE: Zig parses into `yaml_arena` then `deepClone`s out of it
+    // before freeing. The Rust YAML parser allocates into the thread-local
+    // Store (the bump arg is unused), so the clone is unnecessary — lift the
+    // T2 `logger::js_ast::Expr` straight to the full T4 `Expr` via `.into()`.
     let yaml_source = logger::Source::init_path_string(b"pnpm-lock.yaml", data);
-    let _root = match bun_interchange::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
-        Ok(r) => r,
+    let yaml_arena = bun_alloc::Arena::new();
+    let root: Expr = match bun_interchange::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
+        Ok(r) => r.into(),
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
 
-    let root = _root.deep_clone()?;
-
-    if !root.data.is_e_object() {
+    if !root.is_object() {
         log.add_error_fmt(
             None,
             logger::Loc::EMPTY,
             format_args!(
                 "pnpm-lock.yaml root must be an object, got {}",
-                <&'static str>::from(&root.data)
+                expr_tag_name(&root.data)
             ),
         )?;
         return Err(MigratePnpmLockfileError::PnpmLockfileNotObject);
@@ -176,20 +254,17 @@ pub fn migrate_pnpm_lockfile<'a>(
     let lockfile_version_num: f64 = 'lockfile_version: {
         'err: {
             match &lockfile_version_expr.data {
-                js_ast::ExprData::ENumber(num) => {
+                ExprData::ENumber(num) => {
                     if num.value < 0.0 {
                         break 'err;
                     }
-
                     break 'lockfile_version num.value;
                 }
-                js_ast::ExprData::EString(version_str) => {
-                    let str = version_str.slice();
-
+                ExprData::EString(version_str) => {
+                    let str = version_str.data;
                     let end = strings::index_of_char(str, b'.')
                         .map(|i| i as usize)
                         .unwrap_or(str.len());
-                    // TODO(port): parse_float on &[u8] — version strings are ASCII
                     match core::str::from_utf8(&str[0..end])
                         .ok()
                         .and_then(|s| s.parse::<f64>().ok())
@@ -207,7 +282,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             logger::Loc::EMPTY,
             format_args!(
                 "pnpm-lock.yaml 'lockfileVersion' must be a number or string, got {}",
-                <&'static str>::from(&lockfile_version_expr.data)
+                expr_tag_name(&lockfile_version_expr.data)
             ),
         )?;
         return Err(MigratePnpmLockfileError::PnpmLockfileVersionInvalid);
@@ -219,40 +294,35 @@ pub fn migrate_pnpm_lockfile<'a>(
 
     let mut found_patches: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
 
-    // PORT NOTE: reshaped for borrowck — Zig used a labeled block returning a tuple;
-    // Rust keeps the same control flow inside a labeled block.
     let (pkg_map, importer_dep_res_versions, workspace_pkgs_off, workspace_pkgs_end) = 'build: {
-        let mut string_buf = lockfile.string_buf();
-
-        if let Some(catalogs_expr) = root.get_object(b"catalogs") {
+        if let Some(mut catalogs_expr) = root.get_object(b"catalogs") {
             crate::lockfile_real::CatalogMap::from_pnpm_lockfile(
                 lockfile,
                 log,
-                catalogs_expr.data.as_e_object(),
-                &mut string_buf,
+                e_object_mut(&mut catalogs_expr),
+                &mut sbuf!(lockfile),
             )?;
         }
 
         if let Some(overrides_expr) = root.get_object(b"overrides") {
-            for prop in overrides_expr.data.as_e_object().properties.slice() {
+            for prop in e_object(&overrides_expr).properties.slice() {
                 let key = prop.key.as_ref().unwrap();
                 let value = prop.value.as_ref().unwrap();
 
-                let Some(name_str) = key.as_string() else {
+                let Some(name_str) = as_string(key) else {
                     return Err(invalid_pnpm_lockfile());
                 };
-                let name_hash = String::Builder::string_hash(name_str);
-                let name = string_buf.append_with_hash(name_str, name_hash)?;
+                let name_hash = semver::string::Builder::string_hash(name_str);
+                let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
-                if !value.is_string() {
+                let Some(version_str) = as_string(value) else {
                     // TODO:
                     return Err(invalid_pnpm_lockfile());
-                }
+                };
 
-                let version_str = value.as_string().unwrap();
-                let version_hash = String::Builder::string_hash(version_str);
-                let version = string_buf.append_with_hash(version_str, version_hash)?;
-                let version_sliced = version.sliced(string_buf.bytes.as_slice());
+                let version_hash = semver::string::Builder::string_hash(version_str);
+                let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
+                let version_sliced = version.sliced(string_bytes!(lockfile));
 
                 let dep = Dependency {
                     name,
@@ -263,7 +333,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        Some(manager),
+                        Some(&mut *manager),
                     ) {
                         Some(v) => v,
                         None => return Err(invalid_pnpm_lockfile()),
@@ -279,28 +349,28 @@ pub fn migrate_pnpm_lockfile<'a>(
             path: String,
             dep_name: Box<[u8]>,
         }
+        impl Default for Patch {
+            fn default() -> Self {
+                Self { path: String::default(), dep_name: Box::from(b"" as &[u8]) }
+            }
+        }
         let mut patches: StringArrayHashMap<Patch> = StringArrayHashMap::new();
         let mut patch_join_buf: Vec<u8> = Vec::new();
 
         if let Some(patched_dependencies_expr) = root.get_object(b"patchedDependencies") {
-            for prop in patched_dependencies_expr
-                .data
-                .as_e_object()
-                .properties
-                .slice()
-            {
+            for prop in e_object(&patched_dependencies_expr).properties.slice() {
                 let dep_name_expr = prop.key.as_ref().unwrap();
                 let value = prop.value.as_ref().unwrap();
 
-                let Some(dep_name_str) = dep_name_expr.as_string() else {
+                let Some(dep_name_str) = as_string(dep_name_expr) else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
-                let Some((path_str, _)) = value.get_string(b"path")? else {
+                let Some((path_str, _)) = get_string(value, b"path") else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
-                let Some((hash_str, _)) = value.get_string(b"hash")? else {
+                let Some((hash_str, _)) = get_string(value, b"hash") else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
@@ -309,7 +379,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     return Err(invalid_pnpm_lockfile());
                 }
                 *entry.value_ptr = Patch {
-                    path: string_buf.append(path_str)?,
+                    path: sbuf!(lockfile).append(path_str)?,
                     dep_name: Box::<[u8]>::from(dep_name_str),
                 };
             }
@@ -326,8 +396,8 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let mut has_root_pkg_expr: Option<Expr> = None;
 
-        for prop in importers_obj.data.as_e_object().properties.slice() {
-            let Some(importer_path) = prop.key.as_ref().unwrap().as_string() else {
+        for prop in e_object(&importers_obj).properties.slice() {
+            let Some(importer_path) = as_string(prop.key.as_ref().unwrap()) else {
                 return Err(invalid_pnpm_lockfile());
             };
             let value = prop.value.as_ref().unwrap();
@@ -336,12 +406,11 @@ pub fn migrate_pnpm_lockfile<'a>(
                 if has_root_pkg_expr.is_some() {
                     return Err(invalid_pnpm_lockfile());
                 }
-                has_root_pkg_expr = Some(value.clone());
+                has_root_pkg_expr = Some(*value);
                 continue;
             }
 
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-
             pkg_json_path.append(importer_path);
             pkg_json_path.append(b"package.json");
 
@@ -356,24 +425,23 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             let workspace_root = &importer_pkg_json.root;
 
-            let Some((name, _)) = workspace_root.get_string(b"name")? else {
+            let Some((name, _)) = get_string(workspace_root, b"name") else {
                 // we require workspace names.
                 return Err(MigratePnpmLockfileError::WorkspaceNameMissing);
             };
 
-            let name_hash = String::Builder::string_hash(name);
+            let name_hash = semver::string::Builder::string_hash(name);
 
-            lockfile
-                .workspace_paths
-                .put(name_hash, string_buf.append(importer_path)?)?;
+            let path_str = sbuf!(lockfile).append(importer_path)?;
+            lockfile.workspace_paths.put(name_hash, path_str)?;
 
             if let Some(version_expr) = value.get(b"version") {
-                let Some(version_raw) = version_expr.as_string() else {
+                let Some(version_raw) = as_string(&version_expr) else {
                     return Err(invalid_pnpm_lockfile());
                 };
-                let version_str = string_buf.append(version_raw)?;
+                let version_str = sbuf!(lockfile).append(version_raw)?;
 
-                let parsed = semver::Version::parse(version_str.sliced(string_buf.bytes.as_slice()));
+                let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
                 if !parsed.valid {
                     return Err(invalid_pnpm_lockfile());
                 }
@@ -398,7 +466,6 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         {
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-
             pkg_json_path.append(b"package.json");
 
             let pkg_json = match manager
@@ -412,9 +479,9 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             let mut root_pkg = lockfile::Package::default();
 
-            if let Some((name, _)) = pkg_json.root.get_string(b"name")? {
-                let name_hash = String::Builder::string_hash(name);
-                root_pkg.name = string_buf.append_with_hash(name, name_hash)?;
+            if let Some((name, _)) = get_string(&pkg_json.root, b"name") {
+                let name_hash = semver::string::Builder::string_hash(name);
+                root_pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 root_pkg.name_hash = name_hash;
             }
 
@@ -425,51 +492,48 @@ pub fn migrate_pnpm_lockfile<'a>(
                 lockfile,
                 manager,
                 &root_pkg_expr,
-                &mut string_buf,
                 log,
                 true,
                 &importers_obj,
                 importer_versions.value_ptr,
             )?;
 
-            root_pkg.dependencies = lockfile::DependencySlice { off, len };
-            root_pkg.resolutions = lockfile::DependencySlice { off, len };
+            root_pkg.dependencies = ExternalSlice::new(off, len);
+            root_pkg.resolutions = ExternalSlice::new(off, len);
 
             root_pkg.meta.id = 0;
             root_pkg.resolution = Resolution::init_root();
-            // TODO(port): Resolution::init(.{ .root = {} }) — verify constructor name
+            let root_name_hash = root_pkg.name_hash;
             lockfile.packages.append(root_pkg)?;
-            lockfile.get_or_put_id(0, root_pkg.name_hash)?;
+            lockfile.get_or_put_id(0, root_name_hash)?;
         }
 
         let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-        pkg_map.put_no_clobber(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+        pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
 
         let workspace_pkgs_off = lockfile.packages.len();
 
-        'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for prop in importers_obj.data.as_e_object().properties.slice() {
+        let workspace_paths_snapshot: Vec<String> =
+            lockfile.workspace_paths.values().to_vec();
+
+        'workspaces: for workspace_path in &workspace_paths_snapshot {
+            for prop in e_object(&importers_obj).properties.slice() {
                 let key = prop.key.as_ref().unwrap();
                 let value = prop.value.as_ref().unwrap();
 
-                let path = key.as_string().unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_buf.bytes.as_slice()), true)
-                {
+                let path = as_string(key).unwrap();
+                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
                     continue;
                 }
 
                 let mut pkg = lockfile::Package::default();
 
-                pkg.resolution = Resolution {
-                    tag: Resolution::Tag::Workspace,
-                    value: Resolution::Value {
-                        workspace: string_buf.append(path)?,
-                    },
-                };
+                pkg.resolution = Resolution::init(TaggedValue::Workspace(
+                    sbuf!(lockfile).append(path)?,
+                ));
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-
                 path_buf.append(path);
                 let abs_path: Box<[u8]> = Box::from(path_buf.slice());
                 path_buf.append(b"package.json");
@@ -485,10 +549,10 @@ pub fn migrate_pnpm_lockfile<'a>(
 
                 let workspace_root = &workspace_pkg_json.root;
 
-                let name = workspace_root.get(b"name").unwrap().as_string().unwrap();
-                let name_hash = String::Builder::string_hash(name);
+                let name = as_string(&workspace_root.get(b"name").unwrap()).unwrap();
+                let name_hash = semver::string::Builder::string_hash(name);
 
-                pkg.name = string_buf.append_with_hash(name, name_hash)?;
+                pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
 
                 let importer_versions = importer_dep_res_versions.get_or_put(path)?;
@@ -501,29 +565,27 @@ pub fn migrate_pnpm_lockfile<'a>(
                     lockfile,
                     manager,
                     value,
-                    &mut string_buf,
                     log,
                     false,
                     &importers_obj,
                     importer_versions.value_ptr,
                 )?;
 
-                pkg.dependencies = lockfile::DependencySlice { off, len };
-                pkg.resolutions = lockfile::DependencySlice { off, len };
+                pkg.dependencies = ExternalSlice::new(off, len);
+                pkg.resolutions = ExternalSlice::new(off, len);
 
                 if let Some(bin_expr) = workspace_root.get(b"bin") {
-                    pkg.bin = Bin::parse_append(
-                        bin_expr,
-                        &mut string_buf,
-                        &mut lockfile.buffers.extern_strings,
+                    pkg.bin = bin_parse_append(
+                        &bin_expr,
+                        lockfile,
                     )?;
                 } else if let Some(directories_expr) = workspace_root.get(b"directories") {
                     if let Some(bin_expr) = directories_expr.get(b"bin") {
-                        pkg.bin = Bin::parse_append_from_directories(bin_expr, &mut string_buf)?;
+                        pkg.bin = bin_parse_append_from_directories(&bin_expr, lockfile)?;
                     }
                 }
 
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_buf.bytes.as_slice())?;
+                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
 
                 let entry = pkg_map.get_or_put(&abs_path)?;
                 if entry.found_existing {
@@ -546,11 +608,9 @@ pub fn migrate_pnpm_lockfile<'a>(
             let workspace_path: &[u8] = if pkg_id == 0 {
                 b"."
             } else {
-                let workspace_res = &lockfile.packages.items_resolution()[pkg_id as usize];
-                workspace_res
-                    .value
-                    .workspace
-                    .slice(string_buf.bytes.as_slice())
+                let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
+                // SAFETY: tag == Workspace for ids in [1, workspace_pkgs_end).
+                unsafe { workspace_res.value.workspace }.slice(string_bytes!(lockfile))
             };
 
             let Some(importer_versions) = importer_dep_res_versions.get(workspace_path) else {
@@ -561,26 +621,27 @@ pub fn migrate_pnpm_lockfile<'a>(
             'next_dep: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
 
-                let dep = &lockfile.buffers.dependencies[dep_id as usize];
+                let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
                 if dep.behavior.is_workspace() {
                     continue;
                 }
 
                 match dep.version.tag {
-                    dependency::Version::Tag::Folder | dependency::Version::Tag::Workspace => {
+                    dependency::VersionTag::Folder | dependency::VersionTag::Workspace => {
                         let Some(version_str) =
-                            importer_versions.get(dep.name.slice(string_buf.bytes.as_slice()))
+                            importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
                         else {
                             return Err(invalid_pnpm_lockfile());
                         };
                         let version_without_suffix = remove_suffix(version_str);
 
-                        if let Some(link_path) =
-                            strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
-                        {
+                        if let Some(link_path) = strings::without_prefix_if_possible_comptime(
+                            version_without_suffix,
+                            b"link:",
+                        ) {
                             // create a link package for the workspace dependency only if it doesn't already exist
-                            if dep.version.tag == dependency::Version::Tag::Workspace {
+                            if dep.version.tag == dependency::VersionTag::Workspace {
                                 let mut link_path_buf =
                                     bun_paths::AutoAbsPath::init_top_level_dir();
                                 link_path_buf.append(workspace_path);
@@ -590,8 +651,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                                     let mut workspace_path_buf =
                                         bun_paths::AutoAbsPath::init_top_level_dir();
                                     workspace_path_buf.append(
-                                        existing_workspace_path
-                                            .slice(string_buf.bytes.as_slice()),
+                                        existing_workspace_path.slice(string_bytes!(lockfile)),
                                     );
 
                                     if strings::eql_long(
@@ -612,14 +672,12 @@ pub fn migrate_pnpm_lockfile<'a>(
                                 name: dep.name,
                                 name_hash: dep.name_hash,
                                 resolution: Resolution::init_symlink(
-                                    string_buf.append(link_path)?,
+                                    sbuf!(lockfile).append(link_path)?,
                                 ),
                                 ..Default::default()
                             };
-                            // TODO(port): Resolution::init(.{ .symlink = ... }) — verify constructor
 
                             let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
-
                             abs_link_path.join(&[workspace_path, link_path]);
 
                             let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
@@ -629,26 +687,23 @@ pub fn migrate_pnpm_lockfile<'a>(
                             }
 
                             *pkg_entry.value_ptr = lockfile
-                                .append_package_dedupe(&mut pkg, string_buf.bytes.as_slice())?;
+                                .append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
                         }
                     }
-                    dependency::Version::Tag::Symlink => {
+                    dependency::VersionTag::Symlink => {
+                        // SAFETY: tag == Symlink → `value.symlink` active.
                         if !strings::is_npm_package_name(
-                            dep.version
-                                .value
-                                .symlink
-                                .slice(string_buf.bytes.as_slice()),
+                            unsafe { dep.version.value.symlink }
+                                .slice(string_bytes!(lockfile)),
                         ) {
                             log.add_warning_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
                                     "relative link dependency not supported: {}@{}\n",
+                                    bstr::BStr::new(dep.name.slice(string_bytes!(lockfile))),
                                     bstr::BStr::new(
-                                        dep.name.slice(string_buf.bytes.as_slice())
-                                    ),
-                                    bstr::BStr::new(
-                                        dep.version.literal.slice(string_buf.bytes.as_slice())
+                                        dep.version.literal.slice(string_bytes!(lockfile))
                                     ),
                                 ),
                             )?;
@@ -663,6 +718,11 @@ pub fn migrate_pnpm_lockfile<'a>(
         struct SnapshotEntry {
             obj: Expr,
         }
+        impl Default for SnapshotEntry {
+            fn default() -> Self {
+                Self { obj: Expr::empty() }
+            }
+        }
         let mut snapshots: StringArrayHashMap<SnapshotEntry> = StringArrayHashMap::new();
 
         if let Some(packages_obj) = root.get_object(b"packages") {
@@ -675,11 +735,11 @@ pub fn migrate_pnpm_lockfile<'a>(
                 return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
             };
 
-            for snapshot_prop in snapshots_obj.data.as_e_object().properties.slice() {
+            for snapshot_prop in e_object(&snapshots_obj).properties.slice() {
                 let key = snapshot_prop.key.as_ref().unwrap();
                 let value = snapshot_prop.value.as_ref().unwrap();
 
-                let Some(key_str) = key.as_string() else {
+                let Some(key_str) = as_string(key) else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
@@ -710,12 +770,12 @@ pub fn migrate_pnpm_lockfile<'a>(
                     };
 
                     let Ok((_, res_str)) =
-                        Dependency::split_name_and_version(key_str_without_suffix)
+                        dependency::split_name_and_version(key_str_without_suffix)
                     else {
                         return Err(invalid_pnpm_lockfile());
                     };
 
-                    found_patches.put(patch.value.dep_name.clone(), Box::from(res_str))?;
+                    found_patches.put(&patch.value.dep_name, Box::from(res_str))?;
 
                     patch_join_buf.clear();
                     write!(
@@ -726,7 +786,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     )
                     .map_err(|_| AllocError)?;
 
-                    let patch_hash = String::Builder::string_hash(&patch_join_buf);
+                    let patch_hash = semver::string::Builder::string_hash(&patch_join_buf);
                     lockfile.patched_dependencies.put(
                         patch_hash,
                         crate::lockfile_real::PatchedDep {
@@ -741,14 +801,14 @@ pub fn migrate_pnpm_lockfile<'a>(
                     continue;
                 }
 
-                *entry.value_ptr = SnapshotEntry { obj: value.clone() };
+                *entry.value_ptr = SnapshotEntry { obj: *value };
             }
 
-            for packages_prop in packages_obj.data.as_e_object().properties.slice() {
+            for packages_prop in e_object(&packages_obj).properties.slice() {
                 let key = packages_prop.key.as_ref().unwrap();
                 let package_obj = packages_prop.value.as_ref().unwrap();
 
-                let Some(key_str) = key.as_string() else {
+                let Some(key_str) = as_string(key) else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
@@ -767,27 +827,30 @@ pub fn migrate_pnpm_lockfile<'a>(
                     )?;
                     return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
                 };
+                let snapshot_obj = snapshot.obj;
 
-                let Ok((name_str, res_str)) = Dependency::split_name_and_version(key_str) else {
+                let Ok((name_str, res_str)) = dependency::split_name_and_version(key_str) else {
                     return Err(invalid_pnpm_lockfile());
                 };
 
-                let name_hash = String::Builder::string_hash(name_str);
-                let name = string_buf.append_with_hash(name_str, name_hash)?;
+                let name_hash = semver::string::Builder::string_hash(name_str);
+                let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
-                let mut res = Resolution::from_pnpm_lockfile(res_str, &mut string_buf)?;
+                let mut res = Resolution::from_pnpm_lockfile(res_str, &mut sbuf!(lockfile))?;
 
-                if res.tag == Resolution::Tag::Npm {
+                if res.tag == resolution::Tag::Npm {
                     let scope = manager.scope_for_package_name(name_str);
-                    let url = ExtractTarball::build_url(
+                    let url = crate::extract_tarball::build_url(
                         scope.url.href,
-                        strings::StringOrTinyString::init(
-                            name.slice(string_buf.bytes.as_slice()),
+                        &strings::StringOrTinyString::init(
+                            name.slice(string_bytes!(lockfile)),
                         ),
-                        res.value.npm.version,
-                        string_buf.bytes.as_slice(),
+                        // SAFETY: tag == Npm → `value.npm` active.
+                        unsafe { res.value.npm }.version,
+                        string_bytes!(lockfile),
                     )?;
-                    res.value.npm.url = string_buf.append(&url)?;
+                    // SAFETY: tag == Npm.
+                    unsafe { &mut res.value.npm }.url = sbuf!(lockfile).append(url)?;
                 }
 
                 let mut pkg = lockfile::Package {
@@ -802,7 +865,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     }
 
                     if let Some(integrity_expr) = res_expr.get(b"integrity") {
-                        let Some(integrity_str) = integrity_expr.as_string() else {
+                        let Some(integrity_str) = as_string(&integrity_expr) else {
                             return Err(invalid_pnpm_lockfile());
                         };
 
@@ -811,29 +874,25 @@ pub fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if let Some(os_expr) = package_obj.get(b"os") {
-                    pkg.meta.os = Negatable::<npm::OperatingSystem>::from_json(os_expr)?;
+                    pkg.meta.os = negatable_from_json::<npm::OperatingSystem>(&os_expr);
                 }
                 if let Some(cpu_expr) = package_obj.get(b"cpu") {
-                    pkg.meta.arch = Negatable::<npm::Architecture>::from_json(cpu_expr)?;
+                    pkg.meta.arch = negatable_from_json::<npm::Architecture>(&cpu_expr);
                 }
                 // TODO: libc
-                // if let Some(libc_expr) = package_obj.get(b"libc") {
-                //     pkg.meta.libc = Negatable::<npm::Libc>::from_json(libc_expr)?;
-                // }
 
                 let (off, len) = parse_append_package_dependencies(
                     lockfile,
                     package_obj,
-                    &snapshot.obj,
-                    &mut string_buf,
+                    &snapshot_obj,
                     log,
                 )?;
 
-                pkg.dependencies = lockfile::DependencySlice { off, len };
-                pkg.resolutions = lockfile::DependencySlice { off, len };
+                pkg.dependencies = ExternalSlice::new(off, len);
+                pkg.resolutions = ExternalSlice::new(off, len);
                 pkg.resolution = res.copy();
 
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_buf.bytes.as_slice())?;
+                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
 
                 let entry = pkg_map.get_or_put(key_str)?;
                 if entry.found_existing {
@@ -852,30 +911,17 @@ pub fn migrate_pnpm_lockfile<'a>(
         );
     };
 
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-
     let mut res_buf: Vec<u8> = Vec::new();
 
+    let dep_len = lockfile.buffers.dependencies.len();
     lockfile
         .buffers
         .resolutions
-        .reserve_exact(
-            lockfile
-                .buffers
-                .dependencies
-                .len()
-                .saturating_sub(lockfile.buffers.resolutions.len()),
-        );
+        .reserve_exact(dep_len.saturating_sub(lockfile.buffers.resolutions.len()));
     lockfile
         .buffers
         .resolutions
-        .resize(lockfile.buffers.dependencies.len(), INVALID_PACKAGE_ID);
-    // PORT NOTE: Zig did ensureTotalCapacityPrecise + expandToCapacity + @memset; resize covers all three.
-
-    let pkgs = lockfile.packages.slice();
-    let pkg_deps = pkgs.items_dependencies();
-    let _pkg_names = pkgs.items_name();
-    let pkg_resolutions = pkgs.items_resolution();
+        .resize(dep_len, INVALID_PACKAGE_ID);
 
     {
         let Some(importer_versions) = importer_dep_res_versions.get(b".") else {
@@ -883,13 +929,16 @@ pub fn migrate_pnpm_lockfile<'a>(
         };
 
         // resolve root dependencies first
-        for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
+        let root_deps = lockfile.packages.items_dependencies()[0];
+        for _dep_id in root_deps.begin()..root_deps.end() {
             let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-            let dep = &lockfile.buffers.dependencies[dep_id as usize];
+            let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
+            let string_buf = string_bytes!(lockfile);
 
             // implicit workspace dependencies
             if dep.behavior.is_workspace() {
-                let workspace_path = dep.version.value.workspace.slice(string_buf);
+                // SAFETY: tag == Workspace.
+                let workspace_path = unsafe { dep.version.value.workspace }.slice(string_buf);
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 path_buf.join(&[workspace_path]);
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
@@ -914,7 +963,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = Dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
@@ -948,17 +997,19 @@ pub fn migrate_pnpm_lockfile<'a>(
     for _pkg_id in workspace_pkgs_off..workspace_pkgs_end {
         let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
 
-        let workspace_res = &pkg_resolutions[pkg_id as usize];
-        let workspace_path = workspace_res.value.workspace.slice(string_buf);
+        let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
+        // SAFETY: tag == Workspace for ids in [workspace_pkgs_off, workspace_pkgs_end).
+        let workspace_path = unsafe { workspace_res.value.workspace }.slice(string_bytes!(lockfile));
 
         let Some(importer_versions) = importer_dep_res_versions.get(workspace_path) else {
             return Err(invalid_pnpm_lockfile());
         };
 
-        let deps = pkg_deps[pkg_id as usize];
+        let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
             let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-            let dep = &lockfile.buffers.dependencies[dep_id as usize];
+            let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
+            let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
             else {
@@ -976,7 +1027,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = Dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
@@ -1010,21 +1061,22 @@ pub fn migrate_pnpm_lockfile<'a>(
     for _pkg_id in workspace_pkgs_end..lockfile.packages.len() {
         let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
 
-        let deps = pkg_deps[pkg_id as usize];
+        let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
             let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-            let dep = &lockfile.buffers.dependencies[dep_id as usize];
+            let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
+            let string_buf = string_bytes!(lockfile);
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
             if strings::has_prefix(version_maybe_alias, b"npm:") {
                 version_maybe_alias = &version_maybe_alias[b"npm:".len()..];
             }
-            let (version, has_alias) = Dependency::split_version_and_maybe_name(version_maybe_alias);
+            let (version, has_alias) = dependency::split_version_and_maybe_name(version_maybe_alias);
             let version_without_suffix = remove_suffix(version);
 
             match dep.version.tag {
-                dependency::Version::Tag::Folder
-                | dependency::Version::Tag::Symlink
-                | dependency::Version::Tag::Workspace => {
+                dependency::VersionTag::Folder
+                | dependency::VersionTag::Symlink
+                | dependency::VersionTag::Workspace => {
                     let maybe_symlink_or_folder_or_workspace_path =
                         strings::without_prefix(version_without_suffix, b"link:");
                     let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
@@ -1060,13 +1112,13 @@ pub fn migrate_pnpm_lockfile<'a>(
 
     update_package_json_after_migration(manager, log, dir, &found_patches)?;
 
-    Ok(LoadResult::Ok {
-        lockfile, // TODO(port): LoadResult.ok stores *Lockfile in Zig — verify ownership in Phase B
+    Ok(LoadResult::Ok(LoadResultOk {
+        lockfile,
         loaded_from_binary_lockfile: false,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,
-    })
+    }))
 }
 
 fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
@@ -1121,7 +1173,6 @@ fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
     snapshot_obj: &Expr,
-    string_buf: &mut semver::string::Buf<'_>,
     log: &mut logger::Log,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     let mut version_buf: Vec<u8> = Vec::new();
@@ -1132,8 +1183,6 @@ fn parse_append_package_dependencies(
         (b"devDependencies", dependency::Behavior::DEV),
         (b"optionalDependencies", dependency::Behavior::OPTIONAL),
     ];
-    // TODO(port): Dependency.Behavior is a packed struct in Zig with bool fields;
-    // assuming associated consts DEV/OPTIONAL/PROD/PEER/WORKSPACE on the Rust port.
 
     for (group_name, group_behavior) in SNAPSHOT_DEPENDENCY_GROUPS {
         if let Some(deps) = snapshot_obj.get(group_name) {
@@ -1141,25 +1190,25 @@ fn parse_append_package_dependencies(
                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
             }
 
-            for prop in deps.data.as_e_object().properties.slice() {
+            for prop in e_object(&deps).properties.slice() {
                 let key = prop.key.as_ref().unwrap();
                 let value = prop.value.as_ref().unwrap();
 
-                let Some(name_str) = key.as_string() else {
+                let Some(name_str) = as_string(key) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
-                let name_hash = String::Builder::string_hash(name_str);
-                let name = string_buf.append_external_with_hash(name_str, name_hash)?;
+                let name_hash = semver::string::Builder::string_hash(name_str);
+                let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
-                let Some(version_str) = value.as_string() else {
+                let Some(version_str) = as_string(value) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
                 let version_without_suffix = remove_suffix(version_str);
 
-                let version = string_buf.append(version_without_suffix)?;
-                let version_sliced = version.sliced(string_buf.bytes.as_slice());
+                let version = sbuf!(lockfile).append(version_without_suffix)?;
+                let version_sliced = version.sliced(string_bytes!(lockfile));
 
                 let behavior: dependency::Behavior = group_behavior;
 
@@ -1191,30 +1240,30 @@ fn parse_append_package_dependencies(
         }
 
         // for each dependency first look it up in peerDependencies in package_obj
-        'next_prod_dep: for prop in deps.data.as_e_object().properties.slice() {
+        'next_prod_dep: for prop in e_object(&deps).properties.slice() {
             let key = prop.key.as_ref().unwrap();
             let value = prop.value.as_ref().unwrap();
 
-            let Some(name_str) = key.as_string() else {
+            let Some(name_str) = as_string(key) else {
                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
             };
 
-            let name_hash = String::Builder::string_hash(name_str);
-            let name = string_buf.append_external_with_hash(name_str, name_hash)?;
+            let name_hash = semver::string::Builder::string_hash(name_str);
+            let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
-            let Some(version_str) = value.as_string() else {
+            let Some(version_str) = as_string(value) else {
                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
             };
 
             let version_without_suffix = remove_suffix(version_str);
 
             // pnpm-lock.yaml does not prefix aliases with npm: in snapshots
-            let (_, has_alias) = Dependency::split_version_and_maybe_name(version_without_suffix);
+            let (_, has_alias) = dependency::split_version_and_maybe_name(version_without_suffix);
 
             let mut alias: Option<ExternalString> = None;
             let version_sliced = 'version: {
                 if let Some(alias_str) = has_alias {
-                    alias = Some(string_buf.append_external(alias_str)?);
+                    alias = Some(sbuf!(lockfile).append_external(alias_str)?);
                     version_buf.clear();
                     write!(
                         &mut version_buf,
@@ -1222,14 +1271,12 @@ fn parse_append_package_dependencies(
                         bstr::BStr::new(version_without_suffix)
                     )
                     .map_err(|_| AllocError)?;
-                    let version = string_buf.append(&version_buf)?;
-                    let version_sliced = version.sliced(string_buf.bytes.as_slice());
-                    break 'version version_sliced;
+                    let version = sbuf!(lockfile).append(&version_buf)?;
+                    break 'version version.sliced(string_bytes!(lockfile));
                 }
 
-                let version = string_buf.append(version_without_suffix)?;
-                let version_sliced = version.sliced(string_buf.bytes.as_slice());
-                break 'version version_sliced;
+                let version = sbuf!(lockfile).append(version_without_suffix)?;
+                break 'version version.sliced(string_bytes!(lockfile));
             };
 
             if let Some(peers) = package_obj.get(b"peerDependencies") {
@@ -1237,19 +1284,10 @@ fn parse_append_package_dependencies(
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 }
 
-                for peer_prop in peers.data.as_e_object().properties.slice() {
-                    let Some(peer_name_str) = peer_prop.key.as_ref().unwrap().as_string() else {
+                for peer_prop in e_object(&peers).properties.slice() {
+                    let Some(peer_name_str) = as_string(peer_prop.key.as_ref().unwrap()) else {
                         return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                     };
-
-                    // let Some(peer_version_str) = peer_prop.value.as_ref().unwrap().as_string() else {
-                    //     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
-                    // };
-                    //
-                    // let peer_version_without_suffix = remove_suffix(peer_version_str);
-                    //
-                    // let peer_version = string_buf.append(peer_version_without_suffix)?;
-                    // let peer_version_sliced = peer_version.sliced(string_buf.bytes.as_slice());
 
                     let mut behavior = dependency::Behavior::PEER;
 
@@ -1259,9 +1297,9 @@ fn parse_append_package_dependencies(
                                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                             }
 
-                            for peer_meta_prop in peers_meta.data.as_e_object().properties.slice() {
+                            for peer_meta_prop in e_object(&peers_meta).properties.slice() {
                                 let Some(peer_meta_name_str) =
-                                    peer_meta_prop.key.as_ref().unwrap().as_string()
+                                    as_string(peer_meta_prop.key.as_ref().unwrap())
                                 else {
                                     return Err(
                                         ParseAppendDependenciesError::InvalidPnpmLockfile,
@@ -1277,7 +1315,8 @@ fn parse_append_package_dependencies(
                                     }
 
                                     behavior.set_optional(
-                                        meta_obj.get_boolean(b"optional").unwrap_or(false),
+                                        Expr::get_boolean(meta_obj, b"optional")
+                                            .unwrap_or(false),
                                     );
                                     break;
                                 }
@@ -1334,7 +1373,7 @@ fn parse_append_package_dependencies(
     let end = lockfile.buffers.dependencies.len();
 
     {
-        let bytes = string_buf.bytes.as_slice();
+        let bytes = string_bytes!(lockfile);
         lockfile.buffers.dependencies[off..].sort_by(|a, b| {
             if Dependency::is_less_than(bytes, a, b) {
                 core::cmp::Ordering::Less
@@ -1342,7 +1381,6 @@ fn parse_append_package_dependencies(
                 core::cmp::Ordering::Greater
             }
         });
-        // TODO(port): std.sort.pdq — verify Dependency::is_less_than provides a strict weak order
     }
 
     Ok((
@@ -1355,7 +1393,6 @@ fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     pkg_expr: &Expr,
-    string_buf: &mut semver::string::Buf<'_>,
     log: &mut logger::Log,
     is_root: bool,
     importers_obj: &Expr,
@@ -1375,16 +1412,16 @@ fn parse_append_importer_dependencies(
                 return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
             }
 
-            for prop in deps.data.as_e_object().properties.slice() {
+            for prop in e_object(&deps).properties.slice() {
                 let key = prop.key.as_ref().unwrap();
                 let value = prop.value.as_ref().unwrap();
 
-                let Some(name_str) = key.as_string() else {
+                let Some(name_str) = as_string(key) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
-                let name_hash = String::Builder::string_hash(name_str);
-                let name = string_buf.append_external_with_hash(name_str, name_hash)?;
+                let name_hash = semver::string::Builder::string_hash(name_str);
+                let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
                 let Some(specifier_expr) = value.get(b"specifier") else {
                     log.add_error_fmt(
@@ -1412,7 +1449,7 @@ fn parse_append_importer_dependencies(
                     );
                 };
 
-                let Some(version_str) = version_expr.as_string_cloned()? else {
+                let Some(version_str) = as_string(&version_expr) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
@@ -1420,17 +1457,22 @@ fn parse_append_importer_dependencies(
                 if entry.found_existing {
                     continue;
                 }
-                *entry.value_ptr = Box::from(remove_suffix(&version_str));
+                *entry.value_ptr = Box::from(remove_suffix(version_str));
 
-                let Some(specifier_str) = specifier_expr.as_string() else {
+                let Some(specifier_str) = as_string(&specifier_expr) else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
                 if strings::has_prefix(specifier_str, b"catalog:") {
                     let catalog_group_name_str = &specifier_str[b"catalog:".len()..];
-                    let catalog_group_name = string_buf.append(catalog_group_name_str)?;
-                    let Some(mut dep) = lockfile.catalogs.get(lockfile, catalog_group_name, name.value)
-                    else {
+                    let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
+                    // PORT NOTE: reshaped for borrowck — `CatalogMap::get` needs
+                    // both `&mut self.catalogs` and `&self`; temporarily move
+                    // catalogs out so the disjoint fields can be borrowed.
+                    let mut catalogs = core::mem::take(&mut lockfile.catalogs);
+                    let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
+                    lockfile.catalogs = catalogs;
+                    let Some(mut dep) = dep_result else {
                         // catalog is missing an entry in the "catalogs" object in the lockfile
                         log.add_error_fmt(
                             None,
@@ -1450,15 +1492,14 @@ fn parse_append_importer_dependencies(
                     continue;
                 }
 
-                let specifier = string_buf.append(specifier_str)?;
-                let specifier_sliced = specifier.sliced(string_buf.bytes.as_slice());
+                let specifier = sbuf!(lockfile).append(specifier_str)?;
+                let specifier_sliced = specifier.sliced(string_bytes!(lockfile));
 
                 let behavior: dependency::Behavior = group_behavior;
 
                 // TODO: find peerDependencies from package.json
-                if group_behavior.prod() {
-                    // PERF(port): was comptime branch — profile in Phase B
-                    //
+                if group_behavior.is_prod() {
+                    // PERF(port): was comptime branch
                 }
 
                 let dep = Dependency {
@@ -1484,17 +1525,17 @@ fn parse_append_importer_dependencies(
     }
 
     if is_root {
-        'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for prop in importers_obj.data.as_e_object().properties.slice() {
+        let workspace_paths_snapshot: Vec<String> =
+            lockfile.workspace_paths.values().to_vec();
+        'workspaces: for workspace_path in &workspace_paths_snapshot {
+            for prop in e_object(importers_obj).properties.slice() {
                 let key = prop.key.as_ref().unwrap();
-                let path = key.as_string().unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_buf.bytes.as_slice()), true)
-                {
+                let path = as_string(key).unwrap();
+                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
                     continue;
                 }
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-
                 path_buf.append(path);
                 path_buf.append(b"package.json");
 
@@ -1507,19 +1548,19 @@ fn parse_append_importer_dependencies(
                     Err(_) => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
                 };
 
-                let Some((name, _)) = workspace_pkg_json.root.get_string(b"name")? else {
+                let Some((name, _)) = get_string(&workspace_pkg_json.root, b"name") else {
                     return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
                 };
 
-                let name_hash = String::Builder::string_hash(name);
+                let name_hash = semver::string::Builder::string_hash(name);
                 let dep = Dependency {
-                    name: string_buf.append_with_hash(name, name_hash)?,
+                    name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
                     name_hash,
                     behavior: dependency::Behavior::WORKSPACE,
                     version: dependency::Version {
-                        tag: dependency::Version::Tag::Workspace,
-                        value: dependency::Version::Value {
-                            workspace: string_buf.append(path)?,
+                        tag: dependency::VersionTag::Workspace,
+                        value: dependency::Value {
+                            workspace: sbuf!(lockfile).append(path)?,
                         },
                         ..Default::default()
                     },
@@ -1534,7 +1575,7 @@ fn parse_append_importer_dependencies(
     let end = lockfile.buffers.dependencies.len();
 
     {
-        let bytes = string_buf.bytes.as_slice();
+        let bytes = string_bytes!(lockfile);
         lockfile.buffers.dependencies[off..].sort_by(|a, b| {
             if Dependency::is_less_than(bytes, a, b) {
                 core::cmp::Ordering::Less
@@ -1542,7 +1583,6 @@ fn parse_append_importer_dependencies(
                 core::cmp::Ordering::Greater
             }
         });
-        // TODO(port): std.sort.pdq — verify comparator semantics
     }
 
     Ok((
@@ -1558,10 +1598,10 @@ fn update_package_json_after_migration(
     dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
-    let mut pkg_json_path = bun_paths::AbsPath::init_top_level_dir();
-    // TODO(port): bun.AbsPath(.{}) — verify generic params on Rust port
-
+    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     pkg_json_path.append(b"package.json");
+
+    let bump = bun_alloc::Arena::new();
 
     let root_pkg_json = match manager
         .workspace_package_json_cache
@@ -1579,8 +1619,8 @@ fn update_package_json_after_migration(
         Err(_) => return Ok(()),
     };
 
-    let mut json = root_pkg_json.root.clone();
-    if !json.data.is_e_object() {
+    let mut json = root_pkg_json.root;
+    if !json.is_object() {
         return Ok(());
     }
 
@@ -1588,26 +1628,24 @@ fn update_package_json_after_migration(
     let mut moved_overrides = false;
     let mut moved_patched_deps = false;
 
-    if let Some(pnpm_prop) = json.as_property(b"pnpm") {
-        if pnpm_prop.expr.data.is_e_object() {
-            let pnpm_obj = pnpm_prop.expr.data.as_e_object_mut();
+    if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
+        if pnpm_prop.expr.is_object() {
+            let pnpm_obj = e_object_mut(&mut pnpm_prop.expr);
 
             if let Some(overrides_field) = pnpm_obj.get(b"overrides") {
-                if overrides_field.data.is_e_object() {
-                    if let Some(existing_prop) = json.as_property(b"overrides") {
-                        if existing_prop.expr.data.is_e_object() {
-                            let existing_overrides = existing_prop.expr.data.as_e_object_mut();
-                            for prop in overrides_field.data.as_e_object().properties.slice() {
-                                let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+                if overrides_field.is_object() {
+                    if let Some(mut existing_prop) = json.as_property(b"overrides") {
+                        if existing_prop.expr.is_object() {
+                            let existing_overrides = e_object_mut(&mut existing_prop.expr);
+                            for prop in e_object(&overrides_field).properties.slice() {
+                                let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                                     continue;
                                 };
-                                existing_overrides.put(key, prop.value.clone().unwrap())?;
+                                existing_overrides.put(&bump, key, prop.value.unwrap())?;
                             }
                         }
                     } else {
-                        json.data
-                            .as_e_object_mut()
-                            .put(b"overrides", overrides_field)?;
+                        e_object_mut(&mut json).put(&bump, b"overrides", overrides_field)?;
                     }
                     moved_overrides = true;
                     needs_update = true;
@@ -1615,21 +1653,19 @@ fn update_package_json_after_migration(
             }
 
             if let Some(patched_field) = pnpm_obj.get(b"patchedDependencies") {
-                if patched_field.data.is_e_object() {
-                    if let Some(existing_prop) = json.as_property(b"patchedDependencies") {
-                        if existing_prop.expr.data.is_e_object() {
-                            let existing_patches = existing_prop.expr.data.as_e_object_mut();
-                            for prop in patched_field.data.as_e_object().properties.slice() {
-                                let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+                if patched_field.is_object() {
+                    if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
+                        if existing_prop.expr.is_object() {
+                            let existing_patches = e_object_mut(&mut existing_prop.expr);
+                            for prop in e_object(&patched_field).properties.slice() {
+                                let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                                     continue;
                                 };
-                                existing_patches.put(key, prop.value.clone().unwrap())?;
+                                existing_patches.put(&bump, key, prop.value.unwrap())?;
                             }
                         }
                     } else {
-                        json.data
-                            .as_e_object_mut()
-                            .put(b"patchedDependencies", patched_field)?;
+                        e_object_mut(&mut json).put(&bump, b"patchedDependencies", patched_field)?;
                     }
                     moved_patched_deps = true;
                     needs_update = true;
@@ -1639,7 +1675,7 @@ fn update_package_json_after_migration(
             if moved_overrides || moved_patched_deps {
                 let mut remaining_count: usize = 0;
                 for prop in pnpm_obj.properties.slice() {
-                    let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+                    let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                         remaining_count += 1;
                         continue;
                     };
@@ -1654,8 +1690,8 @@ fn update_package_json_after_migration(
 
                 if remaining_count == 0 {
                     let mut new_root_count: usize = 0;
-                    for prop in json.data.as_e_object().properties.slice() {
-                        let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+                    for prop in e_object(&json).properties.slice() {
+                        let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                             new_root_count += 1;
                             continue;
                         };
@@ -1664,28 +1700,23 @@ fn update_package_json_after_migration(
                         }
                     }
 
-                    let mut new_root_props =
-                        js_ast::G::Property::List::init_capacity(new_root_count)?;
-                    for prop in json.data.as_e_object().properties.slice() {
-                        let Some(key) = prop.key.as_ref().unwrap().as_string() else {
-                            new_root_props.push(prop.clone());
-                            // PERF(port): was assume_capacity
+                    let mut new_root_props = G::PropertyList::init_capacity(new_root_count)?;
+                    for prop in e_object(&json).properties.slice() {
+                        let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
+                            new_root_props.append(prop.clone())?;
                             continue;
                         };
                         if key != b"pnpm" {
-                            new_root_props.push(prop.clone());
-                            // PERF(port): was assume_capacity
+                            new_root_props.append(prop.clone())?;
                         }
                     }
 
-                    json.data.as_e_object_mut().properties = new_root_props;
+                    e_object_mut(&mut json).properties = new_root_props;
                 } else {
-                    let mut new_pnpm_props =
-                        js_ast::G::Property::List::init_capacity(remaining_count)?;
+                    let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count)?;
                     for prop in pnpm_obj.properties.slice() {
-                        let Some(key) = prop.key.as_ref().unwrap().as_string() else {
-                            new_pnpm_props.push(prop.clone());
-                            // PERF(port): was assume_capacity
+                        let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
+                            new_pnpm_props.append(prop.clone())?;
                             continue;
                         };
                         if moved_overrides && key == b"overrides" {
@@ -1694,8 +1725,7 @@ fn update_package_json_after_migration(
                         if moved_patched_deps && key == b"patchedDependencies" {
                             continue;
                         }
-                        new_pnpm_props.push(prop.clone());
-                        // PERF(port): was assume_capacity
+                        new_pnpm_props.append(prop.clone())?;
                     }
 
                     pnpm_obj.properties = new_pnpm_props;
@@ -1712,44 +1742,44 @@ fn update_package_json_after_migration(
     let mut workspace_patched_deps_obj: Option<Expr> = None;
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
-        sys::Result::Ok(contents) => 'read_pnpm_workspace_yaml: {
-            let yaml_source = logger::Source::init_path_string(b"pnpm-workspace.yaml", &contents);
-            // TODO(port): YAML::parse needs an arena in interchange crate
+        Ok(contents) => 'read_pnpm_workspace_yaml: {
+            let yaml_source =
+                logger::Source::init_path_string(b"pnpm-workspace.yaml", contents.as_slice());
             let arena = bun_alloc::Arena::new();
-            let Ok(root) = bun_interchange::yaml::YAML::parse(&yaml_source, log, &arena) else {
+            let Ok(ws_root) = bun_interchange::yaml::YAML::parse(&yaml_source, log, &arena) else {
                 break 'read_pnpm_workspace_yaml;
             };
+            let ws_root: Expr = ws_root.into();
 
-            if let Some(packages_expr) = root.get(b"packages") {
-                if let Some(mut packages) = packages_expr.as_array() {
+            if let Some(packages_expr) = ws_root.get(b"packages") {
+                if let Some(packages) = packages_expr.as_array() {
                     let mut paths: Vec<Box<[u8]>> = Vec::new();
-                    while let Some(package_path) = packages.next() {
-                        if let Some(package_path_str) = package_path.as_string() {
+                    for package_path in packages.array.items.slice() {
+                        if let Some(package_path_str) = as_string(package_path) {
                             paths.push(Box::from(package_path_str));
                         }
                     }
-
                     workspace_paths = Some(paths);
                 }
             }
 
-            if let Some(catalog_expr) = root.get_object(b"catalog") {
+            if let Some(catalog_expr) = ws_root.get_object(b"catalog") {
                 catalog_obj = Some(catalog_expr);
             }
 
-            if let Some(catalogs_expr) = root.get_object(b"catalogs") {
+            if let Some(catalogs_expr) = ws_root.get_object(b"catalogs") {
                 catalogs_obj = Some(catalogs_expr);
             }
 
-            if let Some(overrides_expr) = root.get_object(b"overrides") {
+            if let Some(overrides_expr) = ws_root.get_object(b"overrides") {
                 workspace_overrides_obj = Some(overrides_expr);
             }
 
-            if let Some(patched_deps_expr) = root.get_object(b"patchedDependencies") {
+            if let Some(patched_deps_expr) = ws_root.get_object(b"patchedDependencies") {
                 workspace_patched_deps_obj = Some(patched_deps_expr);
             }
         }
-        sys::Result::Err(_) => {}
+        Err(_) => {}
     }
 
     let has_workspace_data =
@@ -1759,89 +1789,72 @@ fn update_package_json_after_migration(
         let use_array_format =
             workspace_paths.is_some() && catalog_obj.is_none() && catalogs_obj.is_none();
 
-        let existing_workspaces = json.data.as_e_object().get(b"workspaces");
+        let existing_workspaces = e_object(&json).get(b"workspaces");
         let is_object_workspaces = existing_workspaces
             .as_ref()
-            .map(|e| e.data.is_e_object())
+            .map(|e| e.is_object())
             .unwrap_or(false);
 
         if use_array_format {
             let paths = workspace_paths.as_ref().unwrap();
             let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
             for path in paths {
-                items.push(Expr::init(
-                    E::String {
-                        data: path.clone(),
-                        ..Default::default()
-                    },
+                items.append(Expr::init(
+                    E::EString::init(path),
                     logger::Loc::EMPTY,
-                ));
-                // PERF(port): was assume_capacity
+                ))?;
             }
             let array = Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
-            json.data.as_e_object_mut().put(b"workspaces", array)?;
+            e_object_mut(&mut json).put(&bump, b"workspaces", array)?;
             needs_update = true;
         } else if is_object_workspaces {
-            let ws_obj = existing_workspaces.unwrap().data.as_e_object_mut();
-            // TODO(port): borrowck — existing_workspaces borrow vs json mut borrow
+            let mut existing_workspaces = existing_workspaces.unwrap();
+            let ws_obj = e_object_mut(&mut existing_workspaces);
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
                     for path in paths {
-                        items.push(Expr::init(
-                            E::String {
-                                data: path.clone(),
-                                ..Default::default()
-                            },
+                        items.append(Expr::init(
+                            E::EString::init(path),
                             logger::Loc::EMPTY,
-                        ));
-                        // PERF(port): was assume_capacity
+                        ))?;
                     }
                     let array =
                         Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
-                    ws_obj.put(b"packages", array)?;
+                    ws_obj.put(&bump, b"packages", array)?;
 
                     needs_update = true;
                 }
             }
 
-            if let Some(catalog) = catalog_obj.clone() {
-                ws_obj.put(b"catalog", catalog)?;
+            if let Some(catalog) = catalog_obj {
+                ws_obj.put(&bump, b"catalog", catalog)?;
                 needs_update = true;
             }
 
-            if let Some(catalogs) = catalogs_obj.clone() {
-                ws_obj.put(b"catalogs", catalogs)?;
+            if let Some(catalogs) = catalogs_obj {
+                ws_obj.put(&bump, b"catalogs", catalogs)?;
                 needs_update = true;
             }
         } else if !use_array_format {
-            let mut ws_props = js_ast::G::Property::List::empty();
+            let mut ws_props = G::PropertyList::default();
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
                     for path in paths {
-                        items.push(Expr::init(
-                            E::String {
-                                data: path.clone(),
-                                ..Default::default()
-                            },
+                        items.append(Expr::init(
+                            E::EString::init(path),
                             logger::Loc::EMPTY,
-                        ));
-                        // PERF(port): was assume_capacity
+                        ))?;
                     }
                     let value =
                         Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
-                    let key = Expr::init(
-                        E::String {
-                            data: Box::from(b"packages" as &[u8]),
-                            ..Default::default()
-                        },
-                        logger::Loc::EMPTY,
-                    );
+                    let key =
+                        Expr::init(E::EString::init(b"packages"), logger::Loc::EMPTY);
 
-                    ws_props.append(js_ast::G::Property {
+                    ws_props.append(G::Property {
                         key: Some(key),
                         value: Some(value),
                         ..Default::default()
@@ -1849,37 +1862,25 @@ fn update_package_json_after_migration(
                 }
             }
 
-            if let Some(catalog) = catalog_obj.clone() {
-                let key = Expr::init(
-                    E::String {
-                        data: Box::from(b"catalog" as &[u8]),
-                        ..Default::default()
-                    },
-                    logger::Loc::EMPTY,
-                );
-                ws_props.append(js_ast::G::Property {
+            if let Some(catalog) = catalog_obj {
+                let key = Expr::init(E::EString::init(b"catalog"), logger::Loc::EMPTY);
+                ws_props.append(G::Property {
                     key: Some(key),
                     value: Some(catalog),
                     ..Default::default()
                 })?;
             }
 
-            if let Some(catalogs) = catalogs_obj.clone() {
-                let key = Expr::init(
-                    E::String {
-                        data: Box::from(b"catalogs" as &[u8]),
-                        ..Default::default()
-                    },
-                    logger::Loc::EMPTY,
-                );
-                ws_props.append(js_ast::G::Property {
+            if let Some(catalogs) = catalogs_obj {
+                let key = Expr::init(E::EString::init(b"catalogs"), logger::Loc::EMPTY);
+                ws_props.append(G::Property {
                     key: Some(key),
                     value: Some(catalogs),
                     ..Default::default()
                 })?;
             }
 
-            if ws_props.len() > 0 {
+            if ws_props.len > 0 {
                 let workspace_obj = Expr::init(
                     E::Object {
                         properties: ws_props,
@@ -1887,7 +1888,7 @@ fn update_package_json_after_migration(
                     },
                     logger::Loc::EMPTY,
                 );
-                json.data.as_e_object_mut().put(b"workspaces", workspace_obj)?;
+                e_object_mut(&mut json).put(&bump, b"workspaces", workspace_obj)?;
                 needs_update = true;
             }
         }
@@ -1895,21 +1896,19 @@ fn update_package_json_after_migration(
 
     // Handle overrides from pnpm-workspace.yaml
     if let Some(ws_overrides) = &workspace_overrides_obj {
-        if ws_overrides.data.is_e_object() {
-            if let Some(existing_prop) = json.as_property(b"overrides") {
-                if existing_prop.expr.data.is_e_object() {
-                    let existing_overrides = existing_prop.expr.data.as_e_object_mut();
-                    for prop in ws_overrides.data.as_e_object().properties.slice() {
-                        let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+        if ws_overrides.is_object() {
+            if let Some(mut existing_prop) = json.as_property(b"overrides") {
+                if existing_prop.expr.is_object() {
+                    let existing_overrides = e_object_mut(&mut existing_prop.expr);
+                    for prop in e_object(ws_overrides).properties.slice() {
+                        let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                             continue;
                         };
-                        existing_overrides.put(key, prop.value.clone().unwrap())?;
+                        existing_overrides.put(&bump, key, prop.value.unwrap())?;
                     }
                 }
             } else {
-                json.data
-                    .as_e_object_mut()
-                    .put(b"overrides", ws_overrides.clone())?;
+                e_object_mut(&mut json).put(&bump, b"overrides", *ws_overrides)?;
             }
             needs_update = true;
         }
@@ -1919,13 +1918,12 @@ fn update_package_json_after_migration(
     if let Some(ws_patched) = &mut workspace_patched_deps_obj {
         let mut join_buf: Vec<u8> = Vec::new();
 
-        if ws_patched.data.is_e_object() {
-            let props_len = ws_patched.data.as_e_object().properties.len();
+        if ws_patched.is_object() {
+            let props_len = e_object(ws_patched).properties.len as usize;
             for prop_i in 0..props_len {
                 // convert keys to expected "name@version" instead of only "name"
-                let prop = &mut ws_patched.data.as_e_object_mut().properties.ptr_mut()[prop_i];
-                // TODO(port): direct .ptr indexing — verify list API in Phase B
-                let Some(key_str) = prop.key.as_ref().unwrap().as_string() else {
+                let prop = &mut e_object_mut(ws_patched).properties.slice_mut()[prop_i];
+                let Some(key_str) = as_string(prop.key.as_ref().unwrap()) else {
                     continue;
                 };
                 let Some(res_str) = patches.get(key_str) else {
@@ -1936,31 +1934,25 @@ fn update_package_json_after_migration(
                     &mut join_buf,
                     "{}@{}",
                     bstr::BStr::new(key_str),
-                    bstr::BStr::new(res_str)
+                    bstr::BStr::new(&**res_str)
                 )
                 .map_err(|_| AllocError)?;
-                prop.key = Some(Expr::init(
-                    E::String {
-                        data: Box::<[u8]>::from(join_buf.as_slice()),
-                        ..Default::default()
-                    },
-                    logger::Loc::EMPTY,
-                ));
+                // Intern into the bump so the slice outlives `join_buf`.
+                let interned: &[u8] = bump.alloc_slice_copy(join_buf.as_slice());
+                prop.key = Some(Expr::init(E::EString::init(interned), logger::Loc::EMPTY));
             }
-            if let Some(existing_prop) = json.as_property(b"patchedDependencies") {
-                if existing_prop.expr.data.is_e_object() {
-                    let existing_patches = existing_prop.expr.data.as_e_object_mut();
-                    for prop in ws_patched.data.as_e_object().properties.slice() {
-                        let Some(key) = prop.key.as_ref().unwrap().as_string() else {
+            if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
+                if existing_prop.expr.is_object() {
+                    let existing_patches = e_object_mut(&mut existing_prop.expr);
+                    for prop in e_object(ws_patched).properties.slice() {
+                        let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
                             continue;
                         };
-                        existing_patches.put(key, prop.value.clone().unwrap())?;
+                        existing_patches.put(&bump, key, prop.value.unwrap())?;
                     }
                 }
             } else {
-                json.data
-                    .as_e_object_mut()
-                    .put(b"patchedDependencies", ws_patched.clone())?;
+                e_object_mut(&mut json).put(&bump, b"patchedDependencies", *ws_patched)?;
             }
             needs_update = true;
         }
@@ -1968,18 +1960,17 @@ fn update_package_json_after_migration(
 
     if needs_update {
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents.is_empty()
-            && root_pkg_json.source.contents[root_pkg_json.source.contents.len() - 1] == b'\n';
+        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
+            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
         let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
         if bun_js_printer::print_json(
             &mut package_json_writer,
-            json,
+            json.into(),
             &root_pkg_json.source,
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,
                 mangled_props: None,
-                ..Default::default()
             },
         )
         .is_err()
@@ -1991,32 +1982,151 @@ fn update_package_json_after_migration(
             return Err(AllocError);
         }
 
-        root_pkg_json.source.contents =
-            Box::<[u8]>::from(package_json_writer.ctx.written_without_trailing_zero());
+        root_pkg_json.source.contents = std::borrow::Cow::Owned(
+            package_json_writer.ctx.written_without_trailing_zero().to_vec(),
+        );
 
         // Write the updated package.json
-        let write_file = match sys::File::openat(
-            dir,
-            b"package.json",
-            sys::O::WRONLY | sys::O::TRUNC,
-            0,
-        )
-        .unwrap_result()
-        {
-            Ok(f) => f,
-            Err(_) => return Ok(()),
-        };
-        // file closes on Drop
-        let _ = write_file.write(&root_pkg_json.source.contents).unwrap_result();
+        let write_file =
+            match sys::File::openat(dir, b"package.json", sys::O::WRONLY | sys::O::TRUNC, 0) {
+                Ok(f) => f,
+                Err(_) => return Ok(()),
+            };
+        let _ = write_file.write_all(root_pkg_json.source.contents());
+        write_file.close();
     }
 
     Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Local helpers bridging T4 (`bun_js_parser::Expr`) → routines that take the
+// T2 `bun_logger::js_ast::Expr` (Bin / Negatable). The bodies match the Zig
+// originals and only touch the EObject/EArray/EString shapes.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn negatable_from_json<T: npm::Field>(expr: &Expr) -> T {
+    let mut this = T::NONE.negatable();
+    match &expr.data {
+        ExprData::EArray(arr) => {
+            for item in arr.items.slice() {
+                if let Some(value) = item.as_utf8_string_literal() {
+                    this.apply(value);
+                }
+            }
+        }
+        ExprData::EString(str) => {
+            this.apply(str.data);
+        }
+        _ => {}
+    }
+    this.combine()
+}
+
+fn bin_parse_append(
+    bin_expr: &Expr,
+    lockfile: &mut Lockfile,
+) -> Result<Bin, AllocError> {
+    use crate::bin::{Tag, Value};
+    use crate::ExternalStringList;
+    match &bin_expr.data {
+        ExprData::EObject(obj) => match obj.properties.len as usize {
+            0 => {}
+            1 => {
+                let Some(bin_name) = as_string(obj.properties.slice()[0].key.as_ref().unwrap())
+                else {
+                    return Ok(Bin::default());
+                };
+                let Some(value) = as_string(obj.properties.slice()[0].value.as_ref().unwrap())
+                else {
+                    return Ok(Bin::default());
+                };
+
+                return Ok(Bin {
+                    tag: Tag::NamedFile,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        named_file: [
+                            sbuf!(lockfile).append(bin_name)?,
+                            sbuf!(lockfile).append(value)?,
+                        ],
+                    },
+                });
+            }
+            _ => {
+                let current_len = lockfile.buffers.extern_strings.len();
+                let num_props: usize = obj.properties.len as usize * 2;
+                lockfile
+                    .buffers
+                    .extern_strings
+                    .reserve_exact(num_props);
+                let mut i: usize = 0;
+                for bin_prop in obj.properties.slice() {
+                    let Some(key_str) = as_string(bin_prop.key.as_ref().unwrap()) else {
+                        return Ok(Bin::default());
+                    };
+                    let Some(value_str) = as_string(bin_prop.value.as_ref().unwrap()) else {
+                        return Ok(Bin::default());
+                    };
+                    let k = sbuf!(lockfile).append_external(key_str)?;
+                    lockfile.buffers.extern_strings.push(k);
+                    i += 1;
+                    let v = sbuf!(lockfile).append_external(value_str)?;
+                    lockfile.buffers.extern_strings.push(v);
+                    i += 1;
+                }
+                debug_assert!(i == num_props);
+                let new = &lockfile.buffers.extern_strings[current_len..current_len + num_props];
+                return Ok(Bin {
+                    tag: Tag::Map,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        map: ExternalStringList::init(
+                            lockfile.buffers.extern_strings.as_slice(),
+                            new,
+                        ),
+                    },
+                });
+            }
+        },
+        ExprData::EString(str_) => {
+            if !str_.data.is_empty() {
+                return Ok(Bin {
+                    tag: Tag::File,
+                    _padding_tag: [0; 3],
+                    value: Value {
+                        file: sbuf!(lockfile).append(str_.data)?,
+                    },
+                });
+            }
+        }
+        _ => {}
+    }
+    Ok(Bin::default())
+}
+
+fn bin_parse_append_from_directories(
+    bin_expr: &Expr,
+    lockfile: &mut Lockfile,
+) -> Result<Bin, AllocError> {
+    use crate::bin::{Tag, Value};
+    if let Some(bin_str) = as_string(bin_expr) {
+        return Ok(Bin {
+            tag: Tag::Dir,
+            _padding_tag: [0; 3],
+            value: Value {
+                dir: sbuf!(lockfile).append(bin_str)?,
+            },
+        });
+    }
+    Ok(Bin::default())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/pnpm.zig (1585 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      Heavy borrowck reshaping needed around Expr/E.Object mut borrows; Dependency.Behavior assumed bitflags consts; AutoAbsPath/Resolution constructors guessed; allocator params dropped per non-AST rules. StringArrayHashMap aliased to ArrayHashMap<Box<[u8]>,V>.
+//   notes:      Heavy borrowck reshaping (sbuf!/string_bytes! macros) to mirror
+//               Zig's free aliasing of `lockfile.stringBuf()`. T2→T4 Expr lift
+//               via `From<logger::js_ast::Expr>` so YAML output and the
+//               package.json cache share one Expr type.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1151,36 +1151,49 @@ fn parse_qualified_rule(
     return parse_nested_block(input, P.QualifiedRuleParser.QualifiedRule, &closure, Closure.parsefn);
 }
 
-fn parse_until_before(
+// The `parse_until_before`, `parse_until_after`, and `parse_nested_block` functions below
+// are generic over the closure type and get monomorphized once per call-site closure
+// (hundreds of instances each in release builds). Their bodies are >70% type-independent:
+// block-type lookup, Delimiters union setup, nested Parser struct init,
+// `consume_until_end_of_block` cleanup, the post-parse delimiter-scan while loop. Only the
+// inner `parseEntirely(closure, &nested)` call is closure-specific.
+//
+// To keep binary size down, the type-independent prologue/epilogue is extracted into
+// non-generic `noinline` helpers so each monomorphized generic body is just a few calls.
+//
+// The generic bodies themselves are also `noinline`: without it, LLVM inlines the now-tiny
+// bodies into recursive callers like `parse_at_rule`, hoisting the nested `Parser` stack
+// slot into a frame that persists through deep recursion (nested `@media` etc.) and
+// reducing the max nesting depth before stack overflow.
+
+noinline fn parse_until_before_begin(
     parser: *Parser,
     delimiters_: Delimiters,
-    error_behavior: ParseUntilErrorBehavior,
-    comptime T: type,
-    closure: anytype,
-    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
-) Result(T) {
+    delimited_parser: *Parser,
+) Delimiters {
     const delimiters = bun.bits.@"or"(Delimiters, parser.stop_before, delimiters_);
-    const result = result: {
-        var delimited_parser = Parser{
-            .input = parser.input,
-            .at_start_of = if (parser.at_start_of) |block_type| brk: {
-                parser.at_start_of = null;
-                break :brk block_type;
-            } else null,
-            .stop_before = delimiters,
-            .import_records = parser.import_records,
-            .flags = parser.flags,
-            .extra = parser.extra,
-        };
-        const result = delimited_parser.parseEntirely(T, closure, parse_fn);
-        if (error_behavior == .stop and result.isErr()) {
-            return result;
-        }
-        if (delimited_parser.at_start_of) |block_type| {
-            consume_until_end_of_block(block_type, &delimited_parser.input.tokenizer);
-        }
-        break :result result;
+    delimited_parser.* = Parser{
+        .input = parser.input,
+        .at_start_of = if (parser.at_start_of) |block_type| brk: {
+            parser.at_start_of = null;
+            break :brk block_type;
+        } else null,
+        .stop_before = delimiters,
+        .import_records = parser.import_records,
+        .flags = parser.flags,
+        .extra = parser.extra,
     };
+    return delimiters;
+}
+
+noinline fn parse_until_before_end(
+    parser: *Parser,
+    delimited_parser: *Parser,
+    delimiters: Delimiters,
+) void {
+    if (delimited_parser.at_start_of) |block_type| {
+        consume_until_end_of_block(block_type, &delimited_parser.input.tokenizer);
+    }
 
     // FIXME: have a special-purpose tokenizer method for this that does less work.
     while (true) {
@@ -1195,25 +1208,27 @@ fn parse_until_before(
             else => break,
         }
     }
-
-    return result;
 }
 
-// fn parse_until_before_impl(parser: *Parser, delimiters: Delimiters, error_behavior: Parse
-
-pub fn parse_until_after(
+noinline fn parse_until_before(
     parser: *Parser,
-    delimiters: Delimiters,
+    delimiters_: Delimiters,
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
     closure: anytype,
-    comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T),
+    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
 ) Result(T) {
-    const result = parse_until_before(parser, delimiters, error_behavior, T, closure, parsefn);
-    const is_err = result.isErr();
-    if (error_behavior == .stop and is_err) {
+    var delimited_parser: Parser = undefined;
+    const delimiters = parse_until_before_begin(parser, delimiters_, &delimited_parser);
+    const result = delimited_parser.parseEntirely(T, closure, parse_fn);
+    if (error_behavior == .stop and result.isErr()) {
         return result;
     }
+    parse_until_before_end(parser, &delimited_parser, delimiters);
+    return result;
+}
+
+noinline fn parse_until_after_end(parser: *Parser, delimiters: Delimiters) void {
     const next_byte = parser.input.tokenizer.nextByte();
     if (next_byte != null and !bun.bits.contains(Delimiters, parser.stop_before, .fromByte(next_byte))) {
         if (bun.Environment.isDebug) bun.debugAssert(bun.bits.contains(Delimiters, delimiters, Delimiters.fromByte(next_byte)));
@@ -1224,10 +1239,25 @@ pub fn parse_until_after(
             consume_until_end_of_block(BlockType.curly_bracket, &parser.input.tokenizer);
         }
     }
+}
+
+pub fn parse_until_after(
+    parser: *Parser,
+    delimiters: Delimiters,
+    error_behavior: ParseUntilErrorBehavior,
+    comptime T: type,
+    closure: anytype,
+    comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T),
+) Result(T) {
+    const result = parse_until_before(parser, delimiters, error_behavior, T, closure, parsefn);
+    if (error_behavior == .stop and result.isErr()) {
+        return result;
+    }
+    parse_until_after_end(parser, delimiters);
     return result;
 }
 
-fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+noinline fn parse_nested_block_begin(parser: *Parser, nested_parser: *Parser) BlockType {
     const block_type: BlockType = if (parser.at_start_of) |block_type| brk: {
         parser.at_start_of = null;
         break :brk block_type;
@@ -1238,23 +1268,33 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
         \\token was just consumed.
     );
 
-    const closing_delimiter = switch (block_type) {
-        .curly_bracket => Delimiters{ .close_curly_bracket = true },
-        .square_bracket => Delimiters{ .close_square_bracket = true },
-        .parenthesis => Delimiters{ .close_parenthesis = true },
+    const closing_delimiter: Delimiters = switch (block_type) {
+        .curly_bracket => .{ .close_curly_bracket = true },
+        .square_bracket => .{ .close_square_bracket = true },
+        .parenthesis => .{ .close_parenthesis = true },
     };
-    var nested_parser = Parser{
+    nested_parser.* = Parser{
         .input = parser.input,
         .stop_before = closing_delimiter,
         .import_records = parser.import_records,
         .flags = parser.flags,
         .extra = parser.extra,
     };
-    const result = nested_parser.parseEntirely(T, closure, parsefn);
+    return block_type;
+}
+
+noinline fn parse_nested_block_end(parser: *Parser, nested_parser: *Parser, block_type: BlockType) void {
     if (nested_parser.at_start_of) |block_type2| {
         consume_until_end_of_block(block_type2, &nested_parser.input.tokenizer);
     }
     consume_until_end_of_block(block_type, &parser.input.tokenizer);
+}
+
+noinline fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+    var nested_parser: Parser = undefined;
+    const block_type = parse_nested_block_begin(parser, &nested_parser);
+    const result = nested_parser.parseEntirely(T, closure, parsefn);
+    parse_nested_block_end(parser, &nested_parser, block_type);
     return result;
 }
 

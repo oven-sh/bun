@@ -68,7 +68,8 @@ describe("export", () => {
     const first = await run();
     const second = await run();
     expect(second.stdout).toBe(first.stdout);
-    expect(first.stdout.split("\n").filter(Boolean)).toEqual([...first.stdout.split("\n").filter(Boolean)].sort());
+    const lines = first.stdout.split("\n").filter(Boolean);
+    expect(lines).toEqual([...lines].sort());
     expect(first.exitCode).toBe(0);
     expect(second.exitCode).toBe(0);
   });

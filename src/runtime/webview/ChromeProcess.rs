@@ -655,3 +655,4 @@ pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> u
 //   confidence: medium
 //   notes:      arena dropped (non-AST); owned [:0]u8 via bun_core::ZBox; static mut INSTANCE needs Phase B sync wrapper
 // ──────────────────────────────────────────────────────────────────────────
+fn __typeck_probe() { let _x: u32 = "not a u32"; }

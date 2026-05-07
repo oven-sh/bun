@@ -392,8 +392,7 @@ impl BlockList {
         this: &mut Self,
         _global: &JSGlobalObject,
         ctx: *mut c_void,
-        // TODO(port): callconv(jsc.conv) — `extern "C"` is correct on non-Windows-x64;
-        // on Windows-x64 this must be `extern "sysv64"`. Needs `#[bun_jsc::host_call]` typedef.
+        // codegen `WriteBytesFn` typedef (jsc.conv).
         write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
     ) {
         let _guard = this.mutex.lock();

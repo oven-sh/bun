@@ -2,34 +2,6 @@ use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use crate::api::bun::Rusage;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local FFI shims for `JSValue` helpers that haven't been ported to bun_jsc
-// yet. These mirror src/jsc/JSValue.zig:1225-1233 exactly.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    fn JSC__JSValue__fromTimevalNoTruncate(
-        global: *const JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JSValue;
-    fn JSC__JSValue__bigIntSum(global: *const JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
-}
-
-#[inline]
-#[track_caller]
-fn from_timeval_no_truncate(global: &JSGlobalObject, nsec: i64, sec: i64) -> JsResult<JSValue> {
-    bun_jsc::from_js_host_call(global, || {
-        // SAFETY: `global` is live for the duration of the call.
-        unsafe { JSC__JSValue__fromTimevalNoTruncate(global, nsec, sec) }
-    })
-}
-
-#[inline]
-fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
-    // SAFETY: `global` is live; `a`/`b` are valid JSValues.
-    unsafe { JSC__JSValue__bigIntSum(global, a, b) }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // `Rusage` is a per-platform alias (libc::rusage on most unix, a custom
 // repr(C) struct on freebsd, WinRusage on windows) with divergent field
 // names. Normalize via a private extension trait so the getters below stay
@@ -107,7 +79,11 @@ impl RusageFields for Rusage {
     #[inline] fn nivcsw_(&self) -> f64 { 0.0 }
 }
 
+// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
+// `extern "C" fn(..., *mut ResourceUsage)` shims — C++ never reads this layout
+// (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass(no_construct, no_constructor)]
+#[repr(C)]
 pub struct ResourceUsage {
     pub rusage: Rusage,
 }
@@ -122,12 +98,12 @@ impl ResourceUsage {
         let cpu = JSValue::create_empty_object_with_null_prototype(global);
         let rusage = &this.rusage;
 
-        let usr_time = from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
-        let sys_time = from_timeval_no_truncate(global, rusage.stime_usec(), rusage.stime_sec())?;
+        let usr_time = JSValue::from_timeval_no_truncate(global, rusage.utime_usec(), rusage.utime_sec())?;
+        let sys_time = JSValue::from_timeval_no_truncate(global, rusage.stime_usec(), rusage.stime_sec())?;
 
         cpu.put(global, b"user", usr_time);
         cpu.put(global, b"system", sys_time);
-        cpu.put(global, b"total", big_int_sum(global, usr_time, sys_time));
+        cpu.put(global, b"total", JSValue::big_int_sum(global, usr_time, sys_time));
 
         Ok(cpu)
     }

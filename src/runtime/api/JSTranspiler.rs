@@ -156,7 +156,7 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<log
 /// is needed wherever the spec assigns by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
     let mut out = MacroMap::default();
-    let _ = out.ensure_unused_capacity(src.count());
+    bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
     for (k, v) in src.keys().iter().zip(src.values().iter()) {
         // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.
         let inner = v.clone().expect("OOM");

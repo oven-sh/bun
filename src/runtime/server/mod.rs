@@ -1043,7 +1043,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on_request_complete(&mut self) {
-        // TODO(b2-blocked): self.vm.event_loop().process_gc_timer();
+        // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`;
+        // single-threaded JS context, no aliasing `&mut`.
+        unsafe { (*self.vm_mut().event_loop()).process_gc_timer() };
         self.pending_requests -= 1;
         self.deinit_if_we_can();
     }
@@ -1103,8 +1105,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // engine rejects new conns and the timer keeps in-flight streams
                 // progressing until deinit. Abrupt: close the fd now.
                 if !abrupt {
-                    if let Some(_h3a) = self.h3_app {
-                        // TODO(b2-blocked): bun_uws_sys::h3::App::close.
+                    if let Some(h3a) = self.h3_app {
+                        // SAFETY: h3a is a live FFI handle; close() sends GOAWAY
+                        // and stops accepting new connections.
+                        unsafe { (*h3a).close() };
                     }
                 } else {
                     // SAFETY: h3l is a live FFI handle until take() nulls it.
@@ -1160,7 +1164,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn stop(&mut self, abrupt: bool) {
-        // TODO(b2-blocked): js_value.set_weak() / unprotect — needs bun_jsc::JsRef methods.
+        if self.js_value.is_not_empty() {
+            self.js_value.downgrade();
+        }
+        if self.config.allow_hot && !self.config.id.is_empty() {
+            // PORT NOTE: reshaped for borrowck — `id` borrows `self.config`;
+            // `vm_mut()` goes through the singleton so it does not conflict,
+            // but `hot_map()` returns `&mut HotMap` which would alias if it
+            // were reached via `self`. Snapshot the slice via raw ptr/len.
+            let (id_ptr, id_len) = (self.config.id.as_ptr(), self.config.id.len());
+            if let Some(hot) = self.vm_mut().hot_map() {
+                // SAFETY: `id` bytes live in `self.config` for this scope.
+                hot.remove(unsafe { core::slice::from_raw_parts(id_ptr, id_len) });
+            }
+        }
+
         self.stop_listening(abrupt);
         self.deinit_if_we_can();
     }

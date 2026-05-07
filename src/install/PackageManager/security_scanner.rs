@@ -1228,11 +1228,24 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
 
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], StdioResult::Buffer((*pipe).cast()))?;
-
-        // Disarm errdefers on success — pipe ownership has transferred to
-        // json_writer; fd slots are already None.
+        // Reconstitute the Box<uv::Pipe> from the raw pointer the errdefer guard
+        // holds and hand ownership to StaticPipeWriter via the StdioResult. The
+        // guard is disarmed immediately afterwards so the close_and_destroy path
+        // never runs once finish_spawn has taken the pipe.
+        // SAFETY: *pipe is the same allocation produced by Box::into_raw above
+        // and has not been freed; ownership transfers here exactly once.
+        let json_stdio = StdioResult::Buffer(unsafe { Box::from_raw(*pipe) });
+        // Ownership of the heap pipe is now in `json_stdio`; disarm the
+        // close_and_destroy errdefer before any further fallible call so we
+        // never double-free. (Zig's errdefer fires only if finish_spawn fails,
+        // but there the writer hasn't taken the pipe yet — Box semantics force
+        // the handoff up front, and finish_spawn's own error path drops the
+        // writer which closes the pipe.)
         scopeguard::ScopeGuard::into_inner(pipe);
+
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], json_stdio)?;
+
+        // fd slots are already None.
         scopeguard::ScopeGuard::into_inner(fds);
         Ok(())
     }

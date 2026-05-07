@@ -52,12 +52,72 @@ pub struct PatchTask<'a> {
     pub next: *mut PatchTask<'a>,
 }
 
+// SAFETY: all four accessors touch the same `next: *mut PatchTask<'a>` field;
+// the atomic variants reinterpret its address as `AtomicPtr<Self>` (same layout
+// as `*mut Self`) — identical to the `NetworkTask` / `Task` impls. Zig:
+// `UnboundedQueue(PatchTask, .next)`.
+unsafe impl<'a> bun_threading::unbounded_queue::Node for PatchTask<'a> {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        unsafe { (*item).next }
+    }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        unsafe { (*item).next = ptr }
+    }
+    #[inline]
+    unsafe fn atomic_load_next(
+        item: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) -> *mut Self {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .load(ordering)
+        }
+    }
+    #[inline]
+    unsafe fn atomic_store_next(
+        item: *mut Self,
+        ptr: *mut Self,
+        ordering: core::sync::atomic::Ordering,
+    ) {
+        unsafe {
+            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+                .store(ptr, ordering)
+        }
+    }
+}
+
 #[derive(strum::IntoStaticStr)]
 pub enum Callback {
     #[strum(serialize = "calc_hash")]
     CalcHash(CalcPatchHash),
     #[strum(serialize = "apply")]
     Apply(ApplyPatch),
+}
+
+impl Callback {
+    /// Zig: `@tagName(self.callback)`.
+    #[inline]
+    pub fn tag_name(&self) -> &'static str {
+        <&'static str>::from(self)
+    }
+    #[inline]
+    pub fn is_calc_hash(&self) -> bool {
+        matches!(self, Callback::CalcHash(_))
+    }
+    #[inline]
+    pub fn is_apply(&self) -> bool {
+        matches!(self, Callback::Apply(_))
+    }
+    /// Zig: `&self.callback.apply`. Panics if the active variant is not `Apply`.
+    #[inline]
+    pub fn apply_mut(&mut self) -> &mut ApplyPatch {
+        match self {
+            Callback::Apply(a) => a,
+            _ => unreachable!("PatchTask.callback is not .apply"),
+        }
+    }
 }
 
 pub struct CalcPatchHash {

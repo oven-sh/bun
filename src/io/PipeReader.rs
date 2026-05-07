@@ -305,6 +305,16 @@ impl PosixBufferedReader {
         self.close_handle();
     }
 
+    /// Explicit teardown that does **not** fire `on_reader_done` (unlike
+    /// [`close`]). Mirrors Zig `PosixBufferedReader.deinit`. Safe to call
+    /// before Drop; both paths are idempotent over an already-released handle.
+    pub fn deinit(&mut self) {
+        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
+        // clearAndFree — release capacity, not just length.
+        self._buffer = Vec::new();
+        self.close_without_reporting();
+    }
+
     fn close_without_reporting(&mut self) {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING));
@@ -1696,6 +1706,26 @@ impl WindowsBufferedReader {
         }
 
         self.close_impl::<true>();
+    }
+
+    /// Explicit teardown that does **not** fire `on_reader_done` (unlike
+    /// [`close`]). Mirrors Zig `WindowsBufferedReader.deinit`. Safe to call
+    /// before Drop; both paths are idempotent over an already-taken source.
+    pub fn deinit(&mut self) {
+        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
+        self._buffer = Vec::new();
+        let Some(source) = self.source.take() else {
+            return;
+        };
+        if !source.is_closed() {
+            // closeImpl will take care of freeing the source
+            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
+            // makes the call a no-op there — preserved verbatim (see Drop).
+            // Tracked as a latent Zig discrepancy; do not "fix" here without
+            // fixing the .zig first.
+            let _ = source;
+            self.close_impl::<false>();
+        }
     }
 
     #[cfg(windows)]

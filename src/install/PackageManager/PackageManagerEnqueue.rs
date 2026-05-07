@@ -283,7 +283,10 @@ pub fn enqueue_git_for_checkout(
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) {
-    let repository = &resolution.value.git;
+    // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
+    // active union field. Copy out so the value no longer borrows
+    // `*resolution` while `*this` is mutably reborrowed below.
+    let repository: Repository = *unsafe { &resolution.value.git };
     let url = this.lockfile.str(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str(&repository.resolved);
@@ -330,7 +333,7 @@ pub fn enqueue_git_for_checkout(
             this,
             clone_id,
             alias,
-            repository,
+            &repository,
             dependency_id,
             &dep,
             resolution,
@@ -1108,16 +1111,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
 
                                 let network_task = this.get_network_task();
-                                // SAFETY: network_task is a freshly acquired pool slot
+                                // SAFETY: `network_task` is the unique handle to a
+                                // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
+                                // resets every defaulted field; `write_init` mirrors that
+                                // (callback is `= undefined` and overwritten by `for_manifest`).
                                 unsafe {
-                                    network_task.write(NetworkTask {
-                                        package_manager: (this as *mut PackageManager).cast(),
-                                        // TODO(port): `callback: undefined` in Zig
-                                        callback: core::mem::zeroed(),
+                                    NetworkTask::write_init(
+                                        network_task,
                                         task_id,
-                                        // allocator dropped — global mimalloc
-                                        ..NetworkTask::default()
-                                    });
+                                        (this as *mut PackageManager).cast(),
+                                        None,
+                                    );
                                 }
 
                                 let scope = this.scope_for_package_name(name_str);
@@ -1158,11 +1162,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             return Ok(());
         }
         dependency::version::Tag::Git => {
-            let dep = &version.value.git;
-            let res = Resolution {
-                tag: ResolutionTag::Git,
-                value: ResolutionValue { git: *dep },
-            };
+            // SAFETY: `version.tag == Git` discriminates the union arm.
+            let dep: &Repository = unsafe { &version.value.git };
+            let res = Resolution::init(ResolutionTagged::Git(*dep));
 
             // First: see if we already loaded the git package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
@@ -1197,7 +1199,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     unsafe { this.env.unwrap().as_mut() },
                     // SAFETY: `log` is set during init; raw `*mut Log` per LIFETIMES.tsv (BACKREF).
                     unsafe { &mut *this.log },
-                    repo_fd.std_dir(),
+                    bun_sys::Dir::from_fd(repo_fd),
                     alias,
                     this.lockfile.str(&dep.committish),
                     clone_id,
@@ -1264,11 +1266,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         dependency::version::Tag::Github => {
-            let dep = &version.value.github;
-            let res = Resolution {
-                tag: ResolutionTag::Github,
-                value: ResolutionValue { github: *dep },
-            };
+            // SAFETY: `version.tag == Github` discriminates the union arm.
+            let dep: &Repository = unsafe { &version.value.github };
+            let res = Resolution::init(ResolutionTagged::Github(*dep));
 
             // First: see if we already loaded the github package in-memory
             if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
@@ -1472,15 +1472,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         dependency::version::Tag::Tarball => {
-            let res: Resolution = match &version.value.tarball.uri {
-                dependency::tarball::Uri::Local(path) => Resolution {
-                    tag: ResolutionTag::LocalTarball,
-                    value: ResolutionValue { local_tarball: *path },
-                },
-                dependency::tarball::Uri::Remote(url) => Resolution {
-                    tag: ResolutionTag::RemoteTarball,
-                    value: ResolutionValue { remote_tarball: *url },
-                },
+            // SAFETY: `version.tag == Tarball` discriminates the union arm.
+            let tarball = unsafe { &version.value.tarball };
+            let res: Resolution = match &tarball.uri {
+                dependency::tarball::Uri::Local(path) => {
+                    Resolution::init(ResolutionTagged::LocalTarball(*path))
+                }
+                dependency::tarball::Uri::Remote(url) => {
+                    Resolution::init(ResolutionTagged::RemoteTarball(*url))
+                }
             };
 
             // First: see if we already loaded the tarball package in-memory

@@ -3,7 +3,13 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
-use bun_js_parser::{self as js_ast, Expr, ExprData, E, G};
+// LAYERING: every `Expr` flowing through this file (YAML parse, package.json
+// cache, `CatalogMap::from_pnpm_lockfile`) is the T2 value-shaped tree from
+// `bun_logger::js_ast`, NOT the T4 `bun_js_parser::Expr`. Importing the T4
+// type here forced a deep-convert at every boundary and broke type unification
+// with `WorkspacePackageJSONCache.root`. Use the lower crate directly; the
+// only T4 hop is the final `print_json` call, which lifts via `.into()`.
+use bun_logger::js_ast::{self, Expr, ExprData, E, G};
 use bun_logger as logger;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
@@ -252,12 +258,12 @@ pub fn migrate_pnpm_lockfile<'a>(
 
     // PORT NOTE: Zig parses into `yaml_arena` then `deepClone`s out of it
     // before freeing. The Rust YAML parser allocates into the thread-local
-    // Store (the bump arg is unused), so the clone is unnecessary — lift the
-    // T2 `logger::js_ast::Expr` straight to the full T4 `Expr` via `.into()`.
+    // Store (the bump arg is unused), so the clone is unnecessary — keep the
+    // T2 `logger::js_ast::Expr` as-is; this whole file operates on that tier.
     let yaml_source = logger::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
     let root: Expr = match bun_interchange::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
-        Ok(r) => r.into(),
+        Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
 
@@ -1767,7 +1773,6 @@ fn update_package_json_after_migration(
             let Ok(ws_root) = bun_interchange::yaml::YAML::parse(&yaml_source, log, &arena) else {
                 break 'read_pnpm_workspace_yaml;
             };
-            let ws_root: Expr = ws_root.into();
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
                 if let Some(packages) = packages_expr.as_array() {
@@ -2022,8 +2027,9 @@ fn update_package_json_after_migration(
 // PORT STATUS
 //   source:     src/install/pnpm.zig (1585 lines)
 //   notes:      Borrowck reshaping via per-append `sbuf!` (Zig holds one
-//               `lockfile.stringBuf()` for the whole function). T2→T4 Expr
-//               lift via `From<logger::js_ast::Expr>` so YAML output and the
-//               package.json cache share one Expr type; `JsonExprView` lets
+//               `lockfile.stringBuf()` for the whole function). Operates on
+//               the T2 `logger::js_ast::Expr` end-to-end (YAML output and the
+//               package.json cache both live there); the only T4 hop is
+//               `print_json`, lifted via `.into()`. `JsonExprView` lets
 //               `Bin::parse_append` / `Negatable::from_json` accept either.
 // ──────────────────────────────────────────────────────────────────────────

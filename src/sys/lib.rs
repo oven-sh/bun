@@ -1857,10 +1857,39 @@ mod posix_impl {
     // (Darwin defines MSG_NOSIGNAL=0x80000; std/c/darwin.zig:1591).
     #[cfg(unix)]
     pub const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    /// sys.zig:3138 `socketpairImpl` — Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK`
-    /// type flags; non-Linux sets CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE`
-    /// per-fd, closing both on any post-step error.
+    /// sys.zig:3054 `setCloseOnExec` — `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
+    pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
+        let fl = fcntl(fd, libc::F_GETFD, 0)?;
+        fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC as isize)?;
+        Ok(())
+    }
+
+    /// sys.zig:3103 `socketpair` — `socketpairImpl(.., for_shell = false)`.
+    /// Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK` type flags; non-Linux sets
+    /// CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE` per-fd, closing both on
+    /// any post-step error.
     pub fn socketpair(domain: i32, ty: i32, proto: i32, nonblock: bool) -> Maybe<[Fd; 2]> {
+        socketpair_impl(domain, ty, proto, nonblock, false)
+    }
+
+    /// sys.zig:3125 `socketpairForShell` — `socketpairImpl(.., for_shell = true)`.
+    /// On macOS this skips `SO_NOSIGPIPE` (so the child's writes get SIGPIPE
+    /// when the read end closes — required for `yes | head`-style pipelines)
+    /// and bumps `SO_RCVBUF`/`SO_SNDBUF` to 128 KB instead. On Linux/other
+    /// POSIX it is identical to [`socketpair`].
+    pub fn socketpair_for_shell(domain: i32, ty: i32, proto: i32, nonblock: bool) -> Maybe<[Fd; 2]> {
+        socketpair_impl(domain, ty, proto, nonblock, true)
+    }
+
+    /// sys.zig:3138 `socketpairImpl`.
+    fn socketpair_impl(
+        domain: i32,
+        ty: i32,
+        proto: i32,
+        nonblock: bool,
+        for_shell: bool,
+    ) -> Maybe<[Fd; 2]> {
+        let _ = for_shell; // only meaningful on macOS
         let mut fds = [0i32; 2];
         #[cfg(target_os = "linux")]
         {
@@ -1870,36 +1899,66 @@ mod posix_impl {
         #[cfg(not(target_os = "linux"))]
         {
             check!(unsafe { libc::socketpair(domain, ty, proto, fds.as_mut_ptr()) }, Tag::socketpair);
-            let close_both = |e| {
+            let close_both = |e: Error| {
                 unsafe { libc::close(fds[0]); libc::close(fds[1]); }
-                Err::<[Fd; 2], _>(Error::from_code_int(e, Tag::socketpair))
+                Err::<[Fd; 2], _>(e)
             };
+            // CLOEXEC first (sys.zig:3173).
             for &fd in &fds {
-                // CLOEXEC
-                if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
-                    return close_both(last_errno());
+                if let Err(e) = set_close_on_exec(Fd::from_native(fd)) {
+                    return close_both(e);
                 }
-                // O_NONBLOCK via GETFL→OR→SETFL (don't clobber existing flags).
-                if nonblock {
-                    let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-                    if fl < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) } < 0 {
-                        return close_both(last_errno());
+            }
+            // Darwin: SO_NOSIGPIPE on both fds — unless `for_shell`, in which
+            // case bump RCVBUF/SNDBUF instead (sys.zig:3180-3199).
+            #[cfg(target_os = "macos")]
+            {
+                if for_shell {
+                    let so_recvbuf: libc::c_int = 1024 * 128;
+                    let so_sendbuf: libc::c_int = 1024 * 128;
+                    // SAFETY: setsockopt on freshly-created socketpair fds.
+                    unsafe {
+                        libc::setsockopt(fds[1], libc::SOL_SOCKET, libc::SO_RCVBUF,
+                            (&so_recvbuf as *const i32).cast(), core::mem::size_of::<i32>() as u32);
+                        libc::setsockopt(fds[0], libc::SOL_SOCKET, libc::SO_SNDBUF,
+                            (&so_sendbuf as *const i32).cast(), core::mem::size_of::<i32>() as u32);
+                    }
+                } else {
+                    let on: libc::c_int = 1;
+                    for &fd in &fds {
+                        // SAFETY: setsockopt on freshly-created socketpair fds.
+                        if unsafe {
+                            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
+                                (&on as *const i32).cast(), core::mem::size_of::<i32>() as u32)
+                        } < 0 {
+                            return close_both(Error::from_code_int(last_errno(), Tag::setsockopt));
+                        }
                     }
                 }
-                // Darwin: SO_NOSIGPIPE so writes return EPIPE instead of SIGPIPE.
-                #[cfg(target_os = "macos")]
-                {
-                    let on: libc::c_int = 1;
-                    if unsafe {
-                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_NOSIGPIPE,
-                            (&on as *const i32).cast(), core::mem::size_of::<i32>() as u32)
-                    } < 0 {
-                        return close_both(last_errno());
+            }
+            // O_NONBLOCK via GETFL→OR→SETFL (don't clobber existing flags).
+            if nonblock {
+                for &fd in &fds {
+                    let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                    if fl < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) } < 0 {
+                        return close_both(Error::from_code_int(last_errno(), Tag::fcntl));
                     }
                 }
             }
         }
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+    }
+
+    /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
+    /// Callers fall back to the waiter-thread on `ENOSYS`/`EPERM`/`EACCES`.
+    #[cfg(target_os = "linux")]
+    pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
+        // SAFETY: raw Linux syscall; SYS_pidfd_open available since 5.3.
+        let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::c_int, flags as libc::c_int) };
+        if rc < 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::pidfd_open));
+        }
+        Ok(Fd::from_native(rc as i32))
     }
 
     // ── B-2 round 9: macOS clonefile / copyfile ──

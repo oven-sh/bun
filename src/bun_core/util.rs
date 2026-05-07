@@ -288,6 +288,7 @@ impl ZStr {
 /// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`
 /// **exclude** the trailing NUL — Zig `[:0]u8` semantics. This is the owned
 /// counterpart of `&ZStr`; use it where Zig returned an allocated `[:0]u8`.
+#[derive(Clone)]
 pub struct ZBox(Box<[u8]>); // invariant: last byte == 0
 impl Default for ZBox {
     /// Zig: `[:0]const u8 = ""` field default — an empty NUL-terminated string.

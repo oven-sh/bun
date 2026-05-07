@@ -422,8 +422,12 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-// PORT NOTE: not `Clone` — `cwd`/`package_name` are owned heap allocations
-// (Zig had borrowed slices with a commented-out `deinit`). No caller clones.
+// PORT NOTE: `Clone` — Zig had borrowed slices so `list.*` was a shallow
+// pointer copy. The Rust port owns `cwd`/`package_name`/`items`, but
+// `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
+// by-value copy while the original allocation in `Store.entries.scripts`
+// must stay live for the post-install pass, so a deep clone is required.
+#[derive(Clone)]
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub first_index: u8,

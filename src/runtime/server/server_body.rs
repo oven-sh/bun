@@ -1698,8 +1698,14 @@ where
         let mut sec_websocket_protocol_owned = bun_str::ZigStringSlice::empty();
         let mut sec_websocket_extensions_owned = bun_str::ZigStringSlice::empty();
 
-        if let Some(head) = request.get_fetch_headers() {
+        // PORT NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
+        // is `*mut`), so go through the `BodyMixin` accessor which yields a
+        // `NonNull` instead of the inherent `&FetchHeaders` getter.
+        if let Some(mut head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
             use jsc::HTTPHeaderName;
+            // SAFETY: `head` is a live, intrusively-refcounted C++ handle owned
+            // by `request.headers`; the FFI accessors only read.
+            let head = unsafe { head.as_mut() };
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
                 sec_websocket_key_owned = key.to_slice_clone();
                 sec_websocket_key_str = ZigString::init(sec_websocket_key_owned.slice());
@@ -2877,7 +2883,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: ctx_slot as *mut c_void,
+                        task: Some(ctx_slot as *mut c_void),
                         global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -3007,7 +3013,7 @@ where
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
-        ctx.signal = Some(signal);
+        ctx.signal = NonNull::new(signal);
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
         // SAFETY: signal is live; ref_() bumps for Request's copy.
@@ -3062,7 +3068,7 @@ where
             return;
         }
 
-        ctx.to_async(req, request_object);
+        ctx.to_async(req as *mut uws::Request as *mut c_void, request_object);
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md

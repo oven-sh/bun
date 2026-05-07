@@ -1158,10 +1158,12 @@ impl<T> VecExt<T> for Vec<T> {
     }
     #[inline]
     fn len_u32(&self) -> u32 {
+        debug_assert!(self.len() <= u32::MAX as usize);
         self.len() as u32
     }
     #[inline]
     fn cap_u32(&self) -> u32 {
+        debug_assert!(self.capacity() <= u32::MAX as usize);
         self.capacity() as u32
     }
 

@@ -197,7 +197,7 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
 
     #[inline]
     pub fn next(it: &Self, cursor: &mut Cursor<C>) -> bool {
-        let pos: u32 = cursor.width as u32 + cursor.i;
+        let pos: u32 = u32::from(cursor.width) + cursor.i;
         if pos as usize >= it.bytes.len() {
             return false;
         }
@@ -342,24 +342,24 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
 fn utf8_decode2(s: &[u8]) -> Option<u32> {
     debug_assert!(s.len() >= 2);
     if s[1] & 0xC0 != 0x80 { return None; }
-    let cp = ((s[0] as u32 & 0x1F) << 6) | (s[1] as u32 & 0x3F);
+    let cp = ((u32::from(s[0]) & 0x1F) << 6) | (u32::from(s[1]) & 0x3F);
     if cp < 0x80 { return None; }
     Some(cp)
 }
 fn utf8_decode3(s: &[u8]) -> Option<u32> {
     debug_assert!(s.len() >= 3);
     if s[1] & 0xC0 != 0x80 || s[2] & 0xC0 != 0x80 { return None; }
-    let cp = ((s[0] as u32 & 0x0F) << 12) | ((s[1] as u32 & 0x3F) << 6) | (s[2] as u32 & 0x3F);
+    let cp = ((u32::from(s[0]) & 0x0F) << 12) | ((u32::from(s[1]) & 0x3F) << 6) | (u32::from(s[2]) & 0x3F);
     if cp < 0x800 { return None; }
     Some(cp)
 }
 fn utf8_decode4(s: &[u8]) -> Option<u32> {
     debug_assert!(s.len() >= 4);
     if s[1] & 0xC0 != 0x80 || s[2] & 0xC0 != 0x80 || s[3] & 0xC0 != 0x80 { return None; }
-    let cp = ((s[0] as u32 & 0x07) << 18)
-        | ((s[1] as u32 & 0x3F) << 12)
-        | ((s[2] as u32 & 0x3F) << 6)
-        | (s[3] as u32 & 0x3F);
+    let cp = ((u32::from(s[0]) & 0x07) << 18)
+        | ((u32::from(s[1]) & 0x3F) << 12)
+        | ((u32::from(s[2]) & 0x3F) << 6)
+        | (u32::from(s[3]) & 0x3F);
     if cp < 0x10000 || cp > 0x10FFFF { return None; }
     Some(cp)
 }
@@ -766,7 +766,7 @@ pub fn allocate_latin1_into_utf8_with_list(
             buf = unsafe {
                 core::slice::from_raw_parts_mut(list.as_mut_ptr().add(i), list.capacity() - i)
             };
-            let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0] as u32);
+            let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[0]));
             buf[..2].copy_from_slice(&two);
             latin1 = &latin1[1..];
             buf = &mut buf[2..];
@@ -835,7 +835,7 @@ pub fn convert_utf8_bytes_into_utf16_with_length(
             }
             UTF16Replacement {
                 len,
-                code_point: ((sequence[0] as u32) << 6) + (sequence[1] as u32) - 0x00003080,
+                code_point: (u32::from(sequence[0]) << 6) + u32::from(sequence[1]) - 0x00003080,
                 ..Default::default()
             }
         }
@@ -864,7 +864,7 @@ pub fn convert_utf8_bytes_into_utf16_with_length(
             }
             UTF16Replacement {
                 len,
-                code_point: (((sequence[0] as u32) << 12) + ((sequence[1] as u32) << 6) + (sequence[2] as u32)) - 0x000E2080,
+                code_point: ((u32::from(sequence[0]) << 12) + (u32::from(sequence[1]) << 6) + u32::from(sequence[2])) - 0x000E2080,
                 ..Default::default()
             }
         }
@@ -900,10 +900,10 @@ pub fn convert_utf8_bytes_into_utf16_with_length(
             }
             UTF16Replacement {
                 len,
-                code_point: (((sequence[0] as u32) << 18)
-                    + ((sequence[1] as u32) << 12)
-                    + ((sequence[2] as u32) << 6)
-                    + (sequence[3] as u32))
+                code_point: ((u32::from(sequence[0]) << 18)
+                    + (u32::from(sequence[1]) << 12)
+                    + (u32::from(sequence[2]) << 6)
+                    + u32::from(sequence[3]))
                     - 0x03C82080,
                 ..Default::default()
             }
@@ -1061,7 +1061,7 @@ pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
                     return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
                 }
 
-                let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0] as u32);
+                let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[0]));
                 buf[..2].copy_from_slice(&two);
                 latin1 = &latin1[1..];
                 buf = &mut buf[2..];
@@ -1072,8 +1072,8 @@ pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
     }
 
     EncodeIntoResult {
-        written: (buf_total - buf.len()) as u32,
-        read: (latin1_total - latin1.len()) as u32,
+        written: u32::try_from(buf_total - buf.len()).unwrap(),
+        read: u32::try_from(latin1_total - latin1.len()).unwrap(),
     }
 }
 
@@ -1081,7 +1081,7 @@ pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
     let mut latin1: &mut [u8] = buf_;
     while let Some(i) = first_non_ascii(latin1) {
         let i = i as usize;
-        let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[i] as u32);
+        let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[i]));
         latin1[i..i + 2].copy_from_slice(&two);
 
         latin1 = &mut latin1[i + 2..];
@@ -1106,15 +1106,15 @@ pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
         latin1 = &latin1[to_write..];
         buf = &mut buf[to_write..];
         if !latin1.is_empty() && buf.len() >= 1 {
-            buf[0] = cp1252_to_codepoint_bytes_assume_not_ascii16(latin1[0] as u32);
+            buf[0] = cp1252_to_codepoint_bytes_assume_not_ascii16(u32::from(latin1[0]));
             latin1 = &latin1[1..];
             buf = &mut buf[1..];
         }
     }
 
     EncodeIntoResult {
-        read: (buf_total - buf.len()) as u32,
-        written: (latin1_total - latin1.len()) as u32,
+        read: u32::try_from(buf_total - buf.len()).unwrap(),
+        written: u32::try_from(latin1_total - latin1.len()).unwrap(),
     }
 }
 
@@ -1122,9 +1122,10 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     let len = buf_.len().min(latin1_.len());
     debug_assert_eq!(buf_[..len].len(), latin1_[..len].len());
     for (out, &inp) in buf_[..len].iter_mut().zip(latin1_[..len].iter()) {
-        *out = inp as u16;
+        *out = u16::from(inp);
     }
-    EncodeIntoResult { read: len as u32, written: len as u32 }
+    let len = u32::try_from(len).unwrap();
+    EncodeIntoResult { read: len, written: len }
 }
 
 pub fn element_length_cp1252_into_utf16(cp1252_: &[u8]) -> usize {
@@ -1170,7 +1171,7 @@ pub fn append_utf8_machine_word_to_utf16_machine_word(
 ) {
     // PERF(port): Zig used @Vector(4, u8) -> @Vector(4, u16) widening; scalar widen here.
     for (o, &i) in output.iter_mut().zip(input.iter()) {
-        *o = i as u16;
+        *o = u16::from(i);
     }
 }
 
@@ -1184,7 +1185,7 @@ pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
 
     let n = input.len().min(output.len());
     for i in 0..n {
-        output[i] = input[i] as u16;
+        output[i] = u16::from(input[i]);
     }
 }
 
@@ -1233,7 +1234,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
     }
 
     for to_byte in to.iter_mut() {
-        *to_byte = (remain[0] & 0x7f) as u8;
+        *to_byte = remain[0] & 0x7f;
         remain = &remain[1..];
     }
 }

@@ -903,7 +903,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         // runs synchronously between parser accesses, so the fresh `&mut`
         // created here is the only live reference for its scope.
         let import_records = unsafe { &mut *this.import_records };
-        let import_record_index = import_records.len() as u32;
+        let import_record_index = u32::try_from(import_records.len()).unwrap();
         import_rule.import_record_idx = import_record_index;
         import_records.push(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
@@ -2920,7 +2920,7 @@ impl<AtRule> StyleSheet<AtRule> {
                     if !saw_imports {
                         saw_imports = true;
                     }
-                    let import_record_idx = new_import_records.len() as u32;
+                    let import_record_idx = u32::try_from(new_import_records.len()).unwrap();
                     import_rule.import_record_idx = import_record_idx;
                     new_import_records.push(ImportRecord {
                         path: ast::fs::path_init(import_rule.url),
@@ -3388,7 +3388,7 @@ impl<'a> Parser<'a> {
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
-                let inner_index = symbols.len() as u32;
+                let inner_index = u32::try_from(symbols.len()).unwrap();
                 symbols.push(bun_logger::Symbol {
                     kind: bun_logger::SymbolKind::LocalCss,
                     original_name: name_static,
@@ -3421,7 +3421,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc — sole live `&mut`
             // for this scope; provenance shared only with raw-pointer aliases.
             let import_records = unsafe { &mut *ptr.as_ptr() };
-            let idx = import_records.len() as u32;
+            let idx = u32::try_from(import_records.len()).unwrap();
             // SAFETY: `url` borrows the parser source / arena which outlives
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
             // the Zig original stores the same borrowed slice; Phase-A
@@ -3972,7 +3972,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| unsafe { (*ptr.as_ptr()).len() as u32 })
+                .map(|ptr| u32::try_from(unsafe { (*ptr.as_ptr()).len() }).unwrap())
                 .unwrap_or(0),
         }
     }
@@ -4241,10 +4241,10 @@ pub mod nth {
         };
 
         if let Token::Delim(d) = tok {
-            if *d == b'+' as u32 {
+            if *d == u32::from(b'+') {
                 return parse_signless_b(input, a, 1);
             }
-            if *d == b'-' as u32 {
+            if *d == u32::from(b'-') {
                 return parse_signless_b(input, a, -1);
             }
         }
@@ -4474,7 +4474,7 @@ impl<'a> Tokenizer<'a> {
                 {
                     Token::UnrestrictedHash(self.consume_name())
                 } else {
-                    Token::Delim(b'#' as u32)
+                    Token::Delim(u32::from(b'#'))
                 }
             }
             b'$' => {
@@ -4483,7 +4483,7 @@ impl<'a> Tokenizer<'a> {
                     Token::SuffixMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(b'$' as u32)
+                    Token::Delim(u32::from(b'$'))
                 }
             }
             b'\'' => self.consume_string::<true>(),
@@ -4501,7 +4501,7 @@ impl<'a> Tokenizer<'a> {
                     Token::SubstringMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(b'*' as u32)
+                    Token::Delim(u32::from(b'*'))
                 }
             }
             b'+' => {
@@ -4513,7 +4513,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_numeric()
                 } else {
                     self.advance(1);
-                    Token::Delim(b'+' as u32)
+                    Token::Delim(u32::from(b'+'))
                 }
             }
             b',' => {
@@ -4534,7 +4534,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_ident_like()
                 } else {
                     self.advance(1);
-                    Token::Delim(b'-' as u32)
+                    Token::Delim(u32::from(b'-'))
                 }
             }
             b'.' => {
@@ -4542,7 +4542,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_numeric()
                 } else {
                     self.advance(1);
-                    Token::Delim(b'.' as u32)
+                    Token::Delim(u32::from(b'.'))
                 }
             }
             b'/' => {
@@ -4550,7 +4550,7 @@ impl<'a> Tokenizer<'a> {
                     Token::Comment(self.consume_comment())
                 } else {
                     self.advance(1);
-                    Token::Delim(b'/' as u32)
+                    Token::Delim(u32::from(b'/'))
                 }
             }
             b'0'..=b'9' => self.consume_numeric(),
@@ -4568,7 +4568,7 @@ impl<'a> Tokenizer<'a> {
                     Token::Cdo
                 } else {
                     self.advance(1);
-                    Token::Delim(b'<' as u32)
+                    Token::Delim(u32::from(b'<'))
                 }
             }
             b'@' => {
@@ -4576,7 +4576,7 @@ impl<'a> Tokenizer<'a> {
                 if self.is_ident_start() {
                     Token::AtKeyword(self.consume_name())
                 } else {
-                    Token::Delim(b'@' as u32)
+                    Token::Delim(u32::from(b'@'))
                 }
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' | 0 => self.consume_ident_like(),
@@ -4589,7 +4589,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_ident_like()
                 } else {
                     self.advance(1);
-                    Token::Delim(b'\\' as u32)
+                    Token::Delim(u32::from(b'\\'))
                 }
             }
             b']' => {
@@ -4602,7 +4602,7 @@ impl<'a> Tokenizer<'a> {
                     Token::PrefixMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(b'^' as u32)
+                    Token::Delim(u32::from(b'^'))
                 }
             }
             b'{' => {
@@ -4615,7 +4615,7 @@ impl<'a> Tokenizer<'a> {
                     Token::DashMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(b'|' as u32)
+                    Token::Delim(u32::from(b'|'))
                 }
             }
             b'}' => {
@@ -4628,7 +4628,7 @@ impl<'a> Tokenizer<'a> {
                     Token::IncludeMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(b'~' as u32)
+                    Token::Delim(u32::from(b'~'))
                 }
             }
             _ => {
@@ -5421,16 +5421,16 @@ fn len_utf16(ch: u32) -> usize {
 fn byte_to_hex_digit(b: u8) -> Option<u32> {
     // todo_stuff.match_byte
     match b {
-        b'0'..=b'9' => Some((b - b'0') as u32),
-        b'a'..=b'f' => Some((b - b'a' + 10) as u32),
-        b'A'..=b'F' => Some((b - b'A' + 10) as u32),
+        b'0'..=b'9' => Some(u32::from(b - b'0')),
+        b'a'..=b'f' => Some(u32::from(b - b'a' + 10)),
+        b'A'..=b'F' => Some(u32::from(b - b'A' + 10)),
         _ => None,
     }
 }
 
 fn byte_to_decimal_digit(b: u8) -> Option<u32> {
     if b >= b'0' && b <= b'9' {
-        Some((b - b'0') as u32)
+        Some(u32::from(b - b'0'))
     } else {
         None
     }

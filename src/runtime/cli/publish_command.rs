@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;

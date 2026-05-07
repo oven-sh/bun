@@ -960,7 +960,7 @@ fn get_ast(
             };
             require_args[1] = Expr::init(
                 E::Object {
-                    // SAFETY: bump-owned slice; never grown via this BabyList.
+                    // SAFETY: bump-owned slice; never grown via this Vec.
                     properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
                     is_single_line: true,
                     ..Default::default()
@@ -970,8 +970,8 @@ fn get_ast(
             let require_call = Expr::init(
                 E::Call {
                     target: require_property,
-                    // SAFETY: bump-owned slice; never grown via this BabyList.
-                    args: unsafe { bun_collections::BabyList::<Expr>::from_bump_slice(require_args) },
+                    // SAFETY: bump-owned slice; never grown via this Vec.
+                    args: unsafe { Vec::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1030,8 +1030,8 @@ fn get_ast(
                         data: ast::ExprData::ERequireCallTarget,
                         loc: Loc { start: 0 },
                     },
-                    // SAFETY: bump-owned slice; never grown via this BabyList.
-                    args: unsafe { bun_collections::BabyList::<Expr>::from_bump_slice(require_args) },
+                    // SAFETY: bump-owned slice; never grown via this Vec.
+                    args: unsafe { Vec::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },

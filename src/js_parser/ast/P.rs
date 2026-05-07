@@ -12,7 +12,7 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::{Arena, ArenaVecExt as _};
-use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};
+use bun_collections::{HashMap, ArrayHashMap, StringHashMap};
 use bun_core::{Environment, Output};
 use bun_logger as logger;
 use bun_options_types::{ImportRecord, ImportKind};
@@ -137,7 +137,7 @@ impl<'a> ImportRecordList<'a> {
     }
 
     /// Zig: `ImportRecord.List.moveFromList(&p.import_records)` — transfer the
-    /// backing storage into a `BabyList<ImportRecord>` and leave `self` empty
+    /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
     /// (so the parser can be dropped without aliasing the records the linker /
     /// printer now own).
     ///
@@ -736,7 +736,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
                     // is this a require("something")
-                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len == 1 {
+                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len_u32() == 1 {
                         if let js_ast::ExprData::EString(s) = call.args.at(0).data {
                             let _ = self.add_import_record(
                                 ImportKind::Require,
@@ -1057,7 +1057,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
         // Zig: `allocator.alloc(Expr, 1); args[0] = arg; ExprNodeList.fromOwnedSlice(args)`.
-        // PORT NOTE: BabyList::from_owned_slice wants Box<[T]>; init_one is the
+        // PORT NOTE: Vec::from_owned_slice wants Box<[T]>; init_one is the
         // single-element equivalent (matches transpose_require below).
         self.new_expr(
             E::Call {
@@ -1815,7 +1815,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: self.bun_app_namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.append(self.bun_app_namespace_ref)?;
+        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, self.bun_app_namespace_ref)?;
 
         let response_ref = self.response_ref;
         let clause_items = allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
@@ -1934,7 +1934,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.append(namespace_ref)?;
+        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, namespace_ref)?;
         for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             let ref_ = symbols.get(alias).expect("unreachable");
             let alias_name: &'static [u8] = symbols.alias_name(alias);
@@ -2053,7 +2053,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.append(namespace_ref)?;
+        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, namespace_ref)?;
 
         for entry in clauses {
             if entry.enabled {
@@ -2078,7 +2078,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: entry.r#ref, is_top_level: true });
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                unsafe { &mut *self.module_scope }.generated.append(entry.r#ref)?;
+                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, entry.r#ref)?;
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
                     entry.r#ref,
@@ -2159,7 +2159,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 js_ast::StmtData::SIf(mut if_stmt) => break 'brk &mut if_stmt.test_ as *mut Expr,
                 js_ast::StmtData::SSwitch(mut switch_stmt) => break 'brk &mut switch_stmt.test_ as *mut Expr,
                 js_ast::StmtData::SLocal(mut local) => {
-                    if local.decls.len > 0 {
+                    if local.decls.len_u32() > 0 {
                         let first = &mut local.decls.slice_mut()[0];
                         if matches!(first.binding.data, js_ast::b::B::BIdentifier(_)) {
                             if let Some(value) = first.value.as_mut() {
@@ -2964,7 +2964,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
                         // SAFETY: see top of fn — `scope` is arena-owned; no live & borrow of
                         // `scope.generated` exists here (the members snapshot was taken by value).
-                        unsafe { &mut *scope }.generated.append(hoisted_ref).expect("oom");
+                        VecExt::append(&mut unsafe { &mut *scope }.generated, hoisted_ref).expect("oom");
                         self.hoisted_ref_for_sloppy_mode_block_fn.insert(value.ref_, hoisted_ref);
                         value.ref_ = hoisted_ref;
                         symbol_idx = hoisted_ref.inner_index() as usize;
@@ -3142,7 +3142,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         });
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *parent }.children.append(unsafe { NonNull::new_unchecked(scope) })?;
+        VecExt::append(&mut unsafe { &mut *parent }.children, unsafe { NonNull::new_unchecked(scope) })?;
         // SAFETY: arena-owned Scope pointers valid for parser 'a lifetime; no aliasing &mut outstanding
         unsafe { (*scope).strict_mode = (*parent).strict_mode };
 
@@ -3231,9 +3231,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 // p.markSyntaxFeature(Destructing)
-                let mut items = BumpVec::with_capacity_in(ex.items.len as usize, self.allocator);
+                let mut items = BumpVec::with_capacity_in(ex.items.len_u32() as usize, self.allocator);
                 let mut is_spread = false;
-                for i in 0..ex.items.len as usize {
+                for i in 0..ex.items.len_u32() as usize {
                     let mut item = ex.items.slice()[i];
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
@@ -3270,7 +3270,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
-                let mut properties = BumpVec::with_capacity_in(ex.properties.len as usize, self.allocator);
+                let mut properties = BumpVec::with_capacity_in(ex.properties.len_u32() as usize, self.allocator);
                 for item in ex.properties.slice_mut() {
                     if item.flags.contains(Flags::Property::IsMethod)
                         || item.kind == js_ast::g::PropertyKind::Get
@@ -3400,13 +3400,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let children = &unsafe { &*parent }.children;
         // Remove the last child from the parent scope
-        let last = children.len - 1;
+        let last = children.len_u32() - 1;
         if children.slice()[last as usize].as_ptr() != to_discard {
             self.panic("Internal error", format_args!(""));
         }
 
         // PORT NOTE (spec parity): Zig P.zig:2700-2707 does `var children =
-        // parent.children;` (a *value copy* of the BabyList header) then
+        // parent.children;` (a *value copy* of the Vec header) then
         // `_ = children.pop();` — the pop mutates only the local copy, so
         // `parent.children` is left unchanged (contrast `discardScopesUpTo`
         // which writes back via `defer scope.children = children`). The
@@ -3532,7 +3532,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             let scope = unsafe { &mut *self.current_scope };
-            scope.generated.append(stmt.namespace_ref)?;
+            VecExt::append(&mut scope.generated, stmt.namespace_ref)?;
         }
 
         let mut item_refs = ImportItemForNamespaceMap::new();
@@ -3751,7 +3751,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
-        scope.generated.append(name.ref_.unwrap())?;
+        VecExt::append(&mut scope.generated, name.ref_.unwrap())?;
 
         Ok(name)
     }
@@ -3809,7 +3809,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // The raw deref does not borrow `self`, so the immutable iter over scopes_in_order is fine.
         let children = unsafe { &mut (*current_scope_ptr).children };
         // PORT NOTE: Zig copied `var children = scope.children` + `defer scope.children = children`.
-        // BabyList isn't Copy in Rust; mutate the field in place via the raw ptr instead.
+        // Vec isn't Copy in Rust; mutate the field in place via the raw ptr instead.
 
         for _child in &self.scopes_in_order[scope_index..] {
             let Some(child) = _child else { continue };
@@ -3817,7 +3817,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding.
             let parent = unsafe { (*child.scope).parent };
             if parent.map(|p| p.as_ptr()) == Some(current_scope_ptr) {
-                let mut i: usize = (children.len - 1) as usize;
+                let mut i: usize = (children.len_u32() - 1) as usize;
                 loop {
                     if children.mut_(i).as_ptr() == child.scope {
                         let _ = children.ordered_remove(i);
@@ -4163,7 +4163,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.append(ref_)?;
+        VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)?;
         Ok(ref_)
     }
 
@@ -4287,7 +4287,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             .put(name, js_ast::scope::Member { ref_, loc })?;
         if IS_GENERATED {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *self.module_scope }.generated.append(ref_)?;
+            VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)?;
         }
         Ok(ref_)
     }
@@ -4625,8 +4625,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
                     let mut decls = G::DeclList::default();
-                    decls
-                        .append(Decl {
+                    VecExt::append(&mut decls, Decl {
                             binding: self.b(js_ast::b::Identifier { r#ref: ref_ }, local.loc),
                             value: None,
                         })
@@ -5367,9 +5366,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: Some(new_ref) };
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                unsafe { &mut *self.module_scope }
-                    .generated
-                    .append(new_ref)
+                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, new_ref)
                     .expect("oom");
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
@@ -5703,7 +5700,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             )
         };
 
-        // PORT NOTE: `G::Arg` is not `Copy` (contains `BabyList<Decorator>`); use
+        // PORT NOTE: `G::Arg` is not `Copy` (contains `Vec<Decorator>`); use
         // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
         // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase-B
         // `'bump` threading on `E::Arrow.args` (currently `&'static [G::Arg]`).
@@ -5792,9 +5789,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .expect("unreachable");
                 self.runtime_imports.put(name, ref_);
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                unsafe { &mut *self.module_scope }
-                    .generated
-                    .append(ref_)
+                VecExt::append(&mut unsafe { &mut *self.module_scope }.generated, ref_)
                     .expect("oom");
                 ref_
             }
@@ -6033,7 +6028,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                             } else {
                                                 &mut prop.ts_decorators
                                             };
-                                            decorators.append(call).expect("oom");
+                                            decorators.push(call);
                                         }
                                     }
                                 }
@@ -6044,7 +6039,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     // TODO: prop.kind == .declare and prop.value == null
 
-                    if prop.ts_decorators.len > 0 {
+                    if prop.ts_decorators.len_u32() > 0 {
                         let descriptor_key = prop.key.unwrap();
                         let loc = descriptor_key.loc;
 
@@ -6081,7 +6076,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                         // PORT NOTE: reshaped — Zig insertSlice(0, ...) prepends; we prepend then push args.
                         let mut full = BumpVec::<Expr>::with_capacity_in(
-                            prop.ts_decorators.len as usize + array.len(),
+                            prop.ts_decorators.len_u32() as usize + array.len(),
                             self.allocator,
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
@@ -6106,7 +6101,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if prop.kind != PropertyKind::ClassStaticBlock
                         && !prop.flags.contains(Flags::Property::IsMethod)
                         && !matches!(prop.key.map(|k| k.data), Some(js_ast::ExprData::EPrivateIdentifier(_)))
-                        && prop.ts_decorators.len > 0
+                        && prop.ts_decorators.len_u32() > 0
                     {
                         // remove decorated fields without initializers to avoid assigning undefined.
                         let Some(initializer) = prop.initializer else { continue };
@@ -6174,7 +6169,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             let target = self.new_expr(E::Super {}, stmt.loc);
                             let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str).expect("unreachable");
                             // SAFETY: arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
-                            unsafe { &mut *self.current_scope }.generated.append(arguments_ref).expect("oom");
+                            VecExt::append(&mut unsafe { &mut *self.current_scope }.generated, arguments_ref).expect("oom");
 
                             let spread_inner = self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
                             let super_ = self.new_expr(E::Spread { value: spread_inner }, stmt.loc);
@@ -6249,7 +6244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 let mut stmts_count: usize =
                     1 + static_members.len() + instance_decorators.len() + static_decorators.len();
-                if unsafe { (*class).ts_decorators.len } > 0 {
+                if unsafe { (*class).ts_decorators.len_u32() } > 0 {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.allocator);
@@ -6257,7 +6252,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
-                if unsafe { (*class).ts_decorators.len } > 0 {
+                if unsafe { (*class).ts_decorators.len_u32() } > 0 {
                     let mut array: Vec<Expr> = unsafe { &mut (*class).ts_decorators }.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
@@ -6714,15 +6709,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         // Remove the last child from the parent scope
-        let last = parent.children.len - 1;
+        let last = parent.children.len_u32() - 1;
         debug_assert!(parent.children.slice()[last as usize].as_ptr().cast_const() == to_flatten);
-        parent.children.len = parent.children.len.saturating_sub(1);
+        parent.children.truncate(last as usize);
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         for item in unsafe { &*to_flatten }.children.slice() {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             unsafe { &mut *item.as_ptr() }.parent = Some(parent_ptr);
-            parent.children.append(*item).expect("oom");
+            VecExt::append(&mut parent.children, *item).expect("oom");
         }
     }
 
@@ -6746,7 +6741,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.temp_refs_to_declare.push(TempRef { r#ref, ..Default::default() });
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *scope }.generated.append(r#ref).expect("oom");
+        VecExt::append(&mut unsafe { &mut *scope }.generated, r#ref).expect("oom");
 
         r#ref
     }
@@ -6793,7 +6788,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
      // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
-        if call.args.len == 0 {
+        if call.args.len_u32() == 0 {
             return;
         }
         // PORT NOTE: match `data` by value (it is `Copy`) so the `StoreRef<_>`
@@ -6992,7 +6987,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     crate::BuiltInHook::useReducer => 1,
                     _ => break 'hash_arg,
                 };
-                if (hook_call.args.len as usize) <= arg_index {
+                if (hook_call.args.len_u32() as usize) <= arg_index {
                     break 'hash_arg;
                 }
                 let arg = hook_call.args.slice()[arg_index];
@@ -7251,7 +7246,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // on the next iteration. `mem::take` would zero the slot and
                     // degrade this to a single pass. Match Zig with `ptr::read`; the
                     // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed BabyList fields).
+                    // below to avoid double-drop of arena-backed Vec fields).
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
                     // matches Zig struct-assignment semantics.
@@ -7553,7 +7548,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let module_scope_strict = unsafe { &*self.module_scope }.strict_mode;
         // PORT NOTE: Zig shallow-copies `p.module_scope.*` into Ast; Scope is not
-        // `Clone` in Rust (BabyList/HashMap members), so move it out and leave
+        // `Clone` in Rust (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
         // SAFETY: same as above.
@@ -7575,8 +7570,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
-        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator BabyList;
-        // wrap the bump-backed storage as a Borrowed BabyList (Drop is no-op).
+        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator Vec;
+        // wrap the bump-backed storage as a Borrowed Vec (Drop is no-op).
         // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
         // *zeroes the source*. Mirror that move-and-zero with
         // `mem::replace(.., new_in)` + `into_bump_slice_mut()` so the leftover
@@ -7588,7 +7583,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let symbols_slice: &'a mut [js_ast::Symbol] =
             core::mem::replace(&mut self.symbols, BumpVec::new_in(allocator)).into_bump_slice_mut();
         // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
-        // Borrowed origin → BabyList::drop is a no-op.
+        // Borrowed origin → Vec::drop is a no-op.
         let symbols = js_ast::symbol::List::from_bump_slice(symbols_slice);
         let parts_slice: &'a mut [js_ast::Part] =
             core::mem::replace(parts, BumpVec::new_in(allocator)).into_bump_slice_mut();
@@ -8013,7 +8008,7 @@ pub struct LowerUsingDeclarationsContext {
 // so the only blockers were API-shape divergences. Reshaped:
 //   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
 //   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
-//   • `DeclaredSymbolList`/`BabyList` API has no allocator param in this port
+//   • `DeclaredSymbolList`/`Vec` API has no allocator param in this port
 //   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
 // reconciler-6 re-gate removed: those API divergences are fixed inline below;
 // `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
@@ -8212,7 +8207,7 @@ impl LowerUsingDeclarationsContext {
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            unsafe { &mut *scope }.generated.append(promise_ref).expect("oom");
+            VecExt::append(&mut unsafe { &mut *scope }.generated, promise_ref).expect("oom");
             p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: promise_ref });
 
             let promise_ref_expr = p.new_expr(E::Identifier { ref_: promise_ref, ..Default::default() }, loc);
@@ -8270,8 +8265,8 @@ impl LowerUsingDeclarationsContext {
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
             let mut decls = G::DeclList::default();
-            decls.append(Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
-            decls.append(Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
+            VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
+            VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
             let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);
             p.allocator.alloc_slice_copy(&[stmt0]) as *mut [Stmt]
         };

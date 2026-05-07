@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
 

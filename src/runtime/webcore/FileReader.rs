@@ -1,9 +1,8 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::cell::UnsafeCell;
 use core::mem;
 
 use bun_aio as aio;
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -471,7 +470,7 @@ impl FileReader {
         if self.reader().is_done() {
             self.consume_reader_buffer();
             if !self.buffered.is_empty() {
-                return streams::Start::OwnedAndDone(ByteList::move_from_list(mem::take(&mut self.buffered)));
+                return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
             }
         } else {
             #[cfg(unix)]
@@ -650,7 +649,7 @@ impl FileReader {
                             drop(buffer); // clearAndFree
                         } else {
                             self.pending.result =
-                                streams::Result::OwnedAndDone(ByteList::move_from_list(buffer));
+                                streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
                         }
                     } else {
                         self.pending.result = streams::Result::Done;
@@ -687,12 +686,12 @@ impl FileReader {
                         let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
                         buffer.truncate(buf.len()); // shrinkRetainingCapacity
                         self.pending.result =
-                            streams::Result::OwnedAndDone(ByteList::move_from_list(buffer));
+                            streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
                         self.pending.result = streams::Result::Temporary(unsafe {
-                            ByteList::from_borrowed_slice_dangerous(buf)
+                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
                         });
                     }
                     break 'pending !was_done;
@@ -701,11 +700,11 @@ impl FileReader {
                 if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                     self.pending.result = if self.reader().is_done() {
                         streams::Result::TemporaryAndDone(unsafe {
-                            ByteList::from_borrowed_slice_dangerous(buf)
+                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
                         })
                     } else {
                         streams::Result::Temporary(unsafe {
-                            ByteList::from_borrowed_slice_dangerous(buf)
+                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
                         })
                     };
                     break 'pending !was_done;
@@ -716,9 +715,9 @@ impl FileReader {
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
                 self.pending.result = if self.reader().is_done() {
-                    streams::Result::OwnedAndDone(ByteList::move_from_list(buffered))
+                    streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
                 } else {
-                    streams::Result::Owned(ByteList::move_from_list(buffered))
+                    streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
                 };
                 break 'pending !was_done;
             };
@@ -848,20 +847,20 @@ impl FileReader {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
                     if self.reader().is_done() {
                         return streams::Result::TemporaryAndDone(unsafe {
-                            ByteList::from_borrowed_slice_dangerous(buf)
+                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
                         });
                     }
 
                     return streams::Result::Temporary(unsafe {
-                        ByteList::from_borrowed_slice_dangerous(buf)
+                        Vec::<u8>::from_borrowed_slice_dangerous(buf)
                     });
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());
                     if self.reader().is_done() {
-                        return streams::Result::OwnedAndDone(ByteList::move_from_list(mem::take(&mut self.buffered)));
+                        return streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
                     }
-                    return streams::Result::Owned(ByteList::move_from_list(mem::take(&mut self.buffered)));
+                    return streams::Result::Owned(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
                 }
                 _ => {
                     // Spec FileReader.zig:544 `else => {}` falls through to set
@@ -889,9 +888,9 @@ impl FileReader {
         streams::Result::Pending(&mut self.pending as *mut _)
     }
 
-    pub fn drain(&mut self) -> ByteList {
+    pub fn drain(&mut self) -> Vec<u8> {
         if !self.buffered.is_empty() {
-            let out = ByteList::move_from_list(mem::take(&mut self.buffered));
+            let out = Vec::<u8>::move_from_list(mem::take(&mut self.buffered));
             if cfg!(debug_assertions) {
                 debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             }
@@ -899,10 +898,10 @@ impl FileReader {
         }
 
         if self.reader().has_pending_read() {
-            return ByteList::default();
+            return Vec::<u8>::default();
         }
 
-        ByteList::move_from_list(mem::take(self.reader().buffer()))
+        Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
     }
 
     pub fn set_ref_or_unref(&mut self, enable: bool) {
@@ -925,7 +924,7 @@ impl FileReader {
             if self.pending.state == streams::PendingState::Pending {
                 if !self.buffered.is_empty() {
                     self.pending.result =
-                        streams::Result::OwnedAndDone(ByteList::move_from_list(mem::take(&mut self.buffered)));
+                        streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(mem::take(&mut self.buffered)));
                 } else {
                     self.pending.result = streams::Result::Done;
                 }
@@ -1021,7 +1020,7 @@ impl readable_stream::SourceContext for FileReader {
     fn on_cancel(&mut self) { Self::on_cancel(self) }
     fn deinit_fn(&mut self) { Self::deinit(self) }
     fn set_ref_unref(&mut self, e: bool) { Self::set_ref_or_unref(self, e) }
-    fn drain_internal_buffer(&mut self) -> ByteList { Self::drain(self) }
+    fn drain_internal_buffer(&mut self) -> Vec<u8> { Self::drain(self) }
     fn memory_cost_fn(&self) -> usize { Self::memory_cost(self) }
     // toBufferedValue: null
 }

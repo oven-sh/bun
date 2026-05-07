@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -1628,7 +1628,7 @@ impl StreamBuffer {
     }
 
     pub fn write_type_as_bytes_assume_capacity<T>(&mut self, data: T) {
-        // TODO(port): Zig round-trips through bun.ByteList here; Rust just writes bytes.
+        // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // SAFETY: caller passes POD T.
         let bytes = unsafe {
             core::slice::from_raw_parts(&data as *const T as *const u8, mem::size_of::<T>())
@@ -1671,7 +1671,7 @@ impl StreamBuffer {
             }
         }
 
-        // PORT NOTE: Zig round-trips through `ByteList::moveFromList` to call
+        // PORT NOTE: Zig round-trips through `Vec::<u8>::moveFromList` to call
         // `writeLatin1`; the underlying op is `allocateLatin1IntoUTF8WithList`,
         // which we call on the `Vec<u8>` directly.
         let len = self.list.len();
@@ -1682,7 +1682,7 @@ impl StreamBuffer {
 
     pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
         // PORT NOTE: see `write_latin1` — call the underlying append on `Vec<u8>`
-        // directly instead of round-tripping through `ByteList`.
+        // directly instead of round-tripping through `Vec<u8>`.
         bun_core::strings::convert_utf16_to_utf8_append(&mut self.list, buffer);
         Ok(())
     }

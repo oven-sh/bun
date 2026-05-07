@@ -1099,7 +1099,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     Logger::Loc::EMPTY,
                                 );
                                 // PERF(port): was appendAssumeCapacity
-                                properties.append(G::Property {
+                                VecExt::append(&mut properties, G::Property {
                                     key: Some(Expr::init(
                                         E::String {
                                             // SAFETY: alias is an arena `*const [u8]`; never null.
@@ -1262,7 +1262,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
     let ast_view =
         core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
-    // SAFETY: `import_records` is a `BabyList` pointing into the bundler arena,
+    // SAFETY: `import_records` is a `Vec` pointing into the bundler arena,
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =

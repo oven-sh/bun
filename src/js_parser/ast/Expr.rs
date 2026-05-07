@@ -8,7 +8,7 @@ use core::fmt;
 use core::cell::Cell;
 
 use bun_alloc::{Arena as Bump, AllocError};
-use bun_collections::{BabyList, ArrayHashMap};
+use bun_collections::{VecExt, ArrayHashMap};
 use bun_core::{self, OOM};
 use bun_logger as logger;
 use bun_logger::Loc;
@@ -289,7 +289,7 @@ impl Expr {
     /// runtime performance.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
         let Data::EObject(obj) = &self.data else { return None };
-        if obj.properties.len == 0 {
+        if obj.properties.len_u32() == 0 {
             return None;
         }
         obj.as_property(name)
@@ -306,7 +306,7 @@ impl Expr {
     pub fn as_array(&self) -> Option<ArrayIterator<'_>> {
         match &self.data {
             Data::EArray(array) => {
-                if array.items.len == 0 {
+                if array.items.len_u32() == 0 {
                     return None;
                 }
                 // SAFETY: StoreRef points into the AST arena; deref to an unbounded
@@ -379,13 +379,13 @@ impl Expr {
 // Expr — property/object/string accessor methods.
 // TODO(b2-ast-round-C): these call into `E::Object::as_property` / `EString`
 // methods that need `bun_string::utf16_eql_string`/`to_utf8_alloc` (track-A
-// blocked_on) and `BabyList::deep_clone`. Types are real; bodies un-gate with
+// blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
         let Data::EObject(obj) = &self.data else { return false };
-        if obj.properties.len == 0 {
+        if obj.properties.len_u32() == 0 {
             return false;
         }
 
@@ -417,7 +417,7 @@ impl Expr {
     ) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
-                if index >= array.items.len {
+                if index >= array.items.len_u32() {
                     return None;
                 }
                 Some(array.items.slice()[index as usize])
@@ -541,7 +541,7 @@ impl Expr {
     pub fn set(expr: &mut Expr, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(expr.is_object());
         let Data::EObject(obj) = &mut expr.data else { unreachable!() };
-        for i in 0..obj.properties.len as usize {
+        for i in 0..obj.properties.len_u32() as usize {
             let prop = &mut obj.properties.slice_mut()[i];
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
@@ -551,7 +551,7 @@ impl Expr {
             }
         }
 
-        obj.properties.append(G::Property {
+        VecExt::append(&mut obj.properties, G::Property {
             key: Some(Expr::init(
                 E::String { data: Str::new(name), ..Default::default() },
                 Loc::EMPTY,
@@ -574,7 +574,7 @@ impl Expr {
     ) -> Result<(), AllocError> {
         debug_assert!(expr.is_object());
         let Data::EObject(obj) = &mut expr.data else { unreachable!() };
-        for i in 0..obj.properties.len as usize {
+        for i in 0..obj.properties.len_u32() as usize {
             let prop = &mut obj.properties.slice_mut()[i];
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
@@ -587,7 +587,7 @@ impl Expr {
             }
         }
 
-        obj.properties.append(G::Property {
+        VecExt::append(&mut obj.properties, G::Property {
             key: Some(Expr::init(
                 E::String { data: Str::new(name), ..Default::default() },
                 Loc::EMPTY,
@@ -664,7 +664,7 @@ impl Expr {
         let q = expr.as_property(name)?;
         match q.expr.data {
             Data::EArray(array) => {
-                if array.items.len == 0 {
+                if array.items.len_u32() == 0 {
                     return None;
                 }
                 // SAFETY: StoreRef points into the AST arena; deref to an unbounded
@@ -713,7 +713,7 @@ impl Expr {
         bump: &'b Bump,
     ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
         let Data::EObject(obj_) = &expr.data else { return None };
-        if obj_.properties.len == 0 {
+        if obj_.properties.len_u32() == 0 {
             return None;
         }
         let query = obj_.as_property(name)?;
@@ -761,7 +761,7 @@ pub struct ArrayIterator<'a> {
 
 impl ArrayIterator<'_> {
     pub fn next(&mut self) -> Option<Expr> {
-        if self.index >= self.array.items.len {
+        if self.index >= self.array.items.len_u32() {
             return None;
         }
         let result = self.array.items.slice()[self.index as usize];
@@ -1215,9 +1215,9 @@ impl From<logger::js_ast::expr::Data> for Data {
             // Recursive containers — deep rebuild.
             V::EArray(arr) => {
                 let mut items: crate::ExprNodeList =
-                    BabyList::init_capacity(arr.items.len as usize).expect("OOM");
+                    Vec::init_capacity(arr.items.len_u32() as usize).expect("OOM");
                 for it in arr.items.slice() {
-                    items.append(Expr::from(*it)).expect("OOM");
+                    VecExt::append(&mut items, Expr::from(*it)).expect("OOM");
                 }
                 E::Array {
                     items,
@@ -1232,7 +1232,7 @@ impl From<logger::js_ast::expr::Data> for Data {
             V::EObject(obj) => {
                 use logger::js_ast::G::{PropertyFlags as T2Flags, PropertyKind as T2Kind};
                 let mut properties: G::PropertyList =
-                    BabyList::init_capacity(obj.properties.len as usize).expect("OOM");
+                    Vec::init_capacity(obj.properties.len_u32() as usize).expect("OOM");
                 for p in obj.properties.slice() {
                     // T2 and T4 `PropertyKind` are both `#[repr(u8)]` with
                     // identical variant order — map 1:1.
@@ -1263,8 +1263,7 @@ impl From<logger::js_ast::expr::Data> for Data {
                     if p.flags.contains(T2Flags::IS_SPREAD) {
                         flags |= crate::flags::Property::IsSpread;
                     }
-                    properties
-                        .append(G::Property {
+                    VecExt::append(&mut properties, G::Property {
                             key: p.key.map(Expr::from),
                             value: p.value.map(Expr::from),
                             initializer: p.initializer.map(Expr::from),
@@ -2151,7 +2150,7 @@ impl Data {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
-// TODO(b2-ast-round-C): these reference `BabyList::deep_clone`/`E::*::Clone`
+// TODO(b2-ast-round-C): these reference `Vec::deep_clone`/`E::*::Clone`
 // surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
 // only these method bodies wait. The round-B verify gate covers what's live.
@@ -2161,9 +2160,9 @@ impl Data {
     /// arena slot) but don't recurse into children. Zig: `Data.clone`.
     ///
     /// PORT NOTE: the `E::*` payloads do not derive `Clone` (they hold raw arena
-    /// pointers / `BabyList`). Zig copied struct bytes (`el.*`); we mirror that
+    /// pointers / `Vec`). Zig copied struct bytes (`el.*`); we mirror that
     /// with a `core::ptr::read` of the payload, which is sound because every
-    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `BabyList`
+    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
     pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
         // TODO(port): narrow error set
@@ -2494,7 +2493,7 @@ impl Data {
                 raw(hasher, e.is_single_line);
                 raw(hasher, e.is_parenthesized);
                 raw(hasher, e.was_originally_macro);
-                raw(hasher, e.items.len);
+                raw(hasher, e.items.len_u32());
                 for item in e.items.slice() {
                     item.data.write_to_hasher(hasher, symbol_table);
                 }

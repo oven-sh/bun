@@ -258,7 +258,7 @@ pub use known_global::KnownGlobal;
 //   2. `pub fn foo(p: &mut P<...>, ...)` → `pub fn foo(&mut self, ...)`; `let p = self;`
 //   3. fix path names: `js_ast::Data` → `js_ast::expr::Data`, `js_ast::SymbolKind` →
 //      `js_ast::symbol::Kind`, `crate::Prefill` → `crate::parser::prefill`, etc.
-//   4. gate fn bodies that hit deeper blockers (Lexer snapshot, BabyList::len method,
+//   4. gate fn bodies that hit deeper blockers (Lexer snapshot, Vec::len method,
 //      E::String rope ops, Scope adapted-API)
 #[path = "parseTypescript.rs"] pub mod parse_typescript;
 #[path = "ImportScanner.rs"] pub mod import_scanner;

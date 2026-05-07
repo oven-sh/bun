@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::ffi::c_void;
 
 use bun_collections::{HashMap, StringHashMap};
@@ -1160,7 +1161,7 @@ impl<'a> ParserCtx<'a> {
                     return Ok(*arr);
                 }
 
-                let arr = JSValue::create_empty_array(self.global, e_array.items.len as usize)?;
+                let arr = JSValue::create_empty_array(self.global, e_array.items.len_u32() as usize)?;
 
                 args.append(arr);
                 self.seen_objects.put(key, arr)?;
@@ -1180,7 +1181,7 @@ impl<'a> ParserCtx<'a> {
                 }
 
                 let obj =
-                    JSValue::create_empty_object(self.global, e_object.properties.len as usize);
+                    JSValue::create_empty_object(self.global, e_object.properties.len_u32() as usize);
 
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;

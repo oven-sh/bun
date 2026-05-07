@@ -201,7 +201,7 @@ fn generate_compile_result_for_css_chunk_impl(
         }
         CssImportOrderKind::ExternalPath(_) => {
             // SAFETY: borrows `condition_import_records` storage for the duration of the
-            // `to_css_with_writer` call below; the borrowed BabyList is dropped (no-op)
+            // `to_css_with_writer` call below; the borrowed Vec is dropped (no-op)
             // before `css_import` goes out of scope, so no double-free / dangling.
             let import_records = unsafe {
                 Vec::<ImportRecord>::from_borrowed_slice_dangerous(

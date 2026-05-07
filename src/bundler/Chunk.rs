@@ -1121,7 +1121,7 @@ pub enum CssImportOrderKind {
 
 // TODO(port): bun.ptr.Cow(Vec<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
 // LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
-// `std::borrow::Cow<'_, Vec<_>>` requires `BabyList: Clone` (not implemented). Port the
+// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented). Port the
 // Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Phase B should
 // thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
 pub enum Layers {

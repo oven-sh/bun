@@ -4561,7 +4561,7 @@ impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
 impl<T, const N: usize> Drop for SmolList<T, N> {
     fn drop(&mut self) {
         if let SmolList::Heap(_) = self {
-            // BabyList drops itself
+            // Vec drops itself
         }
         // Inlined: TODO(port): drop initialized elements if T: Drop. Zig deinit only freed heap.
         // Reset to zeroes is implicit.

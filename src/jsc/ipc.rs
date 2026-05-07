@@ -1,9 +1,8 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_aio::KeepAlive;
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{handle_oom, Output};
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::StreamBuffer;
@@ -160,11 +159,11 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_core::scoped_log!(IPC, $($arg)*) };
 }
 
-/// Union type that switches between simple ByteList (for advanced mode)
+/// Union type that switches between simple Vec<u8> (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
-    Advanced(ByteList),
+    Advanced(Vec<u8>),
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
     Json(JSONLineBuffer),
 }
@@ -172,13 +171,13 @@ enum IncomingBuffer {
 impl IncomingBuffer {
     pub fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(ByteList::default()),
+            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
         }
     }
 }
 
-// deinit: ByteList/JSONLineBuffer own their storage and Drop frees it.
+// deinit: Vec<u8>/JSONLineBuffer own their storage and Drop frees it.
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum IsInternal {
@@ -2101,7 +2100,7 @@ pub mod IPCHandlers {
         use super::*;
 
         pub fn on_read_alloc(send_queue: &mut SendQueue, suggested_size: usize) -> &mut [u8] {
-            // PORT NOTE: ByteList::unused_capacity_slice() yields
+            // PORT NOTE: Vec::<u8>::unused_capacity_slice() yields
             // `&mut [MaybeUninit<u8>]`; libuv only needs the (ptr,len) — it
             // never reads the uninit bytes, only writes them. Cast through raw
             // parts to hand back `&mut [u8]` (matches Zig allocatedSlice()).

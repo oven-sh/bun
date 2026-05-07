@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 

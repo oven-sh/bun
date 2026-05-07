@@ -1,4 +1,5 @@
 use bun_logger as logger;
+use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
 
 use crate::ast as js_ast;
@@ -241,7 +242,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut ts_decorators = ExprNodeList::default();
             if opts.allow_ts_decorators {
                 ts_decorators = p.parse_type_script_decorators()?;
-                if ts_decorators.len > 0 {
+                if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
                 }
             }

@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap, StringHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
 
@@ -16,7 +16,7 @@ use crate::parser::Runtime as runtime;
 
 use crate::ast::part::List as PartList;
 use crate::ast::symbol::List as SymbolList;
-// TODO(port): `ImportRecord.List` is `BabyList<ImportRecord>` in Zig; the
+// TODO(port): `ImportRecord.List` is `Vec<ImportRecord>` in Zig; the
 // options_types crate hasn't yet exposed a `List` alias, so define it here.
 type ImportRecordList = Vec<ImportRecord>;
 
@@ -178,13 +178,13 @@ impl Ast {
     }
 
     // Zig `initTest` borrowed `parts` via `Part.List.fromBorrowedSliceDangerous`
-    // and relied on explicit `deinit` never being called. `BabyList::drop` now
+    // and relied on explicit `deinit` never being called. `Vec::drop` now
     // unconditionally guards on `Origin::Borrowed` (not debug-only), so unwrapping
     // the `ManuallyDrop` is safe — the caller's slice is never freed by `Ast`'s Drop.
     pub fn init_test(parts: &[Part]) -> Ast {
         Ast {
             // SAFETY: test-only helper; the borrowed list is tagged
-            // `Origin::Borrowed`, so `BabyList::drop` skips the free, and no
+            // `Origin::Borrowed`, so `Vec::drop` skips the free, and no
             // grow/free path is reached on `Ast.parts` before the borrow ends.
             parts: std::mem::ManuallyDrop::into_inner(unsafe {
                 PartList::from_borrowed_slice_dangerous(parts)
@@ -218,7 +218,7 @@ impl Ast {
     // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
     // and was guarded by "Do not call this if it wasn't globally allocated!".
     // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): BabyList<T> Drop semantics must distinguish arena-backed vs heap-backed to
+    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
     // preserve the Zig conditional-free behavior. Revisit in Phase B.
 }
 

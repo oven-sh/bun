@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use bun_alloc::AllocError;

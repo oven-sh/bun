@@ -6,7 +6,7 @@ use crate::flags;
 use crate::lexer::{self as js_lexer, T};
 use crate::parser::{options, JSXTag, JSXTagData, JsxT};
 use crate::ast::op::Level;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::err;
 use bun_logger as logger;
 use bun_string::strings;
@@ -388,5 +388,5 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   source:     src/js_parser/ast/parseJSXElement.zig (319 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      const-generic mixin over NewParser_; `defer i += 1` inlined at arm exits; arena-backed lists → std Vec → BabyList::move_from_list (Phase B: route through bump arena); JSXTag::parse un-gated in parser.rs.
+//   notes:      const-generic mixin over NewParser_; `defer i += 1` inlined at arm exits; arena-backed lists → std Vec → Vec::move_from_list (Phase B: route through bump arena); JSXTag::parse un-gated in parser.rs.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe, clippy::all)]
+use bun_collections::VecExt;
 use core::mem;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -261,7 +262,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
-        // SAFETY: arena-owned slice → BabyList borrowed view (no growth/free).
+        // SAFETY: arena-owned slice → Vec borrowed view (no growth/free).
         let ts_decorators = unsafe {
             ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
                 class_opts.ts_decorators.as_ptr() as *mut Expr,

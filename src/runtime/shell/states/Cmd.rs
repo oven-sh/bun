@@ -6,7 +6,7 @@
 use bun_collections::{VecExt, ByteVecExt};
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{log, ByteList, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -87,7 +87,7 @@ pub struct BufferedIoClosed {
 pub enum BufferedIoState {
     #[default]
     Open,
-    Closed(ByteList),
+    Closed(Vec<u8>),
 }
 
 impl BufferedIoState {
@@ -99,7 +99,7 @@ impl Drop for BufferedIoState {
     fn drop(&mut self) {
         // Spec `BufferedIoState.deinit`: the closed buffer was taken via
         // `PipeReader.take_buffer()`; we own it regardless of the original
-        // stdio variant. `ByteList`'s own Drop frees the storage.
+        // stdio variant. `Vec<u8>`'s own Drop frees the storage.
         if let BufferedIoState::Closed(list) = self {
             list.clear_and_free();
         }
@@ -152,13 +152,13 @@ impl BufferedIoClosed {
         readable: &mut Readable,
         io_is_pipe: bool,
         redirects_elsewhere: bool,
-        shell_buf: *mut ByteList,
+        shell_buf: *mut Vec<u8>,
     ) {
         let Some(state) = slot.as_mut() else { return };
         let Readable::Pipe(pipe) = readable else {
             // Not a pipe: nothing to capture. Mark closed with an empty
             // buffer so `all_closed()` is satisfied.
-            *state = BufferedIoState::Closed(ByteList::default());
+            *state = BufferedIoState::Closed(Vec::<u8>::default());
             return;
         };
         // If the shell state is piped (inside a cmd substitution) aggregate
@@ -174,7 +174,7 @@ impl BufferedIoClosed {
         // single-threaded and this is the same pattern `subproc::on_close_io`
         // uses to take the done buffer.
         let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
-        *state = BufferedIoState::Closed(ByteList::move_from_list(buffer));
+        *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
     }
 }
 
@@ -470,7 +470,7 @@ impl Cmd {
                 // `finalize_sync` (closes stdin/stdout/stderr).
                 drop(unsafe { Box::from_raw(sub.child) });
                 // `sub.buffered_closed` drops here, freeing any captured
-                // `ByteList`s (spec `buffered_closed.deinit()`).
+                // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
         }
         // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.

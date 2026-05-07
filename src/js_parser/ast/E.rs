@@ -9,7 +9,7 @@ use bun_alloc::Arena as Bump;
 use phf::phf_map;
 
 use bun_alloc::{AllocError, Arena};
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core as core_;
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
@@ -65,16 +65,16 @@ impl Default for Array {
         }
     }
 }
-// TODO(b2-ast-round-C): Array methods call `BabyList::init_capacity(bump, n)`
-// (signature mismatch: BabyList takes only `n`; AST-crate variant with bump
+// TODO(b2-ast-round-C): Array methods call `Vec::init_capacity(bump, n)`
+// (signature mismatch: Vec takes only `n`; AST-crate variant with bump
 // arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates (round-E unblock).
 impl Array {
     /// Zig: `pub fn push(this: *Array, allocator, item) !void`.
-    /// Phase A `BabyList::append` uses the global allocator; `_bump` is kept
-    /// for call-site shape parity and the eventual bump-arena BabyList.
+    /// Phase A `Vec::append` uses the global allocator; `_bump` is kept
+    /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
-        self.items.append(item)
+        VecExt::append(&mut self.items, item)
     }
 
     #[inline]
@@ -90,13 +90,13 @@ impl Array {
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; Phase-A BabyList uses global allocator.
-        let mut out: BabyList<Expr> =
-            BabyList::init_capacity(estimated_count + self.items.len as usize)?;
+        // PERF(port): Zig allocated in arena; Phase-A Vec uses global allocator.
+        let mut out: Vec<Expr> =
+            Vec::init_capacity(estimated_count + self.items.len_u32() as usize)?;
         out.expand_to_capacity();
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` (remain) does not overlap a shared borrow of `self`.
-        let items_len = self.items.len as usize;
+        let items_len = self.items.len_u32() as usize;
         let mut remain = out.slice_mut();
         for idx in 0..items_len {
             let item = self.items.slice()[idx];
@@ -126,7 +126,7 @@ impl Array {
 
         // PORT NOTE: reshaped for borrowck — capture remain.len() before re-borrowing `out`.
         let remain_len = remain.len();
-        let new_len = out.len as usize - remain_len;
+        let new_len = out.len_u32() as usize - remain_len;
         out.shrink_retaining_capacity(new_len);
         Ok(out)
     }
@@ -824,7 +824,7 @@ pub struct RopeQuery<'a> {
 }
 
 // ── live Object accessor surface (round-E unblock) ─────────────────────────
-// Adapted to the current `BabyList` API (`append(v)`, `slice()`, `slice_mut()`).
+// Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
 impl Object {
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
@@ -858,7 +858,7 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            self.properties.append(G::Property {
+            VecExt::append(&mut self.properties, G::Property {
                 key: Some(Expr::init(EString::init(key), expr.loc)),
                 value: Some(expr),
                 ..G::Property::default()
@@ -917,7 +917,7 @@ impl Object {
                 }
                 _ => unreachable!(),
             };
-            self.properties.append(G::Property {
+            VecExt::append(&mut self.properties, G::Property {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..G::Property::default()
@@ -926,7 +926,7 @@ impl Object {
         }
 
         let out = Expr::init(Object::default(), rope.head.loc);
-        self.properties.append(G::Property {
+        VecExt::append(&mut self.properties, G::Property {
             key: Some(rope.head),
             value: Some(out),
             ..G::Property::default()
@@ -951,9 +951,9 @@ impl Object {
         if self.has_property(&head_key) {
             return Err(SetError::Clobber);
         }
-        // Zig takes `*const Object` here and mutates through BabyList's interior pointer;
+        // Zig takes `*const Object` here and mutates through Vec's interior pointer;
         // in Rust we require `&mut self` so the borrow checker tracks the write.
-        self.properties.append(G::Property {
+        VecExt::append(&mut self.properties, G::Property {
             key: Some(key),
             value: Some(value),
             ..G::Property::default()
@@ -980,7 +980,7 @@ impl Object {
                         return Ok(());
                     }
 
-                    if let Some(last) = array.items.last() {
+                    if let Some(last) = array.items.last_mut() {
                         if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
@@ -1021,7 +1021,7 @@ impl Object {
             value_ = obj;
         }
 
-        self.properties.append(G::Property {
+        VecExt::append(&mut self.properties, G::Property {
             key: Some(rope.head),
             value: Some(value_),
             ..G::Property::default()
@@ -1045,7 +1045,7 @@ impl Object {
                         return Ok(existing);
                     }
 
-                    if let Some(last) = array.items.last() {
+                    if let Some(last) = array.items.last_mut() {
                         if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
@@ -1080,7 +1080,7 @@ impl Object {
                 .e_object_mut()
                 .unwrap()
                 .get_or_put_array(unsafe { &*rope.next }, bump)?;
-            self.properties.append(G::Property {
+            VecExt::append(&mut self.properties, G::Property {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..G::Property::default()
@@ -1089,7 +1089,7 @@ impl Object {
         }
 
         let out = Expr::init(Array::default(), rope.head.loc);
-        self.properties.append(G::Property {
+        VecExt::append(&mut self.properties, G::Property {
             key: Some(rope.head),
             value: Some(out),
             ..G::Property::default()

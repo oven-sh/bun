@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bun_collections::{HashMap, StringHashMap};
@@ -864,7 +865,7 @@ pub fn migrate_yarn_lockfile<'a>(
             let mut string_builder = this.string_builder();
 
             if let logger::js_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
-                string_builder.cap += e_object.properties.len as usize * 128;
+                string_builder.cap += e_object.properties.len_u32() as usize * 128;
             }
             if string_builder.cap > 0 {
                 string_builder.allocate()?;

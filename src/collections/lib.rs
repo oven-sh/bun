@@ -8,7 +8,7 @@
 extern crate self as bun_collections;
 
 pub mod multi_array_list;
-pub mod baby_list;
+pub mod vec_ext;
 pub mod hive_array;
 pub mod bounded_array;
 pub mod identity_context;
@@ -28,7 +28,7 @@ pub use static_hash_map::StaticHashMap;
 
 pub use multi_array_list::{MultiArrayList, MultiArrayElement};
 pub use bun_collections_macros::MultiArrayElement;
-pub use baby_list::{BabyList, ByteList, ByteVecExt, OffsetByteList, VecExt};
+pub use vec_ext::{ByteVecExt, DeepClone, OffsetByteList, VecExt};
 pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};

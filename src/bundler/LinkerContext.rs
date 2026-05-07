@@ -374,7 +374,7 @@ impl<'a> LinkerContext<'a> {
 
         // PORT NOTE: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena. PERF(port): Zig pointed at
-        // the slice in-place; revisit once BabyList grows a borrowed-view ctor.
+        // the slice in-place; revisit once Vec grows a borrowed-view ctor.
         self.graph.reachable_files = reachable.to_vec();
 
         // SAFETY: parse_graph is valid backref just assigned above
@@ -521,7 +521,7 @@ impl<'a> LinkerContext<'a> {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
             for i in 0..server_len as usize {
-                // SAFETY: `server_source_indices` is a stable BabyList; index
+                // SAFETY: `server_source_indices` is a stable Vec; index
                 // bounded by `server_len`.
                 let html_import: u32 =
                     unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
@@ -1645,7 +1645,7 @@ impl<'a> LinkerContext<'a> {
             stmts.inside_wrapper_prefix.append_non_dependency(
                 Stmt::alloc(
                     S::Local {
-                        decls: bun_collections::BabyList::<G::Decl>::from_slice(&[G::Decl {
+                        decls: Vec::<G::Decl>::from_slice(&[G::Decl {
                             binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                             value: Some(Expr::init(
                                 E::RequireString { import_record_index, ..Default::default() },
@@ -1674,7 +1674,7 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_non_dependency(
                     Stmt::alloc(
                         S::Local {
-                            decls: bun_collections::BabyList::<G::Decl>::from_slice(&[G::Decl {
+                            decls: Vec::<G::Decl>::from_slice(&[G::Decl {
                                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                                 value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
                             }])?,
@@ -2109,7 +2109,7 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distances: &mut [u32],
         distance: u32,
-        // Spec (LinkerContext.zig:1579) passes `parts: []BabyList(Part)` and only
+        // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
         // reads it. `&mut` here forced an aliased reborrow against the
         // `parts_in_file` slice below — borrowck conflict in un-gated code.
         parts: &[Vec<Part>],
@@ -2479,7 +2479,7 @@ pub enum ImportTrackerStatus {
 ///
 /// `import_data` is a raw slice into
 /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`
-/// (Zig returned `BabyList.slice()` directly). The graph SoA is never
+/// (Zig returned `Vec.slice()` directly). The graph SoA is never
 /// reallocated during `match_import_with_export`, so the pointer stays valid
 /// for the iterator's lifetime; the caller only reads `.data` from each entry.
 pub struct ImportTrackerIterator {
@@ -3277,7 +3277,7 @@ impl<'a> LinkerContext<'a> {
     ) {
         // PORT NOTE: Zig clones into a local, sorts, iterates, then writes back.
         // `ArrayHashMap` has no in-place key sort and `NamedImport` is non-Clone
-        // (owns a `BabyList`), so we sort an index vector over the live
+        // (owns a `Vec`), so we sort an index vector over the live
         // keys/values instead — same observable iteration order (ascending
         // `inner_index`). The write-back is a no-op here since we never mutate
         // the map.
@@ -3688,17 +3688,17 @@ impl InsideWrapperPrefix {
 
         if call.target.data.e_identifier().unwrap().ref_.eql(promise_all_ref) {
             // `await __promiseAll` already in place, append to the array argument
-            call.args.mut_(0).data.e_array_mut().unwrap().items.append(call_expr)?;
+            call.args.mut_(0).data.e_array_mut().unwrap().items.push(call_expr);
         } else {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 
             let promise_all = Expr::init(E::Identifier { ref_: promise_all_ref, ..Default::default() }, Loc::EMPTY);
 
-            let mut items: bun_collections::BabyList<Expr> = bun_collections::BabyList::init_capacity(2)?;
+            let mut items: Vec<Expr> = Vec::init_capacity(2)?;
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
             // PERF(port): was assume_capacity
 
-            let mut args: bun_collections::BabyList<Expr> = bun_collections::BabyList::init_capacity(1)?;
+            let mut args: Vec<Expr> = Vec::init_capacity(1)?;
             args.append_assume_capacity(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY));
             // PERF(port): was assume_capacity
 

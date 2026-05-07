@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_interchange::json5;
@@ -494,7 +495,7 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
         ExprData::EString(str) => estring_to_js(str.get(), global),
         ExprData::EArray(arr) => {
-            let js_arr = JSValue::create_empty_array(global, arr.items.len as usize)?;
+            let js_arr = JSValue::create_empty_array(global, arr.items.len_u32() as usize)?;
             for (_i, item) in arr.slice().iter().enumerate() {
                 let i = u32::try_from(_i).unwrap();
                 let value = expr_to_js(*item, global)?;
@@ -503,7 +504,7 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(js_arr)
         }
         ExprData::EObject(obj) => {
-            let js_obj = JSValue::create_empty_object(global, obj.properties.len as usize);
+            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
             for prop in obj.properties.slice() {
                 let key_expr = prop.key.unwrap();
                 let value = expr_to_js(prop.value.unwrap(), global)?;

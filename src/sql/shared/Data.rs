@@ -73,7 +73,7 @@ impl Data {
             Data::Empty => {}
             Data::InlineStorage(_) => {}
         }
-        // After clear_and_free the BabyList is already in an empty (cap=0) state,
+        // After clear_and_free the Vec is already in an empty (cap=0) state,
         // so dropping it via the assignment below is a no-op — no double-free.
         *self = Data::Empty;
     }

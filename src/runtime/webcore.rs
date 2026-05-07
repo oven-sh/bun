@@ -300,11 +300,11 @@ pub use byte_stream::ByteStream;
 pub use byte_blob_loader::ByteBlobLoader;
 
 // TODO: make this JSGlobalObject local for better security
-// Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
-// `ObjectPoolType` (already impl'd for `ByteList` in bun_collections), `true`
+// Zig: `bun.ObjectPool(bun.Vec<u8>, null, true, 8)` — `null` init goes on
+// `ObjectPoolType` (already impl'd for `Vec<u8>` in bun_collections), `true`
 // is THREADSAFE, `8` is MAX_COUNT. Storage param defaults to `UnwiredStorage`;
 // wire with `object_pool!` at first use site.
-pub type ByteListPool = bun_collections::pool::ObjectPool<bun_collections::ByteList, true, 8>;
+pub type ByteListPool = bun_collections::pool::ObjectPool<Vec<u8>, true, 8>;
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 // Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).
@@ -460,5 +460,5 @@ pub enum Lifetime {
 //   source:     src/runtime/webcore.zig (129 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Mostly thin re-exports → `pub mod`/`pub use`. `Pipe.Wrap` reshaped to a trait (no comptime-fn generics in Rust); ObjectPool/ByteList crate paths guessed.
+//   notes:      Mostly thin re-exports → `pub mod`/`pub use`. `Pipe.Wrap` reshaped to a trait (no comptime-fn generics in Rust); ObjectPool/Vec<u8> crate paths guessed.
 // ──────────────────────────────────────────────────────────────────────────

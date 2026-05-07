@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::StringArrayHashMap;
 use bun_logger as logger;
 use bun_paths as path;
@@ -148,7 +149,7 @@ impl WorkspaceMap {
         mut string_builder: Option<&mut StringBuilder<'_>>,
     ) -> Result<u32, bun_core::Error> {
         let workspace_names = self;
-        if arr.items.len == 0 {
+        if arr.items.len_u32() == 0 {
             return Ok(0);
         }
 

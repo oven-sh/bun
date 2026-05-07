@@ -1,5 +1,6 @@
 //! Port of `src/install/lockfile/bun.lock.zig` — text lockfile (bun.lock) stringifier and parser.
 
+use bun_collections::VecExt;
 use core::fmt::Write as _;
 
 use bun_core::{self, OOM};
@@ -1938,7 +1939,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let pkg_info = &value.data.e_array().unwrap().items;
-            if (pkg_info.len as usize) < 3 {
+            if (pkg_info.len_u32() as usize) < 3 {
                 continue;
             }
             let maybe_info_obj = pkg_info.at(2);
@@ -1967,7 +1968,7 @@ pub fn parse_into_binary_lockfile(
             let mut i: usize = 0;
             let pkg_info = &value.data.e_array().unwrap().items;
 
-            if (pkg_info.len as usize) == 0 {
+            if (pkg_info.len_u32() as usize) == 0 {
                 log.add_error(Some(source), value.loc, b"Missing package info")?;
                 return Err(ParseError::InvalidPackageInfo);
             }
@@ -2013,7 +2014,7 @@ pub fn parse_into_binary_lockfile(
             };
 
             if res.tag == ResolutionTag::Npm {
-                if i >= (pkg_info.len as usize) {
+                if i >= (pkg_info.len_u32() as usize) {
                     log.add_error(Some(source), value.loc, b"Missing npm registry")?;
                     return Err(ParseError::InvalidPackageInfo);
                 }
@@ -2123,7 +2124,7 @@ pub fn parse_into_binary_lockfile(
                             break 'workspace_and_not_v0;
                         }
 
-                        if i >= (pkg_info.len as usize) {
+                        if i >= (pkg_info.len_u32() as usize) {
                             log.add_error(Some(source), value.loc, b"Missing dependencies object")?;
                             return Err(ParseError::InvalidPackageInfo);
                         }
@@ -2169,7 +2170,7 @@ pub fn parse_into_binary_lockfile(
                         }
                     }
                     ResolutionTag::Root => {
-                        if i >= (pkg_info.len as usize) {
+                        if i >= (pkg_info.len_u32() as usize) {
                             log.add_error(Some(source), value.loc, b"Missing package binaries object")?;
                             return Err(ParseError::InvalidPackageInfo);
                         }
@@ -2193,7 +2194,7 @@ pub fn parse_into_binary_lockfile(
             // integrity
             match res.tag {
                 ResolutionTag::Npm => {
-                    if i >= (pkg_info.len as usize) {
+                    if i >= (pkg_info.len_u32() as usize) {
                         log.add_error(Some(source), value.loc, b"Missing integrity")?;
                         return Err(ParseError::InvalidPackageInfo);
                     }
@@ -2208,7 +2209,7 @@ pub fn parse_into_binary_lockfile(
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
-                    if i < (pkg_info.len as usize) {
+                    if i < (pkg_info.len_u32() as usize) {
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
@@ -2218,7 +2219,7 @@ pub fn parse_into_binary_lockfile(
                 }
                 tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                     // .bun-tag
-                    if i >= (pkg_info.len as usize) {
+                    if i >= (pkg_info.len_u32() as usize) {
                         log.add_error(Some(source), value.loc, b"Missing git dependency tag")?;
                         return Err(ParseError::InvalidPackageInfo);
                     }
@@ -2241,7 +2242,7 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     // Optional integrity hash (added to pin tarball content)
-                    if i < (pkg_info.len as usize) {
+                    if i < (pkg_info.len_u32() as usize) {
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);

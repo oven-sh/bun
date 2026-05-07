@@ -431,7 +431,7 @@ pub fn slice_to(pointer: &[u8], end: u8) -> &[u8] {
 pub use bun_collections as collections;
 pub use bun_collections::identity_context::{IdentityContext, ArrayIdentityContext};
 pub use bun_collections::{
-    MultiArrayList, BabyList, ByteList, OffsetByteList, bit_set, HiveArray, BoundedArray,
+    MultiArrayList, VecExt, ByteVecExt, OffsetByteList, bit_set, HiveArray, BoundedArray,
     LinearFifo, LinearFifoBufferType, ObjectPool,
 };
 pub use bun_collections::comptime_string_map;

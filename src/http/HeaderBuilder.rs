@@ -82,5 +82,5 @@ impl HeaderBuilder {
 //   source:     src/http/HeaderBuilder.zig (64 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      EntryList = Headers.Entry.List (likely MultiArrayList/BabyList); apply() ownership of content buffer needs Phase B decision
+//   notes:      EntryList = Headers.Entry.List (likely MultiArrayList/Vec); apply() ownership of content buffer needs Phase B decision
 // ──────────────────────────────────────────────────────────────────────────

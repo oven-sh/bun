@@ -111,7 +111,7 @@ impl Report {
     }
 }
 
-// Report::deinit only freed owned containers; Rust drops Bitset/BabyList/Vec fields automatically.
+// Report::deinit only freed owned containers; Rust drops Bitset/Vec/Vec fields automatically.
 // Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
 
 pub mod text {

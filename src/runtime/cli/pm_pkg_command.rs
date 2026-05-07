@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use crate::cli::command::Context;
-use bun_collections::{BabyList, StringArrayHashMap};
+use bun_collections::{VecExt, StringArrayHashMap};
 use bun_core::{err, Error, Global, Output};
 use bun_install::PackageManager;
 use bun_interchange::json;
@@ -548,7 +548,7 @@ impl PmPkgCommand {
                             return Err(err!("NotFound"));
                         };
 
-                        if index >= arr.items.len as usize {
+                        if index >= arr.items.len_u32() as usize {
                             return Err(err!("NotFound"));
                         }
 
@@ -570,7 +570,7 @@ impl PmPkgCommand {
                 if let Some(index) = parse_usize(part) {
                     match &current.data {
                         ExprData::EArray(arr) => {
-                            if index >= arr.items.len as usize {
+                            if index >= arr.items.len_u32() as usize {
                                 return Err(err!("NotFound"));
                             }
                             current = arr.items.slice()[index];
@@ -913,8 +913,8 @@ impl PmPkgCommand {
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
         let old = core::mem::take(&mut e_obj.properties);
-        let mut new_props: BabyList<G::Property> =
-            BabyList::init_capacity(old_len - 1)?;
+        let mut new_props: Vec<G::Property> =
+            Vec::init_capacity(old_len - 1)?;
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {

@@ -392,18 +392,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
                 // PORT NOTE: Zig `properties.clone(temp_allocator)` is a memcpy into the
-                // temp arena. `G::Property` is not `Clone` (it embeds a `BabyList`), so
+                // temp arena. `G::Property` is not `Clone` (it embeds a `Vec`), so
                 // mirror the Zig bitwise copy directly. JSON object properties carry no
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
                 // is `None`), so the duplicated bits do not alias any allocation.
-                let src_len = e_object.properties.len as usize;
+                let src_len = e_object.properties.len();
                 let mut new_properties =
                     Vec::<G::Property>::init_capacity(src_len).expect("unreachable");
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
-                        e_object.properties.ptr.as_ptr(),
+                        e_object.properties.as_ptr(),
                         new_properties.as_mut_ptr(),
                         src_len,
                     );
@@ -456,7 +456,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 default_expr = Expr::allocate(
                     temp_allocator,
                     E::Object {
-                        properties: bun_collections::BabyList::move_from_list(new_properties),
+                        properties: Vec::move_from_list(new_properties),
                         ..Default::default()
                     },
                     default_expr.loc,
@@ -580,7 +580,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             },
                             logger::Loc::EMPTY,
                         ),
-                        args: bun_collections::BabyList::move_from_list(cjs_args),
+                        args: Vec::move_from_list(cjs_args),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -800,7 +800,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, logger::Loc::EMPTY),
-                            args: bun_collections::BabyList::move_from_list(esm_args),
+                            args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -1065,7 +1065,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
                         did_merge_with_previous_local = true;
 
                         let mut clone = Vec::<G::Decl>::init_capacity(
-                            (before.decls.len + after.decls.len) as usize,
+                            before.decls.len() + after.decls.len(),
                         )
                         .expect("unreachable");
                         // PERF(port): was appendSliceAssumeCapacity
@@ -1077,7 +1077,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _allocator,
                             S::Local {
-                                decls: bun_collections::BabyList::move_from_list(clone),
+                                decls: Vec::move_from_list(clone),
                                 is_export: before.is_export,
                                 was_commonjs_export: before.was_commonjs_export,
                                 was_ts_import_equals: before.was_ts_import_equals,

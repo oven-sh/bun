@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+use bun_collections::VecExt;
 
 use bun_alloc::Arena as Bump;
 
@@ -78,7 +79,7 @@ impl ObjectRopeExt for E::Object {
             value_ = obj;
         }
 
-        self.properties.append(js_ast::G::Property {
+        VecExt::append(&mut self.properties, js_ast::G::Property {
             key: Some(rope.head),
             value: Some(value_),
             ..Default::default()
@@ -125,7 +126,7 @@ impl ObjectRopeExt for E::Object {
                 .e_object()
                 .unwrap()
                 .get_or_put_array(unsafe { &*rope.next }, bump)?;
-            self.properties.append(js_ast::G::Property {
+            VecExt::append(&mut self.properties, js_ast::G::Property {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..Default::default()
@@ -134,7 +135,7 @@ impl ObjectRopeExt for E::Object {
         }
 
         let out = Expr::init(E::Array::default(), rope.head.loc);
-        self.properties.append(js_ast::G::Property {
+        VecExt::append(&mut self.properties, js_ast::G::Property {
             key: Some(rope.head),
             value: Some(out),
             ..Default::default()

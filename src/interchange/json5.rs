@@ -10,6 +10,7 @@
 //! Reference: https://spec.json5.org/
 
 use bun_alloc::Arena as Bump;
+use bun_collections::VecExt;
 use bun_core::StackCheck;
 // MOVE_DOWN(b0): bun_js_parser::lexer → bun_logger / bun_string (T1/T2).
 // `is_identifier_start/_part` landed in `bun_string::lexer`; route through there.

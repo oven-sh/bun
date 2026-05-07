@@ -2,7 +2,7 @@ use core::ffi::{c_char, CStr};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;

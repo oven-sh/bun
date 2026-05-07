@@ -1,5 +1,6 @@
 //! Port of `src/cli/bunx_command.zig`.
 
+use bun_collections::VecExt;
 use core::mem::size_of;
 use std::io::Write as _;
 

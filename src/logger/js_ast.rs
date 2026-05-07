@@ -26,7 +26,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_string::strings;
 
 use super::Loc;
@@ -424,7 +424,7 @@ pub mod E {
     }
     impl Array {
         pub const EMPTY: Array = Array {
-            items: BabyList::EMPTY,
+            items: Vec::new(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
@@ -436,7 +436,8 @@ pub mod E {
             self.items.slice()
         }
         pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
-            self.items.append(item)
+            self.items.push(item);
+            Ok(())
         }
     }
 
@@ -462,7 +463,7 @@ pub mod E {
     }
     impl Object {
         pub const EMPTY: Object = Object {
-            properties: BabyList::EMPTY,
+            properties: Vec::new(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
@@ -500,11 +501,11 @@ pub mod E {
             if let Some(q) = self.as_property(key) {
                 self.properties.slice_mut()[q.i as usize].value = Some(expr);
             } else {
-                self.properties.append(super::G::Property {
+                self.properties.push(super::G::Property {
                     key: Some(Expr::init(EString::init(key), expr.loc)),
                     value: Some(expr),
                     ..Default::default()
-                })?;
+                });
             }
             Ok(())
         }
@@ -562,19 +563,19 @@ pub mod E {
                     }
                     _ => unreachable!(),
                 };
-                self.properties.append(super::G::Property {
+                self.properties.push(super::G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
                     ..Default::default()
-                })?;
+                });
                 return Ok(out);
             }
             let out = Expr::init(Object::default(), rope.head.loc);
-            self.properties.append(super::G::Property {
+            self.properties.push(super::G::Property {
                 key: Some(rope.head),
                 value: Some(out),
                 ..Default::default()
-            })?;
+            });
             Ok(out)
         }
     }
@@ -702,8 +703,8 @@ pub mod G {
         }
     }
 
-    /// Zig: `pub const List = BabyList(Property);`.
-    pub type PropertyList = BabyList<Property>;
+    /// Zig: `pub const List = Vec(Property);`.
+    pub type PropertyList = Vec<Property>;
 
     /// Lowercase path for `G::property::Kind` (json.rs:351).
     pub mod property {
@@ -715,8 +716,8 @@ pub mod G {
 // Expr / Data
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `js_ast.ExprNodeList` (Zig: `BabyList(Expr)`).
-pub type ExprNodeList = BabyList<Expr>;
+/// `js_ast.ExprNodeList` (Zig: `Vec(Expr)`).
+pub type ExprNodeList = Vec<Expr>;
 
 #[derive(Clone, Copy)]
 pub struct Expr {
@@ -822,7 +823,7 @@ impl Expr {
     pub fn as_array(&self) -> Option<ArrayIterator<'_>> {
         match &self.data {
             expr::Data::EArray(array) => {
-                if array.items.len == 0 {
+                if array.items.is_empty() {
                     return None;
                 }
                 // SAFETY: `StoreRef` points into a live Store/bump arena; widen
@@ -926,7 +927,7 @@ impl Expr {
     /// `bun_install::initialize_store()` (which targets the T4
     /// `bun_js_parser` slab), so re-allocating into `DATA_STORE` here gives
     /// the same survives-across-parses guarantee the Zig callers rely on.
-    /// `BabyList` buffers (items / properties) are heap-backed and owned by
+    /// `Vec` buffers (items / properties) are heap-backed and owned by
     /// the boxed payload, matching Zig's per-clone `allocator.alloc`.
     pub fn deep_clone(&self) -> Result<Expr, AllocError> {
         Ok(Expr { loc: self.loc, data: self.data.deep_clone()? })
@@ -957,7 +958,7 @@ pub struct ArrayIterator<'a> {
 
 impl ArrayIterator<'_> {
     pub fn next(&mut self) -> Option<Expr> {
-        if self.index >= self.array.items.len {
+        if self.index as usize >= self.array.items.len() {
             return None;
         }
         let result = self.array.items.slice()[self.index as usize];
@@ -1053,14 +1054,14 @@ pub mod expr {
                 Data::EArray(a) => {
                     let mut items = ExprNodeList::default();
                     for item in a.slice() {
-                        items.append(item.deep_clone()?)?;
+                        items.push(item.deep_clone()?);
                     }
                     E::Array { items, ..*a }.into_data_store()
                 }
                 Data::EObject(o) => {
                     let mut properties = super::G::PropertyList::default();
                     for prop in o.properties.slice() {
-                        properties.append(super::G::Property {
+                        properties.push(super::G::Property {
                             initializer: match &prop.initializer {
                                 Some(e) => Some(e.deep_clone()?),
                                 None => None,
@@ -1075,7 +1076,7 @@ pub mod expr {
                                 Some(e) => Some(e.deep_clone()?),
                                 None => None,
                             },
-                        })?;
+                        });
                     }
                     E::Object { properties, ..*o }.into_data_store()
                 }

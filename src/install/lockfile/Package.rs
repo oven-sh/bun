@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::mem;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
@@ -2331,7 +2332,7 @@ impl Package<u64> {
                                     _ => {}
                                 }
                             }
-                            total_dependencies_count += obj.properties.len as u32;
+                            total_dependencies_count += obj.properties.len_u32() as u32;
                         }
                         _ => {
                             if group.behavior.is_workspace() {
@@ -2371,7 +2372,7 @@ impl Package<u64> {
                             .trusted_dependencies
                             .as_mut()
                             .unwrap()
-                            .ensure_unused_capacity(arr.items.len as usize)?;
+                            .ensure_unused_capacity(arr.items.len_u32() as usize)?;
                         for item in arr.slice() {
                             let Some(name) = item.as_utf8() else {
                                 let _ = log.add_error_fmt(
@@ -2493,7 +2494,7 @@ impl Package<u64> {
             if let ExprData::EObject(obj) = &patched_deps.expr.data {
                 lockfile
                     .patched_dependencies
-                    .ensure_total_capacity(obj.properties.len as usize)
+                    .ensure_total_capacity(obj.properties.len_u32() as usize)
                     .expect("unreachable");
                 for prop in obj.properties.slice() {
                     let key = prop.key.unwrap();
@@ -2517,7 +2518,7 @@ impl Package<u64> {
             if let Some(bin) = json.as_property(b"bin") {
                 match &bin.expr.data {
                     ExprData::EObject(obj) => {
-                        match obj.properties.len {
+                        match obj.properties.len_u32() {
                             0 => {}
                             1 => {
                                 let first = &obj.properties.slice()[0];
@@ -2539,7 +2540,7 @@ impl Package<u64> {
                             }
                             _ => {
                                 let current_len = lockfile.buffers.extern_strings.len();
-                                let count = obj.properties.len as usize * 2;
+                                let count = obj.properties.len_u32() as usize * 2;
                                 lockfile
                                     .buffers
                                     .extern_strings

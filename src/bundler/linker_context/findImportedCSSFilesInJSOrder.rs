@@ -87,7 +87,7 @@ pub fn find_imported_css_files_in_js_order(
         }
 
         if is_css && source_index.is_valid() {
-            // bun.handleOom(o.append(temp, source_index)) — Rust BabyList uses global allocator.
+            // bun.handleOom(o.append(temp, source_index)) — Rust Vec uses global allocator.
             o.push(source_index);
         }
     }
@@ -114,5 +114,5 @@ pub type BitSet = DynamicBitSet;
 //   source:     src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig (103 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      MultiArrayList `.items(.field)` accessor + `Part.List` path need Phase B wiring; arena threaded for BabyList push
+//   notes:      MultiArrayList `.items(.field)` accessor + `Part.List` path need Phase B wiring; arena threaded for Vec push
 // ──────────────────────────────────────────────────────────────────────────

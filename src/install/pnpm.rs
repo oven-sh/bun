@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -236,7 +237,7 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
 }
 
 /// Shallow struct copy (Zig copies `G.Property` by value freely; the Rust
-/// `G::Property` lacks `Clone` because of its `BabyList`/`NonNull` fields).
+/// `G::Property` lacks `Clone` because of its `Vec`/`NonNull` fields).
 fn shallow_clone_prop(p: &G::Property) -> G::Property {
     G::Property {
         key: p.key,
@@ -1740,11 +1741,11 @@ fn update_package_json_after_migration(
                     let mut new_root_props = G::PropertyList::init_capacity(new_root_count)?;
                     for prop in e_object(&json).properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
-                            new_root_props.append(shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop))?;
                             continue;
                         };
                         if key != b"pnpm" {
-                            new_root_props.append(shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop))?;
                         }
                     }
 
@@ -1753,7 +1754,7 @@ fn update_package_json_after_migration(
                     let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count)?;
                     for prop in pnpm_obj.properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().unwrap()) else {
-                            new_pnpm_props.append(shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop))?;
                             continue;
                         };
                         if moved_overrides && key == b"overrides" {
@@ -1762,7 +1763,7 @@ fn update_package_json_after_migration(
                         if moved_patched_deps && key == b"patchedDependencies" {
                             continue;
                         }
-                        new_pnpm_props.append(shallow_clone_prop(prop))?;
+                        VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop))?;
                     }
 
                     pnpm_obj.properties = new_pnpm_props;
@@ -1855,7 +1856,7 @@ fn update_package_json_after_migration(
             let paths = workspace_paths.as_ref().unwrap();
             let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
             for path in paths {
-                items.append(Expr::init(
+                VecExt::append(&mut items, Expr::init(
                     E::EString::init(path),
                     logger::Loc::EMPTY,
                 ))?;
@@ -1871,7 +1872,7 @@ fn update_package_json_after_migration(
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
                     for path in paths {
-                        items.append(Expr::init(
+                        VecExt::append(&mut items, Expr::init(
                             E::EString::init(path),
                             logger::Loc::EMPTY,
                         ))?;
@@ -1900,7 +1901,7 @@ fn update_package_json_after_migration(
                 if !paths.is_empty() {
                     let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
                     for path in paths {
-                        items.append(Expr::init(
+                        VecExt::append(&mut items, Expr::init(
                             E::EString::init(path),
                             logger::Loc::EMPTY,
                         ))?;
@@ -1910,7 +1911,7 @@ fn update_package_json_after_migration(
                     let key =
                         Expr::init(E::EString::init(b"packages"), logger::Loc::EMPTY);
 
-                    ws_props.append(G::Property {
+                    VecExt::append(&mut ws_props, G::Property {
                         key: Some(key),
                         value: Some(value),
                         ..Default::default()
@@ -1920,7 +1921,7 @@ fn update_package_json_after_migration(
 
             if let Some(catalog) = catalog_obj {
                 let key = Expr::init(E::EString::init(b"catalog"), logger::Loc::EMPTY);
-                ws_props.append(G::Property {
+                VecExt::append(&mut ws_props, G::Property {
                     key: Some(key),
                     value: Some(catalog),
                     ..Default::default()
@@ -1929,14 +1930,14 @@ fn update_package_json_after_migration(
 
             if let Some(catalogs) = catalogs_obj {
                 let key = Expr::init(E::EString::init(b"catalogs"), logger::Loc::EMPTY);
-                ws_props.append(G::Property {
+                VecExt::append(&mut ws_props, G::Property {
                     key: Some(key),
                     value: Some(catalogs),
                     ..Default::default()
                 })?;
             }
 
-            if ws_props.len > 0 {
+            if ws_props.len_u32() > 0 {
                 let workspace_obj = Expr::init(
                     E::Object {
                         properties: ws_props,
@@ -1975,7 +1976,7 @@ fn update_package_json_after_migration(
         let mut join_buf: Vec<u8> = Vec::new();
 
         if ws_patched.is_object() {
-            let props_len = e_object(ws_patched).properties.len as usize;
+            let props_len = e_object(ws_patched).properties.len_u32() as usize;
             for prop_i in 0..props_len {
                 // convert keys to expected "name@version" instead of only "name"
                 let prop = &mut e_object_mut(ws_patched).properties.slice_mut()[prop_i];

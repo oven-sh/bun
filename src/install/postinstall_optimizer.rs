@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use std::sync::LazyLock;
 
 use bun_collections::ArrayHashMap;
@@ -54,7 +55,7 @@ impl PostinstallOptimizer {
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
-        if array.array.items.len == 0 {
+        if array.array.items.len_u32() == 0 {
             return Ok(true);
         }
 

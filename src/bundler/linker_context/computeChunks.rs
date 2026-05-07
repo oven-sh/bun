@@ -501,7 +501,7 @@ pub fn compute_chunks(
 
         break 'sort_chunks sorted_chunks;
         // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
-        // Phase B: confirm ownership of `chunks` slice (sorted_chunks BabyList backing storage).
+        // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
     let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
 
@@ -703,7 +703,7 @@ pub fn compute_chunks(
 
     Ok(sorted_chunks.to_owned_slice()?)
     // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
-    // Phase B: confirm ownership of `chunks` slice (sorted_chunks BabyList backing storage).
+    // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }
 
 pub use crate::DeferredBatchTask;
@@ -719,5 +719,5 @@ use crate::options::{Loader, Target};
 //   source:     src/bundler/linker_context/computeChunks.zig (503 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      Heavy borrowck reshaping needed in Phase B (MultiArrayList .items() borrows overlap with &mut this); arena-keyed ArrayHashMap<&[u8],_> lifetimes; sorted_chunks BabyList ownership for return value; chunk.unique_key slices borrow `this.unique_key_buf` (BACKREF, same single-buffer model as Zig).
+//   notes:      Heavy borrowck reshaping needed in Phase B (MultiArrayList .items() borrows overlap with &mut this); arena-keyed ArrayHashMap<&[u8],_> lifetimes; sorted_chunks Vec ownership for return value; chunk.unique_key slices borrow `this.unique_key_buf` (BACKREF, same single-buffer model as Zig).
 // ──────────────────────────────────────────────────────────────────────────

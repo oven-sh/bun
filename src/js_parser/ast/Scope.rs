@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
+use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
 use bun_logger as logger;
 
 use crate::StrictModeKind;
@@ -11,7 +11,7 @@ use crate::ast::ts::TSNamespaceScope;
 pub type MemberHashMap = StringHashMap<Member>;
 
 // PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
-// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). BabyList no
+// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
 // longer derives `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
@@ -19,9 +19,9 @@ pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`; raw back-pointer.
     pub parent: Option<NonNull<Scope>>,
-    pub children: BabyList<NonNull<Scope>>,
+    pub children: Vec<NonNull<Scope>>,
     pub members: MemberHashMap,
-    pub generated: BabyList<Ref>,
+    pub generated: Vec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     pub label_ref: Option<Ref>,
@@ -50,9 +50,9 @@ impl Default for Scope {
             id: 0,
             kind: Kind::Block,
             parent: None,
-            children: BabyList::default(),
+            children: Vec::default(),
             members: MemberHashMap::default(),
-            generated: BabyList::default(),
+            generated: Vec::default(),
             label_ref: None,
             label_stmt_is_loop: false,
             contains_direct_eval: false,
@@ -64,7 +64,7 @@ impl Default for Scope {
     }
 }
 
-pub type NestedScopeMap = ArrayHashMap<u32, BabyList<NonNull<Scope>>>;
+pub type NestedScopeMap = ArrayHashMap<u32, Vec<NonNull<Scope>>>;
 
 impl Scope {
     // PERF(port): the parser's hot path computes the wyhash once and reuses it

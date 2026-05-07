@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_range_loop)]
+use bun_collections::VecExt;
 use crate::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
 use crate::ast::p::P;
 use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
@@ -583,7 +584,7 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if st.was_ts_import_equals && !st.is_export && st.decls.len > 0 {
+                    if st.was_ts_import_equals && !st.is_export && st.decls.len_u32() > 0 {
                         let decl = &st.decls.slice()[0];
 
                         // Skip to the underlying reference

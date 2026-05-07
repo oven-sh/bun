@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bstr::BStr;
 use std::io::Write as _;
 
@@ -167,7 +168,7 @@ impl AuditCommand {
 
                 // If the response is an empty object, no vulnerabilities
                 if let ExprData::EObject(obj) = &expr.data {
-                    if obj.properties.len == 0 {
+                    if obj.properties.len_u32() == 0 {
                         return Ok(0);
                     }
                 }
@@ -779,7 +780,7 @@ fn print_enhanced_audit_report(
     };
 
     if let ExprData::EObject(obj) = &expr.data {
-        if obj.properties.len == 0 {
+        if obj.properties.len_u32() == 0 {
             Output::prettyln(format_args!("<green>No vulnerabilities found<r>"));
             return Ok(0);
         }

@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use bun_collections::BabyList;
 
 use crate::ImportItemStatus;
 use crate::ast::base::{Ref, RefInt};
@@ -419,7 +418,7 @@ impl Map {
     // (`computeCrossChunkDependencies::walk`) runs concurrently across worker
     // threads with each touching disjoint per-chunk symbol slots. The write
     // goes through the raw `*mut Symbol` returned by `get()` (provenance from
-    // BabyList's raw `NonNull`, independent of the `&self` borrow), so no
+    // Vec's raw `NonNull`, independent of the `&self` borrow), so no
     // whole-map `&mut` is asserted. See `get()` SOUNDNESS note.
     pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
@@ -431,7 +430,7 @@ impl Map {
         impl Iterator<'_> {
             pub fn next(&mut self, ref_: Ref) {
                 // SAFETY: ref_ is a valid top-level symbol ref produced by the parser; Map
-                // contains an entry for it. `get()` derives *mut from BabyList's raw NonNull
+                // contains an entry for it. `get()` derives *mut from Vec's raw NonNull
                 // (write provenance preserved); storage is not reallocated during iteration.
                 // Raw-ptr write — no `&mut` materialized.
                 let symbol = self.map.get(ref_).unwrap();
@@ -453,7 +452,7 @@ impl Map {
         // Union-find with path compression. Zig holds two aliasing *Symbol into the same
         // NestedList; we mirror that with raw-pointer-only access — no `&mut Symbol` is
         // materialized across the recursive `&mut self` calls. `get()` derives *mut from
-        // BabyList's raw `NonNull` (write provenance preserved, independent of `&self`
+        // Vec's raw `NonNull` (write provenance preserved, independent of `&self`
         // borrow); backing storage is never reallocated during merge.
         let old_symbol = self.get(old).unwrap();
         // SAFETY: valid in-bounds ptr from `get()`; see note above.
@@ -488,9 +487,9 @@ impl Map {
     // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
     // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
     // &mut self while holding the pointer. Mirrors Zig's `*const Map -> ?*Symbol`
-    // (interior mutability via BabyList's raw `[*]T` ptr field).
+    // (interior mutability via Vec's raw `[*]T` ptr field).
     //
-    // SOUNDNESS: the *mut is derived directly from `BabyList.ptr: NonNull<T>` — a raw
+    // SOUNDNESS: the *mut is derived directly from `Vec.ptr: NonNull<T>` — a raw
     // pointer field whose provenance is independent of the `&self` borrow used to read
     // it. We deliberately do NOT go through `.slice()`/`.at()` (which produce `&[T]`/`&T`
     // and would yield read-only provenance, making any later write UB). Callers may write
@@ -525,7 +524,7 @@ impl Map {
 
     pub fn init(source_count: usize) -> Map {
         // Zig: `allocator.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
-        // Per PORTING.md §Allocators (non-arena path), use Vec → BabyList.
+        // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
         let mut v: Vec<List> = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);
         Map { symbols_for_source: NestedList::move_from_list(v) }
@@ -597,7 +596,7 @@ impl Map {
             return ref_;
         };
         // SAFETY: see note on `get` — union-find path compression mutates through *mut
-        // derived from BabyList's raw NonNull. Raw-ptr-only access; no `&mut` held across
+        // derived from Vec's raw NonNull. Raw-ptr-only access; no `&mut` held across
         // the recursive call (which may write other symbols' `link` fields).
         if !unsafe { (*symbol_ptr).has_link() } {
             return ref_;
@@ -646,5 +645,5 @@ impl Symbol {
 //   source:     src/js_parser/ast/Symbol.zig (487 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      Map::get returns *mut Symbol derived from BabyList NonNull (union-find aliasing, raw-ptr-only access); original_name is arena raw slice; size_of==88 assert disabled
+//   notes:      Map::get returns *mut Symbol derived from Vec NonNull (union-find aliasing, raw-ptr-only access); original_name is arena raw slice; size_of==88 assert disabled
 // ──────────────────────────────────────────────────────────────────────────

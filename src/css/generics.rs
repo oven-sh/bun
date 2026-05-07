@@ -4,7 +4,7 @@
 //! reflection to derive `eql`, `hash`, `deepClone`, `toCss`, `parse`, etc. across
 //! every CSS value type. Per PORTING.md §Comptime reflection, that has no Rust
 //! equivalent — the port defines a trait per protocol, provides blanket impls for
-//! the structural cases (Option/Box/slice/Vec/BabyList/SmallList/primitives), and
+//! the structural cases (Option/Box/slice/Vec/Vec/SmallList/primitives), and
 //! per-struct/-enum impls are expected to come from `#[derive(...)]` macros in
 //! Phase B (`#[derive(ToCss, DeepClone, CssEql, CssHash)]` etc.).
 //!
@@ -125,7 +125,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Vec<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // `BabyList::deep_clone_with` takes a per-element closure so the arena
+        // `Vec::deep_clone_with` takes a per-element closure so the arena
         // lifetime carried by *this* trait's `deep_clone` threads through.
         self.deep_clone_with(|e| e.deep_clone(bump))
     }
@@ -1140,7 +1140,7 @@ is_compatible_container!(
 // type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
 // or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
 // trait below is the uniform bound that `Property::parse` and the container
-// blanket impls (`SmallList`/`BabyList`/`Option`/`Size2D`/`Rect`) need.
+// blanket impls (`SmallList`/`Vec`/`Option`/`Size2D`/`Rect`) need.
 //
 // `Parse` is intentionally lifetime-free: every value-type parser takes
 // `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.

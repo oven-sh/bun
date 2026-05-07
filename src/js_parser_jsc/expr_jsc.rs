@@ -2,6 +2,7 @@
 //! `JSValue`. Used by the macro system. The AST types stay in `js_parser/`;
 //! only the JS-materialization lives here.
 
+use bun_collections::VecExt;
 use bun_js_parser::{E, Expr, ExprData, G, ToJSError};
 use bun_jsc::{bun_string_jsc, JSGlobalObject, JSValue, JsError};
 use bun_string::{strings, String as BunString};
@@ -101,7 +102,7 @@ pub fn big_int_to_js(_: &E::BigInt) -> JSValue {
 }
 
 pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let obj = JSValue::create_empty_object(global, this.properties.len as usize);
+    let obj = JSValue::create_empty_object(global, this.properties.len_u32() as usize);
     let _guard = obj.protected();
     let props: &[G::Property] = this.properties.slice();
     for prop in props {

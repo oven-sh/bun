@@ -180,7 +180,7 @@ pub mod bun_css {
             pub v: Vec<Box<[u8]>>,
         }
         // PORT NOTE: `Vec<T>` has no blanket `Clone`; manual deep-clone via
-        // `BabyList::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
+        // `Vec::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
         // tiny layer-name list is unrecoverable — `handle_oom`.
         impl Clone for LayerName {
             fn clone(&self) -> Self {

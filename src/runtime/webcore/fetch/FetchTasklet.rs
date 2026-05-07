@@ -479,7 +479,7 @@ impl FetchTasklet {
                     // SAFETY: `chunk` borrows `scheduled_response_buffer` which outlives
                     // `on_data` (consumed synchronously per StreamResult::Temporary contract).
                     bytes.on_data(StreamResult::Temporary(unsafe {
-                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                        Vec::<u8>::from_borrowed_slice_dangerous(chunk)
                     }))?;
                 } else {
                     self.clear_stream_cancel_handler();
@@ -489,7 +489,7 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     // SAFETY: see above.
                     bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
-                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                        Vec::<u8>::from_borrowed_slice_dangerous(chunk)
                     }))?;
                     drop(prev);
                 }
@@ -514,14 +514,14 @@ impl FetchTasklet {
                         // SAFETY: `chunk` borrows `scheduled_response_buffer` which outlives
                         // `on_data` (consumed synchronously per StreamResult::Temporary contract).
                         bytes.on_data(StreamResult::Temporary(unsafe {
-                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                            Vec::<u8>::from_borrowed_slice_dangerous(chunk)
                         }))?;
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(global_this);
                         // SAFETY: see above.
                         bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
-                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                            Vec::<u8>::from_borrowed_slice_dangerous(chunk)
                         }))?;
                     }
 

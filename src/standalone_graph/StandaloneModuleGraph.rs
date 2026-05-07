@@ -2,6 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
+use bun_collections::VecExt;
 use core::ffi::{c_char, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -2107,7 +2108,7 @@ pub fn serialize_json_source_map_for_standalone(
         AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
-    if sources_content.items.len != sources_paths.items.len {
+    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
         return Err(err!("InvalidSourceMap"));
     }
 
@@ -2117,12 +2118,12 @@ pub fn serialize_json_source_map_for_standalone(
     let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
-    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len));
+    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
     header_list.extend_from_slice(&u32::try_from(map_blob.len()).unwrap().to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
-        + size_of::<StringPointer>() * (sources_content.items.len as usize) * 2 // path + source
+        + size_of::<StringPointer>() * (sources_content.items.len_u32() as usize) * 2 // path + source
         + map_blob.len();
 
     for item in sources_paths.items.slice() {

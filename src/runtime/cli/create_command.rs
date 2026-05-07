@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
@@ -845,12 +846,12 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
+                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len_u32() > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().unwrap().properties.len > 0 {
+                        if property.data.e_object().unwrap().properties.len_u32() > 0 {
                             has_dependencies = true;
                             dev_dependencies = Some(q.expr.into());
 
@@ -865,12 +866,12 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"dependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
+                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len_u32() > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().unwrap().properties.len > 0 {
+                        if property.data.e_object().unwrap().properties.len_u32() > 0 {
                             has_dependencies = true;
                             dependencies = Some(q.expr.into());
 
@@ -1175,7 +1176,7 @@ impl CreateCommand {
                     let mut i: usize = 0;
                     let mut property_i: usize = 0;
                     let props = &mut package_json_expr.data.e_object_mut().unwrap().properties;
-                    while i < props.len as usize {
+                    while i < props.len_u32() as usize {
                         let key_expr = props.slice()[i].key.unwrap();
                         let key = key_expr.as_utf8_string_literal().unwrap();
 
@@ -2552,7 +2553,7 @@ impl Example {
 
         if let Some(q) = examples_object.as_property(b"examples") {
             if q.expr.data.is_e_object() {
-                let count = q.expr.data.e_object().unwrap().properties.len as usize;
+                let count = q.expr.data.e_object().unwrap().properties.len_u32() as usize;
 
                 let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
                 for (i, property) in q.expr.data.e_object().unwrap().properties.slice().iter().enumerate() {

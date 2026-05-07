@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_collections::VecExt;
 use crate::ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use crate::ast::p::P;
 use crate::ast::e::CallUnwrap;
@@ -231,7 +232,7 @@ impl SideEffects {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
-                    if call.args.len > 0 {
+                    if call.args.len_u32() > 0 {
                         let joined = Self::join_all_simplified(p, &call.args);
                         if let Some(j) = &joined {
                             if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
@@ -252,7 +253,7 @@ impl SideEffects {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
-                    if call.args.len > 0 {
+                    if call.args.len_u32() > 0 {
                         let joined = Self::join_all_simplified(p, &call.args);
                         if let Some(j) = &joined {
                             if call.can_be_unwrapped_if_unused == CallUnwrap::IfUnusedAndToStringSafe {
@@ -345,7 +346,7 @@ impl SideEffects {
                 // Objects with "..." spread expressions can't be unwrapped because the
                 // "..." triggers code evaluation via getters. In that case, just trim
                 // the other items instead and leave the object expression there.
-                let len = e_object.properties.len as usize;
+                let len = e_object.properties.len_u32() as usize;
                 let mut has_spread = false;
                 for i in 0..len {
                     if e_object.properties.at(i).kind == G::PropertyKind::Spread {
@@ -376,7 +377,7 @@ impl SideEffects {
                             }
                         }
 
-                        // PORT NOTE: G::Property is not Copy (BabyList ts_decorators
+                        // PORT NOTE: G::Property is not Copy (Vec ts_decorators
                         // field). The Zig spec does an in-place struct copy; here we
                         // swap so the kept property lands at `end` without cloning.
                         if end != j {
@@ -425,7 +426,7 @@ impl SideEffects {
                 return Some(result);
             }
             ExprData::EArray(mut arr) => {
-                let len = arr.items.len as usize;
+                let len = arr.items.len_u32() as usize;
 
                 // Arrays with "..." spread expressions can't be unwrapped because the
                 // "..." triggers code evaluation via iterators. In that case, just trim
@@ -466,9 +467,9 @@ impl SideEffects {
     /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &mut P<'a, TS, J, SCAN>,
-        items: &bun_collections::BabyList<Expr>,
+        items: &Vec<Expr>,
     ) -> Option<Expr> {
-        let len = items.len as usize;
+        let len = items.len_u32() as usize;
         if len == 0 {
             return None;
         }
@@ -602,7 +603,7 @@ impl SideEffects {
                 // Omit everything except the identifiers
 
                 // common case: single var foo = blah, don't need to allocate
-                if local.decls.len == 1
+                if local.decls.len_u32() == 1
                     && matches!(
                         local.decls.at(0).binding.data,
                         ast::binding::Data::BIdentifier(_)
@@ -613,8 +614,8 @@ impl SideEffects {
                     return true;
                 }
 
-                let mut decls: Vec<G::Decl> = Vec::with_capacity(local.decls.len as usize);
-                for i in 0..(local.decls.len as usize) {
+                let mut decls: Vec<G::Decl> = Vec::with_capacity(local.decls.len_u32() as usize);
+                for i in 0..(local.decls.len_u32() as usize) {
                     let binding = local.decls.at(i).binding;
                     Self::find_identifiers(binding, &mut decls);
                 }

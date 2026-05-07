@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_alloc::Arena as Bump;
 use bun_logger as logger;
 
@@ -71,7 +72,7 @@ impl KnownGlobal {
     }
 
     // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
-    // `std.mem.Allocator` arg. Phase-A `BabyList` uses the global allocator.
+    // `std.mem.Allocator` arg. Phase-A `Vec` uses the global allocator.
     #[inline(never)]
     pub fn minify_global_constructor(
         _bump: &Bump,
@@ -113,7 +114,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Object => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // new Object() -> {}
@@ -142,7 +143,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Array => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 match n {
                     0 => {
@@ -221,7 +222,7 @@ impl KnownGlobal {
                                     );
                                     return Some(js_ast::Expr::init(
                                         E::Array {
-                                            items: bun_collections::BabyList::move_from_list(list),
+                                            items: Vec::move_from_list(list),
                                             ..Default::default()
                                         },
                                         loc,
@@ -264,7 +265,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::WeakSet | KnownGlobal::WeakMap => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new WeakSet()" is pure
@@ -281,7 +282,7 @@ impl KnownGlobal {
                             e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                         }
                         js_ast::ExprData::EArray(array) => {
-                            if array.items.len == 0 {
+                            if array.items.len_u32() == 0 {
                                 // "new WeakSet([])" is pure
                                 e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                             } else {
@@ -296,7 +297,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::Date => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new Date()" is pure
@@ -329,7 +330,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Set => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new Set()" is pure
@@ -356,7 +357,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Headers => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new Headers()" is pure
@@ -368,7 +369,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Response => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new Response()" is pure
@@ -401,7 +402,7 @@ impl KnownGlobal {
                 None
             }
             KnownGlobal::TextDecoder | KnownGlobal::TextEncoder => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new TextEncoder()" is pure
@@ -417,7 +418,7 @@ impl KnownGlobal {
             }
 
             KnownGlobal::Map => {
-                let n = e.args.len;
+                let n = e.args.len_u32();
 
                 if n == 0 {
                     // "new Map()" is pure
@@ -462,5 +463,5 @@ impl KnownGlobal {
 //   source:     src/js_parser/ast/KnownGlobal.zig (361 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      `_bump` arg retained for call-site parity (Phase-A BabyList uses global allocator).
+//   notes:      `_bump` arg retained for call-site parity (Phase-A Vec uses global allocator).
 // ──────────────────────────────────────────────────────────────────────────

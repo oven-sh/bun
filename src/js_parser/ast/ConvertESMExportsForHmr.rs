@@ -32,9 +32,7 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         .push(TempRef { r#ref, ..Default::default() });
 
     // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-    unsafe { &mut *p.current_scope }
-        .generated
-        .append(r#ref)
+    VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, r#ref)
         .expect("oom");
 
     r#ref
@@ -52,7 +50,7 @@ pub struct ConvertESMExportsForHmr<'a> {
 }
 // PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.allocator` for the four
 // collections; in Rust the parser arena is a `bumpalo::Bump`, but the consumers
-// (`BabyList::move_from_list` for `export_props`, arena copy for `stmts`) want
+// (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>` anyway. Kept as `Vec` so callers can construct via
 // `Default::default()` without needing `&'a Bump`. See P.zig:6389.
 
@@ -86,7 +84,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 let mut new_len: usize = 0;
                 // PORT NOTE: reshaped for borrowck — index loop instead of `|*decl_ptr|`.
-                let decls_len = st.decls.len as usize;
+                let decls_len = st.decls.len_u32() as usize;
                 for i in 0..decls_len {
                     // explicit field copies (G::Decl is not `Copy`) to avoid aliasing
                     let binding = st.decls.slice()[i].binding;
@@ -135,7 +133,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if new_len == 0 {
                     return Ok(());
                 }
-                st.decls.len = u32::try_from(new_len).unwrap();
+                st.decls.truncate(new_len);
 
                 break 'stmt stmt;
             }
@@ -220,7 +218,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             .symbol_uses
                             .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-                        unsafe { &mut *p.current_scope }.generated.append(temp_id)?;
+                        VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, temp_id)?;
 
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
@@ -231,7 +229,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         // SAFETY: as above — POD-shaped read out of arena.
                         let value = unsafe { core::ptr::read(&st.value) }.to_expr();
                         let mut decls = G::DeclList::default();
-                        decls.append(G::Decl {
+                        VecExt::append(&mut decls, G::Decl {
                             binding: Binding::alloc(
                                 p.allocator,
                                 B::Identifier { r#ref: temp_id },
@@ -616,7 +614,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .symbol_uses
                 .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-            unsafe { &mut *p.current_scope }.generated.append(arg1)?;
+            VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg1)?;
 
             // 'get abc() { return abc }'
             let body_stmts = p
@@ -671,7 +669,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             } else {
                 // PORT NOTE: Zig grew `export_props` in place, shifted right with
                 // `bun.copy`, then `@memcpy`'d the star props into the front.
-                // `G::Property` is not `Copy` in Rust (contains `BabyList`), so the
+                // `G::Property` is not `Copy` in Rust (contains `Vec`), so the
                 // bitwise overlap-copy is reproduced via raw ptr ops.
                 let export_star_len = self.export_star_props.len();
                 self.export_props.reserve(export_star_len);

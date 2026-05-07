@@ -1,4 +1,3 @@
-use bun_collections::{VecExt, ByteVecExt};
 // const IPC = @import("../jsc/ipc.zig");
 
 use core::ffi::{c_char, c_void};
@@ -7,7 +6,7 @@ use std::sync::Arc;
 
 use bun_alloc::Arena;
 use bun_aio::Loop as AsyncLoop;
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{
@@ -1457,7 +1456,7 @@ pub struct PipeReader {
 }
 
 pub enum BufferedOutput {
-    Bytelist(ByteList),
+    Bytelist(Vec<u8>),
     ArrayBuffer {
         buf: jsc::array_buffer::ArrayBufferStrong,
         i: u32,
@@ -1466,7 +1465,7 @@ pub enum BufferedOutput {
 
 impl Default for BufferedOutput {
     fn default() -> Self {
-        BufferedOutput::Bytelist(ByteList::default())
+        BufferedOutput::Bytelist(Vec::<u8>::default())
     }
 }
 
@@ -1510,7 +1509,7 @@ impl Drop for BufferedOutput {
     fn drop(&mut self) {
         match self {
             BufferedOutput::Bytelist(_b) => {
-                // ByteList drops its own storage.
+                // Vec<u8> drops its own storage.
             }
             BufferedOutput::ArrayBuffer { buf: _buf, .. } => {
                 // FIXME: SHOULD THIS BE HERE?

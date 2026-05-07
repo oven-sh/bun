@@ -25,7 +25,7 @@ impl Clone for SmolStr {
         if self.is_inlined() {
             return SmolStr(self.0);
         }
-        // Heap-backed: dupe the bytes into a fresh BabyList allocation.
+        // Heap-backed: dupe the bytes into a fresh Vec allocation.
         // bun.handleOom: panic on OOM (matches Zig allocator semantics).
         SmolStr::from_slice(self.slice()).expect("OOM")
     }
@@ -142,7 +142,7 @@ impl SmolStr {
 
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
-            // TODO(port): verify Vec<u8>::init_capacity / append_slice_assume_capacity API.
+            // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
             let mut baby_list = Vec::<u8>::init_capacity(values.len())?;
             baby_list.append_slice_assume_capacity(values);
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
@@ -405,5 +405,5 @@ mod tests {
 //   source:     src/string/SmolStr.zig (275 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      packed u128 bit-layout reimplemented with manual shift accessors; Drop replaces deinit so heap-backed mutators neutralize self before fallible BabyList ops to avoid error-path double-free; Vec<u8> raw-parts API needs verification in Phase B.
+//   notes:      packed u128 bit-layout reimplemented with manual shift accessors; Drop replaces deinit so heap-backed mutators neutralize self before fallible Vec ops to avoid error-path double-free; Vec<u8> raw-parts API needs verification in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

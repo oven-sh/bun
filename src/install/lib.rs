@@ -8,6 +8,7 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
+use bun_collections::VecExt;
 extern crate self as bun_install;
 extern crate bun_string as bun_str;
 extern crate bun_sha_hmac as bun_sha;
@@ -27,6 +28,7 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_interchange::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_logger::js_ast`.
 pub(crate) mod bun_json {
+    use bun_collections::VecExt;
     pub use bun_interchange::json::*;
     pub use bun_logger::js_ast::{Expr, ExprData, e as E, expr::Query, G::Property};
 

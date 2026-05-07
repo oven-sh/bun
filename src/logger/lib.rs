@@ -326,8 +326,6 @@ pub enum ImportKind {
 //         src/js_parser/js_parser.zig (ImportItemStatus).
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_collections::BabyList;
-
 /// Tag bits of `Ref` (Zig: anonymous `enum(u2)` field).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr)]
@@ -712,7 +710,7 @@ pub struct SymbolUse {
 pub mod symbol {
     use core::cell::UnsafeCell;
     #[allow(unused_imports)]
-    use super::{BabyList, Ref, Symbol};
+    use super::{Ref, Symbol};
 
     pub type List = Vec<Symbol>;
     pub type NestedList = Vec<List>;
@@ -751,7 +749,7 @@ pub mod symbol {
             let src = r.source_index() as usize;
             let inner = r.inner_index() as usize;
             // SAFETY: write provenance comes from `UnsafeCell::get`. We index via
-            // the BabyList raw `ptr` fields directly (no intermediate `&mut`).
+            // the Vec raw `ptr` fields directly (no intermediate `&mut`).
             unsafe {
                 let nested: *mut NestedList = self.symbols_for_source.get();
                 debug_assert!(src < (*nested).len());

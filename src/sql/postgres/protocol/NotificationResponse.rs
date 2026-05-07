@@ -1,4 +1,4 @@
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 
 use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
@@ -7,12 +7,12 @@ use crate::postgres::postgres_types::Int4;
 #[derive(Default)]
 pub struct NotificationResponse {
     pub pid: Int4,
-    pub channel: ByteList,
-    pub payload: ByteList,
+    pub channel: Vec<u8>,
+    pub payload: Vec<u8>,
 }
 
 // PORT NOTE: Zig `deinit` only freed `channel`/`payload` via `clearAndFree(bun.default_allocator)`.
-// `ByteList` (= `Vec<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
+// `Vec<u8>` (= `Vec<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
 // is needed here.
 
 impl NotificationResponse {
@@ -49,5 +49,5 @@ impl NotificationResponse {
 //   source:     src/sql/postgres/protocol/NotificationResponse.zig (30 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      DecoderWrap comptime-fn pattern needs trait/macro in Phase B; ByteList must impl Drop.
+//   notes:      DecoderWrap comptime-fn pattern needs trait/macro in Phase B; Vec<u8> must impl Drop.
 // ──────────────────────────────────────────────────────────────────────────

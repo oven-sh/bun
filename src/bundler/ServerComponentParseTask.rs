@@ -332,7 +332,7 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: bun_collections::BabyList::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
+            args: Vec::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });

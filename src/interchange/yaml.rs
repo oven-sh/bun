@@ -14,7 +14,7 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::AllocError;
-use bun_collections::{BabyList, StringHashMap};
+use bun_collections::{VecExt, StringHashMap};
 use bun_core::{self, StackCheck};
 // MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
 use bun_logger::ast::{self, Expr, E, G};
@@ -59,9 +59,9 @@ impl YAML {
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
-                let mut items: BabyList<Expr> = BabyList::init_capacity(stream.docs.len())?;
+                let mut items: Vec<Expr> = Vec::init_capacity(stream.docs.len())?;
                 for doc in &stream.docs {
-                    items.append(doc.root)?;
+                    items.push(doc.root);
                     // PERF(port): was appendAssumeCapacity
                 }
                 Ok(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY))
@@ -2519,7 +2519,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            E::Array { items: BabyList::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
+            E::Array { items: Vec::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
             sequence_start.loc(),
         ))
     }
@@ -2726,7 +2726,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             Ok(Expr::init(
-                E::Array { items: BabyList::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
+                E::Array { items: Vec::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
                 sequence_start.loc(),
             ))
         })();

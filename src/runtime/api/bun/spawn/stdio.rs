@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-use bun_collections::{VecExt, ByteVecExt};
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -37,12 +36,12 @@ macro_rules! log {
     ($($t:tt)*) => { bun_output::scoped_log!(SYS, $($t)*) };
 }
 
-/// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.ByteList }`.
+/// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
 pub struct Capture {
-    // TODO(port): lifetime — Zig holds a raw `*bun.ByteList` backref owned
+    // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
     // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
-    pub buf: *mut ByteList,
+    pub buf: *mut Vec<u8>,
 }
 
 /// Anonymous payload of `Stdio::Dup2` in Zig.
@@ -105,7 +104,7 @@ impl Stdio {
         match self {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the
             // returned slice borrows `self` and the caller guarantees the
-            // ByteList outlives this Stdio.
+            // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
             Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
             Self::Blob(blob) => blob.slice(),

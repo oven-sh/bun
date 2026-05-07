@@ -12,7 +12,7 @@ use crate::css_parser::{CssResult, Delimiters, Parser};
 // latter). The Zig original does the same with `Allocator.alloc`/`free`.
 
 /// This is a type whose items can either be heap-allocated (essentially the
-/// same as a BabyList(T)) or inlined in the struct itself.
+/// same as a Vec(T)) or inlined in the struct itself.
 ///
 /// This type is a performance optimization for avoiding allocations, especially when you know the list
 /// will commonly have N or fewer items.
@@ -20,7 +20,7 @@ use crate::css_parser::{CssResult, Delimiters, Parser};
 /// The `capacity` field is used to disambiguate between the two states: - When
 /// `capacity <= N`, the items are stored inline, and `capacity` is the length
 /// of the items.  - When `capacity > N`, the items are stored on the heap, and
-/// this type essentially becomes a BabyList(T), but with the fields reordered.
+/// this type essentially becomes a Vec(T), but with the fields reordered.
 ///
 /// This code is based on servo/rust-smallvec and the Zig std.ArrayList source.
 pub struct SmallList<T, const N: usize> {

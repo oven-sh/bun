@@ -34,8 +34,6 @@ use bun_collections::{VecExt, ByteVecExt};
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_collections::ByteList as RawByteList;
-pub type ByteList = RawByteList;
 use bun_sys::{self, Fd};
 
 pub use crate::shell::env_map::EnvMap;
@@ -1481,16 +1479,16 @@ impl Interpreter {
 }
 
 /// Spec: interpreter.zig `ioToJSValue`. Moves the captured stdout/stderr
-/// `ByteList` into a JS `Buffer` (ownership transfers to JSC's deallocator)
+/// `Vec<u8>` into a JS `Buffer` (ownership transfers to JSC's deallocator)
 /// and resets the source to empty.
-fn io_to_js_value(global_this: &crate::jsc::JSGlobalObject, buf: *mut ByteList) -> crate::jsc::JSValue {
+fn io_to_js_value(global_this: &crate::jsc::JSGlobalObject, buf: *mut Vec<u8>) -> crate::jsc::JSValue {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
     let bytelist = core::mem::take(unsafe { &mut *buf });
     // PORT NOTE: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
     // (..., .Uint8Array) }.toNodeBuffer(global)`. `MarkedArrayBuffer::
     // to_node_buffer` is the same `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-    // call; we hand it the moved-out `ByteList` storage directly. The
-    // `ByteList` value itself is `mem::forget`-ed since JSC now owns the bytes.
+    // call; we hand it the moved-out `Vec<u8>` storage directly. The
+    // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
     let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
     crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
 }
@@ -1542,13 +1540,13 @@ pub struct ShellExecEnv {
 }
 
 pub enum Bufio {
-    Owned(ByteList),
-    Borrowed(*mut ByteList),
+    Owned(Vec<u8>),
+    Borrowed(*mut Vec<u8>),
 }
 
 impl Default for Bufio {
     fn default() -> Self {
-        Bufio::Owned(ByteList::default())
+        Bufio::Owned(Vec::<u8>::default())
     }
 }
 
@@ -1606,14 +1604,14 @@ impl ShellExecEnv {
         &self.__prev_cwd[..self.__prev_cwd.len().saturating_sub(1)]
     }
 
-    pub fn buffered_stdout(&mut self) -> *mut ByteList {
+    pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
         match &mut self._buffered_stdout {
             Bufio::Owned(o) => o as *mut _,
             Bufio::Borrowed(b) => *b,
         }
     }
 
-    pub fn buffered_stderr(&mut self) -> *mut ByteList {
+    pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
         match &mut self._buffered_stderr {
             Bufio::Owned(o) => o as *mut _,
             Bufio::Borrowed(b) => *b,
@@ -1639,16 +1637,16 @@ impl ShellExecEnv {
         // Spec (interpreter.zig dupeForSubshell): for `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
         // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
-        let bufio_for = |out: &OutKind, parent_buf: *mut ByteList| -> Bufio {
+        let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
             match out {
                 OutKind::Fd(f) => match f.captured {
                     Some(cap) => Bufio::Borrowed(cap),
-                    None => Bufio::Owned(ByteList::default()),
+                    None => Bufio::Owned(Vec::<u8>::default()),
                 },
-                OutKind::Ignore => Bufio::Owned(ByteList::default()),
+                OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
                 OutKind::Pipe => match kind {
                     ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(ByteList::default())
+                        Bufio::Owned(Vec::<u8>::default())
                     }
                     ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
                         Bufio::Borrowed(parent_buf)
@@ -1686,7 +1684,7 @@ impl ShellExecEnv {
         // explicit close (Zig: `closefd(this.cwd_fd)`).
         let boxed = unsafe { Box::from_raw(this) };
         closefd(boxed.cwd_fd);
-        // EnvMap/Vec/ByteList drop impls free their storage; `Bufio::Borrowed`
+        // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
         // is a raw ptr so its drop is a no-op (matches Zig's
         // `if (== .owned) clearAndFree`).
         drop(boxed);

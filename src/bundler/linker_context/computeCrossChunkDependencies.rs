@@ -154,7 +154,7 @@ pub struct CrossChunkDependencies<'a> {
     ctx: *const LinkerContext<'static>,
     // PORT NOTE: `*const` — `walk` runs concurrently across worker threads; each
     // touches disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`
-    // (raw-ptr per-slot write through BabyList's `NonNull`). Holding `&mut Map`
+    // (raw-ptr per-slot write through Vec's `NonNull`). Holding `&mut Map`
     // here would assert whole-map exclusivity per thread = aliasing UB.
     symbols: *const js_ast::ast::symbol::Map,
 }
@@ -546,7 +546,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     if clause_items.len() > 0 {
                         let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1)?;
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
-                        // BabyList buffer (arena-lifetime) into a raw fat ptr.
+                        // Vec buffer (arena-lifetime) into a raw fat ptr.
                         let items_ptr: *mut [js_ast::ClauseItem] =
                             clause_items.slice_mut() as *mut [js_ast::ClauseItem];
                         core::mem::forget(clause_items);
@@ -590,7 +590,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     .imports_from_other_chunks,
             );
             let mut cross_chunk_imports = core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
-            // PORT NOTE: reshaped for borrowck — Zig copies the BabyList by value, mutates,
+            // PORT NOTE: reshaped for borrowck — Zig copies the Vec by value, mutates,
             // then writes back; we `take` to express the same move-out/move-in.
             let mut cross_chunk_prefix_stmts = Vec::<js_ast::Stmt>::default();
 

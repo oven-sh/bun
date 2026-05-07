@@ -6,14 +6,14 @@
 // type reflection; the idiomatic equivalents are the `From` / `FromIterator` /
 // `Extend` traits, plus associated types for `Key`/`Value`/`Of`. The functions
 // below preserve the Zig names and intent but delegate to traits that the
-// concrete collection types (HashMap, Vec, MultiArrayList, BabyList) must impl.
+// concrete collection types (HashMap, Vec, MultiArrayList, Vec) must impl.
 // Phase B: audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
 // likely replace them with direct `.collect()` / `Vec::from` at the caller.
 
 use core::hash::Hash;
 
 use bun_alloc::AllocError;
-// TODO(b0): impls for bun_collections::{BabyList, HashMap, MultiArrayList} move to
+// TODO(b0): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
 // MapLike/ArrayLike for its own types.
 
@@ -144,7 +144,7 @@ where
 // Zig branches on the *target* type:
 //   - MultiArrayList (`@hasField "bytes"`): reserve + appendAssumeCapacity loop
 //   - ArrayList (`@hasField "items"`): reserve, set items.len, memcpy
-//   - BabyList-ish (`@hasField "len"`): reserve, set len, memcpy
+//   - Vec-ish (`@hasField "len"`): reserve, set len, memcpy
 //   - raw slice: allocator.alloc + memcpy, return slice
 //   - has `.ptr`: alloc + build `{ptr,len,cap}`
 pub fn from_slice<A>(default: &[A::Elem]) -> Result<A, AllocError>
@@ -252,7 +252,7 @@ const fn needs_allocator() -> bool {
 
 // ─── trait impls for concrete collections ─────────────────────────────────────
 // PORT NOTE: these did not exist in the Zig — they are the Rust replacement for
-// the `@hasField` / `@hasDecl` probes. Impls for HashMap/BabyList/MultiArrayList
+// the `@hasField` / `@hasDecl` probes. Impls for HashMap/Vec/MultiArrayList
 // live in `bun_collections` (move-in pass) to respect crate tiering.
 
 impl<T> ArrayLike for Vec<T> {
@@ -276,7 +276,7 @@ impl<T> ArrayLike for Vec<T> {
     }
 }
 
-// TODO(b0): ArrayLike impls for BabyList<T> and MultiArrayList<T> arrive via
+// TODO(b0): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
 // move-in pass in bun_collections.
 
 // ════════════════════════════════════════════════════════════════════════════

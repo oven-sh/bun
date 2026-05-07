@@ -9,7 +9,7 @@ use core::mem::size_of;
 use std::io::Write as _;
 
 use bun_alloc::{Arena as Bump, ArenaVec};
-use bun_collections::{BabyList, IntegerBitSet};
+use bun_collections::{VecExt, IntegerBitSet};
 use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,

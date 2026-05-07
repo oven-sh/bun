@@ -11,14 +11,14 @@
 //! (`::bun_css::generics::DeepClone::deep_clone(&field, bump)`), so the call
 //! resolves *only* through the trait — never an inherent. This sidesteps Rust's
 //! method-probe rule that selects an inherent by *name only* (and would
-//! otherwise let an unrelated `BabyList::deep_clone(&self) -> Result<_,_>`
-//! shadow the blanket `impl DeepClone for BabyList<T>` and fail E0061).
+//! otherwise let an unrelated `Vec::deep_clone(&self) -> Result<_,_>`
+//! shadow the blanket `impl DeepClone for Vec<T>` and fail E0061).
 //!
 //! Consequence: every leaf type reached by a derive **must** carry a real
 //! `DeepClone` (or `CssEql`/`CssHash`/`IsCompatible`) trait impl — an
 //! inherent `pub fn deep_clone` alone is no longer sufficient. The blanket
 //! impls in `bun_css::generics` cover Option, Vec, Box, slices, primitives,
-//! `SmallList`, `BabyList`, …; everything else derives or hand-implements the
+//! `SmallList`, `Vec`, …; everything else derives or hand-implements the
 //! trait.
 //!
 //! Generics handling:

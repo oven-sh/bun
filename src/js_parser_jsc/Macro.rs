@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -690,7 +691,7 @@ impl<'a> Run<'a> {
                     if elem.is_missing() {
                         continue;
                     }
-                    array.append(elem)?;
+                    VecExt::append(&mut array, elem)?;
                     i += 1;
                 }
 
@@ -699,7 +700,7 @@ impl<'a> Run<'a> {
                 // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
                     e_array.items = array;
-                    e_array.items.len = i as u32;
+                    e_array.items.truncate((i) as usize);
                 }
                 return Ok(expr);
             }
@@ -748,7 +749,7 @@ impl<'a> Run<'a> {
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] =
                         self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    bun_core::handle_oom(properties.append(G::Property {
+                    bun_core::handle_oom(VecExt::append(&mut properties, G::Property {
                         key: Some(Expr::init(
                             E::EString::init(key_bytes),
                             self.caller.loc,

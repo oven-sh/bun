@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use bun_collections::ArrayHashMap;
@@ -154,7 +155,7 @@ impl OverrideMap {
             return Err(bun_core::err!("Invalid"));
         };
 
-        self.map.ensure_unused_capacity(obj.properties.len as usize)?;
+        self.map.ensure_unused_capacity(obj.properties.len_u32() as usize)?;
 
         'props: for prop in obj.properties.slice() {
             let key = prop.key.as_ref().unwrap();
@@ -174,7 +175,7 @@ impl OverrideMap {
                 } else if let ExprData::EObject(value_obj) = &value_expr.data {
                     if let Some(dot) = value_expr.as_property(b".") {
                         if dot.expr.data.is_e_string() {
-                            if value_obj.properties.len > 1 {
+                            if value_obj.properties.len_u32() > 1 {
                                 log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
                             }
                             break 'value dot.expr;
@@ -232,7 +233,7 @@ impl OverrideMap {
             log.add_warning_fmt(Some(source), expr.loc, format_args!("\"resolutions\" must be an object with string values"))?;
             return Ok(());
         };
-        self.map.ensure_unused_capacity(obj.properties.len as usize)?;
+        self.map.ensure_unused_capacity(obj.properties.len_u32() as usize)?;
         for prop in obj.properties.slice() {
             let key = prop.key.as_ref().unwrap();
             let mut k = key.as_utf8_string_literal().unwrap();

@@ -2,13 +2,12 @@
 //!
 //! Ported from src/runtime/api/html_rewriter.zig.
 
-use bun_collections::{VecExt, ByteVecExt};
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::rc::Rc;
 
-use bun_collections::{ByteList, LinearFifo};
+use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_string::MutableString;
 use bun_jsc::{
@@ -441,7 +440,7 @@ impl HTMLRewriterLoader {
 
         // SAFETY: `bytes` borrowed for the synchronous `output.write` call only;
         // the `Temporary` variant signals the sink it must copy before returning.
-        let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(bytes) };
+        let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(bytes) };
         let write_result = self
             .output
             .write(webcore::sink::Data::Bytes(StreamResult::Temporary(borrowed)));
@@ -535,14 +534,14 @@ impl HTMLRewriterLoader {
         webcore::Sink::init(self)
     }
 
-    // PORT NOTE: takes `ManuallyDrop<ByteList>` so the `DEINIT=false`
+    // PORT NOTE: takes `ManuallyDrop<Vec<u8>>` so the `DEINIT=false`
     // (Temporary / TemporaryAndDone — borrowed) instantiation can NEVER drop
     // caller-owned bytes, on either the error or success path. The Zig spec
     // (html_rewriter.zig:346-356) does not deinit on the error path at all —
     // matched here exactly: only `DEINIT && success` frees.
     fn write_bytes<const DEINIT: bool>(
         &mut self,
-        mut bytes: core::mem::ManuallyDrop<ByteList>,
+        mut bytes: core::mem::ManuallyDrop<Vec<u8>>,
     ) -> Option<bun_sys::Error> {
         // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
         if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes.slice()) }.is_err() {

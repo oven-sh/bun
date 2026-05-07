@@ -149,7 +149,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     let mut rules = BundlerCssRuleList::default();
                     if len > 0 {
                         // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
-                        // is a bitwise BabyList→SmallList header transfer. In Rust the
+                        // is a bitwise Vec→SmallList header transfer. In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
                         // `ungate_support::bun_css::LayerName { v: Vec<Box<[u8]>> }`,
                         // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
@@ -190,7 +190,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     // PORT NOTE: Zig keeps `conditions: ?*ImportConditions` as a raw
                     // pointer to index 0 while the `while j != 1` loop reads
                     // `entry.conditions.len` / `.at(j)`. Taking `&mut` at index 0 here
-                    // would exclusively borrow the whole `entry.conditions` BabyList for
+                    // would exclusively borrow the whole `entry.conditions` Vec for
                     // the duration, aliasing those reads. The pointer is not actually
                     // dereferenced until after the loop (.zig:119), so defer acquiring
                     // the index-0 borrow until `actual_conditions` is built below.
@@ -375,7 +375,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         };
                         // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
-                        // freed via this view, so the duplicated `Vec`/`BabyList` headers are
+                        // freed via this view, so the duplicated `Vec`/`Vec` headers are
                         // sound for read-only / reslice use below.
                         css_chunk.asts[i] = unsafe { core::ptr::read(original_stylesheet) };
                         break 'ast &mut css_chunk.asts[i];

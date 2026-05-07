@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+use bun_collections::VecExt;
 use core::ptr::NonNull;
 
 use bun_core::{err, Error};
@@ -402,7 +403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                unsafe { &mut *p.current_scope }.generated.append(arg_ref)?;
+                VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg_ref)?;
             } else {
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, name_text)
@@ -671,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                unsafe { &mut *p.current_scope }.generated.append(arg_ref)?;
+                VecExt::append(&mut unsafe { &mut *p.current_scope }.generated, arg_ref)?;
             } else {
                 arg_ref = p
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)

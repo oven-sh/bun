@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_variables, unused_imports, unused_mut)]
+use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
 
@@ -1222,7 +1223,7 @@ impl PackageJSON {
             } else if let js_ast::ExprData::EArray(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
                 // PORT NOTE: reshaped — `ArrayIterator` is not `Clone`; iterate the
-                // underlying `BabyList<Expr>` slice directly for both passes.
+                // underlying `Vec<Expr>` slice directly for both passes.
                 let items = e_array.items.slice();
                 let mut map = SideEffectsMap::default();
                 let mut glob_list = GlobList::default();
@@ -1426,7 +1427,7 @@ impl PackageJSON {
                 for group in dependency_groups {
                     if let Some(group_json) = json.get(group.field) {
                         if let js_ast::ExprData::EObject(obj) = &group_json.data {
-                            total_dependency_count += obj.properties.len as usize;
+                            total_dependency_count += obj.properties.len_u32() as usize;
                         }
                     }
                 }
@@ -1515,9 +1516,9 @@ impl PackageJSON {
             let property_string_map = |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
                 let prop = json.as_property(name)?;
                 let js_ast::ExprData::EObject(obj) = &prop.expr.data else { return None };
-                if obj.properties.len == 0 { return None }
+                if obj.properties.len_u32() == 0 { return None }
                 let mut map = StringArrayHashMap::<&'static [u8]>::default();
-                map.ensure_total_capacity(obj.properties.len as usize).ok()?;
+                map.ensure_total_capacity(obj.properties.len_u32() as usize).ok()?;
                 for p in obj.properties.slice() {
                     let Some(key) = p.key.as_ref().and_then(|k| k.as_utf8_string_literal()) else { continue };
                     let Some(value) = p.value.as_ref().and_then(|v| v.as_utf8_string_literal()) else { continue };
@@ -1632,7 +1633,7 @@ impl<'a> Visitor<'a> {
                 };
             }
             js_ast::ExprData::EArray(e_array) => {
-                let mut array: Vec<Entry> = Vec::with_capacity(e_array.items.len as usize);
+                let mut array: Vec<Entry> = Vec::with_capacity(e_array.items.len_u32() as usize);
                 for item in e_array.items.slice() {
                     array.push(self.visit(*item));
                 }
@@ -1642,7 +1643,7 @@ impl<'a> Visitor<'a> {
                 };
             }
             js_ast::ExprData::EObject(e_obj) => {
-                let prop_len = e_obj.properties.len as usize;
+                let prop_len = e_obj.properties.len_u32() as usize;
                 // PORT NOTE: reshaped for borrowck — Zig used MultiArrayList column slices;
                 // EntryDataMapList is a Vec<MapEntry> placeholder until
                 // bun_collections::MultiArrayList lands. Push whole entries instead of

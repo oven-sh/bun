@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::{StringHashMap, StringArrayHashMap};
 use bun_core::{err, zstr, Error, Global, Output};
 use bun_logger as logger;
@@ -270,7 +271,7 @@ pub fn migrate_npm_lockfile<'a>(
     let packages_properties = 'brk: {
         let Some(obj) = json.get(b"packages") else { return Err(err!("InvalidNPMLockfile")); };
         let ExprData::EObject(eobj) = &obj.data else { return Err(err!("InvalidNPMLockfile")); };
-        if eobj.properties.len == 0 {
+        if eobj.properties.len_u32() == 0 {
             return Err(err!("InvalidNPMLockfile"));
         }
         let prop1 = eobj.properties.at(0);
@@ -395,7 +396,7 @@ pub fn migrate_npm_lockfile<'a>(
                 let ExprData::EObject(deps_obj) = &deps.data else {
                     return Err(err!("InvalidNPMLockfile"));
                 };
-                num_deps = num_deps.saturating_add(deps_obj.properties.len as u32);
+                num_deps = num_deps.saturating_add(deps_obj.properties.len_u32() as u32);
             }
         }
 
@@ -403,7 +404,7 @@ pub fn migrate_npm_lockfile<'a>(
             let ExprData::EObject(bin_obj) = &bin.data else {
                 return Err(err!("InvalidNPMLockfile"));
             };
-            match bin_obj.properties.len {
+            match bin_obj.properties.len_u32() {
                 0 => return Err(err!("InvalidNPMLockfile")),
                 1 => {}
                 n => {
@@ -614,11 +615,11 @@ pub fn migrate_npm_lockfile<'a>(
             'bin: {
                 // we already check these conditions during counting
                 let ExprData::EObject(bin_obj) = &bin.data else { unreachable!() };
-                debug_assert!(bin_obj.properties.len > 0);
+                debug_assert!(bin_obj.properties.len_u32() > 0);
 
                 // in npm lockfile, the bin is always an object, even if it is only a single one
                 // we need to detect if it's a single entry and lower it to a file.
-                if bin_obj.properties.len == 1 {
+                if bin_obj.properties.len_u32() == 1 {
                     let prop = bin_obj.properties.at(0);
                     let key = prop.key.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
                     let script_value = prop.value.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
@@ -642,7 +643,7 @@ pub fn migrate_npm_lockfile<'a>(
                 }
 
                 let off = this.buffers.extern_strings.len() as u32;
-                let len = u32::try_from(bin_obj.properties.len * 2).unwrap();
+                let len = u32::try_from(bin_obj.properties.len_u32() * 2).unwrap();
 
                 for bin_entry in bin_obj.properties.slice() {
                     let key = bin_entry.key.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
@@ -681,7 +682,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let ExprData::EArray(arr) = &cpu_array.data else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
-                    if arr.items.len == 0 {
+                    if arr.items.len_u32() == 0 {
                         break 'arch arch.combine();
                     }
                     for item in arr.items.slice() {
@@ -702,7 +703,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let ExprData::EArray(arr) = &cpu_array.data else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
-                    if arr.items.len == 0 {
+                    if arr.items.len_u32() == 0 {
                         break 'arch Npm::OperatingSystem::ALL;
                     }
                     for item in arr.items.slice() {
@@ -903,7 +904,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let ExprData::EArray(arr) = &expr.data else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
-                    let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len as usize);
+                    let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len_u32() as usize);
                     for item in arr.items.slice() {
                         let s = item.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
                         map.put_assume_capacity(s, ());

@@ -14,7 +14,7 @@ use bun_jsc::StringJsc as _;
 use crate::webcore::{AutoFlusher, HasAutoFlusher};
 use crate::node::{Encoding, StringOrBuffer};
 use bun_str::{strings, String as BunString, ZigString};
-use bun_collections::{BabyList as ByteList, HashMap as BunHashMap, HiveArrayFallback};
+use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_ptr::IntrusiveRc;
 use bun_string::MutableString;
 use bun_http::lshpack;
@@ -1175,7 +1175,7 @@ pub struct H2FrameParser {
     is_server: bool,
     preface_received_len: u8,
     // we buffer requests until we get the first settings ACK
-    write_buffer: ByteList<u8>,
+    write_buffer: Vec<u8>,
     write_buffer_offset: usize,
     // TODO: this will be removed when I re-add header and data priorization
     outbound_queue_size: usize,
@@ -2356,12 +2356,10 @@ impl H2FrameParser {
 
             // all the buffer was written! reset things
             self.write_buffer_offset = 0;
-            self.write_buffer.len = 0;
+            self.write_buffer.clear();
             // lets keep size under control
-            if self.write_buffer.cap > MAX_BUFFER_SIZE {
-                self.write_buffer.len = MAX_BUFFER_SIZE;
-                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
-                self.write_buffer.clear_retaining_capacity();
+            if self.write_buffer.capacity() > MAX_BUFFER_SIZE as usize {
+                self.write_buffer.shrink_to(MAX_BUFFER_SIZE as usize);
             }
             bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", buffer_len);
         } else {
@@ -2394,7 +2392,7 @@ impl H2FrameParser {
             }
             // all the buffer was written!
             self.write_buffer_offset = 0;
-            self.write_buffer.len = 0;
+            self.write_buffer.clear();
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 { 0 } else { u32::try_from(result).unwrap() };
@@ -2409,10 +2407,8 @@ impl H2FrameParser {
                 }
             }
             // lets keep size under control
-            if self.write_buffer.cap > MAX_BUFFER_SIZE {
-                self.write_buffer.len = MAX_BUFFER_SIZE;
-                self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
-                self.write_buffer.clear_retaining_capacity();
+            if self.write_buffer.capacity() > MAX_BUFFER_SIZE as usize {
+                self.write_buffer.shrink_to(MAX_BUFFER_SIZE as usize);
             }
             return true;
         }
@@ -2493,11 +2489,9 @@ impl H2FrameParser {
 
                     // defer block
                     self.write_buffer_offset = 0;
-                    self.write_buffer.len = 0;
-                    if self.write_buffer.cap > MAX_BUFFER_SIZE {
-                        self.write_buffer.len = MAX_BUFFER_SIZE;
-                        self.write_buffer.shrink_and_free(MAX_BUFFER_SIZE as usize);
-                        self.write_buffer.clear_retaining_capacity();
+                    self.write_buffer.clear();
+                    if self.write_buffer.capacity() > MAX_BUFFER_SIZE as usize {
+                        self.write_buffer.shrink_to(MAX_BUFFER_SIZE as usize);
                     }
 
                     if result.is_boolean() && !result.to_boolean() {
@@ -2570,7 +2564,7 @@ impl H2FrameParser {
     }
 
     fn has_backpressure(&self) -> bool {
-        self.write_buffer.len > 0 || self.has_nonnative_backpressure
+        self.write_buffer.len_u32() > 0 || self.has_nonnative_backpressure
     }
 
     fn uncork(&mut self) {
@@ -4338,13 +4332,13 @@ impl<'a> WireWriter for MemoryWriter<'a> {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        (self.write_buffer.len as usize + self.queued_data_size as usize) / 1024 / 1024
+        (self.write_buffer.len_u32() as usize + self.queued_data_size as usize) / 1024 / 1024
     }
 
     // get memory in bytes
     #[bun_jsc::host_fn(method)]
     pub fn get_buffer_size(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number((this.write_buffer.len as u64 + this.queued_data_size) as f64))
+        Ok(JSValue::js_number((this.write_buffer.len_u32() as u64 + this.queued_data_size) as f64))
     }
 
     fn send_data(&mut self, stream: &mut Stream, payload: &[u8], close: bool, callback: JSValue) {
@@ -5694,7 +5688,7 @@ impl H2FrameParser {
             last_stream_id: 0,
             is_server: false,
             preface_received_len: 0,
-            write_buffer: ByteList::default(),
+            write_buffer: Vec::<u8>::default(),
             write_buffer_offset: 0,
             outbound_queue_size: 0,
             streams: BunHashMap::default(),

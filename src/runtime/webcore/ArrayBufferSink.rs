@@ -1,7 +1,6 @@
-use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::sink::{self, Sink, SinkHandler};
 use crate::webcore::streams::{self, Signal};
-use bun_collections::ByteList;
+use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
@@ -11,7 +10,7 @@ pub type JSSink = sink::JSSink<ArrayBufferSink>;
 // `JsSinkAbi` impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
 pub struct ArrayBufferSink {
-    pub bytes: ByteList,
+    pub bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
@@ -27,7 +26,7 @@ pub struct ArrayBufferSink {
 impl Default for ArrayBufferSink {
     fn default() -> Self {
         Self {
-            bytes: ByteList::default(),
+            bytes: Vec::<u8>::default(),
             done: false,
             signal: Signal::default(),
             next: None,
@@ -107,7 +106,7 @@ impl ArrayBufferSink {
 
     pub fn init(next: Option<Sink<'static>>) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
         Ok(Box::new(ArrayBufferSink {
-            bytes: ByteList::default(),
+            bytes: Vec::<u8>::default(),
             done: false,
             signal: Signal::default(),
             next,
@@ -120,7 +119,7 @@ impl ArrayBufferSink {
     // pre-allocated slot.
     pub fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
-            bytes: ByteList::default(),
+            bytes: Vec::<u8>::default(),
             done: false,
             signal: Signal::default(),
             next: None,
@@ -189,7 +188,7 @@ impl ArrayBufferSink {
     /// `this` must have been allocated via `Box::into_raw` (i.e. by
     /// [`ArrayBufferSink::init`] or the JSSink codegen path) and not yet freed.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: reclaiming ownership drops `bytes` (ByteList impls Drop) and
+        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box, matching Zig `this.bytes.deinit(...); bun.destroy(this)`.
         drop(unsafe { Box::from_raw(this) });
     }
@@ -208,7 +207,7 @@ impl ArrayBufferSink {
             return Ok(value);
         }
 
-        // `defer this.bytes = bun.ByteList.empty` + `try toOwnedSlice` →
+        // `defer this.bytes = bun.Vec<u8>.empty` + `try toOwnedSlice` →
         // take ownership, leave empty in place.
         let mut bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC — `to_js` installs
@@ -235,7 +234,7 @@ impl ArrayBufferSink {
         debug_assert!(self.next.is_none());
         self.done = true;
         self.signal.close(None);
-        // `defer this.bytes = bun.ByteList.empty` → take ownership, leave empty.
+        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
         let mut bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC; the caller wraps the returned
         // `ArrayBuffer` in `.to_js()` which installs `MarkedArrayBuffer_deallocator`

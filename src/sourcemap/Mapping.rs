@@ -2,7 +2,7 @@ use bun_collections::VecExt;
 use core::mem::{align_of, size_of};
 
 use bun_collections::multi_array_list::{MultiArrayElement, Slice as MalSlice};
-use bun_collections::{ByteList, MultiArrayList};
+use bun_collections::{ByteVecExt, MultiArrayList};
 use bun_core::{declare_scope, err, scoped_log};
 use bun_logger::Loc;
 use bun_semver::String as SemverString;
@@ -218,7 +218,7 @@ impl ListValue {
 pub struct List {
     pub r#impl: ListValue,
     pub names: Box<[SemverString]>,
-    pub names_buffer: ByteList,
+    pub names_buffer: Vec<u8>,
 }
 
 impl List {
@@ -387,7 +387,7 @@ impl List {
         }
     }
 
-    // `deinit` dropped: all fields (`MultiArrayList`, `ByteList`, `Box<[SemverString]>`)
+    // `deinit` dropped: all fields (`MultiArrayList`, `Vec<u8>`, `Box<[SemverString]>`)
     // own their storage and free on Drop.
 
     pub fn get_name(&self, index: i32) -> Option<&[u8]> {

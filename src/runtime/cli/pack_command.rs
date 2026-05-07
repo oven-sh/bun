@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::ffi::c_char;
 use core::fmt;
 use std::io::Write as _;
@@ -1316,7 +1317,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         }
 
         if let ExprData::EObject(bin_obj) = &bin.expr.data {
-            if bin_obj.properties.len == 0 {
+            if bin_obj.properties.len_u32() == 0 {
                 return Ok(Vec::new());
             }
 

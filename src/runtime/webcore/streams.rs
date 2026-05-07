@@ -21,9 +21,9 @@ use crate::webcore::{AutoFlusher, ByteListPool};
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
 bun_core::declare_scope!(NetworkSinkLog, visible);
 
-/// `bun.ObjectPool(bun.ByteList, ...)::Node` — pooled buffer node type used by
+/// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
 /// `HTTPServerWritable.pooled_buffer`.
-pub type ByteListPoolNode = bun_collections::pool::Node<bun_collections::ByteList>;
+pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
@@ -37,7 +37,6 @@ pub mod bun_s3 {
 // fn-pointer signature is structurally identical to callers that name the public
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
-type ByteList = Vec<u8>;
 
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
@@ -81,8 +80,8 @@ pub enum Start {
     H3ResponseSink,
     NetworkSink,
     Ready,
-    OwnedAndDone(ByteList),
-    Done(ByteList),
+    OwnedAndDone(Vec<u8>),
+    Done(Vec<u8>),
 }
 
 #[repr(u8)]
@@ -111,7 +110,7 @@ impl Start {
             Start::OwnedAndDone(mut list) => {
                 // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
                 // hands the allocation to JSC (no-copy + MarkedArrayBuffer_deallocator). In
-                // Rust `list` is an owned BabyList whose Drop would free the same buffer →
+                // Rust `list` is an owned Vec whose Drop would free the same buffer →
                 // double-free. Build the ArrayBuffer, then forget `list` so JSC is sole owner.
                 let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
                 core::mem::forget(list);
@@ -325,13 +324,13 @@ pub enum StreamResult {
     Pending(*mut Pending),
     Err(StreamError),
     Done,
-    Owned(ByteList),
-    OwnedAndDone(ByteList),
+    Owned(Vec<u8>),
+    OwnedAndDone(Vec<u8>),
     // PORT NOTE: `temporary*` payloads are borrowed slices wrapped via
-    // `ByteList::from_borrowed_slice_dangerous` (`ManuallyDrop<ByteList>` so the
+    // `Vec::<u8>::from_borrowed_slice_dangerous` (`ManuallyDrop<Vec<u8>>` so the
     // borrowed allocation is never freed by `Drop`).
-    TemporaryAndDone(ManuallyDrop<ByteList>),
-    Temporary(ManuallyDrop<ByteList>),
+    TemporaryAndDone(ManuallyDrop<Vec<u8>>),
+    Temporary(ManuallyDrop<Vec<u8>>),
     IntoArray(IntoArray),
     IntoArrayAndDone(IntoArray),
 }
@@ -828,7 +827,7 @@ impl StreamResult {
                     }
                     break 'brk js_err;
                 };
-                *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
+                *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
                 // SAFETY: promise GC-rooted; fresh temp `&mut` is sole borrow across
                 // this re-entrant call (no long-lived `&mut JSPromise` held).
                 let _ = unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(value));
@@ -843,7 +842,7 @@ impl StreamResult {
                 let value = match result.to_js(global_this) {
                     Ok(v) => v,
                     Err(err) => {
-                        *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
+                        *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
                         // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                         let _ = unsafe { &mut *promise }.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
@@ -854,7 +853,7 @@ impl StreamResult {
                 };
                 value.ensure_still_alive();
 
-                *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
+                *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
                 // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                 let _ = unsafe { &mut *promise }.resolve(global_this, value);
                 // TODO: properly propagate exception upwards
@@ -878,7 +877,7 @@ impl StreamResult {
             StreamResult::Owned(list) => {
                 // PORT NOTE: Zig overwrites `result.* = .{ .temporary = .{} }` with no
                 // destructor after handing the buffer to JSC. In Rust the later
-                // `*result = Temporary(...)` in fulfill_promise drops the old BabyList,
+                // `*result = Temporary(...)` in fulfill_promise drops the old Vec,
                 // double-freeing the allocation now owned by JSC. Move it out and forget
                 // so JSC's MarkedArrayBuffer_deallocator is the sole owner.
                 let mut taken = core::mem::take(list);
@@ -1053,7 +1052,7 @@ pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub res: Option<*mut UwsResponse<SSL, HTTP3>>,
-    pub buffer: ByteList,
+    pub buffer: Vec<u8>,
     pub pooled_buffer: Option<NonNull<ByteListPoolNode>>,
     pub offset: BlobSizeType,
 
@@ -1085,7 +1084,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
     fn default() -> Self {
         Self {
             res: None,
-            buffer: ByteList::default(),
+            buffer: Vec::<u8>::default(),
             pooled_buffer: None,
             offset: 0,
             is_listening_for_abort: false,
@@ -1361,7 +1360,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 (self.buffer.len() as u64 - self.offset) as usize,
             )
         }
-        // TODO(port): Zig `this.buffer.ptr[this.offset..this.buffer.len]` — verify ByteList field access
+        // TODO(port): Zig `this.buffer.ptr[this.offset..this.buffer.len]` — verify Vec<u8> field access
     }
 
     pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {
@@ -1453,11 +1452,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     self.pooled_buffer = Some(pooled_node);
                     // SAFETY: pooled_node is a valid pool checkout; `data` was
                     // written by `ByteListPool::push` (or zero-initialized).
-                    // Move the ByteList out by bitwise read and reset the slot.
+                    // Move the Vec<u8> out by bitwise read and reset the slot.
                     self.buffer = unsafe {
                         core::mem::replace(
                             (*pooled_node.as_ptr()).data.assume_init_mut(),
-                            ByteList::default(),
+                            Vec::<u8>::default(),
                         )
                     };
                 }
@@ -1951,7 +1950,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
             }
 
-            self.buffer = ByteList::default();
+            self.buffer = Vec::<u8>::default();
             self.pooled_buffer = None;
             // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
@@ -2638,7 +2637,7 @@ impl ReadResult {
                 let owned = slice_ptr as *const u8 != buf.as_ptr();
                 let done = is_done || (close_on_empty && slice_len == 0);
 
-                // Zig `bun.ByteList.fromOwnedSlice(slice)` adopts an existing heap
+                // Zig `bun.Vec<u8>.fromOwnedSlice(slice)` adopts an existing heap
                 // allocation by pointer/len (cap = len). The contract is: when
                 // `slice.ptr != buf.ptr` the slice IS a default-allocator heap
                 // allocation whose ownership is being transferred into the

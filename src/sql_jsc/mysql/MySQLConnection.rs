@@ -1,7 +1,6 @@
 use core::mem::offset_of;
 
 use bun_collections::{VecExt, HashMap, OffsetByteList};
-type ByteList = Vec<u8>;
 use crate::jsc::JSValue;
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
@@ -69,7 +68,7 @@ pub struct MySQLConnection {
     // TODO: move it to JSMySQLConnection
     pub statements: PreparedStatementsMap,
 
-    server_version: ByteList,
+    server_version: Vec<u8>,
     connection_id: u32,
     capabilities: Capabilities,
     character_set: CharacterSet,
@@ -108,7 +107,7 @@ impl Default for MySQLConnection {
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
-            server_version: ByteList::default(),
+            server_version: Vec::<u8>::default(),
             connection_id: 0,
             capabilities: Capabilities::default(),
             character_set: CharacterSet::default(),
